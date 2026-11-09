@@ -1,6 +1,7 @@
 import { WebLaunchMethod } from '../../contracts/webLaunch.ts';
 import { AppServerClient } from './conversation-client.js';
 import { ensureAppServer } from './app-server-background.js';
+import { createWebLaunchConnections } from './web-launch-connections.js';
 import {
   WEB_RUNTIME,
   exactOrigin,
@@ -177,8 +178,11 @@ export function createWebLaunchBackground({
       const previous = old.sites.find(site => site.origin === doc.source.origin);
       const current = sites.sites.find(site => site.origin === doc.source.origin);
       if (previous?.revision !== current?.revision) doc.deliveryRevision += 1;
-      if (previous && previous.enabled !== current?.enabled) void retireClient(doc).catch(() => {});
-      if (!current?.enabled) doc.revoked = true;
+      if (!current?.enabled) {
+        if (!doc.revoked) void retireClient(doc, true).catch(() => {});
+        doc.revoked = true;
+      } else if (previous && previous.enabled !== current.enabled)
+        void retireClient(doc).catch(() => {});
     }
   }
   async function readSites() {
@@ -266,10 +270,10 @@ export function createWebLaunchBackground({
       return false;
     }
   }
-  async function retireClient(doc) {
+  async function retireClient(doc, reconnectRequired = false) {
     await chromeApi.tabs.sendMessage(
       doc.source.tabId,
-      { type: `${WEB_RUNTIME}retire`, documentNonce: doc.documentNonce },
+      { type: `${WEB_RUNTIME}retire`, documentNonce: doc.documentNonce, reconnectRequired },
       { documentId: doc.source.documentId },
     );
   }
@@ -369,7 +373,7 @@ export function createWebLaunchBackground({
       },
     );
   }
-  async function prepare(message, sender, opened) {
+  async function prepare(message, sender, opened, admission = {}) {
     await opened;
     await retirements.get(sender.tab.id);
     const doc = await getDocument(message, sender);
@@ -418,6 +422,7 @@ export function createWebLaunchBackground({
         clickSequence: message.clickSequence,
         payloadDigest: message.payloadDigest,
         input,
+        ...admission,
       });
     } catch (error) {
       error.prepareUncertain = error.requestSent === true;
@@ -520,7 +525,38 @@ export function createWebLaunchBackground({
       [SITES_KEY]: value.sites.filter(site => site.enabled).map(site => site.origin),
     });
   }
-  async function trustedMessage(message) {
+  const connections = createWebLaunchConnections({
+    chromeApi,
+    cryptoApi,
+    client,
+    readSites,
+    applySites,
+    registerScripts,
+    store: action => transaction(() => action((state.connections ??= {}))),
+    windowBusy: windowId => slots.has(windowId),
+    notify: (windowId, connectionPending) => {
+      const panel = panels.get(windowId);
+      if (panel)
+        void chromeApi.runtime
+          .sendMessage({
+            type: 'web-launch:panel:event',
+            panelInstanceId: panel.id,
+            windowId,
+            connectionPending,
+          })
+          .catch(() => {});
+    },
+  });
+  async function trustedMessage(message, sender) {
+    if (message.type === 'web-launch:connection:decide') {
+      const panel = panels.get(message.windowId);
+      if (
+        new URL(sender.url).pathname !== '/sidepanel.html' ||
+        panel?.id !== message.panelInstanceId
+      )
+        throw { code: 'FORBIDDEN' };
+      return connections.decide(message);
+    }
     if (message.type === 'web-launch:panel:register') {
       const panel = {
         id: message.panelInstanceId,
@@ -542,6 +578,7 @@ export function createWebLaunchBackground({
         ok: true,
         envelope: active ? envelope(active) : undefined,
         observations: records.map(record => record.response).filter(Boolean),
+        connectionPending: await connections.current(panel.windowId),
       };
     }
     if (message.type === 'web-launch:panel:state') {
@@ -558,6 +595,7 @@ export function createWebLaunchBackground({
         }
       });
       void refreshObservations().catch(() => {});
+      void connections.refresh(panel.windowId).catch(() => {});
       return { ok: true };
     }
     if (message.type === 'web-launch:sites:list') {
@@ -670,7 +708,7 @@ export function createWebLaunchBackground({
         reply({ ok: false, code: 'FORBIDDEN' });
         return false;
       }
-      return done(trustedMessage(message));
+      return done(trustedMessage(message, sender));
     }
     if (message.type === `${WEB_RUNTIME}revoke`) {
       if (!validDocumentIdentity(sender, chromeApi) || !validIdentifier(message.documentNonce)) {
@@ -716,7 +754,8 @@ export function createWebLaunchBackground({
           return { ok: true, digest: await inputDigest(input, cryptoApi) };
         })(),
       );
-    if (message.type === `${WEB_RUNTIME}launch`) {
+    if ([`${WEB_RUNTIME}launch`, `${WEB_RUNTIME}connection-launch`].includes(message.type)) {
+      const continuation = message.type === `${WEB_RUNTIME}connection-launch`;
       if (
         !validIdentifier(message.requestId) ||
         !Number.isSafeInteger(message.clickSequence) ||
@@ -724,7 +763,9 @@ export function createWebLaunchBackground({
         !Number.isSafeInteger(message.bindingRevision) ||
         message.bindingRevision < 1 ||
         !/^[0-9a-f]{64}$/u.test(message.payloadDigest ?? '') ||
-        !normalizeInput(message.input)
+        !normalizeInput(message.input) ||
+        (continuation &&
+          (!validIdentifier(message.pendingId) || !validIdentifier(message.bindingId)))
       ) {
         reply({ ok: false, code: 'INVALID_REQUEST' });
         return false;
@@ -736,6 +777,17 @@ export function createWebLaunchBackground({
       slots.set(sender.tab.windowId, message.requestId);
       const pendingKey = cancelKey(message, sender);
       preparing.add(pendingKey);
+      if (continuation)
+        return done(
+          connections
+            .consume(message, sender)
+            .then(admission => prepare(message, sender, Promise.resolve(), admission))
+            .catch(error => {
+              if (!error.prepareUncertain) slots.delete(sender.tab.windowId);
+              throw error;
+            })
+            .finally(() => preparing.delete(pendingKey)),
+        );
       let opened;
       try {
         opened = chromeApi.sidePanel.open({ tabId: sender.tab.id });
@@ -771,6 +823,7 @@ export function createWebLaunchBackground({
     return false;
   }
   const invalidateTab = (tabId, soft = false) => {
+    connections.invalidateTab(tabId);
     for (const doc of documents.values())
       if (doc.source.tabId === tabId) {
         doc.revoked = true;
@@ -834,7 +887,10 @@ export function createWebLaunchBackground({
         .contains({ origins: [`${url.protocol}//${url.hostname}/*`] })
         .then(allowed => {
           doc.permissionPending = false;
-          if (!allowed) return revoke(doc, 'permission-revoked');
+          if (!allowed)
+            return retireClient(doc, true)
+              .catch(() => {})
+              .then(() => revoke(doc, 'permission-revoked'));
         })
         .catch(() => {
           doc.permissionPending = false;
@@ -842,5 +898,5 @@ export function createWebLaunchBackground({
         });
     }
   });
-  return { handleMessage, client };
+  return { handleMessage, handleExternalMessage: connections.handleExternalMessage, client };
 }

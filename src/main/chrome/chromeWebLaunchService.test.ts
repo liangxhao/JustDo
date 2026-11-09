@@ -76,10 +76,12 @@ function fixture() {
   const service = new ChromeWebLaunchService(deps);
   services.push(service);
   service.writeSite({ expectedRevision: 0, origin: source.origin, enabled: true, allowSend: true, allowResult: true });
-  const prepare = (options: { source?: WebLaunchSource; input?: WebLaunchInput; requestId?: string; clickSequence?: number; documentLeaseId?: string } = {}) => {
+  const prepare = (options: { source?: WebLaunchSource; input?: WebLaunchInput; requestId?: string; clickSequence?: number; documentLeaseId?: string; connectionOnly?: true; expectedPolicyRevision?: number } = {}) => {
     const value = options.input ?? input;
     return service.prepare({ source: options.source ?? source, requestId: options.requestId ?? 'request-1', clickSequence: options.clickSequence ?? 1, bindingRevision: 1,
-      payloadDigest: webLaunchDigest(canonicalWebLaunchInput(value)), input: value, ...(options.documentLeaseId ? { documentLeaseId: options.documentLeaseId } : {}) });
+      payloadDigest: webLaunchDigest(canonicalWebLaunchInput(value)), input: value, ...(options.documentLeaseId ? { documentLeaseId: options.documentLeaseId } : {}),
+      ...(options.connectionOnly !== undefined ? { connectionOnly: options.connectionOnly } : {}),
+      ...(options.expectedPolicyRevision !== undefined ? { expectedPolicyRevision: options.expectedPolicyRevision } : {}) });
   };
   const actual = { prompt: input.prompt, context: input.context, permissionMode: 'ask' };
   const submit = (prepared: ReturnType<typeof prepare>, extra: Record<string, unknown> = {}) => service.submit({ launchId: prepared.receipt.launchId, composeRevision: prepared.internal.composeRevision, input: actual, submission: 'automatic', shareResult: true, ...extra });
@@ -111,6 +113,55 @@ describe('webpage launch admission and persistence', () => {
     expect(serialized).not.toContain(input.context!.text);
     expect(Object.keys(f.state().receipts)).toHaveLength(1);
     expect(f.threadCreated).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a connection-only card manual and unshared despite an enabled send/result policy', async () => {
+    const f = fixture();
+    const prepared = f.prepare({ connectionOnly: true, expectedPolicyRevision: f.service.sites().revision });
+    expect(prepared.internal.requiresSendConfirmation).toBe(true);
+    expect(prepared.internal.requiresResultConsent).toBe(true);
+    expect(prepared.receipt.request.status).toBe('awaiting-confirmation');
+    expect(prepared.receipt.output.status).toBe('awaiting-consent');
+    const stored = f.state().receipts[prepared.receipt.launchId];
+    expect(stored).toMatchObject({ autoAllowed: false, shareResult: false, mode: input.mode, result: input.result,
+      payloadDigest: webLaunchDigest(canonicalWebLaunchInput(input)) });
+    expect(() => f.submit(prepared)).toThrow('CONFIRMATION_REQUIRED');
+    expect(f.wire).not.toHaveBeenCalled();
+    f.submit(prepared, { submission: 'confirmed', shareResult: true });
+    await tick();
+    expect(f.wire).toHaveBeenCalledTimes(1);
+    expect(f.state().receipts[prepared.receipt.launchId].shareResult).toBe(true);
+  });
+
+  it('rejects stale connection consent against the global policy revision without creating a session', () => {
+    const f = fixture();
+    const captured = f.service.sites().revision;
+    f.service.writeSite({ expectedRevision: captured, origin: 'https://another.example', enabled: true, allowSend: false, allowResult: false });
+    const state = f.state();
+    expect(() => f.prepare({ connectionOnly: true, expectedPolicyRevision: captured })).toThrow('POLICY_CONFLICT');
+    expect(f.state()).toEqual(state);
+    expect(f.db.prepare('SELECT COUNT(*) AS count FROM cowork_sessions').get()).toEqual({ count: 0 });
+    expect(f.threadCreated).not.toHaveBeenCalled();
+    expect(f.chat.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('does not treat connection-only admission as permission to enable a revoked origin', () => {
+    const f = fixture();
+    f.service.writeSite({ expectedRevision: f.service.sites().revision, origin: source.origin, enabled: false, allowSend: false, allowResult: false });
+    const state = f.state();
+    expect(() => f.prepare({ connectionOnly: true, expectedPolicyRevision: state.policyRevision })).toThrow('SITE_NOT_ALLOWED');
+    expect(f.state()).toEqual(state);
+    expect(f.db.prepare('SELECT COUNT(*) AS count FROM cowork_sessions').get()).toEqual({ count: 0 });
+    expect(f.threadCreated).not.toHaveBeenCalled();
+    expect(f.wire).not.toHaveBeenCalled();
+  });
+
+  it('does not reinterpret an existing automatic receipt as a connection-only card', () => {
+    const f = fixture();
+    f.prepare();
+    expect(() => f.prepare({ connectionOnly: true, expectedPolicyRevision: f.service.sites().revision })).toThrow('REQUEST_CONFLICT');
+    expect(f.db.prepare('SELECT COUNT(*) AS count FROM cowork_sessions').get()).toEqual({ count: 1 });
+    expect(f.chat.sendMessage).not.toHaveBeenCalled();
   });
 
   it('rolls back both metadata and product session if creation fails; publishes no success', () => {

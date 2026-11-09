@@ -107,7 +107,10 @@ export function parseWebLaunchInput(raw: unknown): WebLaunchInput {
 
 export function parseWebLaunchPrepare(raw: unknown): WebLaunchPrepare {
   const value = webLaunchRecord(raw);
-  assertWebLaunchKeys(value, ['source', 'documentLeaseId', 'requestId', 'bindingRevision', 'clickSequence', 'payloadDigest', 'input']);
+  assertWebLaunchKeys(value, ['source', 'documentLeaseId', 'requestId', 'bindingRevision', 'clickSequence', 'payloadDigest', 'input', 'connectionOnly', 'expectedPolicyRevision']);
+  const connectionOnly = value.connectionOnly !== undefined || value.expectedPolicyRevision !== undefined;
+  if (connectionOnly && value.connectionOnly !== true) return failWebLaunch('INVALID_REQUEST');
+  const expectedPolicyRevision = connectionOnly ? webLaunchInteger(value.expectedPolicyRevision, 0) : undefined;
   const input = parseWebLaunchInput(value.input);
   const payloadDigest = webLaunchString(value.payloadDigest, 64);
   if (!/^[a-f0-9]{64}$/u.test(payloadDigest) || payloadDigest !== webLaunchDigest(canonicalWebLaunchInput(input))) return failWebLaunch('REQUEST_CONFLICT');
@@ -116,6 +119,7 @@ export function parseWebLaunchPrepare(raw: unknown): WebLaunchPrepare {
     bindingRevision: webLaunchInteger(value.bindingRevision), clickSequence: webLaunchInteger(value.clickSequence),
     payloadDigest, input,
     ...(value.documentLeaseId !== undefined ? { documentLeaseId: webLaunchString(value.documentLeaseId) } : {}),
+    ...(connectionOnly ? { connectionOnly: true, expectedPolicyRevision } : {}),
   };
 }
 

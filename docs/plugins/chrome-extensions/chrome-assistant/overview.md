@@ -73,10 +73,11 @@ side panel's supported UI.
 
 ## Launch conversations from a website
 
-In the extension's site settings, add the exact HTTP(S) origin and grant Chrome
-access. Refresh an already open website afterwards. Connection, direct sending
-and result sharing are separate permissions. The desktop app must already be
-running.
+The first real website button click opens a connection card in the extension.
+Chrome supplies the exact HTTP(S) origin; the user confirms it and grants page
+access without typing a website address. The original frozen input then continues
+as a draft requiring separate send and result consent. Connection is remembered
+and can be revoked in extension settings. The desktop app must already be running.
 
 Copy the composed extension's bundled `chrome-assistant.js` to the website's own
 assets and load it before binding a button. It has no CDN dependency.
@@ -116,7 +117,8 @@ assets and load it before binding a button. It has no CDN dependency.
 Only a real click on a registered, connected, top-level light DOM button opens
 the side panel. Programmatic clicks and timers do not launch work. Prepare
 asynchronous business data before the click, using `update()` when needed.
-Registration times out after five seconds if the bridge is unavailable.
+Binding is ready even before the website is connected. The optional
+`onConnection` callback reports connection progress before a task handle exists.
 
 `mode` defaults to `draft`; `send` requests direct sending subject to permission.
 `result` defaults to `none`; `final` requests this launch's final text subject to

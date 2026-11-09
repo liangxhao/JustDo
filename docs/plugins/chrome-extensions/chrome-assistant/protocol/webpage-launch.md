@@ -7,8 +7,8 @@
 | 方法后缀         | 调用方           | 用途                                                                                                 |
 | ---------------- | ---------------- | ---------------------------------------------------------------------------------------------------- |
 | `sites/read`     | 后台、设置       | 读取 Main 站点策略和全局 revision。                                                                  |
-| `sites/write`    | 可信设置         | 使用 expectedRevision 更新精确 origin 的 enabled、allowSend、allowResult；竞争返回 POLICY_CONFLICT。 |
-| `prepare`        | 后台真实点击路径 | 校验来源、文档序号、配置摘要；原子创建会话和元数据回执。                                             |
+| `sites/write`    | 可信设置、连接卡 | 使用 expectedRevision 更新精确 origin 的 enabled、allowSend、allowResult；竞争返回 POLICY_CONFLICT。 |
+| `prepare`        | 后台点击/受限续接 | 校验来源、文档序号、配置摘要；原子创建会话和元数据回执。                                             |
 | `revise`         | 可信侧栏         | 使用 composeRevision 修改实际输入摘要，撤销自动许可。                                                |
 | `submit`         | 可信侧栏         | 自动或人工确认的单次认领和发送；不重试未知执行。                                                     |
 | `read`           | 后台原文档路径   | 查询回执，以及获准的精确本轮结果。                                                                   |
@@ -51,10 +51,16 @@ type Prepare = {
     mode: 'draft' | 'send';
     result: 'none' | 'final';
   };
+  connectionOnly?: true;
+  expectedPolicyRevision?: number;
 };
 ```
 
 来源由后台根据浏览器 MessageSender 构造，不接受网页覆盖。digest 是纯契约 `canonicalWebLaunchInput` 的 UTF-8 SHA-256。相同文档请求身份与摘要只返回原回执；同 ID 换内容为 REQUEST_CONFLICT。消费过的序号缺少完整回执时返回 EXPIRED，不重新创建。
+
+首次连接卡只授予 `{enabled:true, allowSend:false, allowResult:false}`，使用待确认时冻结的全局 expectedRevision，不刷新 revision 后自动重试。连接续接的 Prepare 同时传 `connectionOnly:true` 和授权写入返回的全局 `expectedPolicyRevision`；字段必须成对出现，`false`、缺失 revision 或单独 revision 均拒绝。Main 在同一同步事务内比较全局 revision，强制关闭自动发送和既有结果分享许可，保留原 input/digest；后续可信侧栏仍需确认发送及分享。已存在的较高授权回执不能被重新解释为受限续接。
+
+网页首次连接使用独立的 `runtime.onMessageExternal` 窄入口，仅允许连接 probe/request/query/cancel；这些消息不属于 app-server 方法，不能代理 Native discovery、任意 RPC 或业务任务的 prepare/submit。外部来源、待确认 identity、绝对期限、原文档绑定及单次续接由扩展负责，Main 不增加另一份待确认状态或正文存储。
 
 Prepare/Submit ACK 丢失后只能 Read，不重放副作用。Read 可使用 `source + requestId` 找回未知 launch/lease；已知时使用 `source + documentLeaseId + launchId`。同一仍 active 文档允许新 channelGeneration 的只读重连，终止撤销后不可恢复。
 

@@ -36,8 +36,9 @@ const envelope = (overrides: Record<string, unknown> = {}) => ({
   },
   ...overrides,
 });
-async function mount(options: Record<string, unknown> = {}, initial = {}) {
-  document.body.innerHTML = '<section id="webLaunchCard" class="hidden"></section>';
+async function mount(options: Record<string, unknown> = {}, initial = {}, registrationExtra = {}) {
+  document.body.innerHTML =
+    '<section id="webConnectionCard" class="hidden"></section><section id="webLaunchCard" class="hidden"></section>';
   const input = envelope(options);
   const composer = {
     prompt: '',
@@ -54,7 +55,7 @@ async function mount(options: Record<string, unknown> = {}, initial = {}) {
   const sendMessage = vi.fn(async (message: any): Promise<any> => {
     if (message.type === Message.Register) {
       registration = message;
-      return { ok: true, envelope: input };
+      return { ok: true, envelope: input, ...registrationExtra };
     }
     if (message.type === Message.Submit)
       return {
@@ -131,6 +132,118 @@ const calls = (mock: ReturnType<typeof vi.fn>, type: string) =>
   mock.mock.calls.map(args => args[0]).filter(message => message.type === type);
 
 describe('website launch panel', () => {
+  it('keeps a newer connection event when an older cold registration reply arrives', async () => {
+    document.body.innerHTML =
+      '<section id="webConnectionCard" class="hidden"></section><section id="webLaunchCard" class="hidden"></section>';
+    let listener = (_message: Record<string, unknown>) => {};
+    let registration: Record<string, unknown> = {};
+    let respond!: (value: Record<string, unknown>) => void;
+    const panel = createWebLaunchPanel({
+      document,
+      chrome: {
+        windows: { getCurrent: async () => ({ id: 4 }) },
+        runtime: {
+          sendMessage: (message: Record<string, unknown>) => {
+            if (message.type === Message.Register) {
+              registration = message;
+              return new Promise(resolve => {
+                respond = resolve;
+              });
+            }
+            return Promise.resolve({ ok: true });
+          },
+          onMessage: {
+            addListener: (handler: typeof listener) => {
+              listener = handler;
+            },
+            removeListener: vi.fn(),
+          },
+        },
+      },
+      readComposer: () => ({ prompt: '', ready: false }),
+      installComposer: vi.fn(),
+    });
+    panels.push(panel);
+    await vi.waitFor(() => expect(respond).toBeDefined());
+    listener({
+      type: Message.Event,
+      panelInstanceId: registration.panelInstanceId,
+      windowId: 4,
+      connectionPending: {
+        pendingId: 'newer',
+        revision: 2,
+        origin: 'https://business.internal:8443',
+        expiresAt: Date.now() + 60_000,
+        status: 'awaiting-consent',
+      },
+    });
+    respond({ ok: true, connectionPending: null });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(document.getElementById('webConnectionCard')?.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('webConnectionCard')?.textContent).toContain(
+      'https://business.internal:8443',
+    );
+  });
+
+  it('shows connection consent on cold registration before Main or composer readiness', async () => {
+    const { composer, installComposer, sendMessage } = await mount(
+      {},
+      { ready: false, prompt: 'Keep this draft' },
+      {
+        envelope: undefined,
+        connectionPending: {
+          pendingId: 'connection-one',
+          revision: 1,
+          origin: 'https://business.internal:8443',
+          status: 'awaiting-consent',
+          expiresAt: Date.now() + 60_000,
+        },
+      },
+    );
+    expect(document.getElementById('webConnectionCard')?.classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('webConnectionCard')?.textContent).toContain(
+      'https://business.internal:8443',
+    );
+    expect(installComposer).not.toHaveBeenCalled();
+    expect(composer.prompt).toBe('Keep this draft');
+    expect(calls(sendMessage, Message.Submit)).toHaveLength(0);
+  });
+
+  it('receives connection updates independently, then waits for manual send after connection', async () => {
+    const { emit, installComposer, sendMessage, panel } = await mount(
+      {},
+      {},
+      { envelope: undefined },
+    );
+    emit({
+      connectionPending: {
+        pendingId: 'connection-one',
+        revision: 2,
+        origin: 'https://business.internal:8443',
+        status: 'connected',
+        expiresAt: Date.now() + 60_000,
+      },
+    });
+    expect(installComposer).not.toHaveBeenCalled();
+    emit({
+      envelope: envelope({
+        mode: 'send',
+        result: 'final',
+        automaticSendAllowed: false,
+        shareAllowed: false,
+      }),
+    });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(document.getElementById('webConnectionCard')?.classList.contains('hidden')).toBe(true);
+    expect(installComposer).toHaveBeenCalledWith(
+      expect.objectContaining({ permissionMode: 'ask' }),
+    );
+    expect(calls(sendMessage, Message.Submit)).toHaveLength(0);
+    await panel.submit('confirmed');
+    expect(calls(sendMessage, Message.Submit)).toHaveLength(1);
+    expect(calls(sendMessage, Message.Submit)[0]).toMatchObject({ submission: 'confirmed' });
+  });
+
   it('creates a separate guarded draft without sending or carrying previous full access', async () => {
     const { panel, composer, sendMessage, installComposer } = await mount();
     expect(composer.permissionMode).toBe('ask');

@@ -1,17 +1,14 @@
 const translations = {
   zh: {
-    webLaunchSitesTitle: '网页发起对话',
-    webLaunchSitesHint: '允许指定业务网站打开独立对话，桌面应用需已启动。',
-    webLaunchOrigin: '精确网站来源',
+    webLaunchSitesTitle: '已连接的网站',
+    webLaunchSitesHint:
+      '在业务网页点击对话按钮，再到扩展中批准连接，无需手填网址。这里管理已连接网站；直接发送和结果分享仍单独授权。桌面应用需已启动。',
     webLaunchAllowSend: '允许直接发送',
     webLaunchAllowResult: '允许回传本次请求结果',
-    webLaunchAddSite: '添加网站并授权 Chrome 访问',
     webLaunchRefresh: '刷新网站权限',
     webLaunchRevoke: '撤销网站访问权限',
-    webLaunchNoSites: '尚未授权任何网站。',
+    webLaunchNoSites: '尚无已连接的网站，请先在业务网页点击对话按钮。',
     webLaunchSaved: '网站权限已保存。',
-    webLaunchReloadPage: '网站已授权，请刷新已打开的网页后使用对话按钮。',
-    webLaunchInvalidOrigin: '请输入不带路径、凭据、查询参数或片段的 HTTP(S) 来源。',
     webLaunchPermissionDenied: '未授予 Chrome 访问权限，未保存网站授权。',
     webLaunchSettingsFailed: '无法确认网站设置，请检查桌面应用是否已启动后刷新。',
     webLaunchConflict: '编辑期间设置已改变，请核对最新值后重试。',
@@ -58,21 +55,16 @@ const translations = {
     statusFailed: '无法读取连接状态，请重新打开设置页。',
   },
   en: {
-    webLaunchSitesTitle: 'Website conversations',
+    webLaunchSitesTitle: 'Connected websites',
     webLaunchSitesHint:
-      'Allow specific business websites to open a separate conversation. The desktop app must be running.',
-    webLaunchOrigin: 'Exact website origin',
+      'Click the conversation button on a business website, then approve its connection in the extension. No address entry is needed. Manage connected websites here; direct sending and result sharing remain separate permissions. The desktop app must be running.',
     webLaunchAllowSend: 'Allow direct sending',
     webLaunchAllowResult: 'Allow returning this request’s result',
-    webLaunchAddSite: 'Add website and authorize Chrome access',
     webLaunchRefresh: 'Refresh website permissions',
     webLaunchRevoke: 'Revoke website access',
-    webLaunchNoSites: 'No websites have access.',
+    webLaunchNoSites:
+      'No connected websites. Start with the conversation button on a business website.',
     webLaunchSaved: 'Website permissions saved.',
-    webLaunchReloadPage:
-      'Website authorized. Refresh its open page before using the conversation button.',
-    webLaunchInvalidOrigin:
-      'Enter an HTTP(S) origin without a path, credentials, query or fragment.',
     webLaunchPermissionDenied: 'Chrome access was not granted. No website permission was saved.',
     webLaunchSettingsFailed:
       'Could not confirm website settings. Check that the desktop application is running, then refresh.',

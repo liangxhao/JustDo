@@ -20,4 +20,20 @@ describe('webpage launch boundary validation', () => {
     expect(() => parseWebLaunchPrepare({ ...prepare, input: { ...input, permissionMode: 'full' } })).toThrow('INVALID_REQUEST');
     expect(() => parseWebLaunchPrepare({ ...prepare, input: { ...input, prompt: 'another request' } })).toThrow('REQUEST_CONFLICT');
   });
+
+  it('accepts connection-only admission only with an explicit true flag and captured policy revision', () => {
+    const input = { prompt: 'fixture prompt', mode: 'send', result: 'final' } as const;
+    const prepare = { source, requestId: 'request', bindingRevision: 1, clickSequence: 1, input, payloadDigest: webLaunchDigest(canonicalWebLaunchInput(input)) };
+    expect(parseWebLaunchPrepare({ ...prepare, connectionOnly: true, expectedPolicyRevision: 0 })).toMatchObject({
+      connectionOnly: true, expectedPolicyRevision: 0, input, payloadDigest: prepare.payloadDigest,
+    });
+    for (const restriction of [
+      { connectionOnly: false, expectedPolicyRevision: 0 },
+      { connectionOnly: 'true', expectedPolicyRevision: 0 },
+      { connectionOnly: true },
+      { expectedPolicyRevision: 0 },
+      { connectionOnly: true, expectedPolicyRevision: -1 },
+      { connectionOnly: true, expectedPolicyRevision: 1.5 },
+    ]) expect(() => parseWebLaunchPrepare({ ...prepare, ...restriction })).toThrow('INVALID_REQUEST');
+  });
 });

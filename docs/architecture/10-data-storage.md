@@ -574,7 +574,7 @@ Renderer。例行结果 SQL 过滤与共享规则一致：完成失败／未知�
 
 浏览器领域通过现有 SQLite KV 的 `chrome.web-launch.v1` 保存精确站点策略、文档租约与消费序号高水位、无正文 launch 回执、发送 owner/原生 ACK 绑定及结果消息引用/摘要。`prepare` 复用同一数据库连接的同步事务创建 `source: chrome-extension`、`ask` 权限的新产品会话并消费序号；回滚不发布会话或 KV 通知，提交后才通知当前扩展连接。领域事务不调用会立即发出变更的通用 KV setter。
 
-不新增数据库、消息表或 transcript 缓存；prompt、页面上下文、最终正文、凭据和 URL/title 不进入此 KV。旧回执淘汰或用户放弃 unknown 观察后，文档高水位仍拒绝旧操作；容量不足拒绝新准入，不以 TTL 将未知执行结算或放行重发。Main 重启不重发持久请求，缺失精确原生证据的派发仍为 unknown。当前契约及验证限制见[网页入口](../plugins/chrome-extensions/chrome-assistant/website-launch.md)。
+不新增数据库、消息表或 transcript 缓存；prompt、页面上下文、最终正文、凭据和 URL/title 不进入此 KV。首次网站连接的有界待确认快照由扩展持有，Main 只在用户确认后用已有站点策略 CAS 保存连接许可，不增加待授权表；首个任务的受限 Prepare 原子核验该全局策略 revision。旧回执淘汰或用户放弃 unknown 观察后，文档高水位仍拒绝旧操作；容量不足拒绝新准入，不以 TTL 将未知执行结算或放行重发。Main 重启不重发持久请求，缺失精确原生证据的派发仍为 unknown。当前契约及验证限制见[网页入口](../plugins/chrome-extensions/chrome-assistant/website-launch.md)。
 
 ### Profile 共享和清理边界
 

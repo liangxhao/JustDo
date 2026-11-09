@@ -187,15 +187,6 @@ textarea:disabled {
   }
 }
 
-#webLaunchOrigin {
-  width: 100%;
-  padding: 10px 12px;
-  font: inherit;
-  color: var(--chat-text);
-  background: var(--chat-bg);
-  border: 1px solid var(--chat-border);
-  border-radius: 9px;
-}
 .web-launch-choice {
   display: flex;
   align-items: flex-start;

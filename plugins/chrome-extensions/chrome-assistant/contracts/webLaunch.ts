@@ -82,6 +82,10 @@ export interface WebLaunchPrepare {
   clickSequence: number;
   payloadDigest: string;
   input: WebLaunchInput;
+  /** First-connection continuation can only create a draft requiring human consent. */
+  connectionOnly?: true;
+  /** Required with connectionOnly; compare the global policy revision atomically. */
+  expectedPolicyRevision?: number;
 }
 
 export interface WebLaunchReference {

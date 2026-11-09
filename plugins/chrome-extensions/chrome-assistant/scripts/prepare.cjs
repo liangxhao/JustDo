@@ -60,9 +60,11 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/conversation-client.js',
   'modules/web-launch-security.js',
   'modules/web-launch-background.js',
+  'modules/web-launch-connections.js',
   'modules/web-launch-content.js',
   'modules/web-launch-sdk.js',
   'modules/web-launch-panel.js',
+  'modules/web-connection-panel.js',
   'modules/web-launch-options.js',
   'web-launch-content.js',
   'chrome-assistant.js',
@@ -193,6 +195,9 @@ function applyBackgroundOverlay(value) {
       '    if (!trustedExtensionPage(sender)) { reply({ ok: false, code: "FORBIDDEN" }); return false; }\n' +
       '    return handleAppServerMessage(msg, reply) || handlePopupMessage(msg, reply);\n' +
       '  },\n' +
+      ');\n' +
+      'chrome.runtime.onMessageExternal.addListener(\n' +
+      '  (msg, sender, reply) => webLaunchBackground.handleExternalMessage(msg, sender, reply),\n' +
       ');',
     'runtime message dispatch',
   );
@@ -207,6 +212,9 @@ function applyManifestOverlay(value) {
   // Desktop discovery and relay use loopback independently of optional page access.
   manifest.host_permissions = ['http://127.0.0.1/*'];
   manifest.optional_host_permissions = ['http://*/*', 'https://*/*'];
+  // Website bootstrap only; access to a page still requires separate runtime consent.
+  // Omit ids so other extensions cannot use this external entry point.
+  manifest.externally_connectable = { matches: ['http://*/*', 'https://*/*'] };
   manifest.permissions = [
     'activeTab',
     ...manifest.permissions.filter(permission => permission !== 'activeTab'),
@@ -263,6 +271,7 @@ function buildExpectedExtensionFiles(repoRoot, productName) {
           platform: 'browser',
           target: 'chrome125',
           write: false,
+          define: { __CHROME_ASSISTANT_EXTENSION_ID__: JSON.stringify(CHROME_EXTENSION_ID) },
         }).outputFiles[0].text,
       ),
     );
@@ -388,6 +397,12 @@ function verifyChromeExtension(extensionDir, options = {}) {
     throw new Error(
       'Chrome extension loopback permission must be explicit and limited to 127.0.0.1.',
     );
+  }
+  if (
+    JSON.stringify(manifest.externally_connectable) !==
+    JSON.stringify({ matches: ['http://*/*', 'https://*/*'] })
+  ) {
+    throw new Error('Chrome extension website bootstrap must accept only HTTP(S) websites.');
   }
   if (manifest.side_panel?.default_path !== 'sidepanel.html') {
     throw new Error('Chrome extension side chat entry is missing.');

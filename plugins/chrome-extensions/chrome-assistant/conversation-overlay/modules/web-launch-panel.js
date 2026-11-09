@@ -1,4 +1,5 @@
 import { sidePanelText as t } from './sidepanel-i18n.js';
+import { createWebConnectionPanel } from './web-connection-panel.js';
 
 export const WebLaunchPanelMessage = {
   Register: 'web-launch:panel:register',
@@ -60,6 +61,7 @@ export function createWebLaunchPanel({
   let lastState = '';
   let previousThread = '';
   let expiryTimer;
+  let connectionVersion = 0;
   const make = (tag, key, parent = root) => {
     const node = document.createElement(tag);
     if (key) node.textContent = t(key);
@@ -147,6 +149,7 @@ export function createWebLaunchPanel({
       });
     return result;
   };
+  const connection = createWebConnectionPanel({ document, chrome, request });
   function render() {
     root.classList.toggle('hidden', !current);
     if (!current) {
@@ -283,6 +286,7 @@ export function createWebLaunchPanel({
   }
   async function acceptEnvelope(envelope) {
     if (disposed || !envelope || envelope.launchId === current?.launchId) return;
+    connection.prepared();
     const composer = readComposer();
     const alreadyDispatched =
       SENT.has(envelope.receipt?.request?.status) ||
@@ -539,6 +543,10 @@ export function createWebLaunchPanel({
       disposed
     )
       return;
+    if (Object.hasOwn(message, 'connectionPending')) {
+      connectionVersion += 1;
+      connection.accept(message.connectionPending);
+    }
     if (message.envelope && message.envelope.launchId !== current?.launchId)
       void acceptEnvelope(message.envelope);
     else if (message.receipt) acceptReceipt(message);
@@ -546,6 +554,7 @@ export function createWebLaunchPanel({
   };
   chrome.runtime.onMessage?.addListener(listener);
   async function register() {
+    const initialConnectionVersion = connectionVersion;
     try {
       const window = await chrome.windows.getCurrent();
       if (disposed) return;
@@ -557,6 +566,11 @@ export function createWebLaunchPanel({
         ),
       });
       initialized = true;
+      if (
+        connectionVersion === initialConnectionVersion &&
+        Object.hasOwn(result, 'connectionPending')
+      )
+        connection.accept(result.connectionPending);
       if (result.envelope) await acceptEnvelope(result.envelope);
     } catch {
       /* Ordinary extension chat remains available when this bridge is unavailable. */
@@ -591,6 +605,7 @@ export function createWebLaunchPanel({
       clearTimeout(expiryTimer);
       clearInterval(heartbeat);
       chrome.runtime.onMessage?.removeListener(listener);
+      connection.dispose();
     },
   };
 }

@@ -54,7 +54,7 @@ describe('Chrome extension preparation', () => {
       const prepared = prepareChromeExtension({ repoRoot });
       const background = fs.readFileSync(path.join(prepared.outputDir, 'background.js'), 'utf8');
       const getter = background.match(
-        /getNativeBootstrapStatus: (async \(\) => \{[\s\S]*?\n  \}),/,
+        /getNativeBootstrapStatus: (async \(\) => \{[\s\S]*?\n {2}\}),/,
       );
       expect(getter).not.toBeNull();
       const attempt = vi.fn();
@@ -202,6 +202,7 @@ describe('Chrome extension preparation', () => {
         name: string;
         host_permissions: string[];
         optional_host_permissions: string[];
+        externally_connectable: { matches: string[]; ids?: string[] };
         permissions: string[];
         version: string;
       };
@@ -241,6 +242,13 @@ describe('Chrome extension preparation', () => {
       expect(manifest.action).not.toHaveProperty('default_popup');
       expect(manifest.host_permissions).toEqual(['http://127.0.0.1/*']);
       expect(manifest.optional_host_permissions).toEqual(['http://*/*', 'https://*/*']);
+      expect(manifest.externally_connectable).toEqual({
+        matches: ['http://*/*', 'https://*/*'],
+      });
+      expect(manifest).not.toHaveProperty('content_scripts');
+      expect(fs.readFileSync(path.join(second.outputDir, 'background.js'), 'utf8')).toContain(
+        'webLaunchBackground.handleExternalMessage(msg, sender, reply)',
+      );
       expect(fs.readFileSync(path.join(second.outputDir, 'background.js'), 'utf8')).toContain(
         'openPanelOnActionClick: true',
       );
@@ -324,6 +332,61 @@ describe('Chrome extension preparation', () => {
       const content = fs.readFileSync(path.join(outputDir, 'web-launch-content.js'), 'utf8');
       expect(content).not.toMatch(/^\s*(?:import|export)\s/m);
       expect(() => verifyChromeExtension(outputDir, { repoRoot })).not.toThrow();
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
+  test('routes an unconnected website through the bundled fixed extension identity without a content script', async () => {
+    const repoRoot = createFixture();
+    try {
+      const { outputDir } = prepareChromeExtension({ repoRoot });
+      let click: (event: unknown) => void = () => {};
+      const document = { addEventListener: (kind: string, listener: typeof click) => { if (kind === 'click') click = listener; } };
+      const sendMessage = vi.fn(async (_id: string, message: Record<string, unknown>) => ({
+        ok: true,
+        ...(message.op === 'probe' ? { connected: false } : {
+          connectionPending: { pendingId: 'pending-1', status: 'awaiting-consent' },
+        }),
+      }));
+      const view = {
+        top: undefined as unknown,
+        chromeAssistant: undefined as { bind(...args: unknown[]): Promise<{ unbind(): Promise<void> }> } | undefined,
+        location: { origin: 'http://business.internal:8443' },
+        navigator: { userActivation: { isActive: true } },
+        chrome: { runtime: { sendMessage } },
+        addEventListener() {}, setTimeout, clearTimeout,
+        postMessage: vi.fn(),
+      };
+      view.top = view;
+      vm.runInNewContext(fs.readFileSync(path.join(outputDir, 'chrome-assistant.js'), 'utf8'), {
+        window: view, document, TextEncoder,
+        crypto: { getRandomValues: webcrypto.getRandomValues.bind(webcrypto) },
+      });
+      const attributes = new Map();
+      const button = {
+        ownerDocument: document, tagName: 'BUTTON', type: 'button', isConnected: true,
+        getRootNode: () => document,
+        setAttribute: (key: string, value: string) => attributes.set(key, value),
+        getAttribute: (key: string) => attributes.get(key),
+        removeAttribute: (key: string) => attributes.delete(key),
+      };
+      const onConnection = vi.fn();
+      const onRequest = vi.fn();
+      const binding = await view.chromeAssistant!.bind(button, { prompt: 'Summarize' }, { onConnection, onRequest });
+      expect(view.postMessage).not.toHaveBeenCalled();
+      click({ isTrusted: false, composedPath: () => [button] });
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      click({ isTrusted: true, composedPath: () => [button] });
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      expect(sendMessage.mock.calls[1]).toEqual([
+        'jboajogplelmaahjbomgflnfngpolgcb',
+        expect.objectContaining({ op: 'request', input: { prompt: 'Summarize', mode: 'draft', result: 'none' }, payloadDigest: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+      ]);
+      expect(onRequest).not.toHaveBeenCalled();
+      expect(onConnection).toHaveBeenCalledWith({ status: 'pending', origin: view.location.origin });
+      await binding.unbind();
+      expect(sendMessage.mock.calls.at(-1)?.[1]).toMatchObject({ op: 'cancel' });
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }

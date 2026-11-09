@@ -1227,3 +1227,6 @@ footer {
 .web-launch-card [hidden] {
   display: none;
 }
+.web-connection-card {
+  border-color: var(--chat-link);
+}

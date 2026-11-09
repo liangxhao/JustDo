@@ -8,6 +8,44 @@ const translations = {
     code: 'Code',
     copied: 'Copied',
     copyFailed: 'Copy failed. Select the text to copy it.',
+    webConnectionTitle: 'Allow this website to connect?',
+    webConnectionHint:
+      'This exact website will remain connected until you revoke access in settings. Connecting only prepares a draft; sending and sharing the result require separate approval.',
+    webConnectionAllow: 'Allow connection',
+    webConnectionDeny: 'Reject',
+    'webConnectionStatus_awaiting-consent':
+      'Review the website address before allowing it to connect.',
+    webConnectionStatus_granting: 'Confirming website access. This request has not been sent.',
+    webConnectionStatus_connected:
+      'Website connected. The original request will be prepared as a draft for your review.',
+    webConnectionStatus_rejected: 'Connection rejected. This request was not sent.',
+    webConnectionStatus_cancelled: 'Connection request cancelled. This request was not sent.',
+    webConnectionStatus_expired:
+      'Connection request expired. Click the website button again to start a new request.',
+    webConnectionError_APP_NOT_RUNNING:
+      'Open the desktop application, then confirm the connection here. Nothing has been sent.',
+    webConnectionError_NATIVE_UNAVAILABLE:
+      'The desktop application is unavailable. Check its connection before trying again.',
+    webConnectionError_NATIVE_HOST_UNAVAILABLE:
+      'The browser connection helper is unavailable. Check the desktop application and extension.',
+    webConnectionError_CONNECTION_UNAVAILABLE:
+      'Connection approval could not be confirmed. Check the desktop application before trying again.',
+    webConnectionError_COMPOSER_BUSY:
+      'Your existing draft and attachments have been kept. Finish or save them, then click the website button again.',
+    webConnectionError_WINDOW_BUSY:
+      'Handle the current website request first, then click the website button again.',
+    webConnectionError_PERMISSION_REQUIRED:
+      'Chrome access was not granted. Website access has not been approved.',
+    webConnectionError_PERMISSION_DENIED:
+      'Chrome access was not granted. Website access has not been approved.',
+    webConnectionError_POLICY_CONFLICT:
+      'Website settings changed during approval. Check the current settings before trying again.',
+    webConnectionError_EXPIRED:
+      'This connection request is no longer valid. Return to the website to start again.',
+    webConnectionError_LEASE_REVOKED:
+      'The original page is no longer connected. Return to the website to start again.',
+    webConnectionError_GENERIC:
+      'Could not confirm website connection. Check the website and desktop application; this does not confirm that a message was sent.',
     approvalRegion: 'Approval request',
     approvalTitle: 'Allow this command?',
     approvalInputTitle: 'Your response is needed',
@@ -102,7 +140,8 @@ const translations = {
     workspaceFailure_unavailable: 'The working directory could not be changed. Try again later.',
     newChat: 'New chat',
     conversation: 'Conversation',
-    modelCatalogUnavailable: 'The model list could not be fully loaded. Refresh before selecting a model.',
+    modelCatalogUnavailable:
+      'The model list could not be fully loaded. Refresh before selecting a model.',
     refresh: 'Refresh',
     settings: 'Pairing settings',
     expandAllProcessDetails: 'Expand all process details',
@@ -205,6 +244,29 @@ const translations = {
     code: '代码',
     copied: '已复制',
     copyFailed: '复制失败，请选中文字后复制。',
+    webConnectionTitle: '允许此网站连接？',
+    webConnectionHint:
+      '此精确网站将保持连接，直到你在设置中撤销。连接只准备草稿，发送和分享结果仍需分别确认。',
+    webConnectionAllow: '允许连接',
+    webConnectionDeny: '拒绝',
+    'webConnectionStatus_awaiting-consent': '请核对网站地址，再允许此网站连接。',
+    webConnectionStatus_granting: '正在确认网站访问权限，本次请求尚未发送。',
+    webConnectionStatus_connected: '网站已连接，原请求将准备为草稿，等待你核对。',
+    webConnectionStatus_rejected: '已拒绝连接，本次请求未发送。',
+    webConnectionStatus_cancelled: '连接请求已取消，本次请求未发送。',
+    webConnectionStatus_expired: '连接请求已过期，请回到网页再次点击按钮发起新请求。',
+    webConnectionError_APP_NOT_RUNNING: '请打开桌面应用，再在这里确认连接。本次请求尚未发送。',
+    webConnectionError_NATIVE_UNAVAILABLE: '桌面应用暂不可用，请检查连接后重试。',
+    webConnectionError_NATIVE_HOST_UNAVAILABLE: '浏览器连接助手不可用，请检查桌面应用和扩展。',
+    webConnectionError_CONNECTION_UNAVAILABLE: '尚未确认连接授权，请检查桌面应用后重试。',
+    webConnectionError_COMPOSER_BUSY: '已保留原有草稿和附件，请先处理或保存，再回到网页点击按钮。',
+    webConnectionError_WINDOW_BUSY: '请先处理当前网页请求，再回到网页点击按钮。',
+    webConnectionError_PERMISSION_REQUIRED: '未授予 Chrome 访问权限，尚未批准网站连接。',
+    webConnectionError_PERMISSION_DENIED: '未授予 Chrome 访问权限，尚未批准网站连接。',
+    webConnectionError_POLICY_CONFLICT: '授权期间网站设置已改变，请核对当前设置后重试。',
+    webConnectionError_EXPIRED: '此连接请求已失效，请回到网页重新发起。',
+    webConnectionError_LEASE_REVOKED: '原网页已断开连接，请回到网页重新发起。',
+    webConnectionError_GENERIC: '无法确认网站连接，请检查网页及桌面应用；这不代表消息已经发送。',
     approvalRegion: '审批请求',
     approvalTitle: '允许执行此命令？',
     approvalInputTitle: '需要你的回答',

@@ -19,6 +19,7 @@ export function installWebLaunchContent({
   if (view !== view.top || !['http:', 'https:'].includes(view.location.protocol)) return null;
   const bindings = new Map();
   const requests = new Map();
+  const continuations = new Map();
   let documentNonce = randomIdentifier(cryptoApi);
   let documentLeaseId;
   let sequence = 0;
@@ -38,6 +39,7 @@ export function installWebLaunchContent({
   };
 
   async function register(message) {
+    const registrationNonce = documentNonce;
     const previous = bindings.get(message.bindingId);
     if (
       message.kind === 'update' &&
@@ -46,11 +48,15 @@ export function installWebLaunchContent({
       throw { code: 'REQUEST_CONFLICT' };
     if (
       message.kind === 'bind' &&
-      (previous || bindings.size >= 64 || message.bindingRevision !== 1)
+      (previous ||
+        bindings.size >= 64 ||
+        !Number.isSafeInteger(message.bindingRevision) ||
+        message.bindingRevision < 1)
     )
       throw { code: 'INVALID_REQUEST' };
     if (previous) previous.ready = false;
     const admission = await send({ type: `${WEB_RUNTIME}hello` });
+    if (terminated || documentNonce !== registrationNonce) throw { code: 'EXPIRED' };
     if (!admission?.ok) throw { code: 'SITE_NOT_ALLOWED' };
     const input = normalizeInput(message.input);
     if (!input) throw { code: 'INVALID_REQUEST' };
@@ -76,7 +82,12 @@ export function installWebLaunchContent({
       ? await inputDigest(input, cryptoApi)
       : (await send({ type: `${WEB_RUNTIME}digest`, input })).digest;
     if (!/^[a-f0-9]{64}$/u.test(digest ?? '')) throw { code: 'BRIDGE_UNAVAILABLE' };
-    if (terminated || bindings.get(message.bindingId) !== binding || !element.isConnected)
+    if (
+      terminated ||
+      documentNonce !== registrationNonce ||
+      bindings.get(message.bindingId) !== binding ||
+      !element.isConnected
+    )
       throw { code: 'EXPIRED' };
     binding.digest = digest;
     binding.ready = true;
@@ -94,6 +105,14 @@ export function installWebLaunchContent({
         requestId: request.requestId,
         code: publicErrorCode(response),
       });
+      if (['SITE_NOT_ALLOWED', 'PERMISSION_REQUIRED'].includes(response?.code)) {
+        bindings.clear();
+        requests.clear();
+        continuations.clear();
+        documentLeaseId = undefined;
+        documentNonce = randomIdentifier(cryptoApi);
+        post({ kind: 'lease-retired', reconnectRequired: true });
+      }
       return;
     }
     if (response.receipt) {
@@ -121,6 +140,10 @@ export function installWebLaunchContent({
     );
     if (!match) return;
     const [bindingId, binding] = match;
+    launchRequest(bindingId, binding);
+  }
+
+  function launchRequest(bindingId, binding, continuation) {
     if (requests.size >= 100) {
       const retired = [...requests.entries()].find(
         ([, request]) =>
@@ -136,7 +159,8 @@ export function installWebLaunchContent({
     if (
       !binding.element.isConnected ||
       binding.element.ownerDocument !== doc ||
-      binding.element.disabled ||
+      binding.element.getRootNode() !== doc ||
+      (!continuation && binding.element.disabled) ||
       binding.element.type !== 'button' ||
       sequence >= Number.MAX_SAFE_INTEGER
     )
@@ -152,7 +176,8 @@ export function installWebLaunchContent({
     post({ kind: 'request', bindingId, requestId, bindingRevision: binding.revision });
     // Keep this call on the real click stack. No digest, storage or permission await here.
     const operation = send({
-      type: `${WEB_RUNTIME}launch`,
+      type: `${WEB_RUNTIME}${continuation ? 'connection-launch' : 'launch'}`,
+      ...(continuation ? { pendingId: continuation.pendingId, bindingId } : {}),
       requestId,
       bindingRevision: binding.revision,
       clickSequence: ++sequence,
@@ -165,6 +190,7 @@ export function installWebLaunchContent({
       response => acceptResponse(request, response),
       error => acceptResponse(request, { ok: false, code: publicErrorCode(error) }),
     );
+    return operation;
   }
 
   async function handleMessage(event) {
@@ -180,14 +206,39 @@ export function installWebLaunchContent({
     )
       return;
     try {
+      if (message.kind === 'ping') {
+        reply(message, { ok: true });
+        return;
+      }
       if (['bind', 'update'].includes(message.kind)) {
         await register(message);
         return;
       }
       const binding = bindings.get(message.bindingId);
       if (!binding) throw { code: 'EXPIRED' };
+      if (message.kind === 'continue') {
+        const continuation = continuations.get(message.pendingId);
+        if (
+          !continuation ||
+          continuation.bindingId !== message.bindingId ||
+          continuation.bindingRevision !== binding.revision ||
+          continuation.payloadDigest !== binding.digest ||
+          continuation.expiresAt <= Date.now() ||
+          !binding.ready
+        )
+          throw { code: 'EXPIRED' };
+        continuations.delete(message.pendingId);
+        const response = await launchRequest(message.bindingId, binding, continuation);
+        reply(
+          message,
+          response?.ok ? { ok: true } : { ok: false, code: publicErrorCode(response) },
+        );
+        return;
+      }
       if (message.kind === 'unbind') {
         bindings.delete(message.bindingId);
+        for (const [id, value] of continuations)
+          if (value.bindingId === message.bindingId) continuations.delete(id);
         for (const [id, request] of requests) {
           if (request.bindingId !== message.bindingId) continue;
           requests.delete(id);
@@ -263,6 +314,7 @@ export function installWebLaunchContent({
   function pagehide() {
     terminated = true;
     bindings.clear();
+    continuations.clear();
     requests.clear();
     void send({ type: `${WEB_RUNTIME}revoke`, documentLeaseId, reason: 'pagehide' }).catch(
       () => {},
@@ -276,15 +328,42 @@ export function installWebLaunchContent({
     }
   }
   const probe = (message, sender, reply) => {
+    if (sender?.id === chromeApi.runtime.id && message?.type === `${WEB_RUNTIME}connection-ready`) {
+      if (
+        terminated ||
+        !validIdentifier(message.pendingId) ||
+        !validIdentifier(message.bindingId) ||
+        !Number.isSafeInteger(message.bindingRevision) ||
+        !/^[a-f0-9]{64}$/u.test(message.payloadDigest ?? '') ||
+        message.expiresAt <= Date.now() ||
+        continuations.size >= 64
+      ) {
+        reply({ ok: false });
+        return false;
+      }
+      const value = {
+        pendingId: message.pendingId,
+        bindingId: message.bindingId,
+        bindingRevision: message.bindingRevision,
+        payloadDigest: message.payloadDigest,
+        expiresAt: message.expiresAt,
+      };
+      continuations.set(value.pendingId, value);
+      post({ kind: 'connection-ready', ...value });
+      reply({ ok: true });
+      return false;
+    }
     if (
       sender?.id === chromeApi.runtime.id &&
       message?.type === `${WEB_RUNTIME}retire` &&
       message.documentNonce === documentNonce
     ) {
       requests.clear();
+      continuations.clear();
+      if (message.reconnectRequired === true) bindings.clear();
       documentLeaseId = undefined;
       documentNonce = randomIdentifier(cryptoApi);
-      post({ kind: 'lease-retired' });
+      post({ kind: 'lease-retired', reconnectRequired: message.reconnectRequired === true });
       reply({ ok: true });
       return false;
     }

@@ -254,12 +254,17 @@ export class ChromeWebLaunchService {
     let prepared!: WebLaunchStoredReceipt;
     this.store.mutate(state => {
       this.prune(state);
+      if (value.connectionOnly) {
+        this.policy(state, value.source.origin);
+        if (value.expectedPolicyRevision !== state.policyRevision) return failWebLaunch('POLICY_CONFLICT');
+      }
       const sourceKey = webLaunchSourceKey(value.source);
       const watermarkKey = webLaunchDigest(sourceKey);
       const existing = Object.values(state.receipts).find(receipt => receipt.sourceKey === sourceKey && receipt.requestId === value.requestId);
       if (existing) {
         this.verifyLease(state, existing.leaseId, value.source);
         if (existing.payloadDigest !== value.payloadDigest || existing.clickSequence !== value.clickSequence || existing.bindingRevision !== value.bindingRevision) return failWebLaunch('REQUEST_CONFLICT');
+        if (value.connectionOnly && (existing.autoAllowed || existing.shareResult)) return failWebLaunch('REQUEST_CONFLICT');
         prepared = existing;
         return;
       }
@@ -286,7 +291,8 @@ export class ChromeWebLaunchService {
       const thread = this.deps.getStore().createSession(new URL(value.source.origin).hostname, cwd, config.executionMode || 'local', [], 'main', 'ask', this.deps.getDefaultModelRef?.(), undefined, CoworkSessionSource.ChromeExtension);
       created = true;
       const requiresUnknownConfirmation = state.unknownOrigins.includes(value.source.origin);
-      const autoAllowed = value.input.mode === 'send' && site.allowSend && (value.input.result === 'none' || site.allowResult) && !requiresUnknownConfirmation;
+      const autoAllowed = !value.connectionOnly && value.input.mode === 'send' && site.allowSend && (value.input.result === 'none' || site.allowResult) && !requiresUnknownConfirmation;
+      const shareResult = !value.connectionOnly && value.input.result === 'final' && site.allowResult;
       prepared = {
         launchId: this.uuid(), requestId: value.requestId, receiptRevision: 1, leaseId: lease.id,
         source: strippedSource(value.source), sourceKey, windowKey, clickSequence: value.clickSequence,
@@ -297,8 +303,8 @@ export class ChromeWebLaunchService {
         confirmationStarted: !autoAllowed, grantRevision: site.revision,
         requestStatus: value.input.mode === 'draft' ? 'drafted' : autoAllowed ? 'drafted' : 'awaiting-confirmation',
         executionStatus: 'not-started', executionSettled: false,
-        outputStatus: value.input.result === 'none' ? 'not-requested' : site.allowResult ? 'pending' : 'awaiting-consent',
-        shareResult: value.input.result === 'final' && site.allowResult, shareRevoked: false,
+        outputStatus: value.input.result === 'none' ? 'not-requested' : shareResult ? 'pending' : 'awaiting-consent',
+        shareResult, shareRevoked: false,
         deliveryRevoked: false, autoAllowed, requiresUnknownConfirmation, observed: true, processEpoch: this.epoch,
       };
       state.receipts[prepared.launchId] = prepared;

@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createWebLaunchOptions,
-  parseWebLaunchOrigin,
   WebLaunchOptionsMessage as Message,
 } from '../conversation-overlay/modules/web-launch-options.js';
 
@@ -14,18 +13,24 @@ afterEach(() => {
 });
 const button = (text: string) =>
   [...document.querySelectorAll('button')].find(node => node.textContent === text)!;
-async function mount() {
+const site = {
+  origin: 'https://internal.test:8443',
+  enabled: true,
+  allowSend: false,
+  allowResult: false,
+};
+type SettingsMessage = { type: string } & Partial<typeof site>;
+async function mount(initial: (typeof site)[] = []) {
   document.body.innerHTML = '<section id="webLaunchSites"></section>';
-  const policies: any[] = [];
-  const permission = vi.fn(async () => true);
-  const order: string[] = [];
-  const sendMessage = vi.fn(async (message: any): Promise<any> => {
-    order.push(message.type);
+  const policies = initial.map(value => ({ ...value }));
+  const permission = vi.fn();
+  const sendMessage = vi.fn(async (message: SettingsMessage): Promise<Record<string, unknown>> => {
     if (message.type === Message.List)
       return { ok: true, sitesRevision: 7, policies: [...policies] };
     if (message.type === Message.Observations) return { ok: true, observations: [] };
     if (message.type === Message.Save) {
-      policies.push(message);
+      const index = policies.findIndex(value => value.origin === message.origin);
+      if (index >= 0) policies[index] = { ...policies[index], ...message };
       return { ok: true };
     }
     return { ok: true };
@@ -37,93 +42,60 @@ async function mount() {
     confirm,
     chrome: {
       runtime: { sendMessage },
-      permissions: {
-        request: (value: unknown) => {
-          order.push('permission');
-          return permission(value);
-        },
-        remove: removePermission,
-      },
+      permissions: { request: permission, remove: removePermission },
     },
   });
   views.push(view);
   await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledWith({ type: Message.List }));
   await new Promise(resolve => setTimeout(resolve, 0));
-  const input = document.getElementById('webLaunchOrigin') as HTMLInputElement;
-  const setOrigin = (value: string) => {
-    input.value = value;
-    input.dispatchEvent(new Event('input'));
-  };
-  return {
-    view,
-    policies,
-    sendMessage,
-    permission,
-    removePermission,
-    order,
-    confirm,
-    input,
-    setOrigin,
-  };
+  return { view, policies, sendMessage, permission, removePermission, confirm };
 }
 
 describe('website launch options', () => {
-  it('requests the required Chrome host permission directly in the click before saving exact origin', async () => {
-    const { setOrigin, permission, sendMessage, order } = await mount();
-    setOrigin('https://business.internal:8443');
-    button('Add website and authorize Chrome access').click();
-    expect(permission).toHaveBeenCalledWith({ origins: ['https://business.internal/*'] });
-    expect(sendMessage.mock.calls.some(([value]) => value.type === Message.Save)).toBe(false);
+  it('explains website-initiated connection without a manual address or combined permission grant', async () => {
+    const { permission } = await mount();
+    expect(document.body.textContent).toContain('No address entry is needed.');
+    expect(document.body.textContent).toContain('No connected websites.');
+    expect(document.querySelector('input[type="url"]')).toBeNull();
+    expect(document.querySelectorAll('input')).toHaveLength(0);
+    expect(permission).not.toHaveBeenCalled();
+  });
+
+  it('keeps direct sending and result sharing separately opt-in for an already connected website', async () => {
+    const { sendMessage, permission } = await mount([site]);
+    const send = document.querySelectorAll<HTMLInputElement>('.web-launch-choice input')[0];
+    const result = document.querySelectorAll<HTMLInputElement>('.web-launch-choice input')[1];
+    expect(send.checked).toBe(false);
+    expect(result.checked).toBe(false);
+    send.checked = true;
+    send.dispatchEvent(new Event('change'));
     await vi.waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith({
         type: Message.Save,
         expectedRevision: 7,
-        origin: 'https://business.internal:8443',
+        origin: site.origin,
         enabled: true,
-        allowSend: false,
+        allowSend: true,
         allowResult: false,
       }),
     );
-    expect(order.indexOf('permission')).toBeLessThan(order.indexOf(Message.Save));
-    expect(document.body.textContent).toContain('Refresh its open page');
-  });
-
-  it('does not save a website when Chrome permission was denied', async () => {
-    const { setOrigin, permission, sendMessage } = await mount();
-    permission.mockResolvedValue(false);
-    setOrigin('http://intranet.internal:8080');
-    button('Add website and authorize Chrome access').click();
+    expect(permission).not.toHaveBeenCalled();
     await vi.waitFor(() =>
-      expect(document.body.textContent).toContain('Chrome access was not granted'),
+      expect(document.body.textContent).toContain('Website permissions saved.'),
     );
-    expect(sendMessage.mock.calls.some(([value]) => value.type === Message.Save)).toBe(false);
+    expect(document.body.textContent).not.toContain('[object Object]');
   });
 
-  it.each([
-    'file:///tmp/a',
-    'https://name:password@internal.test',
-    'https://internal.test/path',
-    'https://internal.test/?token=secret',
-    'https://internal.test/#fragment',
-  ])('rejects a non-origin input: %s', value =>
-    expect(() => parseWebLaunchOrigin(value)).toThrow(),
-  );
-
-  it('revokes only the site policy without deleting shared Chrome permissions', async () => {
-    const { view, policies, sendMessage, removePermission } = await mount();
-    policies.push({
-      origin: 'https://internal.test',
-      enabled: true,
-      allowSend: true,
-      allowResult: true,
-    });
-    await view.refresh();
+  it('revokes all site permissions without deleting shared Chrome permissions', async () => {
+    const { sendMessage, removePermission } = await mount([
+      { ...site, allowSend: true, allowResult: true },
+    ]);
     button('Revoke website access').click();
     await vi.waitFor(() =>
       expect(sendMessage).toHaveBeenCalledWith({
         type: Message.Save,
         expectedRevision: 7,
-        origin: 'https://internal.test',
+        origin: site.origin,
         enabled: false,
         allowSend: false,
         allowResult: false,
@@ -140,7 +112,7 @@ describe('website launch options', () => {
             ok: true,
             observations: [
               {
-                origin: 'https://internal.test',
+                origin: site.origin,
                 receipt: { launchId: 'unknown-one', execution: { status: 'unknown' } },
               },
             ],
@@ -160,19 +132,30 @@ describe('website launch options', () => {
     expect(sendMessage.mock.calls.some(([value]) => value.type.includes(':stop'))).toBe(false);
   });
 
-  it('shows safe errors and does not automatically retry a conflicted write', async () => {
-    const { setOrigin, sendMessage } = await mount();
+  it('shows safe errors without retrying a conflicted write or claiming success', async () => {
+    const { sendMessage } = await mount([site]);
     sendMessage.mockImplementation(async message =>
       message.type === Message.Save
-        ? { ok: false, code: 'REVISION_CONFLICT', error: 'secret=private' }
-        : { ok: true, sitesRevision: 8, policies: [] },
+        ? { ok: false, code: 'POLICY_CONFLICT', error: 'secret=private' }
+        : { ok: true, sitesRevision: 8, policies: [site] },
     );
-    setOrigin('https://internal.test');
-    button('Add website and authorize Chrome access').click();
+    button('Revoke website access').click();
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Settings changed while you were editing'),
     );
     expect(sendMessage.mock.calls.filter(([value]) => value.type === Message.Save)).toHaveLength(1);
     expect(document.body.textContent).not.toContain('private');
+    expect(document.body.textContent).not.toContain('Website permissions saved.');
+  });
+
+  it('disables stale site controls while the desktop application is unavailable', async () => {
+    const { view, sendMessage } = await mount([site]);
+    sendMessage.mockResolvedValue({ ok: false, code: 'APP_NOT_RUNNING' });
+    await view.refresh();
+    expect(button('Revoke website access').disabled).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('.web-launch-choice input')?.disabled).toBe(
+      true,
+    );
+    expect(document.body.textContent).toContain('Check that the desktop application is running');
   });
 });

@@ -7,21 +7,6 @@ export const WebLaunchOptionsMessage = {
   Abandon: 'web-launch:launch:abandon',
 };
 
-export function parseWebLaunchOrigin(value) {
-  const url = new URL(value.trim());
-  if (
-    !['http:', 'https:'].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash ||
-    url.origin === 'null'
-  )
-    throw new Error('INVALID_ORIGIN');
-  return { origin: url.origin, permission: `${url.protocol}//${url.hostname}/*` };
-}
-
 export function createWebLaunchOptions({
   document,
   chrome = globalThis.chrome,
@@ -42,15 +27,7 @@ export function createWebLaunchOptions({
   };
   make('h2', 'webLaunchSitesTitle');
   make('p', 'webLaunchSitesHint').className = 'muted';
-  const label = make('label', 'webLaunchOrigin');
-  label.htmlFor = 'webLaunchOrigin';
-  const originInput = make('input');
-  originInput.type = 'url';
-  originInput.id = 'webLaunchOrigin';
-  originInput.placeholder = 'https://business.internal';
-  originInput.autocomplete = 'off';
-  const addChoices = make('div');
-  const choice = (key, parent = addChoices) => {
+  const choice = (key, parent) => {
     const element = make('label', null, parent);
     element.className = 'web-launch-choice';
     const input = make('input', null, element);
@@ -58,11 +35,6 @@ export function createWebLaunchOptions({
     make('span', key, element);
     return input;
   };
-  const allowSend = choice('webLaunchAllowSend');
-  const allowResult = choice('webLaunchAllowResult');
-  const add = make('button', 'webLaunchAddSite');
-  add.type = 'button';
-  add.className = 'primary';
   const refreshButton = make('button', 'webLaunchRefresh');
   refreshButton.type = 'button';
   refreshButton.addEventListener('click', () => {
@@ -85,12 +57,8 @@ export function createWebLaunchOptions({
     return result;
   };
   function controls() {
-    add.disabled = busy || !loaded || !originInput.value.trim();
     refreshButton.disabled = busy;
-    originInput.disabled = busy;
-    allowSend.disabled = busy || !loaded;
-    allowResult.disabled = busy || !loaded;
-    for (const node of sites.querySelectorAll('button,input')) node.disabled = busy;
+    for (const node of sites.querySelectorAll('button,input')) node.disabled = busy || !loaded;
     for (const node of observations.querySelectorAll('button')) node.disabled = busy;
   }
   function showFailure(code) {
@@ -199,42 +167,6 @@ export function createWebLaunchOptions({
     }
     if (!disposed && next === generation) controls();
   }
-  originInput.addEventListener('input', controls);
-  add.addEventListener('click', () => {
-    if (busy || !loaded) return;
-    let parsed;
-    try {
-      parsed = parseWebLaunchOrigin(originInput.value);
-    } catch {
-      setFeedback('webLaunchInvalidOrigin', true);
-      return;
-    }
-    // Keep the permission request directly in the trusted click stack.
-    let permission;
-    try {
-      permission = chrome.permissions.request({ origins: [parsed.permission] });
-    } catch {
-      setFeedback('webLaunchPermissionDenied', true);
-      return;
-    }
-    void perform(async () => {
-      if (!(await permission))
-        throw Object.assign(new Error('Permission refused'), { code: 'PERMISSION_DENIED' });
-      if (disposed) return;
-      await save({
-        origin: parsed.origin,
-        enabled: true,
-        allowSend: allowSend.checked,
-        allowResult: allowResult.checked,
-      });
-      if (!disposed) {
-        originInput.value = '';
-        allowSend.checked = false;
-        allowResult.checked = false;
-      }
-      return 'webLaunchReloadPage';
-    });
-  });
   controls();
   void refresh();
   return {

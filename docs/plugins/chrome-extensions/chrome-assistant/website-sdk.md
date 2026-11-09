@@ -7,14 +7,14 @@
 ## 1. 接入前准备
 
 1. 安装与桌面应用匹配的 Chrome 扩展，并启动桌面应用。网页调用不会自动启动桌面应用。
-2. 在扩展设置中添加业务网站的精确 origin，例如 `https://business.internal:8443`；不要填写业务路径、查询参数或片段。
-3. 用户在扩展设置中授予 Chrome 访问权限，并分别选择是否允许该网站直接发送、读取本轮结果。只允许接入也可以使用人工确认流程。
-4. 授权后刷新已经打开的业务网页，使网页桥生效。不同协议、主机或端口视为不同来源。
-5. 取得发布方提供的同版 `chrome-assistant.js`，复制到业务站点自己的静态资源目录，例如 `/assets/chrome-assistant.js`，随业务站点部署和升级。
+2. 取得发布方提供的同版 `chrome-assistant.js`，复制到业务站点自己的静态资源目录，例如 `/assets/chrome-assistant.js`，随业务站点部署和升级。
+3. 用户首次点击业务按钮时，扩展自动识别当前网站，并在自己的侧栏显示实际来源（例如 `https://business.internal:8443`），由用户选择连接或拒绝。开发者和用户都不需要事先登记网址。
+4. 用户点击“连接”时，Chrome 可能另行请求网站访问权限。成功后继续处理原按钮的内容，在侧栏准备待确认草稿，无需刷新页面或重新点击业务按钮。连接授权本身不允许自动发送或读取结果；用户仍需确认实际输入和分享。
+5. 连接会被记住；用户可以在扩展设置中管理、撤销连接，并分别调整直接发送和结果分享权限。不同协议、主机或端口视为不同来源。
 
 从兼容宿主的扩展发布产物取得已打包的单文件 `chrome-assistant.js`。源码入口依赖包内模块，不能直接作为网站独立脚本复制；SDK 不依赖公共 CDN，网站仍须允许自己的本地脚本。
 
-首版支持 HTTP(S) 顶层页面中已连接的 light DOM `button[type="button"]`。HTTPS 优先；HTTP 内网 origin 也须显式配置。不支持 iframe 或 Shadow DOM 内的按钮。
+首版支持 HTTP(S) 顶层页面中已连接的 light DOM `button[type="button"]`。HTTPS 优先；HTTP 内网网站也须由用户确认连接。不支持 iframe 或 Shadow DOM 内的按钮。
 
 ## 2. 最小可用示例
 
@@ -71,6 +71,16 @@
         result: 'final',
       },
       {
+        onConnection(connection) {
+          if (currentRequest) return;
+          if (connection.status === 'pending' || connection.status === 'granting') {
+            button.disabled = true;
+            status.textContent = `请在扩展侧栏确认连接 ${connection.origin}。`;
+          } else if (connection.status === 'rejected' || connection.status === 'expired') {
+            status.textContent = '网站连接未完成，请检查扩展侧栏后重新操作。';
+            button.disabled = false;
+          }
+        },
         onRequest(request) {
           button.disabled = true;
           currentRequest = request;
@@ -106,7 +116,7 @@
     // 在组件卸载或业务入口移除时调用：await binding.unbind();
     // 保留 binding，供业务数据变化时串行调用 binding.update(完整参数)。
   } catch (error) {
-    status.textContent = `未能登记按钮（${error.code ?? 'BRIDGE_UNAVAILABLE'}）。请检查站点授权并刷新页面。`;
+    status.textContent = `未能准备按钮（${error.code ?? 'BRIDGE_UNAVAILABLE'}）。请检查扩展是否已启用及 SDK 是否匹配。`;
   }
 })();
 ```
@@ -143,7 +153,7 @@
 
 ## 4. 绑定控制器与请求句柄
 
-`await bind()` 返回绑定控制器 `{ update, unbind }`，表示当前按钮配置登记成功，不表示侧栏已经打开、消息已经发送或执行成功。每次新的真实点击通过 `onRequest(handle)` 获得独立请求句柄；此回调先于该请求的状态和结果回调。
+`await bind()` 返回绑定控制器 `{ update, unbind }`，表示当前按钮配置已准备好，不表示网站已授权、侧栏已打开、消息已发送或执行成功。尚未连接的网站也能完成绑定，首次真实点击进入连接确认。连接阶段通过可选的 `onConnection` 更新页面提示；只有进入任务准备后才通过 `onRequest(handle)` 获得独立请求句柄，此回调先于该请求的状态和结果回调。
 
 | 对象       | 成员                              | 用法                                                                 |
 | ---------- | --------------------------------- | -------------------------------------------------------------------- |
@@ -161,7 +171,7 @@ const { receipt } = await currentRequest.read();
 if (receipt) showReceipt(receipt);
 ```
 
-`update()` 需要串行等待，且每次传完整参数；省略 mode/result 会重新采用默认值。例如业务记录变化后，在没有在途请求时更新：
+`update()` 需要串行等待，且每次传完整参数；省略 mode/result 会重新采用默认值。首次连接确认尚未结束时，更新返回 `REQUEST_CONFLICT`，保留原点击的冻结内容；可先解绑取消，或等确认结束后再更新未来点击。例如业务记录变化后，在没有在途请求时更新：
 
 ```js
 button.disabled = true;
@@ -199,10 +209,13 @@ try {
 
 | 回调                | 何时使用                                                                               |
 | ------------------- | -------------------------------------------------------------------------------------- |
+| `onConnection(state)` | 首次连接阶段；包含 status、浏览器核验的 origin 和可选公开 code，不是执行回执。       |
 | `onRequest(handle)` | 保存本次真实点击的句柄，关联业务记录。                                                 |
 | `onStatus(receipt)` | 更新请求、执行、结果及投递状态，同时检查可选的 receipt.error。                         |
 | `onResult(receipt)` | 执行已结算，且输出为 available / empty / unsupported / unavailable；参数仍是整份回执。 |
 | `onError(error)`    | 处理点击或后续观察产生的异步桥接错误，根据公开 error.code 展示提示。                   |
+
+连接状态为 `pending / granting / connected / rejected / expired`。`connected` 只表示网站已连接，不能当作任务已接纳、已发送或执行成功；取得任务句柄后，以回执为准，不要用迟到的连接提示覆盖任务状态。
 
 bind/update/unbind/read/cancel 的 Promise 拒绝仍须在调用处 catch，不能仅依赖 `onError`。回执内的 `error` 也不保证触发 `onError`。`onResult` 不等于执行成功：仅在 `execution.status === 'completed'`、`executionSettled === true` 且 `output.status === 'available'` 时使用 text。
 
@@ -241,8 +254,9 @@ SDK 桥接调用的等待上限为 5 秒。超时、断线或没有收到回执�
 
 | 现象或公开码                                                                            | 建议处理                                                                                                                  |
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| BRIDGE_UNAVAILABLE                                                                      | 检查扩展是否已安装/启用、SDK 是否匹配、精确站点是否授权、授权后是否刷新，以及按钮是否在顶层 light DOM；不要自动重放点击。 |
-| SITE_NOT_ALLOWED / PERMISSION_REQUIRED                                                  | 在可信扩展设置中核对站点接入和 Chrome 访问授权。                                                                          |
+| BRIDGE_UNAVAILABLE                                                                      | 检查扩展是否已安装/启用、SDK 是否匹配，以及按钮是否在 HTTP(S) 顶层 light DOM；不要自动重放点击。                           |
+| SITE_NOT_ALLOWED / PERMISSION_REQUIRED                                                  | 在扩展侧栏确认实际网站和 Chrome 访问授权；已撤权的旧请求不能恢复。                                                       |
+| PANEL_OPEN_FAILED                                                                      | 浏览器未允许本次打开侧栏；用户可点击扩展图标检查状态，再主动发起新操作，不自动弹新标签或重试。                             |
 | APP_NOT_RUNNING / NATIVE_HOST_UNAVAILABLE / CONNECTION_UNAVAILABLE / NATIVE_UNAVAILABLE | 检查桌面应用与扩展连接，再由用户确认下一步；已有句柄只读核对。                                                            |
 | COMPOSER_BUSY / WINDOW_BUSY                                                             | 先保留或处理侧栏现有草稿/网页请求，不覆盖、夹带附件或自动排队发送。                                                       |
 | CONFIRMATION_REQUIRED / RESULT_CONSENT_REQUIRED                                         | 引导用户在侧栏确认发送和分享；网页不能自行提升权限。                                                                      |

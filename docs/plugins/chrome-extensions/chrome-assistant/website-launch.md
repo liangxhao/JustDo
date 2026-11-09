@@ -4,7 +4,9 @@
 
 ## 用户流程
 
-首次使用先在扩展设置的站点管理中添加精确 HTTP(S) origin。设置页在用户点击链请求 Chrome host permission，Main 保存允许接入、直接发送和结果分享三个独立授权；成功后刷新已打开的业务网页。Chrome 权限匹配范围不能替代包含协议、主机、端口的业务 origin 校验。撤销此功能不删除页面上下文等功能共用的 Chrome host permission。
+首次点击业务按钮时，SDK 通过受限的外部消息入口请求连接；扩展从 Chrome sender 自动识别精确 HTTP(S) origin，并在自己的侧栏展示连接卡。用户无需预先登记网址。只有用户点击连接后才请求 Chrome 网站访问权限，并由 Main 保存该精确 origin 的连接许可。直接发送与结果分享默认关闭，分别授权。成功后向当前原文档注入桥接脚本，原按钮的冻结内容继续进入待确认草稿，无需刷新或再次点击。
+
+连接卡中的确认不直接发送消息或分享正文，即使网站请求 `send + final`，本次也必须由用户确认发送及分享。后续真实点击才按已有的独立站点策略处理。设置页仅管理已连接网站、发送/分享开关与撤权。Chrome host permission 的匹配范围不能替代包含协议、主机、端口的 Main origin 校验；撤销连接不删除页面上下文等功能共用的 Chrome host permission。
 
 网页参数相互独立，默认 `draft + none`：
 
@@ -31,9 +33,11 @@
 
 首版仅支持 HTTP(S) 顶层 light DOM 内已连接的 `type="button"` 按钮。SDK 用一次性 DOM 定位标记登记；content script 持有真实 Element 和不可变配置版本、预计算摘要。按钮元素不跨 world 序列化，定位标记和请求 ID 不是授权凭据。
 
-Content script 在 capture 点击链核验真实事件、用户激活和按钮引用，冻结已登记参数并生成 requestId 与文档单调点击序号。普通 `postMessage`、自定义事件、程序 `.click()` 和定时器不能触发运行。更新登记期间禁用旧绑定；异步业务数据须在点击前准备。登记 5 秒无响应返回 `BRIDGE_UNAVAILABLE`，不延后重放点击。
+已连接网站的 content script 在 capture 点击链核验真实事件、用户激活和按钮引用，冻结已登记参数并生成 requestId 与文档单调点击序号。未连接时 SDK 在真实点击链同步调用受限外部入口；外部入口不能调用任意 RPC，Chrome 的侧栏用户手势检查必须通过。普通 `postMessage`、自定义事件、程序 `.click()` 和定时器不能触发运行。更新登记期间禁用旧绑定；异步业务数据须在点击前准备。
 
-后台顶层同步注册监听器，在收到真实点击消息后立即调用 `chrome.sidePanel.open()`，之后才等待存储、Native discovery 和 Main 权限。打开失败结束本次操作。应用未启动时显示错误，不自动启动、重启应用或悄悄重试发送。
+首次连接待确认有独立绝对期限，同一窗口只保留一个。拒绝、超时、解绑或原文档导航会关闭本次连接操作，不能从旧快照恢复运行。用户确认后，仅允许原文档、原绑定版本、原输入摘要进行一次受限续接；content script 分配正式 requestId 和单调序号，Main 在原子准入中核验连接后的全局策略 revision，并强制人工发送/分享确认。不是重新触发点击，也不会回放未知 prepare/submit。SDK 的 `onConnection` 表达连接进度，正式任务句柄仍只由 `onRequest` 提供。
+
+后台顶层同步注册内部和外部监听器，在收到点击消息后立即调用 `chrome.sidePanel.open()`，之后才等待存储、Native discovery 和 Main 权限。打开失败结束本次操作并提示检查扩展；不通过创建新标签页绕开用户手势限制。应用未启动时显示错误，不自动启动、重启应用或悄悄重试发送。
 
 `onRequest(handle)` 先于该请求的状态/结果回调。句柄提供只读 requestId、bindingRevision、接纳后的 launchId，以及 `read()` 和 `cancel()`。句柄仅在原有效文档内使用；不能序列化成跨页面凭据。`update()` 只影响未来点击；`unbind()` 关闭自身绑定及其句柄，并请求撤销未发送输入或分享，其 Promise 完成不证明后端撤回已确认，也不停止已发送执行。
 
@@ -49,11 +53,23 @@ sequenceDiagram
   participant P as Side Panel
   participant M as Main
   participant G as Gateway
+  alt 首次连接
+    W->>B: 真实点击发起受限外部连接请求
+    B->>B: Chrome 手势检查并打开侧栏
+    B->>P: 浏览器核验的精确 origin
+    Note over P: 用户选择连接，授予 Chrome 站点权限
+    P->>B: 冻结 pendingId/revision 的连接决定
+    B->>M: CAS 保存连接，发送/分享关闭
+    B->>C: 原文档注入，单次受限续接
+    Note over C,M: 本次必须人工确认发送及分享
+  else 已连接网站
   W->>C: 登记按钮与快照
   C-->>W: ready
   Note over W,C: 用户真实点击
   C->>B: 固定快照与浏览器 sender
   B->>B: 立即打开侧栏
+  end
+  C->>B: 原文档的正式请求身份与摘要
   B->>M: prepare（精确来源、序号、摘要）
   M-->>B: 原子登记的新会话与回执
   B->>P: 独立输入与来源卡片
@@ -72,9 +88,13 @@ sequenceDiagram
 
 已有 Native discovery、relay 和 Tab control 内部消息同时要求可信扩展页面 sender；content script 的相同 extension ID 不足以访问它们。网页桥仅允许有限的登记、查询和取消，不代理任意 RPC。地址 capability、Gateway token、relay key、产品/原生内部 ID 不进入网页、DOM、错误或日志。
 
+Manifest 的 `externally_connectable` 只允许 HTTP(S) 网页与上述连接入口通信，不授予网页读取权限；省略 `ids`，其他扩展不能走此入口。必需 host permission 仍仅为 loopback，网站访问在连接卡的真实点击链请求。来源拒绝 iframe、非 active 文档、缺失 documentId 和自报 origin；查询/取消必须仍来自原文档。待确认状态与已接纳 Main 文档租约分开，不能以连接重置已撤销的旧租约。
+
 站点策略是 Main 权威。授权修改提升 revision；最终发送、异步结果读取后和扩展投递前均重新核验。Main 向当前连接发送无正文的 `chrome/webLaunch/changed`，后台重新读取策略并作废旧投递代次。撤权先于 Main 释放正文则不返回；已释放到传输层或已交付的数据无法撤回。
 
 导航、刷新、关闭、pagehide、BFCache 冻结、撤权及主动解绑终止原分享租约，不按相同 origin/tab 恢复。BFCache 返回也需新真实点击。只有单纯传输中断或 service worker 重启，在原文档仍 active、原租约有效且未终止撤销时，才可用新通道只读恢复观察；不重新 prepare/submit。
+
+撤销站点连接或 Chrome 网站权限后，扩展停用旧点击绑定，网页的新真实点击可以重新申请连接；旧请求与旧草稿不因此恢复。尚未建立过扩展文档状态的已绑定页面，首次点击可能仅报告 `SITE_NOT_ALLOWED` 并停用旧绑定，下一次真实点击再显示连接卡；失败点击不自动重放，也不要求刷新。
 
 ## 回执、发送与停止
 
@@ -112,6 +132,8 @@ Live 候选只在内存保留最多 15 分钟；最多 10 次历史就绪查询�
 ## 验证范围与限制
 
 自动化验证分为 SDK/content script/后台来源和真实点击限制、侧栏/设置交互、实际 SQLite 原子回执、发送 owner 竞争、原生 adapter 最终围栏与显式 ACK、精确最终结果投影。包内 `tests/web-launch-*.test.ts` 验证客户端；SQLite、发送 owner 与原生准入测试由集成宿主提供，不能替代完整 GUI 验收。
+
+首次连接还需覆盖：无已授权 host 时绑定就绪、外部入口方法白名单与真实 sender 校验、拒绝/过期/导航、权限拒绝、策略竞争、一次性原文档续接，以及 `send + final` 在连接后仍需人工确认。首次连接的真实浏览器正向点击及 Chrome 授权对话框尚待目标环境验收；已有 content script 唤起探针的证据不覆盖外部消息首次接入。
 
 ### 显式浏览器探针
 
