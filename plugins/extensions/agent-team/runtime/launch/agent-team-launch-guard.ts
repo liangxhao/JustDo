@@ -74,6 +74,12 @@ function inputText(message: RecordValue): string | undefined {
   );
   return texts.length === 1 ? texts[0] : undefined;
 }
+function isDirectUserProvenance(value: unknown): boolean {
+  // Native restart-safe chat.send marks direct human input explicitly.
+  // This classification does not replace the exact input and owner proofs.
+  return value == null ||
+    (record(value) && value.kind === 'external_user' && Object.keys(value).length === 1);
+}
 function enabled(api: OpenClawPluginApi): boolean {
   const plugins = api.runtime.config.current().plugins;
   return (
@@ -241,7 +247,7 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
     if (
       !record(message) ||
       message.role !== 'user' ||
-      message.provenance != null ||
+      !isDirectUserProvenance(message.provenance) ||
       !record(message.__openclaw) ||
       message.__openclaw.senderIsOwner !== true ||
       text === undefined ||
@@ -679,7 +685,7 @@ export function registerAgentTeamLaunchGuard(api: OpenClawPluginApi): void {
   const verify = async (
     ctx: Identity & { inputProvenance?: unknown; hookInvocation?: { assertActive(): void } },
   ) => {
-    if (!managed(ctx.sessionKey) || ctx.inputProvenance != null) return;
+    if (!managed(ctx.sessionKey) || !isDirectUserProvenance(ctx.inputProvenance)) return;
     try {
       await reconcileBeforeUse(ctx.sessionKey);
     } catch {

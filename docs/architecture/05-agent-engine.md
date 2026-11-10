@@ -585,6 +585,13 @@ Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实�
 
 原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
 
+普通主会话通过 `sessions_spawn(runtime:'acp')` 创建子会话时，即使不启用嵌套
+admission 检查，也必须在启动前的原生会话写入中保存深度、角色与控制范围，连同原有
+父会话、完成接收者和继承工具策略构成完整身份。深度为 1，角色和控制范围使用原生
+能力计算；这不额外启用并发配额、目标策略或同步存储读取。完成回传继续要求精确的
+私有 handoff 与持久身份相互匹配；缺失或不匹配时保持工具禁用，不能根据通知正文
+或父子导航关系补授权。既有缺失身份的历史子会话不自动修补或重放。
+
 展示保留原生 queued、running、done、failed、interrupted、killed、timeout 的区别；interrupted 在产品中显示为已停止。缺少终态证据不能显示成功。详情核对精确原生 session key，再使用同一会话投影中的累计 usage/runtime、activeRunIds 和 lastRunId；新活动运行清除旧终态时间与错误。主模型结束或 UI busy 消失不证明 required child 已被父运行消费。结果不确定时先查原生会话与运行身份，不能重发整个子任务；它可能已经产生文件、网络或 spawn 副作用。
 
 ### 执行观测与结果投递

@@ -335,6 +335,14 @@
       "targets": [
         "dist/builtin-openclaw-Ci5YBsOb.mjs"
       ]
+    },
+    {
+      "file": "036-acp-completion-lineage.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/spawn-thread-binding-CKE2AseF.mjs"
+      ]
     }
   ],
   "targets": [
@@ -617,6 +625,10 @@
     {
       "file": "dist/simple-completion-execution-DJB-X6CQ.mjs",
       "sha256": "4b3d9ecd221652ffda62793767983cc29fd1ea15021f3f63fd021ecdf4d593c5"
+    },
+    {
+      "file": "dist/spawn-thread-binding-CKE2AseF.mjs",
+      "sha256": "9ee3b4a52c4aa8f07dd3f1eb1a41935da18f9b949b0fbe63ab212b14f16b2d25"
     },
     {
       "file": "dist/sqlite-wal-CAPx5bGS.mjs",

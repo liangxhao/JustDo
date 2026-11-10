@@ -98,6 +98,7 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
     if (loseAdmissionAcknowledgement) { admissionUnknown = true; throw new Error('Admission acknowledgement lost'); }
     return { id: 'admission-fixture', generation: 1 };
   });
+  const updateAdmission = vi.fn(async () => ({}));
   let entryReadFails = false;
   let anchorId = 'entry-1';
   let generation = 'transcript-1';
@@ -177,7 +178,7 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
         bind: bindCapabilities,
         captureExecutionAdmission: () => projectionCurrent ? { readExecutionAdmission: readAdmission } : undefined,
         dispose: () => { projectionCurrent = false; },
-      }) } : name === '@runtime-services/sdk/admission-client' ? { createExecutionAdmissionClient: () => ({ bind: bindAdmission, inspect: async () => readAdmission(), reserve: reserveAdmission, update: async () => ({}), dispose() {} }) } : name === 'openclaw/plugin-sdk/session-store-runtime'
+      }) } : name === '@runtime-services/sdk/admission-client' ? { createExecutionAdmissionClient: () => ({ bind: bindAdmission, inspect: async () => readAdmission(), reserve: reserveAdmission, update: updateAdmission, dispose() {} }) } : name === 'openclaw/plugin-sdk/session-store-runtime'
         ? {
             getSessionEntry: () => {
               if (entryReadFails) throw new Error('Native identity unavailable');
@@ -238,6 +239,7 @@ function fixture(persisted?: Record<string, unknown>, existingStateDir?: string)
   return {
     bindAdmission,
     bindCapabilities,
+    updateAdmission,
     service,
     entry,
     stateDir,
@@ -1143,15 +1145,48 @@ describe('explicit Team launch protection', () => {
     expect((await f.call('register', { ...intent, promptSha256: 'partial' })).ok).toBe(false);
     expect(f.state()).toBeUndefined();
   });
-  it.each(['missing', 'different-body', 'peer-copy', 'non-owner'])(
+  it('verifies the exact native external user input and opens its execution admission', async () => {
+    const f = fixture();
+    await f.call('register', intent);
+    // Native restart-safe chat.send persists this provenance for direct human input.
+    f.provenance = { kind: 'external_user' };
+
+    await f.verify();
+
+    expect(f.state().state).toBe('verified');
+    expect(f.updateAdmission).toHaveBeenCalledWith({
+      sessionKey: key, id: 'admission-fixture', generation: 1,
+    }, 'verify', {});
+    expect(await f.policy('exec')).toBeUndefined();
+  });
+  it('verifies an external user hook context against the exact native input', async () => {
+    const f = fixture();
+    await f.call('register', intent);
+    f.provenance = { kind: 'external_user' };
+
+    await f.hooks.get('before_prompt_build')!({}, {
+      ...ctx, inputProvenance: { kind: 'external_user' },
+    });
+
+    expect(f.state().state).toBe('verified');
+    expect(f.updateAdmission).toHaveBeenCalledWith({
+      sessionKey: key, id: 'admission-fixture', generation: 1,
+    }, 'verify', {});
+  });
+  it.each(['missing', 'different-body', 'peer-copy', 'system-input', 'unknown-source', 'conflicting-source', 'non-owner'])(
     'keeps %s input unverified and never corrects it',
     async kind => {
       const f = fixture();
       await f.call('register', intent);
+      f.provenance = { kind: 'external_user' };
       if (kind === 'missing') f.inputPresent = false;
       if (kind === 'different-body') f.body = prompt + '\nextra';
       if (kind === 'peer-copy')
         f.provenance = { kind: 'inter_session', sourceTool: 'sessions_send' };
+      if (kind === 'system-input') f.provenance = { kind: 'internal_system' };
+      if (kind === 'unknown-source') f.provenance = {};
+      if (kind === 'conflicting-source')
+        f.provenance = { kind: 'external_user', sourceTool: 'sessions_send' };
       if (kind === 'non-owner') f.nativeOwner = false;
       await f.verify();
       expect(f.state().state).toBe('pending');
@@ -1159,6 +1194,18 @@ describe('explicit Team launch protection', () => {
       expect(await f.hooks.get('before_agent_finalize')!({}, ctx)).toBeUndefined();
     },
   );
+  it('does not verify a system hook from an otherwise valid external user record', async () => {
+    const f = fixture();
+    await f.call('register', intent);
+    f.provenance = { kind: 'external_user' };
+
+    await f.hooks.get('llm_input')!({}, {
+      ...ctx, inputProvenance: { kind: 'internal_system' },
+    });
+
+    expect(f.state().state).toBe('pending');
+    expect(f.updateAdmission).not.toHaveBeenCalled();
+  });
   it('rejects a queued execution UUID even when the submitted input exists', async () => {
     const f = fixture();
     await f.call('register', intent);

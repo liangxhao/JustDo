@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers, and the later 034 resolves an independently reproduced cumulative commentary ownership gap. Capability 005 has since been removed: ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 33 patches and preserves the remaining numbers. All current verifiers reject the pristine target, and all transformations apply and verify on their actual source owners. No historical-shape migration is introduced. [pristine-targets.json](pristine-targets.json) records the 79 exact pristine patch target hashes; the source lock binds these to the npm archive. Matching names or old anchors alone do not establish this disposition.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034) and ordinary ACP completion lineage (036). Capability 005 has since been removed: ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 34 patches and preserves the remaining numbers. All current verifiers reject the pristine target, and all transformations apply and verify on their actual source owners. No historical-shape migration is introduced. [pristine-targets.json](pristine-targets.json) records the 80 exact pristine patch target hashes; the source lock binds these to the npm archive. Matching names or old anchors alone do not establish this disposition.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -29,7 +29,7 @@ The parent, native-contract and provider/plugin agents independently cross-revie
 
 ## Capability gaps and removal conditions
 
-The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage; 005 is retired and its number is not reused. 034 is a later independently removable fix.
+The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage; 005 is retired and its number is not reused. 034 and 036 are later independently removable fixes.
 
 | Patch                                                                                            | Old ID | Retained capability / target gap                                                                                                                                      | Remove when                                                                                                                                    |
 | ------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -66,6 +66,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [032-run-progress-observations.cjs](032-run-progress-observations.cjs)                           | 033    | expose exact tool/model counters and buffered-request activity through separate existing native status items.                                                                         | native Gateway publishes equivalent provider-independent stream progress before tool execution, including bounded replay.                      |
 | [033-windows-plugin-directory-publication.cjs](033-windows-plugin-directory-publication.cjs)     | 034    | recover a refused local Windows plugin-directory publication within the same copied artifact, guarded transaction and bounded wait.                                   | native plugin installs provide equivalent receipt-bound, bounded Windows publication recovery.                                                 |
 | [034-commentary-block-ownership.cjs](034-commentary-block-ownership.cjs)                       | —      | declare whole-message commentary snapshot ownership for scoped generic delivery, preserving complete native text filtering.                                         | native delivery exposes an equivalent explicit cumulative commentary range across updates, mixed phases and terminal publication.              |
+| [036-acp-completion-lineage.cjs](036-acp-completion-lineage.cjs) | — | persist the structural spawn envelope for ordinary top-level ACP children before dispatch, so exact completion handoffs retain requester tools. | native ACP creation persists the same envelope independently of optional nested admission checks. |
 
 ## Locked target source owners
 
@@ -106,6 +107,7 @@ The following paths were returned by a clean application on the pristine target.
 | 032 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
 | 033 | `node_modules/@openclaw/fs-safe/dist/move-path.js`<br>`node_modules/@openclaw/fs-safe/dist/guarded-mutation.js`<br>`dist/install-package-dir-D5h3GpAL.mjs`<br>`dist/npm-managed-root-C6KnxuJp.mjs` |
 | 034 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
+| 036 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
 
 ## Test ownership
 
@@ -148,6 +150,7 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 032 | `run-progress-observations.test.ts`, `buffered-run-progress.test.ts` |
 | 033 | `plugin-directory-publication.test.ts` |
 | 034 | `commentary-block-ownership.test.ts`, `reasoning-completions-semantic.test.ts`, Renderer `justdo-chat.streaming.test.ts` |
+| 036 | `acp-completion-lineage.test.ts` |
 
 ### 034: upstream commentary block ownership defect
 
@@ -199,6 +202,52 @@ accepted all 34 patches; reapplying 034 to the actual source and Gateway bundle 
 zero bytes. The isolated bundled Node CLI reported `OpenClaw 2026.10.7 (157d8c2)`.
 Application lint/build and Electron type checking passed. These checks do not claim a live
 reproduction on the originally reported machine/provider.
+
+### 036: ordinary ACP completion loses requester tools
+
+In the locked pristine source, ordinary main-session `sessions_spawn` with `runtime:'acp'`
+calls `resolveSpawnAdmission` with `enabled:false`. Its early `{ok:true}` return omits
+`childSessionPatch`. The ACP creation write still stores `spawnedBy`, `parentSessionKey`,
+`completionOwnerSessionKey` and `inheritedToolPolicyVersion:1`, but omits `spawnDepth`,
+`subagentRole` and `subagentControlScope`. Existing completion verification cannot establish
+that a top-level ACP record is a subagent envelope. Even an exact consumed private handoff
+then fails the persisted-lineage proof, and `resolveCompletionToolPolicy` disables tools for
+the completion turn. A model that nevertheless emits `exec` reaches unknown-tool rejection.
+The three-identical-failures message is a later execution guard, not the initiating defect.
+
+The fix retains the early return and invokes only the existing pure
+`resolveSubagentCapabilities` with depth 1 and the configured native maximum (default 5).
+It returns the three structural fields through the existing creation patch. It does not
+read session storage, enable root quotas/target restrictions, change the enabled admission
+branch, or add a new maximum-depth result. The strict completion consumer, exact parent
+and requester identities, inherited policy and private single-use handoff remain unchanged.
+No old session metadata is inferred, repaired or replayed.
+
+Public `patchSessionEntry` can update these fields but has no atomic hook into ACP's initial
+creation before dispatch and completion registration. ACP does not emit `subagent_spawned`;
+later shared progress observers can race a fast completion. A Runtime Services repair would
+also duplicate native lineage policy. Repairing only the optional ACP backend would miss
+other backends and duplicate that policy. Two independent agents cross-reviewed the native
+producer seam and these alternatives before implementation. Remove 036 once ordinary native
+ACP creation persists the same structural envelope without enabling nested admission limits.
+
+The patch rejects pristine verification, unknown/duplicate owners, changed defaults,
+historical/partial bodies and mixed source/bundle states before writing. Current-shape
+reapplication is byte-preserving. Tests execute the actual locked admission, ACP creation
+expressions, persisted-envelope proof, private requester proof and completion policy with
+synthetic storage/transport boundaries. A pristine control must lose tools; the patched
+record must pass exact proof, including a configured depth-1 leaf. Invalid proofs remain
+denied. This source/function validation does not establish real model, Gateway transport,
+frozen installer or already affected session recovery; fresh artifact validation is separate.
+
+On 2026-11-10, all eight focused cases passed, including the actual locked source control.
+The generated-bundle case uses an esbuild fixture, not a complete Gateway artifact; the
+handoff is synthetic and native single-use consumption is unchanged. Two independent agents
+reviewed the implementation and test boundaries without findings. The normal pretest was
+blocked by the absent prepared public SDK. The wider run passed 28 tests but hit an existing
+029 line-budget mismatch (821 lines against a limit below 800); the manifest suite could not
+load the missing `@electron/asar` dependency. These blockers do not establish full artifact
+acceptance and are not repaired by this capability.
 
 ## Validation boundary
 
