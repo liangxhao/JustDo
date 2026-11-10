@@ -25,6 +25,9 @@ describe('Agent runtime settings', () => {
       automation: {
         approvalTimeoutMinutes: 2,
       },
+      automaticErrorRetry: {
+        maxContinuations: 1,
+      },
       mcp: {
         requestTimeoutSeconds: 60,
         appsEnabled: true,
@@ -67,6 +70,46 @@ describe('Agent runtime settings', () => {
       },
     });
   });
+
+  test('defaults only the new retry preference when loading an existing profile', () => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.agent.thinking = 'high';
+    input.askUserQuestion.timeoutMinutes = 45;
+    input.subagents.model = 'internal/model';
+    input.subagents.maxConcurrent = 7;
+    const { automaticErrorRetry: _removed, ...existing } = input;
+
+    expect(parseAgentRuntimeSettings(existing)).toEqual(input);
+    expect(validateAgentRuntimeSettings(existing)).toEqual({ ok: true, settings: input });
+  });
+
+  test.each([0, 1, 3])('accepts an additional error retry budget of %s', maxContinuations => {
+    const input = createDefaultAgentRuntimeSettings();
+    input.automaticErrorRetry.maxContinuations = maxContinuations;
+
+    expect(validateAgentRuntimeSettings(input)).toEqual({ ok: true, settings: input });
+  });
+
+  test.each([-1, 4, 1.5, '1', null, undefined])(
+    'rejects an invalid error retry budget (%s)',
+    maxContinuations => {
+      const input = createDefaultAgentRuntimeSettings();
+      expect(
+        validateAgentRuntimeSettings({
+          ...input,
+          automaticErrorRetry: { maxContinuations },
+        }).ok,
+      ).toBe(false);
+    },
+  );
+
+  test.each([null, undefined, false])(
+    'rejects malformed retry settings (%s)',
+    automaticErrorRetry => {
+      const input = createDefaultAgentRuntimeSettings();
+      expect(validateAgentRuntimeSettings({ ...input, automaticErrorRetry }).ok).toBe(false);
+    },
+  );
 
   test.each([
     ['concurrency', { maxConcurrent: 0 }],
@@ -120,12 +163,18 @@ describe('Agent runtime settings', () => {
     });
   });
 
-  test.each([null, undefined, 'true'])('rejects an invalid MCP Apps preference (%s)', appsEnabled => {
-    const input = createDefaultAgentRuntimeSettings();
-    expect(validateAgentRuntimeSettings({
-      ...input, mcp: { ...input.mcp, appsEnabled },
-    }).ok).toBe(false);
-  });
+  test.each([null, undefined, 'true'])(
+    'rejects an invalid MCP Apps preference (%s)',
+    appsEnabled => {
+      const input = createDefaultAgentRuntimeSettings();
+      expect(
+        validateAgentRuntimeSettings({
+          ...input,
+          mcp: { ...input.mcp, appsEnabled },
+        }).ok,
+      ).toBe(false);
+    },
+  );
 
   test('rejects an existing profile without current session visibility preferences', () => {
     const input = createDefaultAgentRuntimeSettings();

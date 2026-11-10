@@ -250,6 +250,7 @@ export default function NativeSessionHistory({
         />
       )}
       <ChatMessageDisplay
+        productSessionId={productSessionId}
         className="min-h-0 flex-1"
         controller={
           messages === undefined && controller?.state.sessionKey === sessionKey ? controller : null

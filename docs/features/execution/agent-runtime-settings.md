@@ -1,30 +1,31 @@
 # Agent 运行参数
 
-设置使用版本化 AgentRuntimeSettings，保存在产品配置中再投影到原生配置。本文按 shared/agents/agentRuntimeSettings.ts 说明当前默认值；UI 文案不能把 null、0 与固定值混为一谈。
+设置使用版本化 AgentRuntimeSettings，保存在产品配置中；原生执行参数再投影到原生配置，应用自有设置由 Main 消费。本文按 shared/agents/agentRuntimeSettings.ts 说明当前默认值；UI 文案不能把 null、0 与固定值混为一谈。
 
 ## 1. 配置分组
 
-| 分组                               | 默认    | 含义                                      |
-| ---------------------------------- | ------- | ----------------------------------------- |
-| 主 Agent thinking                  | null    | 保留继承/未指定语义                       |
-| 主 Agent run timeout               | 0       | 未设置正向运行时限，不是立刻超时          |
-| 主 Agent 并发                      | null    | 不强制产品覆盖                            |
-| ask_user_question                  | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
-| automation approval                | 2 分钟  | 允许 2/5/10 三档                          |
-| MCP request timeout                | 60 秒   | 用户 server 的默认请求等待                |
-| MCP Apps                           | true    | 交互界面宿主开关，投影到 mcp.apps.enabled |
-| session visibility                 | tree    | 原生跨会话可见范围                        |
-| Subagent model/thinking/delegation | null    | 继承或未指定                              |
-| Subagent 并发                      | 3       | 原生全局并发限制                          |
-| 每 Agent children                  | 5       | 子任务容量                                |
-| Subagent run timeout               | 7200 秒 | 原生运行时限                              |
-| spawn depth                        | 1       | 嵌套深度                                  |
-| archiveAfterMinutes                | 0       | 不提供正向自动归档期限                    |
-| Code Mode                          | off     | 原生工具编排；显式 auto/on 与关闭分别保存 |
-| 原生 Swarm enabled                 | true    | 批量委派容量开关，不是 Workflow 插件开关  |
-| Swarm maxConcurrent                | 8       | 当前原生组并发，范围 1–64                 |
-| Swarm maxChildrenPerGroup          | 50      | 组内存活子任务容量，范围 1–200            |
-| Swarm maxTotalPerGroup             | 200     | 组内累计子任务容量，范围 1–1000           |
+| 分组                                 | 默认    | 含义                                      |
+| ------------------------------------ | ------- | ----------------------------------------- |
+| 主 Agent thinking                    | null    | 保留继承/未指定语义                       |
+| 主 Agent run timeout                 | 0       | 未设置正向运行时限，不是立刻超时          |
+| 主 Agent 并发                        | null    | 不强制产品覆盖                            |
+| ask_user_question                    | 10 分钟 | 默认启用超时；必须回答时显式关闭          |
+| automation approval                  | 2 分钟  | 允许 2/5/10 三档                          |
+| automaticErrorRetry.maxContinuations | 1 次    | 应用自动恢复额外次数，范围 0–3，0 关闭    |
+| MCP request timeout                  | 60 秒   | 用户 server 的默认请求等待                |
+| MCP Apps                             | true    | 交互界面宿主开关，投影到 mcp.apps.enabled |
+| session visibility                   | tree    | 原生跨会话可见范围                        |
+| Subagent model/thinking/delegation   | null    | 继承或未指定                              |
+| Subagent 并发                        | 3       | 原生全局并发限制                          |
+| 每 Agent children                    | 5       | 子任务容量                                |
+| Subagent run timeout                 | 7200 秒 | 原生运行时限                              |
+| spawn depth                          | 1       | 嵌套深度                                  |
+| archiveAfterMinutes                  | 0       | 不提供正向自动归档期限                    |
+| Code Mode                            | off     | 原生工具编排；显式 auto/on 与关闭分别保存 |
+| 原生 Swarm enabled                   | true    | 批量委派容量开关，不是 Workflow 插件开关  |
+| Swarm maxConcurrent                  | 8       | 当前原生组并发，范围 1–64                 |
+| Swarm maxChildrenPerGroup            | 50      | 组内存活子任务容量，范围 1–200            |
+| Swarm maxTotalPerGroup               | 200     | 组内累计子任务容量，范围 1–1000           |
 
 ### 同页的产品设置
 
@@ -37,9 +38,13 @@ Goal 次数按当前目标在原生持久接纳的自动回合累计，准备、
 重连、清理 Main 内存及手动继续不清零。原生最终准入同时检查额度和回交责任，见
 [Goal 模式](goal-mode.md)。
 
+错误自动重试另有独立分组和额度。`automaticErrorRetry.maxContinuations` 保存在
+AgentRuntimeSettings 中，由应用消费，不投影到 OpenClaw，也不复用 Goal 续跑参数。
+它限制一次任务中针对已接入错误的额外执行次数，不改变工具授权或原生单轮失败守卫。
+
 ## 2. 验证与旧值
 
-保存必须提交完整的当前版本结构；Main/shared 校验版本、枚举、整数、范围与模型引用长度。读取缺失、损坏或校验失败的记录时，`parseAgentRuntimeSettings` 整份采用当前默认值，不保留有效字段做逐项迁移；保存时则明确拒绝非法结构。
+保存必须提交完整的当前版本结构；Main/shared 校验版本、枚举、整数、范围与模型引用长度。旧记录仅缺少新增的 `automaticErrorRetry` 分组时，补入默认值并保留其余已验证设置；显式提供该分组但值非法时仍拒绝。其他缺失、损坏或校验失败的记录由 `parseAgentRuntimeSettings` 整份采用当前默认值；保存时明确拒绝非法结构。
 
 主 Agent／Subagent 并发范围均为 1–16（主 Agent 另允许 null），children 为 1–20，depth 为 1–5；正向 run timeout 为 60–86400 秒，0 的特殊意义按字段校验。ask_user_question 为 1–1440 分钟，MCP request timeout 为 1–86400 秒，archiveAfterMinutes 为 0–525600 分钟。不要在 Renderer 自己 clamp 后让 Main 接受任意数据。
 
@@ -54,6 +59,7 @@ flowchart LR
   UI[运行设置] --> Validate[共享校验]
   Validate --> Store[产品配置]
   Store --> Sync[原生配置投影]
+  Store --> Retry[应用错误重试设置]
   Sync --> Agent[agents.defaults]
   Sync --> Child[agents.defaults.subagents]
   Sync --> Visibility[tools.sessions.visibility]
@@ -61,6 +67,9 @@ flowchart LR
 ```
 
 配置 mutation 串行执行。需应用原生设置的失败不能仅显示本地保存成功；回滚或待恢复遵循对应配置服务契约。参数改变不代表已运行任务被追溯修改。
+
+仅修改错误重试次数时，持久化成功即可生效，不同步原生配置或重启 Gateway。
+同次保存还修改原生参数时，仍执行完整同步与失败回滚。
 
 ## 4. 容量、排队和超时
 

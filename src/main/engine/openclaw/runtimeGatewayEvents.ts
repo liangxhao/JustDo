@@ -20,7 +20,7 @@ import { ApprovalKind, OpenClawApprovalIpc } from '../../../shared/security/appr
 import { observeWebpageEmbedSessionEvent } from '../../chat/embed/webpageEmbedSessions';
 import { coworkLog } from '../../cowork/coworkLogger';
 import type { CoworkSessionStatus, CoworkStore } from '../../data/coworkStore';
-import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
+import { GoalContinuationCoordinator, type GoalLifecycleEvent } from '../../openclaw/goals/goalContinuationCoordinator';
 import { SessionExecApprovalGrants } from '../../openclaw/permissions/sessionExecApprovalGrants';
 import { notifyNativeQuestionChanged } from '../../plugins/mcp/nativeQuestionEvents';
 import { isRecord } from '../gateway/helpers';
@@ -77,6 +77,9 @@ export interface RuntimeGatewayEventsContext {
   readonly terminalLifecycleErrorSessionIds: Set<string>;
   readonly resolveTurn: (sessionId: string) => void;
   readonly goalContinuationCoordinator: GoalContinuationCoordinator;
+  readonly forwardGoalLifecycle?: (event: GoalLifecycleEvent) => void;
+  readonly cancelAutomaticErrorRetry?: (sessionId: string) => void;
+  readonly deferRetryError?: (sessionId: string, runId: string, error: string) => boolean;
   readonly classifyMainAgentEvent: (
     turn: SessionTurn,
     event: NormalizedAgentEvent,
@@ -295,7 +298,8 @@ export function handleChatEvent(
     return;
   }
   finish('error');
-  this.emit('error', sessionId, event.errorMessage ?? 'chat error');
+  const error = event.errorMessage ?? 'chat error';
+  if (!this.deferRetryError?.(sessionId, runId, error)) this.emit('error', sessionId, error);
 }
 
 export function handleAgentEvent(
@@ -337,7 +341,7 @@ export function handleAgentEvent(
     if (stream === 'lifecycle' && sessionKey) {
       const phase = typeof data.phase === 'string' ? data.phase : '';
       if (phase === 'start' || phase === 'end' || phase === 'error') {
-        void this.goalContinuationCoordinator.handleLifecycle({
+        const lifecycle: GoalLifecycleEvent = {
           runId,
           sessionKey,
           sessionId: event.sessionId,
@@ -353,7 +357,9 @@ export function handleAgentEvent(
           ...(typeof data.status === 'string' ? { status: data.status } : {}),
           ...(typeof data.timeoutPhase === 'string' ? { timeoutPhase: data.timeoutPhase } : {}),
           ...(typeof data.error === 'string' ? { error: data.error } : {}),
-        });
+        };
+        if (this.forwardGoalLifecycle) this.forwardGoalLifecycle(lifecycle);
+        else void this.goalContinuationCoordinator.handleLifecycle(lifecycle);
       }
     }
   };
@@ -394,6 +400,9 @@ export function handleAgentEvent(
   if (!turn.gatewaySessionId && event.sessionId) turn.gatewaySessionId = event.sessionId;
   if (!turn.lifecycleGeneration && event.lifecycleGeneration) {
     turn.lifecycleGeneration = event.lifecycleGeneration;
+  }
+  if (nativeAgentSeq !== undefined && stream === 'lifecycle' && data.executionSettled === true) {
+    this.observeRunTerminal(event, true);
   }
   forwardGoalEvent();
   turn.lastAgentSeq = event.agentSeq;
@@ -466,6 +475,7 @@ export function handleSessionOperationEvent(
     this.sessionExecApprovalGrants.clearSession(sessionKey);
     const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
     if (sessionId) {
+      this.cancelAutomaticErrorRetry?.(sessionId);
       this.sessionActivityChecks.delete(sessionId);
       this.clearCompactionInFlight(sessionId);
       this.goalContinuationCoordinator.invalidateForUserTurn(sessionId);

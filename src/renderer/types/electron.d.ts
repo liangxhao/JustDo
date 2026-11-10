@@ -1202,6 +1202,15 @@ interface IElectronAPI {
       execution?: import('@shared/cowork/sessionGoal').GoalExecutionSnapshot;
       error?: string;
     }>;
+    getAutomaticErrorRetry: (sessionId: string) => Promise<{
+      success: boolean;
+      presentation?: import('@shared/cowork/automaticErrorRetry').AutomaticErrorRetryPresentation | null;
+      presentations?: import('@shared/cowork/automaticErrorRetry').AutomaticErrorRetryPresentation[];
+      error?: string;
+    }>;
+    onAutomaticErrorRetryChanged: (
+      callback: (value: import('@shared/cowork/automaticErrorRetry').AutomaticErrorRetryPresentation) => void,
+    ) => () => void;
     getGoalExecution: (sessionId: string) => Promise<{
       success: boolean;
       execution?: import('@shared/cowork/sessionGoal').GoalExecutionSnapshot;

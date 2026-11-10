@@ -123,6 +123,7 @@ export class SqliteStore {
         client_turn_id TEXT NOT NULL UNIQUE,
         root_run_id TEXT,
         model_ref TEXT,
+        automatic_error_retry TEXT,
         state TEXT NOT NULL,
         started_at INTEGER NOT NULL,
         accepted_at INTEGER,
@@ -138,6 +139,10 @@ export class SqliteStore {
         ON cowork_session_runs(session_id)
         WHERE ended_at IS NULL;
     `);
+    if (!this.db.prepare('PRAGMA table_info(cowork_session_runs)').all()
+      .some(column => (column as { name: string }).name === 'automatic_error_retry')) {
+      this.db.exec('ALTER TABLE cowork_session_runs ADD COLUMN automatic_error_retry TEXT');
+    }
     initializeSessionDiagnosticsTables(this.db);
 
     this.db.exec(`

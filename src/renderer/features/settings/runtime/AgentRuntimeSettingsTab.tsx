@@ -10,6 +10,7 @@ import {
   AgentRuntimeThinkingLevel,
   AUTOMATION_APPROVAL_TIMEOUT_MINUTES,
 } from '@shared/agents/agentRuntimeSettings';
+import { AUTOMATIC_ERROR_RETRY_MAX_CONTINUATIONS } from '@shared/cowork/automaticErrorRetry';
 import {
   MAX_MAX_RETAINED_DISPLAY_TABS,
   MIN_MAX_RETAINED_DISPLAY_TABS,
@@ -330,6 +331,25 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
   return (
     <div className="runtime-settings min-w-0 space-y-9 pb-1">
       <SettingsSection
+        title={i18nService.t('automaticErrorRetrySettingsSectionTitle')}
+        description={i18nService.t('automaticErrorRetrySettingsSectionDescription')}
+      >
+        <SettingRow
+          label={i18nService.t('automaticErrorRetryMaxContinuationsTitle')}
+          description={i18nService.t('automaticErrorRetryMaxContinuationsDescription')}
+        >
+          <NumberControl
+            label={i18nService.t('automaticErrorRetryMaxContinuationsTitle')}
+            value={settings.automaticErrorRetry.maxContinuations}
+            min={0}
+            max={AUTOMATIC_ERROR_RETRY_MAX_CONTINUATIONS}
+            onChange={value =>
+              onChange({ ...settings, automaticErrorRetry: { maxContinuations: value } })
+            }
+          />
+        </SettingRow>
+      </SettingsSection>
+      <SettingsSection
         title={i18nService.t('agentRuntimeAgentSectionTitle')}
         description={i18nService.t('agentRuntimeAgentSectionDescription')}
       >
@@ -606,9 +626,7 @@ const AgentRuntimeSettingsTab: React.FC<Props> = ({
               { value: 'true', label: i18nService.t('mcpAppsEnable') },
               { value: 'false', label: i18nService.t('mcpAppsDisable') },
             ]}
-            onChange={value =>
-              updateMcp({ appsEnabled: value === 'true' })
-            }
+            onChange={value => updateMcp({ appsEnabled: value === 'true' })}
             ariaLabel={i18nService.t('mcpAppsEnabledTitle')}
             className="h-9 py-2 text-xs"
           />

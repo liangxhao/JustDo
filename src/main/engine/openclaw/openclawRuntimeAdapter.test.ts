@@ -19,10 +19,13 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import { AutomaticErrorRetryPhase } from '../../../shared/cowork/automaticErrorRetry';
 import { AskUserQuestionGateway } from '../../../shared/cowork/interactions/askUserQuestion';
 import { CoworkPlanHandoffState } from '../../../shared/cowork/interactions/planHandoff';
+import type { BeginSessionRunInput, SessionRunState, SessionRunTiming } from '../../../shared/cowork/sessionRun';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
+import type { AutomaticErrorRetryHost } from './automaticErrorRetry/host';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 const createPreparedSessionReceipt = (key = 'agent:main:justdo:session-1') => ({
@@ -1448,4 +1451,95 @@ test('patchSessionModel applies immediately to subsequent calls while session is
     undefined,
     'subsequent-calls',
   );
+});
+
+test.each([false, true])('holds a prepared desktop error until native classification finishes (supported: %s)', async supported => {
+  vi.useFakeTimers();
+  const { store, session } = createEmptyStore();
+  const key = 'agent:main:justdo:session-1';
+  const runId = 'desktop-input';
+  const nativeSessionId = 'gateway-session-1';
+  const lifecycleRevision = 'revision-one';
+  const rows = new Map<string, SessionRunTiming>([[runId, {
+    id: 'root-timing', sessionId: session.id, clientTurnId: runId, state: 'running', startedAt: 1,
+  }]]);
+  Object.assign(store, {
+    getLatestSessionRun: () => [...rows.values()].at(-1),
+    getSessionRunByClientTurnId: (id: string) => rows.get(id),
+    finishSessionRun: (id: string, state: SessionRunState, endedAt: number) => {
+      for (const [key, row] of rows) if (row.id === id) rows.set(key, { ...row, state, endedAt });
+    },
+    beginSessionRun: (input: BeginSessionRunInput) => {
+      const timing: SessionRunTiming = { ...input, id: 'retry-timing', state: 'running' };
+      rows.set(input.clientTurnId, timing);
+      return timing;
+    },
+    bindSessionRunRootRun: vi.fn(),
+    setSessionRunAutomaticErrorRetry: vi.fn(),
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as SessionPreparationInternals & {
+    gatewayClientGeneration: number;
+    automaticErrorRetryHost: AutomaticErrorRetryHost;
+    ensureActiveTurn: (sessionId: string, sessionKey: string, runId: string) => void;
+    handleGatewayEvent: (event: unknown) => void;
+  };
+  let resolveFailure!: (value: unknown) => void;
+  const failure = new Promise(resolve => { resolveFailure = resolve; });
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.describe') return { session: {
+      key, sessionId: nativeSessionId, lifecycleRevision,
+      permissionMode: 'full', sessionRoot: process.cwd(), activeRunIds: [],
+    } };
+    if (method === 'sessions.create') return createPreparedSessionReceipt(key);
+    if (method === 'runtimeServices.executionFailure') return failure;
+    if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
+    throw new Error(`unexpected request ${method}`);
+  });
+  internals.gatewayClient = { request } as unknown as GatewayClientLike;
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  adapter.setContinuationPermissionPreparer(async () => {});
+  const errors = vi.fn();
+  adapter.on('error', errors);
+  try {
+    await adapter.prepareSession(session.id);
+    await adapter.armAutomaticErrorRetry(session.id, runId);
+    expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Eligible);
+    internals.ensureActiveTurn(session.id, key, runId);
+    internals.handleGatewayEvent({ event: 'chat', payload: {
+      sessionKey: key, sessionId: nativeSessionId, runId,
+      state: 'error', errorMessage: 'native tool failure',
+    } });
+    internals.automaticErrorRetryHost.coordinator.observeSettled({
+      runId, sessionKey: key, sessionId: nativeSessionId, lifecycleGeneration: null,
+      clientGeneration: internals.gatewayClientGeneration, agentSeq: 3,
+      executionSettled: true, status: 'failed', endedAt: Date.now(),
+    });
+
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Checking);
+    expect(errors).not.toHaveBeenCalled();
+
+    resolveFailure({ sessionKey: key, sessionId: nativeSessionId,
+      lifecycleRevision, runId, errorCode: supported ? 'openclaw_repeated_tool_error' : 'unregistered_error' });
+    if (supported) {
+      await vi.waitFor(() => expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Running));
+      const successor = adapter.getAutomaticErrorRetry(session.id)!.runs.at(-1)!;
+      internals.automaticErrorRetryHost.coordinator.observeSettled({
+        runId: successor.runId, sessionKey: key, sessionId: nativeSessionId, lifecycleGeneration: null,
+        clientGeneration: internals.gatewayClientGeneration, agentSeq: 5,
+        executionSettled: true, status: 'completed', endedAt: Date.now(),
+      });
+      expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Completed);
+      expect(errors).not.toHaveBeenCalled();
+      expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+    } else {
+      await vi.waitFor(() => expect(errors).toHaveBeenCalledExactlyOnceWith(session.id, 'native tool failure'));
+      expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Failed);
+      expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    }
+  } finally {
+    internals.automaticErrorRetryHost.clear();
+    vi.useRealTimers();
+  }
 });

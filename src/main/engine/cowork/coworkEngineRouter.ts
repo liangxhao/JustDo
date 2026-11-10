@@ -58,6 +58,18 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     return this.runtime.prepareSession(sessionId, options);
   }
 
+  async armAutomaticErrorRetry(sessionId: string, clientTurnId: string): Promise<void> {
+    await this.runtime.armAutomaticErrorRetry?.(sessionId, clientTurnId);
+  }
+
+  cancelAutomaticErrorRetry(sessionId: string): void {
+    this.runtime.cancelAutomaticErrorRetry?.(sessionId);
+  }
+
+  getAutomaticErrorRetry(sessionId: string) {
+    return this.runtime.getAutomaticErrorRetry?.(sessionId) ?? null;
+  }
+
   async stopSession(sessionId: string, options?: CoworkStopOptions): Promise<void> {
     await this.runtime.stopSession(sessionId, options);
   }

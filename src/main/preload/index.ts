@@ -310,6 +310,7 @@ import {
   type BuiltinSpeechPreviewRequest,
   SpeechSynthesisIpc,
 } from '../../shared/speech/speechSynthesis';
+import { createAutomaticErrorRetryApi } from './automaticErrorRetry';
 import { createExtensionChangedSubscription } from './extensions';
 import { createMcpAppPreloadApi } from './mcpApps';
 import { createPluginOperationSubscription } from './pluginOperations';
@@ -942,6 +943,7 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:run:bind', input),
     listSessionRuns: (sessionId: string) =>
       ipcRenderer.invoke('cowork:session:run:list', sessionId),
+    ...createAutomaticErrorRetryApi(),
     markSessionRunUnknown: (input: SessionRunUnknownInput) =>
       ipcRenderer.invoke(SessionRunIpc.Unknown, input),
     failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) =>

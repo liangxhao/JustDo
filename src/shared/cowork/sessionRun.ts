@@ -1,3 +1,5 @@
+import type { AutomaticErrorRetryRunMetadata } from './automaticErrorRetry';
+
 export type SessionRunState = 'running' | 'completed' | 'failed' | 'aborted';
 
 export const SessionRunBeginErrorCode = {
@@ -19,6 +21,8 @@ export interface SessionRunTiming {
   acceptedAt?: number;
   endedAt?: number;
   state: SessionRunState;
+  /** Content-free presentation association; never used to resume execution. */
+  automaticErrorRetry?: AutomaticErrorRetryRunMetadata;
 }
 
 export interface SessionRuntimeSnapshot {

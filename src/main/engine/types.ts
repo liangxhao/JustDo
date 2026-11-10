@@ -147,6 +147,8 @@ export interface CoworkNativeAcceptedBinding extends CoworkNativeSendBinding {
 }
 
 export type CoworkStartOptions = {
+  /** Main-proven ordinary desktop send, never accepted as an IPC option. */
+  automaticErrorRetry?: boolean;
   /** Main-validated composer selection for the initial native admission. */
   initialModelRef?: string;
   /** Main-owned adoption of a prepared homepage App incarnation. Never accepted from IPC. */
@@ -208,6 +210,9 @@ export interface CoworkGenerateTitleOptions {
 }
 
 export interface CoworkRuntime {
+  armAutomaticErrorRetry?(sessionId: string, clientTurnId: string): Promise<void>;
+  cancelAutomaticErrorRetry?(sessionId: string): void;
+  getAutomaticErrorRetry?(sessionId: string): import('../../shared/cowork/automaticErrorRetry').AutomaticErrorRetryPresentation | null;
   on<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   off<U extends keyof CoworkRuntimeEvents>(event: U, listener: CoworkRuntimeEvents[U]): this;
   startSession(sessionId: string, prompt: string, options?: CoworkStartOptions): Promise<void>;

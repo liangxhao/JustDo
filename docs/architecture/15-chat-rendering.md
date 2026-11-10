@@ -2,6 +2,15 @@
 
 本页说明消息如何从原生历史和实时事件形成可重建的聊天状态，重点是身份、顺序、接管、发送与恢复。Renderer 不建立第二份 transcript；Main 和 Redux 只保留各自产品状态。
 
+[错误自动重试](../features/execution/automatic-error-retry.md)使用 Main 提供的精确运行关联
+收敛中间合成失败及提示，保留部分正文、工具和文件。其呈现控制器不修改原生 reducer、
+历史源或 Goal 计数；应用重试的忙碌状态独立保证准备间隙仍可停止。无关联、最终失败、
+未知或无法取得决议的情况正常展示原生错误，不根据报错字符串隐藏记录。
+
+订阅、元数据修订与计时器归 `controllers/automatic-error-retry-presentation.ts`；
+纯消息和 Turn 显示变换归 `pipeline/automatic-error-retry-display.ts`。
+聊天组件组合两者，桌面活动 hook 仍由 Cowork 聊天功能持有，不复制执行状态。
+
 阅读顺序：先看数据流和状态归属，再看事件准入、历史读取及发送，最后查看终态、交互与回归入口。三个独立专题分别维护[运行与内容呈现](chat-runtime-presentation.md)、[交互展示载体](chat-interactive-surfaces.md)和[工作区审阅](chat-workspace-review.md)，避免把卡片/UI细节混进消息协议。
 
 ## 按问题定位

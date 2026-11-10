@@ -47,6 +47,7 @@ import {
 } from '../../plugins/app/sessionParticipants';
 import type { WorkspaceAppSessions } from '../../plugins/mcp/workspaceAppSession';
 import { registerMcpAppHandlers } from '../plugins/mcpApps';
+import { registerAutomaticErrorRetryHandlers } from './automaticErrorRetry';
 import { registerSessionWorkspaceHandler } from './sessionWorkspace';
 
 interface SessionHandlerDependencies {
@@ -81,6 +82,10 @@ export const registerCoworkSessionHandlers = ({
   onSessionsChanged,
   getSessionPlugins,
 }: SessionHandlerDependencies): SessionWorkspaceUpdater => {
+  registerAutomaticErrorRetryHandlers({
+    isAllowedSender: event => isAllowedWorkspaceSender?.(event) === true,
+    getStore: getCoworkStore, getRouter: getCoworkEngineRouter,
+  });
   const sessionBranchDependencies: SessionBranchOperationDependencies = {
     getCoworkStore,
     getCoworkEngineRouter,
@@ -527,6 +532,8 @@ export const registerCoworkSessionHandlers = ({
       (input.pluginPrompt !== undefined && typeof input.pluginPrompt !== 'string')
     )
       return { success: false, error: 'Invalid session run input.' };
+    if (isAllowedWorkspaceSender?.(_event) === true)
+      getCoworkEngineRouter().cancelAutomaticErrorRetry?.(input.sessionId);
     const startupUnavailable = getStartupEngineNotReadyResponse?.();
     if (startupUnavailable) return startupUnavailable;
     if (getSessionPlugins?.().isDeleting(input.sessionId))
@@ -626,7 +633,13 @@ export const registerCoworkSessionHandlers = ({
       idleConfirmations.delete(input.sessionId);
       terminalOutcomes.delete(input.sessionId);
       finalizedOutcomes.delete(input.sessionId);
-      const timing = store.beginSessionRun(input);
+      getCoworkEngineRouter().cancelAutomaticErrorRetry?.(input.sessionId);
+      let timing = store.beginSessionRun(input);
+      if (isAllowedWorkspaceSender?.(_event) === true && !input.pluginPrompt &&
+        !getSessionPlugins?.().isManaged(input.sessionId)) {
+        await getCoworkEngineRouter().armAutomaticErrorRetry?.(input.sessionId, input.clientTurnId);
+        timing = store.getSessionRun(timing.id) ?? timing;
+      }
       return {
         success: true,
         timing,

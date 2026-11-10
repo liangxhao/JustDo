@@ -380,6 +380,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           skillIds: options.activeSkillIds,
           workspaceRoot: resolvedWorkspaceRoot,
           confirmationMode: 'modal',
+          automaticErrorRetry: options.rendererDispatch === true && !pluginSubmission && !appBinding,
           attachments: options.attachments,
           agentId,
           ...(selectedModelRef ? { initialModelRef: selectedModelRef } : {}),

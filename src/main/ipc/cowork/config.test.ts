@@ -11,7 +11,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   for (const directory of temporaryDirectories.splice(0)) {
     const relative = path.relative(path.resolve(os.tmpdir()), path.resolve(directory));
-    if (!relative || path.isAbsolute(relative) || relative === '..' || relative.startsWith(`..${path.sep}`)) {
+    if (
+      !relative ||
+      path.isAbsolute(relative) ||
+      relative === '..' ||
+      relative.startsWith(`..${path.sep}`)
+    ) {
       throw new Error('Refusing to remove a workspace fixture outside the temporary directory.');
     }
     fs.rmSync(directory, { recursive: true, force: true });
@@ -217,7 +222,8 @@ describe('cowork config IPC', () => {
     });
 
     const result = await handlers.get('cowork:config:set')?.(
-      {}, { workingDirectory: selected.directory },
+      {},
+      { workingDirectory: selected.directory },
     );
 
     expect(result).toEqual({ success: true });
@@ -233,10 +239,14 @@ describe('cowork config IPC', () => {
     });
 
     const result = await handlers.get('cowork:config:set')?.(
-      {}, { workingDirectory: selected.directory },
+      {},
+      { workingDirectory: selected.directory },
     );
 
-    expect(result).toMatchObject({ success: false, error: expect.stringContaining(selected.marker) });
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining(selected.marker),
+    });
     expect(currentConfig).toEqual(previous);
     expect(fs.existsSync(selected.marker)).toBe(true);
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
@@ -261,14 +271,15 @@ describe('cowork config IPC', () => {
     const selected = createWorkspaceFixture();
     currentConfig = { ...baseConfig, workingDirectory: selected.directory };
 
-    await expect(handlers.get('cowork:config:set')?.(
-      {}, { workingDirectory: selected.directory },
-    )).resolves.toEqual({ success: true });
+    await expect(
+      handlers.get('cowork:config:set')?.({}, { workingDirectory: selected.directory }),
+    ).resolves.toEqual({ success: true });
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
     const settings = createDefaultExternalAgentSettings();
     settings.agents.claude.enabled = true;
-    await expect(handlers.get(ExternalAgentIpc.SET_SETTINGS)?.({}, settings))
-      .resolves.toMatchObject({ success: true });
+    await expect(
+      handlers.get(ExternalAgentIpc.SET_SETTINGS)?.({}, settings),
+    ).resolves.toMatchObject({ success: true });
 
     expect(fs.existsSync(selected.marker)).toBe(true);
   });
@@ -344,6 +355,55 @@ describe('cowork config IPC', () => {
     expect(syncOpenClawConfig).toHaveBeenCalledWith({
       reason: 'agent-runtime-settings-change',
     });
+  });
+
+  it('persists an error retry budget without synchronizing native configuration', async () => {
+    const next = createDefaultAgentRuntimeSettings();
+    next.automaticErrorRetry.maxContinuations = 0;
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, next);
+
+    expect(result).toEqual({ success: true, changed: true, settings: next });
+    expect(currentAgentRuntimeSettings.automaticErrorRetry.maxContinuations).toBe(0);
+    expect(setAgentRuntimeSettings).toHaveBeenCalledOnce();
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+    expect(ensureEngineRunning).not.toHaveBeenCalled();
+  });
+
+  it('still synchronizes when a retry preference and a native setting change together', async () => {
+    const next = createDefaultAgentRuntimeSettings();
+    next.automaticErrorRetry.maxContinuations = 3;
+    next.agent.thinking = 'high';
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, next);
+
+    expect(result).toMatchObject({ success: true, changed: true, settings: next });
+    expect(syncOpenClawConfig).toHaveBeenCalledOnce();
+  });
+
+  it('does not claim an app-only retry preference was saved when persistence fails', async () => {
+    const next = createDefaultAgentRuntimeSettings();
+    next.automaticErrorRetry.maxContinuations = 2;
+    setAgentRuntimeSettings.mockImplementationOnce(() => {
+      throw new Error('write failed');
+    });
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, next);
+
+    expect(result).toEqual({ success: false, error: 'write failed' });
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
+    expect(currentAgentRuntimeSettings.automaticErrorRetry.maxContinuations).toBe(1);
+  });
+
+  it('rejects an invalid retry budget before persistence or native synchronization', async () => {
+    const next = createDefaultAgentRuntimeSettings();
+    next.automaticErrorRetry.maxContinuations = 4;
+
+    const result = await handlers.get(AgentRuntimeSettingsIpc.Set)?.({}, next);
+
+    expect(result).toMatchObject({ success: false });
+    expect(setAgentRuntimeSettings).not.toHaveBeenCalled();
+    expect(syncOpenClawConfig).not.toHaveBeenCalled();
   });
 
   it('rejects invalid Agent runtime settings before persistence', async () => {

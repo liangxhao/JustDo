@@ -43,6 +43,7 @@ import { renderCompletedProcess } from '@/libs/openclaw-chat/components/timeline
 import { CompletedProcessMotion } from '@/libs/openclaw-chat/components/timeline/completed-process-motion';
 import { materializeDisclosureContents } from '@/libs/openclaw-chat/components/timeline/disclosure-content';
 import { historyViewport, type HistoryViewportHandle } from '@/libs/openclaw-chat/components/timeline/history-viewport';
+import { AutomaticErrorRetryPresentationController } from '@/libs/openclaw-chat/controllers/automatic-error-retry-presentation';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { HistoryDisclosureState } from '@/libs/openclaw-chat/controllers/history-disclosure-state';
 import { HistoryRenderScheduler } from '@/libs/openclaw-chat/controllers/history-render-scheduler';
@@ -114,6 +115,7 @@ import {
   withFailureDetailsForDisplay,
 } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
+import { isRetryFailureMessage, projectRetryFailureMessages, projectRetryFailureTurn } from '@/libs/openclaw-chat/pipeline/automatic-error-retry-display';
 import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
 import {
@@ -283,6 +285,9 @@ export class JustDoChatElement extends LitElement {
   declare runTimings: SessionRunTiming[];
 
   @property({ attribute: false })
+  declare productSessionId: string;
+
+  @property({ attribute: false })
   declare onLastUserMessageAction:
     | ((
         action: UserMessageHistoryAction,
@@ -447,6 +452,7 @@ export class JustDoChatElement extends LitElement {
     this.searchCaseSensitive = false;
     this.processSummariesExpanded = false;
     this.runTimings = [];
+    this.productSessionId = '';
     this.onLastUserMessageAction = undefined;
     this.onAssistantMessageFork = undefined;
     this.onMessageQuote = undefined;
@@ -470,6 +476,15 @@ export class JustDoChatElement extends LitElement {
   private _streamUnsubscribe: (() => void) | null = null;
   private pendingInputReadFailureScope: readonly unknown[] = [];
   private unsubscribeMessagePresentation: (() => void) | null = null;
+  private retryHistorySource: GatewayMessage[] | null = null;
+  private retryHistoryKey = '';
+  private retryHistoryMessages: GatewayMessage[] = [];
+  private readonly automaticErrorRetry = new AutomaticErrorRetryPresentationController(() => {
+    this.persistedTimelineCache.clear();
+    this.persistedTimelineRenderCache.clear();
+    this.historySearchIndex.clear();
+    this.requestUpdate();
+  });
   private readonly handleMessagePresentationChanged = () => {
     this.peerFilteredHistory = new WeakMap();
     this.peerPerspectiveHistory = new WeakMap();
@@ -732,10 +747,41 @@ export class JustDoChatElement extends LitElement {
     // Use controller state if available, otherwise use direct properties
     const ctrl = this._controller;
     const sourceActiveTurn = this.activeTurnForDisplay(ctrl);
-    const activePersistedMessages = this.messagesForPerspective(
+    const sourcePersistedMessages = this.messagesForPerspective(
       ctrl ? (ctrl.getLoadedMessages() as GatewayMessage[]) : this.messages,
     );
-    const activeTurn = withFailureDetailsForDisplay(sourceActiveTurn, activePersistedMessages);
+    this.automaticErrorRetry.selectSession(this.productSessionId || null);
+    if (this.automaticErrorRetry.hydrating &&
+      (sourceActiveTurn?.status === 'error' || sourcePersistedMessages.some(isRetryFailureMessage))) {
+      return html`<div class="chat-shell"><div class="chat-container" role="status">
+        ${i18nService.t('coworkErrorRetryChecking')}
+      </div></div>`;
+    }
+    const retryBinding = {
+      sessionKey: ctrl?.state.sessionKey ?? sourceActiveTurn?.sessionKey ?? '',
+      nativeSessionId: ctrl?.state.currentSessionId ?? sourceActiveTurn?.sessionId ?? null,
+    };
+    const hiddenRetryRunIds = this.automaticErrorRetry.hiddenRuns(
+      retryBinding, sourcePersistedMessages, sourceActiveTurn,
+    );
+    const retryProgress = this.automaticErrorRetry.progress(retryBinding);
+    const retryStatus = retryProgress
+      ? retryProgress.attempt > 0
+        ? i18nService.t('coworkErrorRetryProgress')
+          .replace('{attempt}', String(retryProgress.attempt))
+          .replace('{max}', String(retryProgress.maxContinuations))
+        : i18nService.t('coworkErrorRetryChecking')
+      : null;
+    const retryHistoryKey = [...hiddenRetryRunIds].sort().join('\0');
+    if (this.retryHistorySource !== sourcePersistedMessages || this.retryHistoryKey !== retryHistoryKey) {
+      this.retryHistorySource = sourcePersistedMessages;
+      this.retryHistoryKey = retryHistoryKey;
+      this.retryHistoryMessages = projectRetryFailureMessages(sourcePersistedMessages, hiddenRetryRunIds);
+    }
+    const activePersistedMessages = this.retryHistoryMessages;
+    const activeTurn = projectRetryFailureTurn(
+      withFailureDetailsForDisplay(sourceActiveTurn, sourcePersistedMessages), hiddenRetryRunIds,
+    );
     let pendingMessage = (ctrl?.state.pendingUserMessage as GatewayMessage | null) ?? null;
     const compactionOwners =
       activeTurn?.items
@@ -784,6 +830,7 @@ export class JustDoChatElement extends LitElement {
     this.userMessageHistoryActionsAvailable = Boolean(
       ctrl &&
       ctrl.state.connected &&
+      !retryProgress &&
       !isStreaming &&
       !ctrl.state.chatLoading &&
       !ctrl.state.historyLoadingOlder &&
@@ -807,15 +854,18 @@ export class JustDoChatElement extends LitElement {
             .map(item => item.text)
             .join('\n')}`
       : 'idle';
-    const currentRunTiming = this.runTimings[this.runTimings.length - 1] ?? null;
+    const displayRunTimings = this.runTimings.filter(timing =>
+      !timing.rootRunId || !hiddenRetryRunIds.has(timing.rootRunId),
+    );
+    const currentRunTiming = displayRunTimings[displayRunTimings.length - 1] ?? null;
     const processFoldOptions = {
       foldUnresolvedTools: true,
       protectTrailingTurn: Boolean(
         activeTurn || isStreaming || currentRunTiming?.state === 'running',
       ),
     };
-    const persistedRunTimings = this.runTimings;
-    const runTimingSignature = this.runTimings
+    const persistedRunTimings = displayRunTimings;
+    const runTimingSignature = displayRunTimings
       .map(
         timing => `${timing.id}:${timing.rootRunId ?? ''}:${timing.state}:${timing.endedAt ?? ''}`,
       )
@@ -854,7 +904,8 @@ export class JustDoChatElement extends LitElement {
       // Run receipts can arrive before Gateway history. Keep their metadata
       // attached to visible content instead of rendering an orphan footer.
       const activeTurnFooter =
-        historyTimeline.length > 0 || activeTimeline.length > 0
+        (!activeTurn || !hiddenRetryRunIds.has(activeTurn.runId)) &&
+        (historyTimeline.length > 0 || activeTimeline.length > 0)
           ? projectActiveTurnFooter(activeFooterTiming)
           : null;
       const timelineView = projectIncrementalTimelineView({
@@ -916,11 +967,14 @@ export class JustDoChatElement extends LitElement {
           <div
             class="chat-container"
             role="log"
-            aria-busy=${activeTurn?.status === 'running' || isStreaming}
+            aria-busy=${activeTurn?.status === 'running' || isStreaming || Boolean(retryProgress)}
           >
             <div class="sr-only" role="status" aria-live="polite">
               ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
+            ${retryStatus ? html`<div role="status" aria-live="polite" data-automatic-error-retry>
+              ${retryStatus}
+            </div>` : nothing}
             ${this.renderPersistedRows(timelineView.persistedRows)}
             ${
               timelineView.seamRow
@@ -1019,7 +1073,10 @@ export class JustDoChatElement extends LitElement {
       return html`
         <div class="chat-shell">
           ${this.renderMinimap(minimapEntries)}
-          <div class="chat-container" role="log">${this.renderPersistedRows(visibleRows)}</div>
+          <div class="chat-container" role="log">
+            ${retryStatus ? html`<div role="status" data-automatic-error-retry>${retryStatus}</div>` : nothing}
+            ${this.renderPersistedRows(visibleRows)}
+          </div>
         </div>
       `;
     }
@@ -1093,6 +1150,7 @@ export class JustDoChatElement extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    this.automaticErrorRetry.dispose();
     this.unsubscribeMessagePresentation?.();
     this.unsubscribeMessagePresentation = null;
     this.removeEventListener(NATIVE_WIDGET_CONTEXT_REQUEST, this.handleWidgetContext);

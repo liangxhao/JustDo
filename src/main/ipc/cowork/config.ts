@@ -146,6 +146,14 @@ export const registerCoworkConfigHandlers = ({
         };
       }
 
+      // Automatic error retry belongs to Main and has no native configuration projection.
+      if (
+        JSON.stringify({ ...previous, automaticErrorRetry: next.automaticErrorRetry }) ===
+        JSON.stringify(next)
+      ) {
+        return { success: true, changed: true, settings: next };
+      }
+
       let syncResult: SyncResult;
       try {
         syncResult = await syncOpenClawConfig({

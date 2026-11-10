@@ -84,6 +84,7 @@ const createHarness = (
   waitBeforeAutomaticContinuation?: () => Promise<void>,
   maxContinuationTurns = 20,
   prepareSessionForContinuation = vi.fn().mockResolvedValue(undefined),
+  overrides: Partial<ConstructorParameters<typeof GoalContinuationCoordinator>[0]> = {},
 ) => {
   let currentGoal: unknown = goal(goalStatus);
   const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
@@ -121,6 +122,7 @@ const createHarness = (
     prepareSessionForContinuation,
     waitBeforeAutomaticContinuation,
     now: () => ++now,
+    ...overrides,
   });
   return {
     coordinator,
@@ -138,6 +140,259 @@ const createHarness = (
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe('independent execution policy composition', () => {
+  it('does not dispatch or replace the predecessor claimed by another policy', async () => {
+    const claimSuccessor = vi.fn(() => false);
+    const harness = createHarness(
+      SessionGoalStatus.Active, undefined, 20, undefined, { claimSuccessor },
+    );
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'end', executionSettled: true,
+    });
+
+    expect(claimSuccessor).toHaveBeenCalledWith('parent-run', expect.any(String));
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    expect(harness.onRunAccepted).not.toHaveBeenCalled();
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'parent-run', 'technical-run', nativeIdentity.sessionId,
+    )).toBe(true);
+  });
+
+  it('checks that its successor reservation is still current before dispatch', async () => {
+    const claimSuccessor = vi.fn(() => true);
+    const isSuccessorCurrent = vi.fn(() => false);
+    const releaseSuccessor = vi.fn();
+    const harness = createHarness(
+      SessionGoalStatus.Active, undefined, 20, undefined,
+      { claimSuccessor, isSuccessorCurrent, releaseSuccessor },
+    );
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, phase: 'end', executionSettled: true,
+    });
+
+    expect(isSuccessorCurrent).toHaveBeenCalledWith('parent-run', expect.any(String));
+    expect(releaseSuccessor).toHaveBeenCalledWith(...claimSuccessor.mock.calls[0]!);
+    expect(harness.onRunAccepted).not.toHaveBeenCalled();
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+  });
+
+  it('releases only an explicitly rejected successor so native deferral can be retried', async () => {
+    vi.useFakeTimers();
+    const claimSuccessor = vi.fn((_predecessor: string, _successor: string) => true);
+    const releaseSuccessor = vi.fn();
+    const harness = createHarness(
+      SessionGoalStatus.Active, undefined, 20, undefined, { claimSuccessor, releaseSuccessor },
+    );
+    let agentCalls = 0;
+    harness.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe') {
+        return { session: { key: sessionKey, ...nativeIdentity, goal: goal() } };
+      }
+      if (++agentCalls === 1) throw nativeDeferred('native-handoff');
+      return acceptedReceipt(params);
+    });
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, phase: 'end', executionSettled: true,
+    });
+    const firstClaim = claimSuccessor.mock.calls[0]!;
+    expect(releaseSuccessor).toHaveBeenCalledWith(...firstClaim);
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(agentCalls).toBe(2);
+    expect(claimSuccessor.mock.calls[1]?.[0]).toBe('parent-run');
+    expect(claimSuccessor.mock.calls[1]?.[1]).not.toBe(firstClaim[1]);
+    expect(releaseSuccessor).toHaveBeenCalledOnce();
+  });
+
+  it('retains a successor reservation when the send acknowledgement is unknown', async () => {
+    vi.useFakeTimers();
+    const releaseSuccessor = vi.fn();
+    const harness = createHarness(
+      SessionGoalStatus.Active, undefined, 20, undefined,
+      { claimSuccessor: () => true, releaseSuccessor },
+    );
+    harness.request.mockImplementation(async method => {
+      if (method === 'sessions.describe') {
+        return { session: { key: sessionKey, ...nativeIdentity, goal: goal() } };
+      }
+      throw new Error('acknowledgement lost');
+    });
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, phase: 'end', executionSettled: true,
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(harness.onRunUnknown).toHaveBeenCalledOnce();
+    expect(releaseSuccessor).not.toHaveBeenCalled();
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+  });
+
+  it('preserves Goal retry attempts and continuation count across a technical run start', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.setGoal({ ...goal(), continuationTurns: 4 });
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'parent-run', 4);
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true, error: 'provider failed',
+    });
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      retryAttempt: 1, continuationCount: 4,
+    });
+
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'parent-run', 'technical-run', nativeIdentity.sessionId,
+    )).toBe(true);
+    await harness.coordinator.handleLifecycle({
+      runId: 'technical-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+    });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Running, runId: 'technical-run', continuationCount: 4,
+    });
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'technical-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true, error: 'still failed',
+    });
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Retrying, retryAttempt: 2, continuationCount: 4,
+    });
+  });
+
+  it('rejects a technical handoff for another predecessor or native session', async () => {
+    const harness = createHarness();
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true, error: 'provider failed',
+    });
+
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'other-run', 'technical-run', nativeIdentity.sessionId,
+    )).toBe(false);
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'parent-run', 'technical-run', 'replaced-session',
+    )).toBe(false);
+    harness.coordinator.stop(sessionId);
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'parent-run', 'technical-run', nativeIdentity.sessionId,
+    )).toBe(false);
+  });
+
+  it('does not require an observed Goal for a non-Goal desktop chat', () => {
+    const harness = createHarness();
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'parent-run', 'technical-run', nativeIdentity.sessionId,
+    )).toBe(true);
+    expect(harness.coordinator.getSnapshot(sessionId)).toBeNull();
+  });
+
+  it('returns a definitely unsent technical successor to the deferred predecessor', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+    });
+    harness.coordinator.adoptTechnicalRun(
+      sessionId, 'parent-run', 'technical-run', nativeIdentity.sessionId,
+      nativeIdentity.lifecycleRevision,
+    );
+    expect(harness.coordinator.rollbackTechnicalRun(
+      sessionId, 'another-predecessor', 'technical-run',
+    )).toBe(false);
+
+    expect(harness.coordinator.rollbackTechnicalRun(
+      sessionId, 'parent-run', 'technical-run',
+    )).toBe(true);
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true, error: 'original failure',
+    });
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Retrying, retryAttempt: 1,
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(harness.onRunAccepted.mock.calls[0]?.[4]).toEqual({
+      predecessorRunId: 'parent-run', businessRetry: true,
+    });
+  });
+
+  it.each(['settled', 'new-user-turn'] as const)(
+    'cannot roll back a technical handoff after %s', async boundary => {
+      vi.useFakeTimers();
+      const harness = createHarness();
+      await harness.coordinator.handleLifecycle({
+        runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+      });
+      harness.coordinator.adoptTechnicalRun(
+        sessionId, 'parent-run', 'technical-run', nativeIdentity.sessionId,
+      );
+      if (boundary === 'settled') {
+        await harness.coordinator.handleLifecycle({
+          runId: 'technical-run', sessionKey, sessionId: nativeIdentity.sessionId,
+          phase: 'error', executionSettled: true, error: 'actual technical failure',
+        });
+      } else {
+        harness.coordinator.invalidateForUserTurn(sessionId);
+      }
+
+      expect(harness.coordinator.rollbackTechnicalRun(
+        sessionId, 'parent-run', 'technical-run',
+      )).toBe(false);
+    },
+  );
+
+  it('keeps the Main-proven revision when adopting before the first Goal lookup', async () => {
+    const harness = createHarness();
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+    });
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'parent-run', 'technical-run', nativeIdentity.sessionId,
+      nativeIdentity.lifecycleRevision,
+    )).toBe(true);
+    harness.request.mockResolvedValue({ session: {
+      key: sessionKey, ...nativeIdentity, lifecycleRevision: 'revision-after-reset', goal: goal(),
+    } });
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'technical-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true, error: 'provider failed',
+    });
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Stopped,
+    });
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+  });
+
+  it.each(['end', 'error'] as const)(
+    'reports business retry lineage separately from native Goal admission for %s', async phase => {
+      vi.useFakeTimers();
+      const harness = createHarness();
+      await harness.coordinator.handleLifecycle({
+        runId: 'parent-run', sessionKey, phase, executionSettled: true,
+        ...(phase === 'error' ? { error: 'provider failed' } : {}),
+      });
+      if (phase === 'error') await vi.advanceTimersByTimeAsync(2_000);
+
+      expect(harness.onRunAccepted.mock.calls[0]?.[4]).toEqual({
+        predecessorRunId: 'parent-run', businessRetry: phase === 'error',
+      });
+      expect(harness.request).toHaveBeenCalledWith('agent', expect.objectContaining({
+        goalContinuation: expect.objectContaining({ predecessorRunId: 'parent-run', automatic: true }),
+      }));
+    },
+  );
 });
 
 it.each([false, true])(

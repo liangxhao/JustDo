@@ -46,7 +46,7 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         onMaxGoalContinuationTurnsChange={vi.fn()}
       />,
     );
-    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(7);
+    expect(screen.getAllByRole('heading', { level: 4 })).toHaveLength(8);
     for (const name of [
       'agentRuntimeCodeModeActivation',
       'agentRuntimeSessionVisibilityTitle',
@@ -91,6 +91,11 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
         />,
       );
       const groups = [
+        [
+          'automaticErrorRetrySettingsSectionTitle',
+          'automaticErrorRetrySettingsSectionDescription',
+          ['automaticErrorRetryMaxContinuationsTitle'],
+        ],
         [
           'agentRuntimeAgentSectionTitle',
           'agentRuntimeAgentSectionDescription',
@@ -251,6 +256,42 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     expect(onMaxRetainedDisplayTabsChange).toHaveBeenCalledWith(31);
   });
 
+  test('changes the independent retry budget with bounded inputs without changing goal settings', () => {
+    const settings = createDefaultAgentRuntimeSettings();
+    const onChange = vi.fn();
+    const onMaxGoalContinuationTurnsChange = vi.fn();
+    render(
+      <AgentRuntimeSettingsTab
+        settings={settings}
+        models={[]}
+        isLoading={false}
+        loadError={null}
+        onChange={onChange}
+        onRetry={vi.fn()}
+        maxRetainedDisplayTabs={30}
+        onMaxRetainedDisplayTabsChange={vi.fn()}
+        maxGoalContinuationTurns={10}
+        onMaxGoalContinuationTurnsChange={onMaxGoalContinuationTurnsChange}
+      />,
+    );
+    const input = screen.getByRole('spinbutton', {
+      name: 'automaticErrorRetryMaxContinuationsTitle',
+    }) as HTMLInputElement;
+    expect(input.value).toBe('1');
+
+    fireEvent.change(input, { target: { value: '0' } });
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...settings,
+      automaticErrorRetry: { maxContinuations: 0 },
+    });
+    fireEvent.change(input, { target: { value: '9' } });
+    expect(onChange).toHaveBeenLastCalledWith({
+      ...settings,
+      automaticErrorRetry: { maxContinuations: 3 },
+    });
+    expect(onMaxGoalContinuationTurnsChange).not.toHaveBeenCalled();
+  });
+
   test('shows an unlimited Agent turn default and emits a bounded MCP timeout update', () => {
     const settings = createDefaultAgentRuntimeSettings();
     const onChange = vi.fn();
@@ -295,8 +336,15 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
 
   test.each([true, false])('offers only explicit MCP Apps choices (enabled: %s)', enabled => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
-      bottom: 132, height: 32, left: 20, right: 220, top: 100, width: 200,
-      x: 20, y: 100, toJSON: () => ({}),
+      bottom: 132,
+      height: 32,
+      left: 20,
+      right: 220,
+      top: 100,
+      width: 200,
+      x: 20,
+      y: 100,
+      toJSON: () => ({}),
     });
     const settings = createDefaultAgentRuntimeSettings();
     settings.mcp.appsEnabled = enabled;
@@ -320,11 +368,15 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     expect(select.textContent).toContain(enabled ? 'mcpAppsEnable' : 'mcpAppsDisable');
     fireEvent.click(select);
     expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
-      'mcpAppsEnable', 'mcpAppsDisable',
+      'mcpAppsEnable',
+      'mcpAppsDisable',
     ]);
-    fireEvent.click(screen.getByRole('option', { name: enabled ? 'mcpAppsDisable' : 'mcpAppsEnable' }));
+    fireEvent.click(
+      screen.getByRole('option', { name: enabled ? 'mcpAppsDisable' : 'mcpAppsEnable' }),
+    );
     expect(onChange).toHaveBeenCalledWith({
-      ...settings, mcp: { ...settings.mcp, appsEnabled: !enabled },
+      ...settings,
+      mcp: { ...settings.mcp, appsEnabled: !enabled },
     });
   });
 

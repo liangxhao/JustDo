@@ -18,6 +18,38 @@ import { SqliteStore } from './sqliteStore';
 
 const tempDirs: string[] = [];
 
+test('upgrades existing run receipts and retains content-free retry associations after reopen', () => {
+  const directory = createTempDir();
+  const initial = SqliteStore.create(directory);
+  const cowork = new CoworkStore(initial.getDatabase());
+  const session = cowork.createSession('Retry', '/tmp');
+  const timing = cowork.beginSessionRun({ sessionId: session.id, clientTurnId: 'retry-root', startedAt: 1 });
+  initial.getDatabase().exec('ALTER TABLE cowork_session_runs DROP COLUMN automatic_error_retry');
+  initial.close();
+
+  const upgraded = SqliteStore.create(directory);
+  const metadata = {
+    chainId: 'chain', attempt: 0, maxContinuations: 1,
+    sessionKey: 'agent:main:justdo:retry', nativeSessionId: 'physical',
+    lifecycleRevision: 'revision', disposition: 'superseded' as const,
+  };
+  const store = new CoworkStore(upgraded.getDatabase());
+  expect(store.getSessionRun(timing.id)?.automaticErrorRetry).toBeUndefined();
+  store.setSessionRunAutomaticErrorRetry(timing.clientTurnId, metadata);
+  store.finishSessionRun(timing.id, 'failed', 2);
+  upgraded.close();
+
+  const reopened = SqliteStore.create(directory);
+  try {
+    expect(new CoworkStore(reopened.getDatabase()).getSessionRun(timing.id)).toMatchObject({
+      state: 'failed', automaticErrorRetry: metadata,
+    });
+    reopened.getDatabase().prepare('UPDATE cowork_session_runs SET automatic_error_retry = ? WHERE id = ?')
+      .run('{invalid', timing.id);
+    expect(new CoworkStore(reopened.getDatabase()).getSessionRun(timing.id)?.automaticErrorRetry).toBeUndefined();
+  } finally { reopened.close(); }
+});
+
 function createTempDir(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-sqlite-store-'));
   tempDirs.push(dir);

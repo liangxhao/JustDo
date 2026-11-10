@@ -546,6 +546,12 @@ export const settingsTranslations = {
     agentRuntimeRetry: '重新加载',
     agentRuntimeUnsaved: '有未保存更改',
     agentRuntimeRestoreDefaults: '恢复默认值',
+    automaticErrorRetrySettingsSectionTitle: '错误自动重试',
+    automaticErrorRetrySettingsSectionDescription:
+      '遇到支持的执行错误时，追加内部反馈并继续处理原任务；与目标模式的续跑分别计数。',
+    automaticErrorRetryMaxContinuationsTitle: '最多额外重试次数',
+    automaticErrorRetryMaxContinuationsDescription:
+      '每次任务遇到支持的错误后，最多额外重试 0–3 次。设为 0 关闭；调整方法期间只显示进度，重试提示不会出现在聊天中。',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription: '所有 Agent 默认继承的运行、会话访问与委派行为。',
     agentRuntimeCodeModeTitle: 'Code Mode（实验性）',
@@ -1614,6 +1620,12 @@ export const settingsTranslations = {
     agentRuntimeRetry: 'Reload',
     agentRuntimeUnsaved: 'Unsaved changes',
     agentRuntimeRestoreDefaults: 'Restore defaults',
+    automaticErrorRetrySettingsSectionTitle: 'Automatic error retry',
+    automaticErrorRetrySettingsSectionDescription:
+      'Continue the current task with internal feedback after supported execution errors. This has a separate budget from goal continuation.',
+    automaticErrorRetryMaxContinuationsTitle: 'Maximum additional retries',
+    automaticErrorRetryMaxContinuationsDescription:
+      'Allow 0–3 additional attempts after a supported error in each task. Set 0 to disable. Only progress is shown while adjusting the approach; retry prompts stay out of the chat.',
     agentRuntimeAgentSectionTitle: 'Agent',
     agentRuntimeAgentSectionDescription:
       'Runtime, session access, and delegation defaults inherited by all Agents.',

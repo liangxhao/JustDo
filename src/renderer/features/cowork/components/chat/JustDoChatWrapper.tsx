@@ -1136,6 +1136,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           </div>
         )}
         <ChatMessageDisplay
+          productSessionId={currentSessionId}
           className="flex-1 min-h-0"
           controller={controller}
           assistantName={assistantName}

@@ -12,6 +12,7 @@ import type { MessageQuoteHandler } from '../composer/draft/messageQuote';
 import { type OpenMessageFileLink, useMessageFileLinkOpener } from '../preview/messageFileLinks';
 
 interface ChatMessageDisplayProps {
+  productSessionId?: string;
   className?: string;
   controller?: ChatController | null;
   gatewayMessages?: GatewayMessage[];
@@ -50,6 +51,7 @@ const EMPTY_PEER_NAMES: Readonly<Record<string, string>> = {};
  * behavior in one place while callers only provide a controller or messages.
  */
 const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
+  productSessionId,
   className,
   controller = null,
   gatewayMessages,
@@ -137,6 +139,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.onOpenFile = openFile;
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
+    chat.productSessionId = productSessionId ?? '';
     chat.onLastUserMessageAction = onLastUserMessageAction;
     chat.onMessageQuote = onMessageQuote;
     chat.onAssistantMessageFork = onAssistantMessageFork;
@@ -154,6 +157,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     workingDirectory,
     openFile,
     runTimings,
+    productSessionId,
     onLastUserMessageAction,
     onMessageQuote,
     onAssistantMessageFork,

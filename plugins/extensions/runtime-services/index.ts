@@ -17,6 +17,7 @@ import {
 } from './contracts/history-failure';
 import { registerCustody } from './custody/service';
 import { registerCommandResultPolicy } from './execution/command-result-policy';
+import { registerExecutionFailureObservation } from './execution/failure-observation';
 import { registerGoalResultPolicy } from './execution/goal-result-policy';
 import { readPreparedManagedExecutionDescriptor } from './execution/prepared-profile';
 import { registerExternalMcp } from './external-mcp';
@@ -301,6 +302,7 @@ const plugin = {
       emitProgress('waiting_model', ctx);
     });
 
+    registerExecutionFailureObservation(api);
     api.registerGatewayMethod(
       'runtimeServices.historyDetails',
       async ({ params, respond }) => {

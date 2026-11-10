@@ -32,6 +32,14 @@ Main complete 通知携带明确状态，运行快照携带正 revision；字段
 
 Adapter 入口保留生命周期及状态，runtimeGatewayConnection、runtimeGatewayEvents、runtimeHistory、runtimePlanInteractions、runtimeGoalOperations、runtimeSessionStatus 处理各领域操作。它们通过显式实时上下文访问入口状态，不复制控制器状态，更不保存 transcript。
 
+`automaticErrorRetry/` 拥有登记错误后的有限技术续跑：`coordinator.ts` 管策略与次数，
+`host.ts` 适配现有条件 `agent` 发送、权限准备和无正文回执；`lifecycle.ts` 管理已接纳的
+终态暂存、错误展示延后及业务 owner 交接。Adapter 保留原生身份、连接代次与恢复核验，
+并创建独立的 `ExecutionSuccessorClaims`，分别注入 Goal 和重试 Host。
+Main 先认领精确前驱再查询结构化错误，
+与 Goal 在发送边界共享唯一后继约束；两者的提示、次数和授权独立。原生旧轮仍然失败，
+仅新运行推进任务。来源范围、停止/未知边界及验证限制见[错误自动重试](../features/execution/automatic-error-retry.md)。
+
 普通启动只读取轻量交付信息与已完成安装记录，打开已有产品数据、加载必要配置后直接
 启动 Gateway，不执行宿主数据库预检、会话目录扫描、运行包全量哈希或离线会话规范准备。
 当前 schema、会话与插件的准入由 Gateway 自己在启动时负责。正常升级由 `startup/upgrade`

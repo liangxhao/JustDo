@@ -1,3 +1,7 @@
+import {
+  AUTOMATIC_ERROR_RETRY_DEFAULT_MAX_CONTINUATIONS,
+  AUTOMATIC_ERROR_RETRY_MAX_CONTINUATIONS,
+} from '../cowork/automaticErrorRetry';
 import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS, MCP_REQUEST_TIMEOUT_LIMITS } from '../plugins/mcp';
 
 export const AGENT_RUNTIME_SETTINGS_VERSION = 1 as const;
@@ -82,6 +86,9 @@ export interface AgentRuntimeSettings {
   automation: {
     approvalTimeoutMinutes: (typeof AUTOMATION_APPROVAL_TIMEOUT_MINUTES)[number];
   };
+  automaticErrorRetry: {
+    maxContinuations: number;
+  };
   mcp: {
     requestTimeoutSeconds: number;
     appsEnabled: boolean;
@@ -121,6 +128,9 @@ export const DEFAULT_AGENT_RUNTIME_SETTINGS: Readonly<AgentRuntimeSettings> = Ob
   automation: Object.freeze({
     approvalTimeoutMinutes: 2,
   }),
+  automaticErrorRetry: Object.freeze({
+    maxContinuations: AUTOMATIC_ERROR_RETRY_DEFAULT_MAX_CONTINUATIONS,
+  }),
   mcp: Object.freeze({
     requestTimeoutSeconds: DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS,
     appsEnabled: true,
@@ -152,6 +162,7 @@ export const createDefaultAgentRuntimeSettings = (): AgentRuntimeSettings => ({
   agent: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.agent },
   askUserQuestion: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.askUserQuestion },
   automation: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.automation },
+  automaticErrorRetry: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.automaticErrorRetry },
   mcp: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.mcp },
   sessions: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.sessions },
   swarm: { ...DEFAULT_AGENT_RUNTIME_SETTINGS.swarm },
@@ -184,6 +195,22 @@ export const validateAgentRuntimeSettings = (
   if (!isRecord(value.subagents)) {
     return { ok: false, error: 'Invalid Subagent settings.' };
   }
+
+  // Existing version-one profiles predate this application-owned preference.
+  const automaticErrorRetry = Object.prototype.hasOwnProperty.call(value, 'automaticErrorRetry')
+    ? value.automaticErrorRetry
+    : DEFAULT_AGENT_RUNTIME_SETTINGS.automaticErrorRetry;
+  if (
+    !isRecord(automaticErrorRetry) ||
+    !isIntegerInRange(
+      automaticErrorRetry.maxContinuations,
+      0,
+      AUTOMATIC_ERROR_RETRY_MAX_CONTINUATIONS,
+    )
+  ) {
+    return { ok: false, error: 'Automatic error retry limit is outside the supported range.' };
+  }
+  const maxAutomaticErrorContinuations = automaticErrorRetry.maxContinuations;
 
   const codeMode = value.codeMode;
   if (
@@ -416,6 +443,9 @@ export const validateAgentRuntimeSettings = (
       automation: {
         approvalTimeoutMinutes:
           automationApprovalTimeoutMinutes as (typeof AUTOMATION_APPROVAL_TIMEOUT_MINUTES)[number],
+      },
+      automaticErrorRetry: {
+        maxContinuations: maxAutomaticErrorContinuations,
       },
       mcp: {
         requestTimeoutSeconds: mcpRequestTimeoutSeconds,

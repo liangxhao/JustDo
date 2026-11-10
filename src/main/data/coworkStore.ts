@@ -11,6 +11,7 @@ import {
 } from '../../shared/agents/agentRuntimeSettings';
 import type { Agent, AgentProfileInput } from '../../shared/agents/agents';
 import type { HistorySessionBinding } from '../../shared/app/startup/history';
+import type { AutomaticErrorRetryRunMetadata } from '../../shared/cowork/automaticErrorRetry';
 import {
   DEFAULT_MAX_RETAINED_DISPLAY_TABS,
   normalizeMaxRetainedDisplayTabs,
@@ -196,6 +197,7 @@ interface SessionRunRow {
   client_turn_id: string;
   root_run_id: string | null;
   model_ref: string | null;
+  automatic_error_retry: string | null;
   state: SessionRunState;
   started_at: number;
   accepted_at: number | null;
@@ -224,6 +226,18 @@ interface PlanHandoffRow {
   updated_at: number;
 }
 
+const parseAutomaticErrorRetryMetadata = (value: string | null): AutomaticErrorRetryRunMetadata | undefined => {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as AutomaticErrorRetryRunMetadata;
+    if (typeof parsed.chainId !== 'string' || typeof parsed.sessionKey !== 'string' ||
+      typeof parsed.nativeSessionId !== 'string' || !Number.isInteger(parsed.attempt) ||
+      !Number.isInteger(parsed.maxContinuations) ||
+      !['candidate', 'pending', 'superseded', 'final'].includes(parsed.disposition)) return undefined;
+    return parsed;
+  } catch { return undefined; }
+};
+
 const mapSessionRun = (row: SessionRunRow): SessionRunTiming => ({
   id: row.id,
   sessionId: row.session_id,
@@ -234,6 +248,9 @@ const mapSessionRun = (row: SessionRunRow): SessionRunTiming => ({
   ...(row.accepted_at === null ? {} : { acceptedAt: row.accepted_at }),
   ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
   state: row.state,
+  ...(parseAutomaticErrorRetryMetadata(row.automatic_error_retry)
+    ? { automaticErrorRetry: parseAutomaticErrorRetryMetadata(row.automatic_error_retry) }
+    : {}),
 });
 
 const mapPlanHandoff = (row: PlanHandoffRow): CoworkPlanHandoff => ({
@@ -314,6 +331,15 @@ export class CoworkStore {
   getSessionRun(id: string): SessionRunTiming | undefined {
     const row = this.getOne<SessionRunRow>('SELECT * FROM cowork_session_runs WHERE id = ?', [id]);
     return row ? mapSessionRun(row) : undefined;
+  }
+
+  setSessionRunAutomaticErrorRetry(
+    clientTurnId: string,
+    metadata: AutomaticErrorRetryRunMetadata,
+  ): void {
+    this.db.prepare(
+      'UPDATE cowork_session_runs SET automatic_error_retry = ?, updated_at = ? WHERE client_turn_id = ?',
+    ).run(JSON.stringify(metadata), Date.now(), clientTurnId);
   }
 
   getSessionRunByClientTurnId(clientTurnId: string): SessionRunTiming | undefined {

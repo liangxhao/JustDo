@@ -105,7 +105,7 @@ import type { ApprovedPlanArtifactStore } from '../../cowork/approvedPlans/appro
 import { coworkLog } from '../../cowork/coworkLogger';
 import { type SessionTitleFetch, SessionTitleGenerator } from '../../cowork/sessionTitleGenerator';
 import type { CoworkStore } from '../../data/coworkStore';
-import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
+import { GoalContinuationCoordinator, type GoalLifecycleEvent } from '../../openclaw/goals/goalContinuationCoordinator';
 import { GoalEventAdmission } from '../../openclaw/goals/goalEventAdmission';
 import {
   type ExternalApprovalBinding,
@@ -157,6 +157,9 @@ import type {
   CoworkStopOptions,
   GatewayRequestOptions,
 } from '../types';
+import { AutomaticErrorRetryHost } from './automaticErrorRetry/host';
+import { AutomaticErrorRetryLifecycle } from './automaticErrorRetry/lifecycle';
+import { ExecutionSuccessorClaims } from './executionSuccessorClaims';
 import { type GatewaySubagent, listGatewaySubagents, SUBAGENT_STATUSES } from './subagentGateway';
 
 export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntime {
@@ -303,6 +306,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private sessionRpc!: SessionRpc;
   private titleGenerator!: SessionTitleGenerator;
   private readonly goalContinuationCoordinator: GoalContinuationCoordinator;
+  private readonly automaticErrorRetryHost: AutomaticErrorRetryHost;
+  private readonly automaticErrorRetryLifecycle: AutomaticErrorRetryLifecycle;
+  private readonly executionSuccessorClaims = new ExecutionSuccessorClaims();
+  private readonly preparedNativeSessionIds = new Map<string, string>();
 
   get agentTimeoutSeconds(): number {
     return this.store.getAgentRuntimeSettings().agent.runTimeoutSeconds;
@@ -335,8 +342,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       resolveSessionId: sessionKey => this.resolveSessionIdBySessionKey(sessionKey),
       resolveAgentId: sessionId => this.store.getSession(sessionId)?.agentId || 'main',
       getMaxContinuationTurns: () => this.store.getConfig().maxGoalContinuationTurns,
+      claimSuccessor: (predecessorRunId, successorRunId) =>
+        this.executionSuccessorClaims.claim(predecessorRunId, successorRunId),
+      releaseSuccessor: (predecessorRunId, successorRunId) =>
+        this.executionSuccessorClaims.release(predecessorRunId, successorRunId),
+      isSuccessorCurrent: (predecessorRunId, successorRunId) =>
+        this.executionSuccessorClaims.isCurrent(predecessorRunId, successorRunId),
       eventAdmission: new GoalEventAdmission(sessionId => this.activeTurns.get(sessionId)),
-      onRunAccepted: (sessionId, sessionKey, runId, nativeSessionId) => {
+      onRunAccepted: (sessionId, sessionKey, runId, nativeSessionId, successor) => {
         if (this.terminalLifecycleSessionIds.has(sessionId)) {
           this.cleanupSessionTurn(sessionId);
         }
@@ -347,6 +360,21 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // Fence cancellation before sending, including the interval before an
         // ACK or any lifecycle event can establish native admission.
         this.registerUnknownSessionRun(sessionId, runId);
+        if (successor?.predecessorRunId) {
+          const predecessor = this.runTerminalReceipts.get(successor.predecessorRunId) ??
+            this.automaticErrorRetryHost.coordinator.getSettledReceipt(successor.predecessorRunId);
+          const previous = this.store.getActiveSessionRun?.(sessionId);
+          if (predecessor && previous &&
+            (previous.rootRunId ?? previous.clientTurnId) === predecessor.runId) {
+            this.store.finishSessionRun(previous.id,
+              predecessor.status === 'completed' ? 'completed' :
+                predecessor.status === 'interrupted' ? 'aborted' : 'failed', predecessor.endedAt ?? Date.now());
+          }
+          if (!this.store.getActiveSessionRun?.(sessionId))
+            this.store.beginSessionRun({ sessionId, clientTurnId: runId, startedAt: Date.now() });
+          this.automaticErrorRetryHost.adoptBusinessRun(sessionId, successor.predecessorRunId,
+            runId, nativeSessionId, successor.businessRetry);
+        }
       },
       onRunConfirmed: (sessionId, runId) => {
         const pending = this.unknownSessionRuns.get(sessionId);
@@ -394,6 +422,67 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       waitBeforeAutomaticContinuation: () => new Promise(resolve => setTimeout(resolve, 1_600)),
     });
 
+    this.automaticErrorRetryHost = new AutomaticErrorRetryHost({
+      store: this.store,
+      successorClaims: this.executionSuccessorClaims,
+      getClient: () => this.gatewayClient,
+      getGeneration: () => this.gatewayClientGeneration,
+      sessionKey: sessionId => this.toSessionKey(sessionId),
+      isBlocked: sessionId => this.stoppedSessions.has(sessionId) ||
+        this.stopSessionPromises.has(sessionId) || !this.store.getSession(sessionId),
+      prepare: async sessionId => {
+        if (this.continuationPermissionPreparer) await this.continuationPermissionPreparer(sessionId);
+        else await this.prepareSession(sessionId);
+      },
+      beforeSuccessor: (sessionId, predecessorRunId) => {
+        const current = this.activeTurns.get(sessionId);
+        if (current && current.runId !== predecessorRunId)
+          throw Object.assign(new Error('A newer execution owns this conversation.'), { requestSent: false });
+        if (current) this.cleanupSessionTurn(sessionId);
+        this.resolveTurn(sessionId);
+      },
+      beginRun: (sessionId, binding, runId) => {
+        this.ensureActiveTurn(sessionId, binding.sessionKey, runId);
+        const turn = this.activeTurns.get(sessionId);
+        if (turn?.runId === runId) turn.gatewaySessionId = binding.nativeSessionId;
+        this.registerUnknownSessionRun(sessionId, runId);
+      },
+      confirmed: (sessionId, runId) => {
+        const pending = this.unknownSessionRuns.get(sessionId);
+        if (pending?.runId === runId && !pending.cancelled) this.unknownSessionRuns.delete(sessionId);
+        const timing = this.store.getSessionRunByClientTurnId(runId);
+        if (timing?.state === 'running') this.store.bindSessionRunRootRun(timing.id, runId);
+        this.automaticErrorRetryLifecycle.confirmSuccessor(runId);
+      },
+      rejected: (sessionId, runId, predecessor) => {
+        if (this.activeTurns.get(sessionId)?.runId === runId) this.cleanupSessionTurn(sessionId);
+        this.goalContinuationCoordinator.rollbackTechnicalRun(sessionId, predecessor, runId);
+      },
+      unknown: (sessionId, runId) => {
+        if (this.activeTurns.get(sessionId)?.runId !== runId &&
+          this.unknownSessionRuns.get(sessionId)?.runId !== runId) return;
+        this.registerUnknownSessionRun(sessionId, runId);
+        void this.reconcileDisconnectedTurn(sessionId);
+      },
+      adoptTechnicalRun: (sessionId, predecessor, runId, nativeSessionId) => {
+        const metadata = this.automaticErrorRetryHost.coordinator.getRunMetadata(predecessor);
+        return this.goalContinuationCoordinator.adoptTechnicalRun(sessionId, predecessor, runId,
+          nativeSessionId, metadata?.lifecycleRevision);
+      },
+      unclaimed: receipt => this.automaticErrorRetryLifecycle.onUnclaimedSettled(receipt),
+      isResponseError: error => this.captureGatewayResponseContext()?.isResponseError(error) === true,
+      onPresentation: presentation => this.automaticErrorRetryLifecycle.onPresentation(presentation),
+    });
+    this.automaticErrorRetryLifecycle = new AutomaticErrorRetryLifecycle({
+      coordinator: this.automaticErrorRetryHost.coordinator,
+      resolveSessionId: sessionKey => this.resolveSessionIdBySessionKey(sessionKey),
+      isConnectionCurrent: ({ client, generation }) =>
+        this.gatewayClient === client && this.gatewayClientGeneration === generation,
+      handleGoalLifecycle: event => { void this.goalContinuationCoordinator.handleLifecycle(event); },
+      reconcileGoalTerminal: event => this.goalContinuationCoordinator.reconcileSettledRun(event),
+      emitError: (sessionId, error) => { this.emit('error', sessionId, error); },
+    });
+
     this.titleGenerator = new SessionTitleGenerator({
       resolveApiConfig: () => resolveRawApiConfig(),
       fetch: titleFetch,
@@ -435,6 +524,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       agentId: options.agentId,
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
+      automaticErrorRetry: options.automaticErrorRetry,
       beforeNativeSend: options.beforeNativeSend,
       finalSyncAdmission: options.finalSyncAdmission,
       onNativeAccepted: options.onNativeAccepted,
@@ -611,6 +701,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (options.modelRef && !isInitialModelContextCurrent())
         throw new Error(t('sessionModelPreparationChanged'));
       this.rememberSessionKey(sessionId, sessionKey);
+      this.preparedNativeSessionIds.set(sessionId, options.expectedSessionId);
       return { sessionKey, gatewaySessionId: options.expectedSessionId };
     }
     if (session.nativeSessionKey && !session.historyBinding) {
@@ -677,6 +768,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (options.modelRef) await pinInitialModel(entry.sessionId);
       assertPreparationCurrent();
       this.rememberSessionKey(sessionId, sessionKey);
+      this.preparedNativeSessionIds.set(sessionId, entry.sessionId);
       return { sessionKey, gatewaySessionId: entry.sessionId };
     }
     const client = this.requireGatewayClient();
@@ -787,6 +879,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw new Error(t('sessionModelPreparationChanged'));
 
     this.rememberSessionKey(sessionId, sessionKey);
+    this.preparedNativeSessionIds.set(sessionId, gatewaySessionId);
     return { sessionKey, gatewaySessionId };
   }
 
@@ -814,6 +907,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async stopSession(sessionId: string, options: CoworkStopOptions = {}): Promise<void> {
+    this.cancelAutomaticErrorRetry(sessionId);
     const existing = this.stopSessionPromises.get(sessionId);
     if (existing) return existing;
     // Capture identity before cancellation mutates or removes the active turn.
@@ -1222,6 +1316,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       agentId?: string;
       workspaceRoot?: string;
       clientTurnId?: string;
+      automaticErrorRetry?: boolean;
       beforeNativeSend?: () => Promise<void>;
       finalSyncAdmission?: CoworkStartOptions['finalSyncAdmission'];
       onNativeAccepted?: CoworkStartOptions['onNativeAccepted'];
@@ -1269,6 +1364,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       resolveSettled: () => resolveSettled(),
     };
     this.pendingTurnStarts.set(sessionId, pendingStart);
+    this.cancelAutomaticErrorRetry(sessionId);
     this.goalContinuationCoordinator.invalidateForUserTurn(sessionId);
     const isStartCancelled = () =>
       pendingStart.cancelled || this.pendingTurnStarts.get(sessionId) !== pendingStart;
@@ -1398,6 +1494,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (isStartCancelled()) return;
         await options.beforeNativeSend?.();
         if (isStartCancelled()) return;
+        if (options.automaticErrorRetry) {
+          await this.armAutomaticErrorRetry(sessionId, runId);
+          if (isStartCancelled()) return;
+        }
         const sendParams: Record<string, unknown> = {
           sessionKey,
           ...(commandSessionId ? { sessionId: commandSessionId } : {}),
@@ -2522,6 +2622,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         ? { error: event.data.error.slice(0, 4096) }
         : {}),
     });
+    this.automaticErrorRetryHost.coordinator.observeSettled(this.runTerminalReceipts.get(event.runId)!);
     while (this.runTerminalReceipts.size > 100) {
       this.runTerminalReceipts.delete(this.runTerminalReceipts.keys().next().value!);
     }
@@ -2827,6 +2928,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   private stopGatewayClient(): void {
+    this.automaticErrorRetryHost.clear();
+    this.automaticErrorRetryLifecycle.clearWaitTerminals();
+    this.preparedNativeSessionIds.clear();
     return runtimeGatewayConnection.stopGatewayClient.call(this.runtimeGatewayConnectionContext);
   }
 
@@ -2874,6 +2978,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
    *  on a closed connection would reject all pending requests with
    *  "gateway client stopped" noise. */
   private cleanupGatewayClientState(): void {
+    this.automaticErrorRetryHost.clear();
+    this.automaticErrorRetryLifecycle.clear();
+    this.preparedNativeSessionIds.clear();
     return runtimeGatewayConnection.cleanupGatewayClientState.call(
       this.runtimeGatewayConnectionContext,
     );
@@ -2932,6 +3039,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     persistedSessionKeys: string[] = [],
     workspaceRoots: string[] = [],
   ): void {
+    this.cancelAutomaticErrorRetry(sessionId);
+    this.preparedNativeSessionIds.delete(sessionId);
     this.emit('sessionDeleted', sessionId);
     const removedKeys: string[] = [
       ...new Set(persistedSessionKeys.map(key => key.trim()).filter(Boolean)),
@@ -3020,6 +3129,28 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   // ─── Public API ─────────────────────────────────────────────────────────
+
+  armAutomaticErrorRetry(sessionId: string, clientTurnId: string): Promise<void> {
+    return this.automaticErrorRetryHost.arm(sessionId, clientTurnId,
+      this.preparedNativeSessionIds.get(sessionId));
+  }
+
+  cancelAutomaticErrorRetry(sessionId: string): void {
+    this.automaticErrorRetryHost.cancel(sessionId);
+    this.automaticErrorRetryLifecycle.cancel(sessionId);
+  }
+
+  getAutomaticErrorRetry(sessionId: string) {
+    return this.automaticErrorRetryHost.coordinator.getPresentation(sessionId);
+  }
+
+  private forwardGoalLifecycle(event: GoalLifecycleEvent): void {
+    this.automaticErrorRetryLifecycle.forwardGoalLifecycle(event);
+  }
+
+  private deferRetryError(sessionId: string, runId: string, error: string): boolean {
+    return this.automaticErrorRetryLifecycle.deferError(sessionId, runId, error);
+  }
 
   getGatewayClient(): GatewayClientLike | null {
     return this.gatewayClient;
@@ -3166,13 +3297,31 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const client = this.gatewayClient;
     const turn = this.activeTurns.get(sessionId);
     if (!client || !turn?.runId) return;
+    const generation = this.gatewayClientGeneration;
+    const capturedRunId = turn.runId;
+    const capturedSessionKey = turn.sessionKey;
+    const nativeSessionId = turn.gatewaySessionId;
+    const lifecycleGeneration = turn.lifecycleGeneration;
+    const retryMetadata = this.automaticErrorRetryHost.coordinator.getRunMetadata(turn.runId);
+    let verifiedRetryIdentity: { sessionKey: string; nativeSessionId: string; lifecycleRevision: string | null } | undefined;
+    const isCurrent = () => this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+      turn.runId === capturedRunId && turn.sessionKey === capturedSessionKey &&
+      this.activeTurns.get(sessionId) === turn && turn.gatewaySessionId === nativeSessionId &&
+      turn.lifecycleGeneration === lifecycleGeneration;
+    const reconcileTerminal = (
+      event: GoalLifecycleEvent & { phase: 'end' | 'error'; executionSettled: true },
+      status: 'completed' | 'failed' | 'interrupted',
+      endedAt?: number,
+    ) => this.automaticErrorRetryLifecycle.reconcileVerifiedWaitTerminal(
+      event, { client, generation }, status, endedAt, verifiedRetryIdentity,
+    );
     try {
       const unknownRun = this.unknownSessionRuns.get(sessionId);
       if (unknownRun?.cancelled && unknownRun.runId === turn.runId) {
         // Precise identity also cancels native pre-registered admission. Never
         // use a broad stop here: an old cancelled request must not kill a successor.
         await client.request('sessions.abort', { key: turn.sessionKey, runId: unknownRun.runId });
-        if (this.activeTurns.get(sessionId) !== turn) return;
+        if (!isCurrent()) return;
       }
       const result = await client.request<{
         runId?: string;
@@ -3182,8 +3331,19 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         error?: string;
         yielded?: boolean;
       }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
-      if (this.gatewayClient !== client || this.activeTurns.get(sessionId) !== turn) return;
+      if (!isCurrent()) return;
       if (result.runId !== turn.runId) return;
+      if (retryMetadata) {
+        const described = await client.request<{ session?: Record<string, unknown> }>(
+          'sessions.describe', { key: turn.sessionKey },
+        );
+        if (!isCurrent() || described.session?.key !== turn.sessionKey ||
+          described.session.sessionId !== nativeSessionId || nativeSessionId !== retryMetadata.nativeSessionId ||
+          (described.session.lifecycleRevision ?? null) !== retryMetadata.lifecycleRevision) return;
+        verifiedRetryIdentity = {
+          sessionKey: turn.sessionKey, nativeSessionId: nativeSessionId!, lifecycleRevision: retryMetadata.lifecycleRevision,
+        };
+      }
       if (
         result.yielded === true &&
         result.status === 'ok' &&
@@ -3198,7 +3358,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         // descendant work has received the explicit full-session stop.
         if (unknownRun?.cancelled) {
           await this.abortSessionAndSubagents(sessionId, turn, true);
-          if (this.gatewayClient !== client || this.activeTurns.get(sessionId) !== turn) return;
+          if (!isCurrent()) return;
           this.goalContinuationCoordinator.confirmStop(sessionId);
         }
         this.cleanupSessionTurn(sessionId);
@@ -3206,7 +3366,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (!unknownRun?.cancelled) {
           // Native agent.wait reports yielded only from the exact whole-run
           // terminal. Descendants retain native custody after this run settles.
-          await this.goalContinuationCoordinator.reconcileSettledRun({
+          await reconcileTerminal({
             sessionKey: turn.sessionKey,
             sessionId: turn.gatewaySessionId,
             lifecycleGeneration: turn.lifecycleGeneration,
@@ -3216,7 +3376,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             yielded: true,
             livenessState: 'paused',
             stopReason: 'end_turn',
-          });
+          }, 'completed', result.endedAt);
         }
         this.scheduleGoalRecovery(this.gatewayClientGeneration);
         return;
@@ -3233,16 +3393,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (this.unknownSessionRuns.get(sessionId)?.runId === turn.runId) {
         this.unknownSessionRuns.delete(sessionId);
       }
-      this.handleChatEvent({
-        sessionKey: turn.sessionKey,
-        runId: turn.runId,
-        state: aborted ? 'aborted' : result.status === 'ok' ? 'final' : 'error',
-        ...(result.error ? { errorMessage: result.error } : {}),
-      });
       // The lifecycle event may have been lost with the connection as well.
-      // Reconcile the Goal before exposing idle so an automatic continuation
-      // cannot disappear from the aggregate between root runs.
-      await this.goalContinuationCoordinator.reconcileSettledRun({
+      // Reserve generic recovery before publishing the display final or letting
+      // the Goal owner schedule a successor for this same exact predecessor.
+      const reconciliation = reconcileTerminal({
         sessionKey: turn.sessionKey,
         sessionId: turn.gatewaySessionId,
         lifecycleGeneration: turn.lifecycleGeneration,
@@ -3251,7 +3405,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         executionSettled: true,
         aborted,
         ...(result.error ? { error: result.error } : {}),
+      }, aborted ? 'interrupted' : result.status === 'ok' ? 'completed' : 'failed', result.endedAt);
+      this.handleChatEvent({
+        sessionKey: turn.sessionKey,
+        runId: turn.runId,
+        state: aborted ? 'aborted' : result.status === 'ok' ? 'final' : 'error',
+        ...(result.error ? { errorMessage: result.error } : {}),
       });
+      await reconciliation;
     } catch {
       // Keep execution outcome unknown when the authority cannot be queried.
     }
@@ -3820,6 +3981,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       },
       rememberTerminalTurn: { get: () => this.rememberTerminalTurn.bind(this) },
       observeRunTerminal: { get: () => this.observeRunTerminal.bind(this) },
+      forwardGoalLifecycle: { get: () => this.forwardGoalLifecycle.bind(this) },
+      deferRetryError: { get: () => this.deferRetryError.bind(this) },
+      cancelAutomaticErrorRetry: { get: () => this.cancelAutomaticErrorRetry.bind(this) },
       cleanupSessionTurn: { get: () => this.cleanupSessionTurn.bind(this) },
       store: { get: () => this.store },
       terminalLifecycleSessionIds: { get: () => this.terminalLifecycleSessionIds },

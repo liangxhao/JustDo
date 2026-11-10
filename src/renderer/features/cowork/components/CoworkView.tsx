@@ -222,6 +222,7 @@ import { type RootState, store } from '@/store';
 import { readAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
 import type { AppSubmission } from '../../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { renderCoworkHomeWorkspace } from './chat/CoworkHomeWorkspace';
+import { useAutomaticErrorRetryActivity } from './chat/useAutomaticErrorRetryActivity';
 import { useCoworkSideChats } from './chat/useCoworkSideChats';
 import type { MessageQuoteHandler } from './composer/draft/messageQuote';
 import {
@@ -969,11 +970,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   });
   homeFileOpenerRef.current = homeApps.openFile;
   const currentSessionMainRunning = useSelector(selectCurrentSessionMainRuntimeRunning);
-  const currentSessionRuntimeRunning = currentSession
+  const automaticErrorRetryActive = useAutomaticErrorRetryActivity(currentSession?.id);
+  const currentSessionRuntimeRunning = automaticErrorRetryActive || (currentSession
     ? currentSession.id.startsWith('temp-')
       ? currentSession.status === 'running'
       : sessionRuntimeActivity[currentSession.id] === true
-    : isStreaming;
+    : isStreaming);
   const currentSessionRuntimeRunningRef = useRef(currentSessionRuntimeRunning);
   currentSessionRuntimeRunningRef.current = currentSessionRuntimeRunning;
   const canonicalGatewaySessionKey = currentSession

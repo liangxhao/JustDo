@@ -2,6 +2,8 @@ import { PRODUCT_NAME } from '@shared/productMetadata';
 
 export const chatTranslations = {
   zh: {
+    coworkErrorRetryChecking: '正在检查执行状态…',
+    coworkErrorRetryProgress: '正在调整方法（{attempt}/{max}）',
     coworkReservedSession: '此会话仅用于内部存储，无法作为聊天打开。',
     exportSession: '导出对话',
     coworkSummaryTitle: '摘要',
@@ -725,6 +727,8 @@ export const chatTranslations = {
     composerFeatures: '功能',
   },
   en: {
+    coworkErrorRetryChecking: 'Checking execution status…',
+    coworkErrorRetryProgress: 'Adjusting the approach ({attempt}/{max})',
     coworkReservedSession: 'This session is reserved for internal storage and cannot be opened as a chat.',
     exportSession: 'Export conversation',
     coworkSummaryTitle: 'Summary',

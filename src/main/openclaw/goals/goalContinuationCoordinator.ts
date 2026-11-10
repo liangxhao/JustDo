@@ -95,7 +95,11 @@ interface GoalContinuationCoordinatorDependencies {
     sessionKey: string,
     runId: string,
     nativeSessionId: string,
+    options: { predecessorRunId?: string; businessRetry: boolean },
   ) => void;
+  claimSuccessor?: (predecessorRunId: string, successorRunId: string) => boolean;
+  releaseSuccessor?: (predecessorRunId: string, successorRunId: string) => void;
+  isSuccessorCurrent?: (predecessorRunId: string, successorRunId: string) => boolean;
   onRunFailed: (sessionId: string, runId: string) => void;
   onRunConfirmed: (sessionId: string, runId: string) => void;
   onRunUnknown: (sessionId: string, runId: string) => void;
@@ -192,6 +196,11 @@ export class GoalContinuationCoordinator {
   private readonly snapshots = new Map<string, GoalExecutionSnapshot>();
   private readonly sessionKeys = new Map<string, string>();
   private readonly processedTerminalRuns = new Set<string>();
+  private readonly failedPredecessorRuns = new Set<string>();
+  private readonly technicalPredecessors = new Map<
+    string,
+    { sessionId: string; predecessorRunId: string }
+  >();
   private readonly stoppedSessionIds = new Set<string>();
   private readonly continuationRuns = new Map<string, GoalSessionTarget>();
   private readonly dispatchLanes = new Map<string, GoalDecision>();
@@ -230,6 +239,86 @@ export class GoalContinuationCoordinator {
     this.cancelRetry(sessionId, true);
     this.retryTargets.delete(sessionId);
     this.continuationTargets.delete(sessionId);
+    this.clearTechnicalPredecessors(sessionId);
+  }
+
+  /** Main has already admitted the exact technical successor and native identity. */
+  adoptTechnicalRun(
+    sessionId: string,
+    predecessorRunId: string,
+    runId: string,
+    nativeSessionId: string,
+    nativeLifecycleRevision?: string | null,
+  ): boolean {
+    const sessionKey = this.sessionKeys.get(sessionId);
+    if (!runId || !nativeSessionId || this.stoppedSessionIds.has(sessionId)) return false;
+    // A chat with no observed Goal execution needs no Goal owner handoff.
+    if (!sessionKey || !this.latestRunIds.has(sessionId)) {
+      return !this.snapshots.get(sessionId)?.goalId;
+    }
+    if (
+      this.latestRunIds.get(sessionId) !== predecessorRunId ||
+      this.processedTerminalRuns.has(runId)) return false;
+    const target = this.continuationRuns.get(predecessorRunId) ??
+      this.retryTargets.get(sessionId) ?? this.sessionTargets.get(sessionKey);
+    if (target && (target.sessionId !== nativeSessionId ||
+      (nativeLifecycleRevision !== undefined && target.lifecycleRevision !== undefined &&
+        target.lifecycleRevision !== nativeLifecycleRevision))) return false;
+
+    this.invalidateDecision(sessionId);
+    this.cancelRetry(sessionId, false);
+    this.continuationRuns.delete(predecessorRunId);
+    this.technicalPredecessors.delete(predecessorRunId);
+    this.technicalPredecessors.set(runId, { sessionId, predecessorRunId });
+    this.continuationRuns.set(runId, {
+      sessionId: nativeSessionId,
+      ...(target?.lifecycleRevision === undefined
+        ? nativeLifecycleRevision === undefined ? {} : { lifecycleRevision: nativeLifecycleRevision }
+        : { lifecycleRevision: target.lifecycleRevision }),
+    });
+    this.latestRunIds.set(sessionId, runId);
+    const current = this.snapshots.get(sessionId);
+    this.publish({
+      sessionId,
+      ...(current?.goalId ? { goalId: current.goalId } : {}),
+      phase: GoalExecutionPhase.Running,
+      runId,
+      continuationCount: current?.continuationCount ?? 0,
+      ...(current?.retryAttempt === undefined ? {} : { retryAttempt: current.retryAttempt }),
+      updatedAt: this.now(),
+    });
+    return true;
+  }
+
+  /** Only a definite preaccept rejection allows Main to return the original terminal. */
+  rollbackTechnicalRun(sessionId: string, predecessorRunId: string, runId: string): boolean {
+    const handoff = this.technicalPredecessors.get(runId);
+    const target = this.continuationRuns.get(runId);
+    if (handoff?.sessionId !== sessionId || handoff.predecessorRunId !== predecessorRunId ||
+      !target || this.latestRunIds.get(sessionId) !== runId ||
+      this.processedTerminalRuns.has(runId) || this.stoppedSessionIds.has(sessionId)) return false;
+    this.invalidateDecision(sessionId);
+    this.continuationRuns.delete(runId);
+    this.technicalPredecessors.delete(runId);
+    this.continuationRuns.set(predecessorRunId, target);
+    this.latestRunIds.set(sessionId, predecessorRunId);
+    const current = this.snapshots.get(sessionId);
+    this.publish({
+      sessionId,
+      ...(current?.goalId ? { goalId: current.goalId } : {}),
+      phase: GoalExecutionPhase.Running,
+      runId: predecessorRunId,
+      continuationCount: current?.continuationCount ?? 0,
+      ...(current?.retryAttempt === undefined ? {} : { retryAttempt: current.retryAttempt }),
+      updatedAt: this.now(),
+    });
+    return true;
+  }
+
+  private clearTechnicalPredecessors(sessionId: string): void {
+    for (const [runId, handoff] of this.technicalPredecessors) {
+      if (handoff.sessionId === sessionId) this.technicalPredecessors.delete(runId);
+    }
   }
 
   /** A change notification may recheck retained settlement, but cannot create authority. */
@@ -408,6 +497,7 @@ export class GoalContinuationCoordinator {
   clearSession(sessionId: string): void {
     this.invalidateDecision(sessionId);
     this.continuationTargets.delete(sessionId);
+    this.clearTechnicalPredecessors(sessionId);
     this.dependencies.eventAdmission.clearSession(sessionId);
     const sessionKey = this.sessionKeys.get(sessionId);
     if (sessionKey) this.sessionTargets.delete(sessionKey);
@@ -463,6 +553,8 @@ export class GoalContinuationCoordinator {
     this.snapshots.clear();
     this.sessionKeys.clear();
     this.processedTerminalRuns.clear();
+    this.failedPredecessorRuns.clear();
+    this.technicalPredecessors.clear();
     this.stoppedSessionIds.clear();
     this.continuationRuns.clear();
     this.dispatchLanes.clear();
@@ -642,6 +734,7 @@ export class GoalContinuationCoordinator {
 
     const knownTarget = this.continuationRuns.get(event.runId);
     this.continuationRuns.delete(event.runId);
+    this.technicalPredecessors.delete(event.runId);
     const terminalStatus = this.terminalGoalRuns.get(event.runId) ?? null;
     this.terminalGoalRuns.delete(event.runId);
     for (const key of this.pendingGoalUpdates.keys()) {
@@ -652,6 +745,7 @@ export class GoalContinuationCoordinator {
     const latestRunId = this.latestRunIds.get(sessionId);
     if (latestRunId && latestRunId !== event.runId) return;
     if (!latestRunId) this.latestRunIds.set(sessionId, event.runId);
+    if (event.aborted || event.phase === 'error') this.failedPredecessorRuns.add(event.runId);
     let terminalTarget = event.sessionId
       ? knownTarget?.sessionId === event.sessionId ? knownTarget : { sessionId: event.sessionId }
       : knownTarget ?? this.sessionTargets.get(event.sessionKey);
@@ -1049,10 +1143,21 @@ export class GoalContinuationCoordinator {
       });
     }
     const runId = randomUUID();
+    if (predecessorRunId &&
+      this.dependencies.claimSuccessor?.(predecessorRunId, runId) === false) return;
+    if (predecessorRunId &&
+      this.dependencies.isSuccessorCurrent?.(predecessorRunId, runId) === false) {
+      this.dependencies.releaseSuccessor?.(predecessorRunId, runId);
+      return;
+    }
     this.continuationRuns.set(runId, target);
     decision.runId = runId;
     this.latestRunIds.set(sessionId, runId);
-    this.dependencies.onRunAccepted(sessionId, sessionKey, runId, target.sessionId);
+    this.dependencies.onRunAccepted(sessionId, sessionKey, runId, target.sessionId, {
+      ...(predecessorRunId ? { predecessorRunId } : {}),
+      businessRetry: !enforceMaxContinuationTurns ||
+        Boolean(predecessorRunId && this.failedPredecessorRuns.has(predecessorRunId)),
+    });
     try {
       // Normal chat.send turns receive OpenClaw's native bounded active-Goal context. Automatic
       // continuations use the lower-level agent RPC so the synthetic prompt stays out of history
@@ -1108,6 +1213,7 @@ export class GoalContinuationCoordinator {
         isDefinitiveSessionGoalGatewayError(error) ||
         (error && typeof error === 'object' && 'requestSent' in error && error.requestSent === false)
       ) {
+        if (predecessorRunId) this.dependencies.releaseSuccessor?.(predecessorRunId, runId);
         this.continuationRuns.delete(runId);
         this.dependencies.onRunFailed(sessionId, runId);
         decision.runId = predecessorRunId;
@@ -1326,7 +1432,10 @@ export class GoalContinuationCoordinator {
     this.processedTerminalRuns.add(runId);
     if (this.processedTerminalRuns.size > 512) {
       const oldest = this.processedTerminalRuns.values().next().value;
-      if (oldest) this.processedTerminalRuns.delete(oldest);
+      if (oldest) {
+        this.processedTerminalRuns.delete(oldest);
+        this.failedPredecessorRuns.delete(oldest);
+      }
     }
   }
 

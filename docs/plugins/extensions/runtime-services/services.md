@@ -1,5 +1,16 @@
 # Runtime Services 通用运行能力
 
+## 精确执行失败代码
+
+`runtimeServices.executionFailure` 是 `operator.read` 的窄只读接口。调用方提供精确的
+`sessionKey`、`sessionId`、`lifecycleRevision`（未分配时显式为 null）和 `runId`。
+Runtime Services 通过公开异步会话和可见原生 transcript SDK 读取当前分支，只返回这组
+身份及最后一条对应 assistant 消息的结构化 `errorCode`；没有匹配失败时返回 null。
+读取前后均核对 SID 和 lifecycle revision，不返回原始错误、参数、消息正文或凭据。
+该接口不能证明整轮已经结算；Main 必须另行关联精确 `executionSettled:true` 回执，
+不能根据失败代码推断工具权限、原始发送授权或终态。当前读取复用原生完整可见分支的
+异步 owner，不宣称支持按 run 索引的局部存储查询。
+
 Runtime Services 还提供通用 CLI / ACP 的会话级 stdio MCP 代理：通过公开 v2 工具工厂按
 精确 native session/lease 提供固定声明的 `external_mcp`，保留服务器原始 schema 和结果；
 每次调用经原生单次审批，不把客户端 MCP 写进全局配置。进程、授权与租约随会话关闭清理。
