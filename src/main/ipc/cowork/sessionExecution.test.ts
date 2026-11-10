@@ -930,6 +930,7 @@ describe('homepage App adoption at first-message admission', () => {
     const { WorkspaceAppSessions } = await import('../../plugins/mcp/workspaceAppSession');
     const workspaces = new WorkspaceAppSessions({
       getStore: () => store as unknown as CoworkStore,
+      waitForStartup: async assertCurrent => { assertCurrent(); },
       request: request as never,
       captureResponseContext: async () => ({ isCurrent: () => true, isResponseError: () => false }),
     });

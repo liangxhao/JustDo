@@ -41,6 +41,7 @@ if (!process.versions.electron) {
   });
   const config = { workingDirectory: output, permissionMode: 'auto', allowMainAgentSwitch: false };
   const service = new WorkspaceAppSessions({
+    waitForStartup: async assertCurrent => { assertCurrent(); },
     getStore: () => ({ getConfig: () => config, getAgent: () => ({ enabled: true }) }),
     captureResponseContext: async () => ({ isCurrent: () => true, isResponseError: () => false }),
     request: async (method, params, options) => {

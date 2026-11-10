@@ -95,6 +95,7 @@ const admission = compile(functions(path.join(source, 'src/state/agent-database-
       let creates = 0, reads = 0;
       const failure = pending(kind !== 'uncorrelated');
       const workspaces = new WorkspaceAppSessions({
+        waitForStartup: async assertCurrent => { assertCurrent(); },
         getStore: () => ({ getConfig: () => ({ workingDirectory: fixture, permissionMode: 'auto' }), getAgent: () => ({ enabled: true }) }),
         captureResponseContext: async () => capture(),
         request: async (method, params, options) => {

@@ -45,6 +45,7 @@ export function registerMcpAppHandlers(deps: Dependencies): void {
       // A generic RPC port cannot establish native transport correlation.
       // Production supplies Main's shared workspace owner with that evidence.
       captureResponseContext: async () => null,
+      waitForStartup: async () => { throw new Error('Gateway is unavailable'); },
     });
   const target = (id: unknown) => {
     const current = session(id);

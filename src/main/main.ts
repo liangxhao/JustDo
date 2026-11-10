@@ -279,6 +279,7 @@ import { buildManagedLocalTtsConfig } from './openclaw/config/speech/localTtsCon
 import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
 import { createEngineDiagnosticsCollector } from './openclaw/runtime/engineDiagnostics';
 import { ensureExecutionReady } from './openclaw/runtime/executionReadiness';
+import { waitForGatewayStartup } from './openclaw/runtime/gatewayStartup';
 import { acquireOpenClawRuntimeDevLease } from './openclaw/runtime/launch/openclawRuntimeDevLease';
 import {
   OpenClawEngineManager,
@@ -1865,6 +1866,10 @@ if (agentBridgeArgv) {
 
   const workspaceAppSessions = new WorkspaceAppSessions({
     getStore: getCoworkStore,
+    waitForStartup: assertCurrent => {
+      assertCurrent();
+      return waitForGatewayStartup({ port: openClawEngineManager!.getGatewayPort(), assertCurrent });
+    },
     request: <T>(method: string, params?: unknown, options?: GatewayRequestOptions) =>
       getCoworkEngineService().requestGateway<T>(method, params, options),
     captureResponseContext: async () => {
@@ -1875,12 +1880,16 @@ if (agentBridgeArgv) {
       const manager = openClawEngineManager;
       const context = adapter?.captureGatewayResponseContext();
       if (!context || !adapter || !router || !manager) return null;
+      const processGeneration = manager.getGatewayProcessGeneration();
+      const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
       return {
         isResponseError: context.isResponseError,
         isCurrent: () =>
           !appShutdown.isQuitting() &&
           coworkEngineService === service &&
           openClawEngineManager === manager &&
+          manager.getGatewayProcessGeneration() === processGeneration &&
+          manager.getGatewayLifecycleGeneration() === lifecycleGeneration &&
           service.getCurrentRouter() === router &&
           service.getRuntimeAdapter() === adapter &&
           context.isCurrent(),

@@ -55,6 +55,7 @@ function fixture() {
     return { ok: true, deleted: true };
   });
   const productCreate = vi.fn();
+  const waitForStartup = vi.fn(async (assertCurrent: () => void) => { assertCurrent(); });
   const service = new WorkspaceAppSessions({
     getStore: () =>
       ({
@@ -64,6 +65,7 @@ function fixture() {
       }) as never,
     request: request as never,
     captureResponseContext,
+    waitForStartup,
   });
   const emitter = new EventEmitter();
   const owner = Object.assign(emitter, { id: 17, isDestroyed: () => false }) as unknown as WebContents;
@@ -76,6 +78,7 @@ function fixture() {
     sessions,
     productCreate,
     captureResponseContext,
+    waitForStartup,
     advanceGeneration: () => { generation++; },
     pending: (overrides: Record<string, unknown> = {}, correlated = true) => {
       const error = Object.assign(new Error('Agent main inspection pending'), {
@@ -98,6 +101,55 @@ describe('homepage native App workspace ownership', () => {
       isMainFrame: true, isSameDocument: false,
     });
   };
+
+  it('shares startup waiting before inspecting or creating a workspace', async () => {
+    const f = fixture();
+    let ready!: () => void;
+    f.waitForStartup.mockImplementationOnce(() => new Promise(resolve => { ready = resolve; }));
+    const first = f.service.prepare(f.owner, f.input);
+    const second = f.service.prepare(f.owner, f.input);
+    await vi.waitFor(() => expect(ready).toBeTypeOf('function'));
+    expect(f.waitForStartup).toHaveBeenCalledTimes(1);
+    expect(f.request).not.toHaveBeenCalled();
+    ready();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(b);
+    expect(f.created()).toHaveLength(1);
+    await expect(f.service.prepare(f.owner, f.input)).resolves.toEqual(a);
+    expect(f.waitForStartup).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows an explicit reread after startup observation fails before any creation', async () => {
+    const f = fixture();
+    f.waitForStartup.mockRejectedValueOnce(new Error('Startup timed out'));
+    await expect(f.service.prepare(f.owner, f.input)).rejects.toThrow('Startup timed out');
+    expect(f.request).not.toHaveBeenCalled();
+    expect(logCalls('warn')).toContainEqual(['[WorkspaceAppSessions] Preparation failed:',
+      expect.objectContaining({ stage: 'startup', createIssued: false, count: 0 })]);
+    await f.service.prepare(f.owner, f.input);
+    expect(f.waitForStartup).toHaveBeenCalledTimes(2);
+    expect(f.created()).toHaveLength(1);
+  });
+
+  it.each(['generation', 'folder', 'navigation'] as const)('does not create after %s changes during startup waiting', async kind => {
+    const f = fixture();
+    let ready!: () => void;
+    f.waitForStartup.mockImplementationOnce(() => new Promise(resolve => { ready = resolve; }));
+    const pending = f.service.prepare(f.owner, f.input);
+    const observed = expect(pending).rejects.toThrow(kind === 'folder' ? 'current' : 'changed');
+    await vi.waitFor(() => expect(ready).toBeTypeOf('function'));
+    if (kind === 'generation') f.advanceGeneration();
+    if (kind === 'folder') f.configure({ workingDirectory: path.resolve('changed') });
+    if (kind === 'navigation') navigate(f.owner);
+    ready();
+    await observed;
+    expect(f.request).not.toHaveBeenCalled();
+    if (kind === 'generation') {
+      await f.service.prepare(f.owner, f.input);
+      expect(f.waitForStartup).toHaveBeenCalledTimes(2);
+      expect(f.created()).toHaveLength(1);
+    }
+  });
 
   it('prepares across more than eight reloads of the same window without exhausting its quota', async () => {
     const f = fixture();

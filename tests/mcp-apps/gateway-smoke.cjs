@@ -19,6 +19,7 @@ const { pathToFileURL } = require('node:url');
   const receiptsPath = path.join(state, 'receipts.json');
   const drawio = process.argv.includes('--drawio');
   const firstSend = process.argv.includes('--first-send');
+  const workspaceStartup = process.argv.includes('--workspace-startup');
   assert.ok(!firstSend || drawio, '--first-send requires --drawio');
   const modelInputs = [];
   const model = firstSend
@@ -260,16 +261,19 @@ const { pathToFileURL } = require('node:url');
     console.log('Isolated Gateway hello ready');
     for (const method of ['mcp.app.cancel', 'mcp.app.release'])
       assert.ok(!hello.features.methods.includes(method));
-    if (firstSend) {
+    if (firstSend || workspaceStartup) {
       const serviceFile = path.join(state, 'workspace-sessions.cjs');
       require('esbuild').buildSync({
-        entryPoints: [path.join(root, 'src/main/plugins/mcp/workspaceAppSession.ts')],
+        stdin: {
+          contents: "export { WorkspaceAppSessions } from './src/main/plugins/mcp/workspaceAppSession'; export { waitForGatewayStartup } from './src/main/openclaw/runtime/gatewayStartup';",
+          resolveDir: root,
+        },
         outfile: serviceFile,
         bundle: true,
         platform: 'node',
         format: 'cjs',
       });
-      const { WorkspaceAppSessions } = require(serviceFile);
+      const { WorkspaceAppSessions, waitForGatewayStartup } = require(serviceFile);
       appOwner = Object.assign(new (require('node:events').EventEmitter)(), {
         isDestroyed: () => false,
       });
@@ -279,6 +283,7 @@ const { pathToFileURL } = require('node:url');
         agentId: 'main',
       };
       appWorkspaces = new WorkspaceAppSessions({
+        waitForStartup: assertCurrent => waitForGatewayStartup({ port, assertCurrent }),
         getStore: () => ({
           getConfig: () => ({ workingDirectory: workspace, permissionMode: 'auto' }),
           getAgent: () => ({ enabled: true }),
@@ -306,6 +311,21 @@ const { pathToFileURL } = require('node:url');
     console.log('Isolated native session prepared');
     const catalog = await client.request('mcp.app.discover', scope);
     console.log('Native MCP App discovery returned');
+    if (workspaceStartup) {
+      assert.ok(catalog.servers.some(server =>
+        server.serverName === 'fixture' &&
+        server.entrypoints.some(entry => entry.entrypoint.type === 'global')));
+      const history = await client.request('chat.history', { sessionKey: scope.sessionKey, limit: 10 });
+      assert.equal(history.messages.length, 0, 'Catalog preparation must not submit a model prompt');
+      await appWorkspaces.release(appOwner, appScope.requestId);
+      assert.equal((await client.request('sessions.describe', { key: scope.sessionKey })).session, null);
+      fs.writeFileSync(path.join(state, 'workspace-startup-proof.json'), JSON.stringify({
+        passed: true, nativeStartupSettled: true, nativeCatalog: true,
+        emptyConversation: true, ownedWorkspaceReleased: true,
+      }, null, 2));
+      console.log('Homepage startup, native App catalog and exact workspace cleanup passed without a model request.');
+      return;
+    }
     if (historyRecovery) {
       const created = await client.request('mcp.app.launch', {
         ...scope,

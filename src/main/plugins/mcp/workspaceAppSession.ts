@@ -18,9 +18,10 @@ interface Dependencies {
   getStore: () => CoworkStore;
   request: <T>(method: string, params: unknown, options?: GatewayRequestOptions) => Promise<T>;
   captureResponseContext: () => Promise<GatewayResponseContext | null>;
+  waitForStartup: (assertCurrent: () => void) => Promise<void>;
 }
 interface WorkspaceEntry {
-  stage: 'transport' | 'inspection' | 'creation';
+  stage: 'transport' | 'startup' | 'inspection' | 'creation';
   signature: string;
   released: boolean;
   productSessionId: string;
@@ -245,6 +246,11 @@ export class WorkspaceAppSessions {
           assertOwnerCurrent();
           next.responseContext = await this.deps.captureResponseContext();
           assertCurrent();
+          // A connected Gateway can still publish background database changes
+          // that invalidate creation facts. Wait on its native startup probe.
+          next.stage = 'startup';
+          await this.deps.waitForStartup(assertCurrent);
+          assertCurrent();
           return this.create(scope, next, assertCurrent);
         }).then(result => {
           next.creationSettled = true;
@@ -252,9 +258,12 @@ export class WorkspaceAppSessions {
         }).catch(error => {
           let current = false;
           try { assertCurrent(); current = true; } catch { /* Retain revoked or uncertain ownership. */ }
-          if (current && !next.createIssued && this.isInspectionPending(error, scope.agentId, next.responseContext)) {
-            // No automatic retry: a later explicit preparation may reserve a new
-            // owner only after this read-only, correlated rejection was observed.
+          if (!next.createIssued && (next.stage === 'startup' ||
+              (current && this.isInspectionPending(error, scope.agentId, next.responseContext)))) {
+            // No creation was dispatched: only a later explicit preparation may
+            // retry startup observation or a correlated inspection rejection.
+            // Startup cancellation may retire the transport itself; the exact
+            // map/entry check still prevents it from removing a successor.
             if (this.owners.get(owner) === entries && entries.get(scope.requestId) === next) {
               entries.delete(scope.requestId);
               if (!entries.size) this.owners.delete(owner);
