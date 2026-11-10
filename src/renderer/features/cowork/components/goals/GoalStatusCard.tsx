@@ -90,25 +90,6 @@ const GoalElapsed = ({ goal }: { goal: SessionGoal }) => {
   );
 };
 
-export const formatGoalTokenCount = (value: number): string => {
-  if (value < 1_000) return String(Math.floor(value));
-  if (value < 1_000_000) return `${(value / 1_000).toFixed(value < 10_000 ? 1 : 0)}k`;
-  return `${(value / 1_000_000).toFixed(value < 10_000_000 ? 1 : 0)}m`;
-};
-
-const formatGoalUsage = (goal: SessionGoal): string | null => {
-  if (goal.tokenBudget !== undefined) {
-    return i18nService
-      .t('coworkGoalTokenBudget')
-      .replace('{used}', formatGoalTokenCount(goal.tokensUsed))
-      .replace('{budget}', formatGoalTokenCount(goal.tokenBudget));
-  }
-  if (goal.tokensUsed <= 0) return null;
-  return i18nService
-    .t('coworkGoalTokensUsed')
-    .replace('{used}', formatGoalTokenCount(goal.tokensUsed));
-};
-
 interface GoalObjectiveEditorProps {
   objective: string;
   canEdit: boolean;
@@ -312,7 +293,6 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
   const status = goal?.status ?? SessionGoalStatus.Active;
   const rawObjective = goal?.objective ?? pendingObjective ?? '';
   const objective = extractGoalFollowUpRequest(`/goal start ${rawObjective}`) ?? rawObjective;
-  const usage = goal ? formatGoalUsage(goal) : null;
   const matchedExecution =
     goal && execution && (!execution.goalId || execution.goalId === goal.id) ? execution : null;
   const effectiveStatus =
@@ -451,9 +431,6 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
             </span>
           )}
           {goal && <GoalElapsed goal={goal} />}
-          {usage && (
-            <span className="flex-shrink-0 text-[10px] tabular-nums text-secondary">{usage}</span>
-          )}
           {live ? (
             <span className="flex min-w-0 items-center gap-1.5 text-[10px] text-secondary">
               <ArrowPathIcon className="h-3 w-3 flex-shrink-0 animate-spin text-primary" />

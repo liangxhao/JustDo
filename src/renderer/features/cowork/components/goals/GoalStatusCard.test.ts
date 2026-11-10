@@ -6,11 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
-import GoalStatusCard, {
-  formatGoalElapsed,
-  formatGoalTokenCount,
-  goalElapsedEnd,
-} from './GoalStatusCard';
+import GoalStatusCard, { formatGoalElapsed, goalElapsedEnd } from './GoalStatusCard';
 
 const activeGoal = {
   schemaVersion: 1 as const,
@@ -108,8 +104,8 @@ describe('GoalStatusCard', () => {
     expect(rendered).toContain(`>${i18nService.t('coworkGoalPause')}<`);
     expect(rendered).not.toContain(`>${i18nService.t('coworkGoalContinue')}<`);
     expect(rendered).not.toContain(i18nService.t('coworkGoalMarkComplete'));
-    expect(rendered).toContain('42k');
-    expect(rendered).toContain('50k');
+    expect(rendered).not.toContain('42k');
+    expect(rendered).not.toContain('50k');
     expect(rendered).toContain(i18nService.t('coworkGoalEdit'));
   });
 
@@ -183,7 +179,6 @@ describe('GoalStatusCard', () => {
       ),
     ).toBe(4_000);
     expect(goalElapsedEnd(activeGoal, 9_000)).toBe(9_000);
-    expect(formatGoalTokenCount(42_000)).toBe('42k');
   });
 
   it('keeps an active goal live while its execution snapshot is not matched yet', () => {
