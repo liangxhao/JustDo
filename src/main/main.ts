@@ -303,6 +303,7 @@ import { AppApprovalStore } from './plugins/app/approvalStore';
 import { startAppDevelopmentAssets } from './plugins/app/developmentAssets';
 import { AppPluginManager, discoverAppCandidates } from './plugins/app/manager';
 import { ensureAppPluginRuntimeReady } from './plugins/app/runtimeReadiness';
+import { appPluginStoragePaths } from './plugins/app/storage';
 import { WorkspaceAppSessions } from './plugins/mcp/workspaceAppSession';
 import { SkillWorkshopService } from './plugins/skills/skillWorkshopService';
 import {
@@ -575,13 +576,15 @@ let cliExternalSessionStore: ExternalSessionStore | null = null;
 let appPlugins: AppPluginManager | undefined;
 let stopAppDevelopmentAssets: (() => Promise<void>) | undefined;
 let appApprovalStore: AppApprovalStore | undefined;
+const getAppPluginStoragePaths = () =>
+  appPluginStoragePaths(getOpenClawEngineManager().getStateDir());
 const getAppApprovalStore = () =>
   (appApprovalStore ??= new AppApprovalStore(
-    path.join(app.getPath('userData'), 'app-plugins', 'approvals.json'),
+    getAppPluginStoragePaths().approvals,
   ));
 const getAppPlugins = (): AppPluginManager =>
   (appPlugins ??= new AppPluginManager({
-    retentionRoot: path.join(app.getPath('userData'), 'app-plugins', 'artifacts'),
+    retentionRoot: getAppPluginStoragePaths().artifacts,
     withStoppedGateway: operation =>
       getOpenClawEngineManager().withStoppedGatewayForMutation(operation),
     isGatewayConnected: () => !!getOpenClawRuntimeAdapter()?.getGatewayClient(),
@@ -612,7 +615,7 @@ const getAppPlugins = (): AppPluginManager =>
         getOpenClawEngineManager().getRuntimeRoot(),
         getOpenClawExtensionImportService().listInstalled(),
         await getAppApprovalStore().read(),
-        path.join(app.getPath('userData'), 'app-plugins', 'artifacts'),
+        getAppPluginStoragePaths().artifacts,
         await getAppApprovalStore().history(),
       ),
     broadcast: (channel, payload) =>

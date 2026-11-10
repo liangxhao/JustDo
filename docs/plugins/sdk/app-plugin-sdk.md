@@ -65,6 +65,12 @@ directory and verify its `.owner.json` receipt. The resolver never creates a
 directory, migrates data or falls back to another path. Missing preparation is
 unavailable; do not construct a substitute path.
 
+The same `plugin-data/` root contains host-owned `.host/approvals.json` and
+`.host/artifacts/`. The leading-dot name is outside the plugin ID namespace and
+cannot be claimed or removed as private plugin data. Plugins keep using their
+existing `plugin-data/<plugin-id>/` path; the host-owned subdirectory does not
+change the SDK contract.
+
 The optional declaration
 `"migrateLegacyDirectory":{"requiredFiles":["selection.json"]}` claims only the
 same plugin's former `<state>/<plugin-id>` directory. The host verifies the named

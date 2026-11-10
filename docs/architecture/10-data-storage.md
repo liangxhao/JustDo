@@ -41,6 +41,10 @@ flowchart LR
 
 声明受管数据目录的 App 插件通过公开 SDK 访问 `<state>/plugin-data/<plugin-id>/`。默认可清理目录用于模型、私有组件及缓存，更新和停用保留，卸载可选择清理；执行恢复账本可声明保留策略，卸载也不清理。目录归属、策略及安全清理见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。既有业务库和原生历史沿用各自的存储与删除规则。
 
+应用插件的可写存储统一位于 `<state>/plugin-data/`：插件 ID 子目录保存私有数据，
+保留子目录 `.host/` 保存宿主批准记录和不可变代码，写入时由各自存储入口按需创建。
+备份和插件卸载时分别遵守宿主代码、私有数据与原生历史的归属。
+
 ## 2. 初始化与兼容规则
 
 ### 原生关闭与 WAL
@@ -619,7 +623,7 @@ Main KV `activity.reportingSchedule` 只保存北京时间日期、已预留窗�
 
 ### 通用插件资源保护账本
 
-应用资源保护账本 `app_plugin_resources` 位于同一产品库，以 owner ID 和 resource ID 唯一标识资源，并绑定 artifact hash，保存元数据身份和删除围栏，不保存消息。插件 schema 初始化使用相同数据库连接；失败不能放行受保护删除。跨 hash 采用必须显式确认旧完整集合，空投影不能擦除保护。外部应用代码批准及历史批准 hash 保存于 `app-plugins/approvals.json`，不可变已批准代码保留于 `app-plugins/artifacts/`，只恢复账本引用的旧版本清理。
+应用资源保护账本 `app_plugin_resources` 位于同一产品库，以 owner ID 和 resource ID 唯一标识资源，并绑定 artifact hash，保存元数据身份和删除围栏，不保存消息。插件 schema 初始化使用相同数据库连接；失败不能放行受保护删除。跨 hash 采用必须显式确认旧完整集合，空投影不能擦除保护。外部应用代码批准及历史批准 hash 保存于 `<state>/plugin-data/.host/approvals.json`，不可变已批准代码保留于同一宿主目录的 `artifacts/`，只恢复账本引用的旧版本清理。
 
 完整可信清单确认可选插件已移除时，仅按 `owner_id` 解除该插件的宿主资源关联，不按共享的 `resource_id` 清除其他插件保护。插件业务表、助手、产品会话、原生历史和未确认执行的安全回执均保留；装回插件后重新读取既有元数据并登记关联。坏包、整体库存未知和数据库读取失败不等同于明确卸载，不通过空投影推断资源或执行已完成。此行为不新增数据库表或 transcript 缓存。
 
