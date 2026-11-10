@@ -14,6 +14,7 @@ import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import type { OpenClawModelsListResult } from '@shared/openclaw/models';
 import type { PermissionMode } from '@shared/security/approvals';
+import { flushSync } from 'react-dom';
 
 import {
   addGroup,
@@ -784,6 +785,19 @@ export class CoworkService {
     const pendingTemporarySessionId = temporarySessionId?.startsWith('temp-')
       ? temporarySessionId
       : undefined;
+    const publishPromotedSession = (session: CoworkSession, publish: () => void): void => {
+      const beforeSessionSelected = hooks.beforeSessionSelected;
+      if (!beforeSessionSelected) {
+        publish();
+        return;
+      }
+      // A Redux selection can commit before queued local workspace state.
+      // Publish both together so the native surface never observes an empty owner.
+      flushSync(() => {
+        beforeSessionSelected(session);
+        publish();
+      });
+    };
     let dispatchedSessionId: string | undefined;
     const nativeStart: InitialNativeStart = { cancelled: false, deleted: false };
     const stopDispatch =
@@ -822,20 +836,22 @@ export class CoworkService {
             }
             const preparedSession = { ...row.session, status: 'running' as const };
             nativeStart.sessionId = preparedSession.id;
-            hooks.beforeSessionSelected?.(preparedSession);
-            dispatchedSessionId = preparedSession.id;
-            // Promotion can beat the asynchronous session-activity hydration.
-            // Preserve Stop while this exact initial submission awaits admission.
-            this.markSessionInProgress(preparedSession.id);
-            const provisionalActivityVersion = this.runtimeActivityVersions.get(preparedSession.id);
-            store.dispatch(addSession({ session: preparedSession, select: true }));
-            store.dispatch(
-              setPlanModeState({
-                sessionId: preparedSession.id,
-                enabled: options.planMode ?? false,
-                ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
-              }),
-            );
+            let provisionalActivityVersion: number | undefined;
+            publishPromotedSession(preparedSession, () => {
+              dispatchedSessionId = preparedSession.id;
+              // Promotion can beat the asynchronous session-activity hydration.
+              // Preserve Stop while this exact initial submission awaits admission.
+              this.markSessionInProgress(preparedSession.id);
+              provisionalActivityVersion = this.runtimeActivityVersions.get(preparedSession.id);
+              store.dispatch(addSession({ session: preparedSession, select: true }));
+              store.dispatch(
+                setPlanModeState({
+                  sessionId: preparedSession.id,
+                  enabled: options.planMode ?? false,
+                  ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
+                }),
+              );
+            });
             try {
               return await hooks.dispatchInitialTurn!(request, () => nativeStart.cancelled);
             } catch (error) {
@@ -864,9 +880,11 @@ export class CoworkService {
         // Adoption can finish before dispatch or after navigation. Move the
         // retained canvas to its canonical owner without changing navigation.
         const select = store.getState().cowork.currentSession?.id === temporarySessionId;
-        hooks.beforeSessionSelected?.(result.session);
-        dispatchedSessionId = result.session.id;
-        store.dispatch(addSession({ session: result.session, select }));
+        const adoptedSession = result.session;
+        publishPromotedSession(adoptedSession, () => {
+          dispatchedSessionId = adoptedSession.id;
+          store.dispatch(addSession({ session: adoptedSession, select }));
+        });
       }
       if (result.success && result.session) {
         const planModeEnabled = pendingTemporarySessionId
@@ -895,8 +913,12 @@ export class CoworkService {
         const select =
           store.getState().cowork.currentSession?.id ===
           (dispatchedSessionId ?? temporarySessionId);
-        if (select && !dispatchedSessionId) hooks.beforeSessionSelected?.(runningSession);
-        store.dispatch(addSession({ session: runningSession, select }));
+        const publishSession = () => store.dispatch(addSession({ session: runningSession, select }));
+        if (select && !dispatchedSessionId) {
+          publishPromotedSession(runningSession, publishSession);
+        } else {
+          publishSession();
+        }
         store.dispatch(
           setPlanModeState({
             sessionId: runningSession.id,

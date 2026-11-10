@@ -278,7 +278,10 @@ export function renderCoworkHomeWorkspace({
             <div key="mcp-app-panels" className="contents">
               {mcpAppTabs.panels(activeDisplayTabId)}
             </div>
-            {retainedRuntimePanels}
+            {/* Keep live browser and terminal ancestors in the same slot across layouts. */}
+            <div key="retained-runtime-panels" className="contents">
+              {retainedRuntimePanels}
+            </div>
             {recordingReviewTabs.panels(activeDisplayTabId)}
             {filePreviews.map(preview => (
               <FilePreviewDrawer

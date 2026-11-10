@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
 import { BROWSER_AGENT_PANEL_TARGET_ID, BROWSER_GUEST_COMMAND_CHANNEL, BROWSER_GUEST_ZOOM_CHANNEL, type BrowserAgentInteractionState, type BrowserLocalHtmlPreviewResult, type BrowserPanelFaviconUpdatedEvent, type BrowserPanelOpenTabEvent, type BrowserPanelTab,BrowserTabPresentation } from '@shared/browser/browser';
 import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
 import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import React, { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';
+import ts from 'typescript';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDisplayPanel';
 import NewDisplayTabButton from '@/features/cowork/components/display/tabs/NewDisplayTabButton';
@@ -130,6 +134,7 @@ function BrowserPanelHarness({
   embedded = false,
   navigationBarVisible,
   isOpen = true,
+  keepVisible = false,
   onTabsChange,
   onRecordingRetentionChange,
   onAddAnnotation = () => true,
@@ -146,6 +151,7 @@ function BrowserPanelHarness({
   embedded?: boolean;
   navigationBarVisible?: boolean;
   isOpen?: boolean;
+  keepVisible?: boolean;
   onTabsChange?: ComponentProps<typeof BrowserPanel>['onTabsChange'];
   onRecordingRetentionChange?: ComponentProps<typeof BrowserPanel>['onRecordingRetentionChange'];
   onAddAnnotation?: ComponentProps<typeof BrowserPanel>['onAddAnnotation'];
@@ -164,6 +170,7 @@ function BrowserPanelHarness({
       ref={panelRef}
       draftKey={draftKey}
       isOpen={isOpen}
+      keepVisible={keepVisible}
       width={520}
       activeTargetId={activeTargetId}
       onClose={vi.fn()}
@@ -184,6 +191,61 @@ function BrowserPanelHarness({
     />
   );
 }
+
+/** Exercise the real child positions: an unkeyed array can remount despite stable panel keys. */
+const productionRuntimePanelChildren = (relativePath: string) => {
+  const filePath = path.resolve(__dirname, relativePath);
+  const source = ts.createSourceFile(
+    filePath, readFileSync(filePath, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX,
+  );
+  let panel: ts.JsxElement | undefined;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isJsxElement(node) && node.openingElement.tagName.getText(source) === 'CoworkDisplayPanel'
+    ) panel = node;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (!panel) throw new Error(`CoworkDisplayPanel is missing from ${relativePath}`);
+  const neutralize: ts.TransformerFactory<ts.Node> = context => root => {
+    const transform = (node: ts.Node): ts.VisitResult<ts.Node> => {
+      if (
+        (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) &&
+        /^[A-Z]/u.test(
+          (ts.isJsxElement(node) ? node.openingElement.tagName : node.tagName).getText(source),
+        )
+      ) return ts.factory.createJsxExpression(undefined, ts.factory.createNull());
+      if (ts.isJsxExpression(node)) {
+        return node.expression?.getText(source) === 'retainedRuntimePanels'
+          ? node
+          : ts.factory.createJsxExpression(undefined, ts.factory.createNull());
+      }
+      return ts.visitEachChild(node, transform, context);
+    };
+    return ts.visitNode(root, transform) as ts.Node;
+  };
+  const children = ts.factory.createJsxFragment(
+    ts.factory.createJsxOpeningFragment(), panel.children, ts.factory.createJsxJsxClosingFragment(),
+  );
+  const transformed = ts.transform(children, [neutralize]);
+  const expression = ts.createPrinter().printNode(
+    ts.EmitHint.Expression, transformed.transformed[0], source,
+  );
+  transformed.dispose();
+  const script = ts.transpileModule(`(${expression})`, {
+    compilerOptions: { jsx: ts.JsxEmit.React, target: ts.ScriptTarget.ESNext },
+  }).outputText;
+  return new Function('React', 'retainedRuntimePanels', `return ${script}`) as (
+    react: typeof React, panels: React.JSX.Element[],
+  ) => React.JSX.Element;
+};
+
+const homeRuntimePanelChildren = productionRuntimePanelChildren(
+  '../cowork/components/chat/CoworkHomeWorkspace.tsx',
+);
+const sessionRuntimePanelChildren = productionRuntimePanelChildren(
+  '../cowork/components/CoworkView.tsx',
+);
 
 describe('BrowserPanel embedded webview', () => {
   it('does not select another browser tab when replacing the active start page with a tool', async () => {
@@ -525,6 +587,131 @@ describe('BrowserPanel embedded webview', () => {
 
     expect(registerAgentTab).toHaveBeenCalledTimes(1);
     expect(unregisterAgentTab).toHaveBeenCalledTimes(unregisterCount);
+  });
+
+  it('preserves the live page through home, temporary and canonical conversation layouts', async () => {
+    const homeKey = `layout-home-${++nextId}`;
+    const tempKey = `temp-layout-${++nextId}`;
+    const sessionKey = `layout-session-${++nextId}`;
+    const guestIds = new WeakMap<HTMLElement, number>();
+    let nextGuestId = 7;
+    defineWebviewMethod('getWebContentsId', function (this: HTMLElement) {
+      if (!guestIds.has(this)) guestIds.set(this, nextGuestId++);
+      return guestIds.get(this)!;
+    });
+    const panels = (draftKey: string) => [
+      <BrowserPanelHarness
+        key="retained-page-runtime"
+        draftKey={draftKey}
+        embedded
+        isOpen={!draftKey.startsWith('temp-')}
+        keepVisible={draftKey.startsWith('temp-')}
+        initialTabs={[pageTab]}
+      />,
+    ];
+    const view = render(homeRuntimePanelChildren(React, panels(homeKey)));
+    const guest = view.container.querySelector('webview')!;
+    const unsavedInput = document.createElement('input');
+    unsavedInput.value = 'Unsubmitted page content';
+    guest.appendChild(unsavedInput);
+    const nativePageState = { revision: 42 };
+    Object.assign(guest, { nativePageState });
+    await waitFor(() => expect(registerAgentTab).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: homeKey, targetId: pageTab.targetId, webContentsId: 7 }),
+    ));
+    const removedNodes: Node[] = [];
+    const collectRemovedNodes = (records: MutationRecord[]) => {
+      removedNodes.push(...records.flatMap(record => [...record.removedNodes]));
+    };
+    const observer = new MutationObserver(collectRemovedNodes);
+    observer.observe(view.container, { childList: true, subtree: true });
+    onTestFinished(() => observer.disconnect());
+    const expectGuestStayedAttached = () => {
+      collectRemovedNodes(observer.takeRecords());
+      expect(removedNodes.splice(0).some(node => node === guest || node.contains(guest))).toBe(false);
+    };
+
+    for (const [fromKey, toKey] of [[homeKey, tempKey], [tempKey, sessionKey]]) {
+      promoteBrowserPanelTabs(fromKey, toKey);
+      view.rerender(sessionRuntimePanelChildren(React, panels(toKey)));
+
+      expectGuestStayedAttached();
+      expect(view.container.querySelector('webview')).toBe(guest);
+      expect(guest.contains(unsavedInput)).toBe(true);
+      expect(unsavedInput.value).toBe('Unsubmitted page content');
+      expect((guest as HTMLElement & { nativePageState: unknown }).nativePageState).toBe(nativePageState);
+      const temporary = toKey === tempKey;
+      const panel = view.container.querySelector('aside')!;
+      expect(panel.style.opacity).toBe('1');
+      expect(guest.style.opacity).toBe('1');
+      expect(panel.style.pointerEvents).toBe(temporary ? 'none' : '');
+      expect(guest.style.pointerEvents).toBe(temporary ? 'none' : '');
+      expect(panel.hasAttribute('inert')).toBe(temporary);
+      expect(guest.hasAttribute('inert')).toBe(temporary);
+      expect(guest.tabIndex).toBe(temporary ? -1 : 0);
+      expect(unregisterAgentTab).toHaveBeenCalledWith({ sessionId: fromKey, targetId: pageTab.targetId });
+      expect(registerAgentTab).toHaveBeenLastCalledWith(
+        expect.objectContaining({ sessionId: toKey, targetId: pageTab.targetId, webContentsId: 7 }),
+      );
+      expect(loadUrl).not.toHaveBeenCalled();
+      expect(reload).not.toHaveBeenCalled();
+    }
+    expect(registerAgentTab).toHaveBeenCalledTimes(3);
+    expect(unregisterAgentTab).toHaveBeenCalledTimes(2);
+
+    view.rerender(homeRuntimePanelChildren(React, panels(sessionKey)));
+    expectGuestStayedAttached();
+    expect(view.container.querySelector('webview')).toBe(guest);
+    expect(unsavedInput.value).toBe('Unsubmitted page content');
+    expect(loadUrl).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+
+    const nextHomeKey = `layout-next-home-${++nextId}`;
+    view.rerender(homeRuntimePanelChildren(React, [
+      ...panels(sessionKey),
+      <BrowserPanelHarness
+        key="next-home-runtime"
+        draftKey={nextHomeKey}
+        embedded
+        initialTabs={[pageTab]}
+      />,
+    ]));
+    expectGuestStayedAttached();
+    const guests = view.container.querySelectorAll('webview');
+    expect(guests).toHaveLength(2);
+    expect(guests[0]).toBe(guest);
+    expect(guests[1]).not.toBe(guest);
+    expect(guests[1].querySelector('input')).toBeNull();
+    expect(registerAgentTab).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sessionId: nextHomeKey, webContentsId: 8 }),
+    );
+    expect(unregisterAgentTab).not.toHaveBeenCalledWith(
+      { sessionId: sessionKey, targetId: pageTab.targetId },
+    );
+  });
+
+  it('keeps only the selected page visible during promotion without enabling its input', () => {
+    const props = {
+      draftKey: `temp-visible-pages-${++nextId}`,
+      embedded: true,
+      isOpen: false,
+      initialTabs: [
+        pageTab,
+        { ...pageTab, id: 'other-page', targetId: 'other-page', url: 'https://example.org' },
+      ],
+    };
+    const view = render(<BrowserPanelHarness {...props} keepVisible />);
+    const guests = [...view.container.querySelectorAll('webview')];
+    expect(guests.map(guest => guest.style.opacity)).toEqual(['1', '0']);
+    expect(guests.every(guest => guest.hasAttribute('inert'))).toBe(true);
+    expect(guests.every(guest => guest.tabIndex === -1 && guest.style.pointerEvents === 'none')).toBe(true);
+
+    view.rerender(<BrowserPanelHarness {...props} keepVisible={false} />);
+    expect([...view.container.querySelectorAll('webview')]).toEqual(guests);
+    expect(guests.map(guest => guest.style.opacity)).toEqual(['0', '0']);
+    expect(view.container.querySelector('aside')!.style.opacity).toBe('0');
+    expect(loadUrl).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it.each(['canGoBack', 'canGoForward'])(

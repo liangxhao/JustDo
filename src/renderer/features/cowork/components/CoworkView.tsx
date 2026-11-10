@@ -38,6 +38,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { flushSync } from 'react-dom';
 import { useDispatch, useSelector } from 'react-redux';
 
 import { observeChatContentWidth } from '@/app/chatContentWidth';
@@ -1229,25 +1230,25 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         agentId: currentAgentId,
       };
 
-      // Immediately show the session detail page with user message
-      promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, tempSessionId);
-      mcpAppTabs.promote(HOME_DISPLAY_SESSION_KEY, tempSessionId);
-      promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
-      browserPanelRefs.current.forEach(panel =>
-        panel.promoteRecordingSession(HOME_DISPLAY_SESSION_KEY, tempSessionId),
-      );
-      promotePendingBrowserTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
-      dispatch(setCurrentSession(tempSession));
-      dispatch(setPlanMode({ sessionId: tempSessionId, enabled: startInPlanMode }));
-      dispatch(setStreaming(true));
-
-      // Buffer the pending user message until the temporary session render has
-      // switched the ChatController. Applying it synchronously here can still
-      // target the previously selected, running session.
-      pendingPromptRef.current = prompt;
-      pendingSendMotionRef.current = submission?.sendMotionOrigin;
-      pendingAttachmentsRef.current = attachments ?? [];
-      pendingGatewayPromptRef.current = gatewayPrompt;
+      // Local workspace state and Redux selection must reach the same commit.
+      // An intermediate empty display state hides the native workspace surface.
+      flushSync(() => {
+        // Prepare the input for the new owner before its first synchronous render.
+        pendingPromptRef.current = prompt;
+        pendingSendMotionRef.current = submission?.sendMotionOrigin;
+        pendingAttachmentsRef.current = attachments ?? [];
+        pendingGatewayPromptRef.current = gatewayPrompt;
+        promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+        mcpAppTabs.promote(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+        promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+        browserPanelRefs.current.forEach(panel =>
+          panel.promoteRecordingSession(HOME_DISPLAY_SESSION_KEY, tempSessionId),
+        );
+        promotePendingBrowserTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+        dispatch(setCurrentSession(tempSession));
+        dispatch(setPlanMode({ sessionId: tempSessionId, enabled: startInPlanMode }));
+        dispatch(setStreaming(true));
+      });
       debugLog('[CoworkView] handleStartSession:', {
         prompt: prompt.slice(0, 60),
         wrapperRefExists: !!chatWrapperRef.current,
@@ -1351,11 +1352,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
       if (!startedSession && (startError || startCancelled)) {
         if (appWorkspaceRequestId && !pendingStartRef.current?.canonicalSessionId) {
-          homeApps.rollback(tempSessionId);
-          mcpAppTabs.promote(tempSessionId, HOME_DISPLAY_SESSION_KEY);
-          promoteDisplaySession(tempSessionId, HOME_DISPLAY_SESSION_KEY);
-          if (store.getState().cowork.currentSession?.id === tempSessionId)
-            dispatch(clearCurrentSession());
+          flushSync(() => {
+            homeApps.rollback(tempSessionId);
+            mcpAppTabs.promote(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+            promoteDisplaySession(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+            if (store.getState().cowork.currentSession?.id === tempSessionId)
+              dispatch(clearCurrentSession());
+          });
         }
         const failedSessionId =
           pendingStartRef.current?.requestId === requestId
@@ -2327,6 +2330,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   continueBrowserTaskRef.current?.(sessionKey, prompt) ?? Promise.resolve('failed')
                 }
                 isOpen={isWorkspaceVisible && browserVisible && !sessionKey.startsWith('temp-')}
+                keepVisible={isWorkspaceVisible && browserVisible && sessionKey.startsWith('temp-')}
                 width={displayState.browserPanelWidth}
                 activeTargetId={displayState.browserPanelTargetId}
                 onClose={() => {
@@ -3671,6 +3675,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               <div key="mcp-app-panels" className="contents">
                 {mcpAppTabs.panels(activeDisplayTabId)}
               </div>
+              {/* Keep live browser and terminal ancestors in the same slot across layouts. */}
+              <div key="retained-runtime-panels" className="contents">
+                {retainedRuntimePanels}
+              </div>
               {isReviewOpen && (
                 <SessionReviewPanel
                   key={currentSession.id}
@@ -3693,7 +3701,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   }}
                 />
               )}
-              {retainedRuntimePanels}
               {isSubagentsTabOpen && (
                 <div
                   key={`subagents:${currentSession.id}`}

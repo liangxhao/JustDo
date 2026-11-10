@@ -316,6 +316,8 @@ export interface BrowserTabCloseActions {
 interface BrowserPanelProps {
   draftKey: string;
   isOpen: boolean;
+  /** Retain the visible page during owner promotion without enabling interaction. */
+  keepVisible?: boolean;
   width: number;
   activeTargetId: string | null;
   onClose: () => void;
@@ -343,6 +345,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     draftKey,
     capacityFeedbackEnabled = true,
     isOpen,
+    keepVisible = false,
     width,
     activeTargetId,
     onClose,
@@ -365,6 +368,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   },
   ref,
 ) {
+  const isVisible = isOpen || keepVisible;
   const ownerDocument = useOwnerDocument();
   const ownerWindow = useOwnerWindow();
   const navigationBarVisibleRef = useRef(navigationBarVisible);
@@ -2288,7 +2292,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       style={
         {
           display: 'flex',
-          opacity: isOpen ? 1 : 0,
+          opacity: isVisible ? 1 : 0,
           pointerEvents: isOpen ? undefined : 'none',
           ...(!isOpen ? { position: 'absolute' } : {}),
           ...(embedded ? {} : { '--browser-panel-width': `${width}px` }),
@@ -2858,7 +2862,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               plugins={'true' as unknown as boolean}
               className="absolute inset-0 h-full w-full"
               style={{
-                opacity: isOpen && tab.targetId === activeTab?.targetId ? 1 : 0,
+                opacity: isVisible && tab.targetId === activeTab?.targetId ? 1 : 0,
                 pointerEvents: isOpen && tab.targetId === activeTab?.targetId ? undefined : 'none',
               }}
               aria-hidden={!isOpen || tab.targetId !== activeTab?.targetId}
@@ -2868,7 +2872,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           ))}
           {activeTab?.url === 'about:blank' &&
             (renderStartPage ? (
-              isOpen && (
+              isVisible && (
                 <div className="absolute inset-0 z-[5] bg-background">
                   {renderStartPage(url => void submitUrl(url, true))}
                 </div>

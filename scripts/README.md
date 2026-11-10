@@ -458,6 +458,17 @@ sidebar view hides during expansion and returns with the same document on collap
 or unmount. Public network access is blocked; test artifacts stay under
 `.agent-tasks/browser/widget-viewport-*/`.
 
+`node scripts/test/browser/browser-session-handoff-smoke.cjs` checks first-send
+workspace handoff with a real Electron browser page, the production Renderer
+session service, Redux/display state and native workspace manager. It records
+every native visibility update and checks that the guest, document instance,
+unsaved input and document-request count survive home-to-session promotion.
+Admission uses a synthetic local bridge, with an isolated profile and no Gateway
+or application database. Artifacts remain under `.agent-tasks/browser/session-handoff/`.
+Use `--baseline=<git-commit-hash>` to reproduce the earlier service's hide/show
+transition while confirming that the same page was never reloaded; source files
+are not replaced. This fixture does not mount the entire application or installer.
+
 The other `test/browser/` commands cover embedded-browser recording, intervention, PDF/sidebar display, background lifetimes, retries and cron. `test/workspace-window-probe.cjs` exercises workspace windows and uses the fixtures under `tests/workspace-window/`. Their names refer to the embedded browser; Chrome extension verification belongs to its plugin.
 
 ### Plugin host and management
