@@ -193,6 +193,11 @@ type OpenClawExtensionImportServiceDeps = {
 };
 
 const CAPABILITY_REVIEW_OUTPUT_PREFIX = 'JUSTDO_PLUGIN_CAPABILITY_REVIEW=';
+const NETWORK_POLICY_LOCATION = {
+  SOURCE: 'networkPolicySource',
+  PREPARED: 'networkPolicyPreparedSource',
+  INSTALLED: 'networkPolicyInstalled',
+} as const;
 const CAPABILITY_REVIEW_SCRIPT = String.raw`
 import fs from 'node:fs';
 import path from 'node:path';
@@ -2498,6 +2503,20 @@ export class OpenClawExtensionImportService {
     );
   }
 
+  private inspectNetworkPolicy(
+    directory: string,
+    location: typeof NETWORK_POLICY_LOCATION[keyof typeof NETWORK_POLICY_LOCATION],
+  ): void {
+    try {
+      this.deps.outboundHeaderPolicy?.inspectExtension(directory);
+    } catch (error) {
+      throw new Error(t('networkPolicyInspectionFailed')
+        .replace('{location}', t(location))
+        .replace('{reason}', () => error instanceof Error && error.message
+          ? error.message : t('networkPolicyInspectionReasonUnavailable')));
+    }
+  }
+
   private async importPathExclusive(
     sourcePath: string,
     onProgress?: (progress: ExtensionInstallProgress) => void,
@@ -2595,7 +2614,7 @@ export class OpenClawExtensionImportService {
       });
       pluginDirectory = prepared.pluginDirectory;
       extensionId = validateNativePluginDirectory(pluginDirectory);
-      this.deps.outboundHeaderPolicy?.inspectExtension(pluginDirectory);
+      this.inspectNetworkPolicy(pluginDirectory, NETWORK_POLICY_LOCATION.SOURCE);
 
       reportProgress('preparing_runtime', 35);
       const manager = this.deps.getOpenClawEngineManager();
@@ -2613,7 +2632,7 @@ export class OpenClawExtensionImportService {
           installSourcePath = frozenArchivePath ?? installSource.directory;
           retainedInstallSourcePath = installSourcePath;
           extensionId = validateNativePluginDirectory(pluginDirectory);
-          this.deps.outboundHeaderPolicy?.inspectExtension(pluginDirectory);
+          this.inspectNetworkPolicy(pluginDirectory, NETWORK_POLICY_LOCATION.PREPARED);
         }
       }
       // Discovery can name a multi-entry package's children differently from
@@ -2979,7 +2998,7 @@ export class OpenClawExtensionImportService {
             }
             reportOperationProgress(PluginOperationStage.VALIDATING);
             try {
-              this.deps.outboundHeaderPolicy.inspectExtension(installationPath);
+              this.inspectNetworkPolicy(installationPath, NETWORK_POLICY_LOCATION.INSTALLED);
             } catch (error) {
               await convergeInstalledRuntime();
               return {

@@ -1,20 +1,28 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { pipeline } from 'stream/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ZipFile } from 'yazl';
 
+import { extractZipSafely } from '../../core/filesystem/safeZipExtractor';
 import { getLanguage, setLanguage, t } from '../../core/i18n';
 import { sanitizeInstallationFailureReason } from '../installation/installationFailureReason';
 import { inspectExtensionNetworkPolicyManifest } from './extensionNetworkPolicyManifest';
 
 const tempDirectories: string[] = [];
+const validManifest = {
+  schemaVersion: 1,
+  groups: [{ baseUrlWhitelist: ['https://api.example.test/v1/'], headerNames: ['X-User-Account'] }],
+};
 let previousLanguage: ReturnType<typeof getLanguage>;
 
 beforeEach(() => {
   previousLanguage = getLanguage();
+  setLanguage('en');
 });
 
-const createExtension = (manifest: unknown): string => {
+const createExtension = (manifest: unknown = validManifest): string => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-network-policy-'));
   tempDirectories.push(directory);
   fs.writeFileSync(
@@ -26,6 +34,7 @@ const createExtension = (manifest: unknown): string => {
 };
 
 afterEach(() => {
+  vi.restoreAllMocks();
   setLanguage(previousLanguage);
   for (const directory of tempDirectories.splice(0)) {
     fs.rmSync(directory, { recursive: true, force: true });
@@ -53,6 +62,94 @@ const invalidUrlReason = (value: unknown): string => {
 };
 
 describe('inspectExtensionNetworkPolicyManifest', () => {
+  it('accepts the same policy in ZIP packages with different configuration and Chinese or spaced names', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-policy-archive-'));
+    tempDirectories.push(root);
+    const policyText = JSON.stringify(validManifest, null, 2);
+    const manifests = [];
+    for (const name of ['ExampleGenerator', '配置修改 B']) {
+      const archivePath = path.join(root, `${name}.zip`);
+      const extracted = path.join(root, `${name} extracted`);
+      const zip = new ZipFile();
+      zip.addBuffer(Buffer.from(JSON.stringify({
+        id: 'example-generator',
+        configSchema: { type: 'object', properties: { label: { type: 'string', default: name } } },
+      })), `${name}/openclaw.plugin.json`);
+      zip.addBuffer(Buffer.from(policyText), `${name}/outbound-header-policy.json`);
+      const writing = pipeline(zip.outputStream, fs.createWriteStream(archivePath));
+      zip.end();
+      await writing;
+
+      await extractZipSafely(archivePath, extracted);
+      const extensionRoot = path.join(extracted, name);
+      manifests.push(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest);
+
+      expect(fs.readFileSync(path.join(extensionRoot, 'outbound-header-policy.json'), 'utf8')).toBe(policyText);
+    }
+    expect(manifests).toEqual([validManifest, validManifest]);
+  });
+
+  it.each(['zh', 'en'] as const)('identifies a directory instead of a policy file in %s without exposing paths', language => {
+    setLanguage(language);
+    const extensionRoot = createExtension();
+    const manifestPath = path.join(extensionRoot, 'outbound-header-policy.json');
+    fs.unlinkSync(manifestPath);
+    fs.mkdirSync(manifestPath);
+
+    let reason = '';
+    try { inspectExtensionNetworkPolicyManifest(extensionRoot); }
+    catch (error) { reason = (error as Error).message; }
+
+    expect(reason).toContain('outbound-header-policy.json');
+    expect(reason).toContain(t('networkPolicyFileBeforeOpen'));
+    expect(reason).toContain(t('networkPolicyFileNotRegular'));
+    expect(reason).not.toContain(extensionRoot);
+    expect(sanitizeInstallationFailureReason(reason)).toBe(reason);
+  });
+
+  it('accepts the 64 KiB boundary and reports the actual size when it is exceeded', () => {
+    const extensionRoot = createExtension();
+    const manifestPath = path.join(extensionRoot, 'outbound-header-policy.json');
+    fs.writeFileSync(manifestPath, JSON.stringify(validManifest).padEnd(65536, ' '));
+    expect(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest).toEqual(validManifest);
+    fs.appendFileSync(manifestPath, ' ');
+
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('65537 bytes');
+  });
+
+  it('reports an unexpected open-file link count without calling it a hard link and closes the file', () => {
+    const extensionRoot = createExtension();
+    const stat = fs.lstatSync(path.join(extensionRoot, 'outbound-header-policy.json'));
+    vi.spyOn(fs, 'fstatSync').mockReturnValueOnce(Object.assign(stat, { nlink: 0 }));
+    const close = vi.spyOn(fs, 'closeSync');
+
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('reported file link count is 0');
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('distinguishes file identifier mismatches from size or link errors and closes the file', () => {
+    const extensionRoot = createExtension();
+    const stat = fs.lstatSync(path.join(extensionRoot, 'outbound-header-policy.json'));
+    vi.spyOn(fs, 'fstatSync').mockReturnValueOnce(Object.assign(stat, { dev: stat.dev + 1 }));
+    const close = vi.spyOn(fs, 'closeSync');
+
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('file identifiers differ');
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('reports an identity mismatch at path recheck and closes the file', () => {
+    const extensionRoot = createExtension();
+    const stat = fs.lstatSync(path.join(extensionRoot, 'outbound-header-policy.json'));
+    const changed = Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { dev: stat.dev + 1 });
+    vi.spyOn(fs, 'lstatSync').mockReturnValueOnce(stat).mockReturnValueOnce(changed);
+    const close = vi.spyOn(fs, 'closeSync');
+
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow(
+      'outbound-header-policy.json (rechecking the file path): The file identifiers differ',
+    );
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it('normalizes a declarative outbound-header policy', () => {
     const extensionRoot = createExtension({
       schemaVersion: 1,
@@ -184,7 +281,7 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
     fs.writeFileSync(sourcePath, JSON.stringify({ schemaVersion: 1, groups: [] }), 'utf8');
     fs.linkSync(sourcePath, path.join(extensionRoot, 'outbound-header-policy.json'));
 
-    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('unlinked file');
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('reported file link count is 2');
   });
 
   it('rejects a symbolic-link policy manifest when the platform permits creating one', () => {
@@ -200,6 +297,6 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
       throw error;
     }
 
-    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('unlinked file');
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('symbolic link');
   });
 });

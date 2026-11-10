@@ -14,6 +14,13 @@ const MAX_BASE_URLS = 64;
 const MAX_HEADERS = 32;
 const MAX_URL_LENGTH = 2_048;
 const MAX_HEADER_LENGTH = 128;
+const FILE_CHECK = {
+  BEFORE_OPEN: 'networkPolicyFileBeforeOpen',
+  OPENED: 'networkPolicyFileOpened',
+  PATH_RECHECK: 'networkPolicyFilePathRecheck',
+  CONTENT: 'networkPolicyFileContent',
+} as const;
+type FileCheck = typeof FILE_CHECK[keyof typeof FILE_CHECK];
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const FORBIDDEN_HEADER_NAMES = new Set([
   'connection',
@@ -89,6 +96,32 @@ export type ExtensionNetworkPolicyInspection = {
   manifest: ExtensionOutboundHeaderManifestV1;
 };
 
+const fileInspectionError = (check: FileCheck, reason: string): Error =>
+  new Error(t('networkPolicyFileInvalid')
+    .replace('{file}', EXTENSION_OUTBOUND_HEADER_MANIFEST_FILE)
+    .replace('{check}', t(check))
+    .replace('{reason}', reason));
+
+const fileSizeReason = (bytes: number): string => t('networkPolicyFileTooLarge')
+  .replace('{bytes}', String(bytes))
+  .replace('{limit}', String(MAX_MANIFEST_BYTES));
+
+const assertManifestFile = (stat: fs.Stats, check: FileCheck): void => {
+  if (stat.isSymbolicLink()) {
+    throw fileInspectionError(check, t('networkPolicyFileSymbolicLink'));
+  }
+  if (!stat.isFile()) {
+    throw fileInspectionError(check, t('networkPolicyFileNotRegular'));
+  }
+  if (stat.size > MAX_MANIFEST_BYTES) {
+    throw fileInspectionError(check, fileSizeReason(stat.size));
+  }
+  if (stat.nlink !== 1) {
+    throw fileInspectionError(check, t('networkPolicyFileLinkCount')
+      .replace('{count}', String(stat.nlink)));
+  }
+};
+
 export const inspectExtensionNetworkPolicyManifest = (
   extensionRoot: string,
 ): ExtensionNetworkPolicyInspection | null => {
@@ -101,16 +134,7 @@ export const inspectExtensionNetworkPolicyManifest = (
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
-  if (
-    !pathStatBefore.isFile() ||
-    pathStatBefore.isSymbolicLink() ||
-    pathStatBefore.size > MAX_MANIFEST_BYTES ||
-    pathStatBefore.nlink !== 1
-  ) {
-    throw new Error(
-      'The Extension network policy must be a regular, unlinked file no larger than 64 KiB.',
-    );
-  }
+  assertManifestFile(pathStatBefore, FILE_CHECK.BEFORE_OPEN);
   const fileDescriptor = fs.openSync(
     manifestPath,
     fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
@@ -118,35 +142,24 @@ export const inspectExtensionNetworkPolicyManifest = (
   let rawManifest: string;
   try {
     const stat = fs.fstatSync(fileDescriptor);
-    if (
-      !stat.isFile() ||
-      stat.size > MAX_MANIFEST_BYTES ||
-      stat.nlink !== 1 ||
-      stat.dev !== pathStatBefore.dev ||
-      stat.ino !== pathStatBefore.ino
-    ) {
-      throw new Error(
-        'The Extension network policy must be a regular, unlinked file no larger than 64 KiB.',
-      );
+    assertManifestFile(stat, FILE_CHECK.OPENED);
+    if (stat.dev !== pathStatBefore.dev || stat.ino !== pathStatBefore.ino) {
+      throw fileInspectionError(FILE_CHECK.OPENED, t('networkPolicyFileIdentityMismatch'));
     }
     const realManifestPath = fs.realpathSync(manifestPath);
     const relativePath = path.relative(resolvedRoot, realManifestPath);
     if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-      throw new Error('The Extension network policy must stay inside the Extension root.');
+      throw fileInspectionError(FILE_CHECK.PATH_RECHECK, t('networkPolicyFileOutsideRoot'));
     }
     const pathStatAfter = fs.lstatSync(manifestPath);
-    if (
-      !pathStatAfter.isFile() ||
-      pathStatAfter.isSymbolicLink() ||
-      pathStatAfter.nlink !== 1 ||
-      pathStatAfter.dev !== stat.dev ||
-      pathStatAfter.ino !== stat.ino
-    ) {
-      throw new Error('The Extension network policy changed while it was being read.');
+    assertManifestFile(pathStatAfter, FILE_CHECK.PATH_RECHECK);
+    if (pathStatAfter.dev !== stat.dev || pathStatAfter.ino !== stat.ino) {
+      throw fileInspectionError(FILE_CHECK.PATH_RECHECK, t('networkPolicyFileIdentityMismatch'));
     }
     rawManifest = fs.readFileSync(fileDescriptor, 'utf8');
-    if (Buffer.byteLength(rawManifest, 'utf8') > MAX_MANIFEST_BYTES) {
-      throw new Error('The Extension network policy must be no larger than 64 KiB.');
+    const bytes = Buffer.byteLength(rawManifest, 'utf8');
+    if (bytes > MAX_MANIFEST_BYTES) {
+      throw fileInspectionError(FILE_CHECK.CONTENT, fileSizeReason(bytes));
     }
   } finally {
     fs.closeSync(fileDescriptor);

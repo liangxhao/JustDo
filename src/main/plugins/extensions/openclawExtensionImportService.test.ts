@@ -3195,6 +3195,41 @@ describe('OpenClawExtensionImportService', () => {
     }
   });
 
+  it.each(['source', 'prepared'] as const)('identifies the %s location when policy inspection fails before installation', async location => {
+    const sourceDir = path.join(fixtureRoot, 'source');
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(path.join(sourceDir, 'openclaw.plugin.json'), '{"id":"policy-extension"}');
+    const reason = 'outbound-header-policy.json: file identifiers differ (detail $&)';
+    const inspectExtension = vi.fn((directory: string) => {
+      if (location === 'source' || directory !== sourceDir) throw new Error(reason);
+      return null;
+    });
+    const runCommand = vi.fn();
+    const applyPackageMutation = vi.fn(async () => { throw new Error('Installation must not start'); });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => ({
+        buildCliEnvironment: async () => ({
+          env: {}, runtimeRoot: fixtureRoot, openclawEntry: 'fixture.mjs',
+        }),
+      }) as unknown as OpenClawEngineManager,
+      runCommand,
+      outboundHeaderPolicy: {
+        inspectExtension,
+        reconcile: () => ({ enabled: false, groups: [], digest: 'unchanged' }),
+      },
+    });
+
+    const result = await service.importPath(sourceDir, undefined, undefined, { applyPackageMutation });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain(t(location === 'source' ? 'networkPolicySource' : 'networkPolicyPreparedSource'));
+    expect(result.error).toContain(reason);
+    expect(result.installationCommitted).toBeUndefined();
+    expect(inspectExtension).toHaveBeenCalledTimes(location === 'source' ? 1 : 2);
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(applyPackageMutation).not.toHaveBeenCalled();
+  });
+
   it.each(['inspection', 'reconciliation'])(
     'preserves the post-install network policy %s failure stage',
     async failure => {
@@ -3256,6 +3291,10 @@ describe('OpenClawExtensionImportService', () => {
       });
       expect(onOperationProgress).toHaveBeenLastCalledWith('validating');
       expect(runCommand).toHaveBeenCalledOnce();
+      if (failure === 'inspection') {
+        expect(result.error).toContain(t('networkPolicyInstalled'));
+        expect(result.error).toContain('Installed policy inspection failed');
+      }
     },
   );
 
