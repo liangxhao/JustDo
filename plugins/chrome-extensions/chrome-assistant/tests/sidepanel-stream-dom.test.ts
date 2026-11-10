@@ -819,7 +819,7 @@ describe('extension streaming DOM', () => {
     expect(document.querySelector('.process-live details.process-thinking')).toBeNull();
     emit(3, 'assistant', { text: 'Answer' });
     await vi.waitFor(() =>
-      expect(document.querySelector('.assistant')?.textContent?.trim()).toBe('Answer'),
+      expect(document.querySelector('.assistant-content')?.textContent?.trim()).toBe('Answer'),
     );
     const group = document.querySelector<HTMLDetailsElement>('.process-summary-group')!;
     expect(group.open).toBe(false);
@@ -852,7 +852,7 @@ describe('extension streaming DOM', () => {
     const { thread, emit } = await mountThread();
     emit(1, 'assistant', { text: 'Hello' });
     await vi.waitFor(() =>
-      expect(document.querySelector('.message.assistant')?.textContent?.trim()).toBe('Hello'),
+      expect(document.querySelector('.assistant-content')?.textContent?.trim()).toBe('Hello'),
     );
     const laggingHistory = {
       ...thread,
@@ -874,14 +874,14 @@ describe('extension streaming DOM', () => {
     mock.notify('chrome/thread/updated', { threadId: 'one', thread: laggingHistory });
     emit(2, 'assistant', { text: 'Hello world' });
     await vi.waitFor(() =>
-      expect(document.querySelector('.message.assistant')?.textContent?.trim()).toBe('Hello world'),
+      expect(document.querySelector('.assistant-content')?.textContent?.trim()).toBe('Hello world'),
     );
     // The next poll can still carry the older native body. The rich renderer
     // must continue displaying the longer, admitted live projection.
     mock.notify('chrome/thread/updated', { threadId: 'one', thread: laggingHistory });
     emit(3, 'assistant', { text: 'Hello world, still streaming' });
     await vi.waitFor(() =>
-      expect(document.querySelector('.message.assistant')?.textContent?.trim()).toBe(
+      expect(document.querySelector('.assistant-content')?.textContent?.trim()).toBe(
         'Hello world, still streaming',
       ),
     );

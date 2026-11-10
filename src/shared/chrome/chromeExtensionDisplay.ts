@@ -6,6 +6,9 @@ export const ChromeExtensionCompactionKind = {
 
 /** Authenticated presentation facts; none of these fields establishes execution outcome. */
 export interface ChromeExtensionMessageDisplay {
+  /** Native assistant message metadata; never a run completion or model-selection receipt. */
+  timestampMs?: number;
+  modelName?: string;
   nativeFailure?: true;
   stopReason?: 'error' | 'aborted';
   keepVisible?: true;

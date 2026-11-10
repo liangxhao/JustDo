@@ -23,6 +23,19 @@ import {
 import { i18nService } from './chrome-extension-i18n';
 
 const imageRetries = new WeakMap<HTMLImageElement, () => void>();
+
+/** Copy the same normalized text that is rendered, excluding cards and attachments. */
+export function messageCopyText(entry: {
+  role: string;
+  text?: string;
+  rawMessage?: Record<string, unknown>;
+}): string {
+  const raw = entry.rawMessage ?? { role: entry.role, content: entry.text };
+  return normalizeMessage(raw).content
+    .flatMap(item => item.type === 'text' ? [item.text] : [])
+    .join('\n\n');
+}
+
 export function pendingInputLabel(
   state: string,
   incomplete = false,

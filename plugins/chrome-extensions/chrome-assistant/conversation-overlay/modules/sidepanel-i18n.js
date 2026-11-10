@@ -1,5 +1,13 @@
 const translations = {
   en: {
+    assistant: 'Assistant',
+    messageTime: 'Message time',
+    responseModel: 'Response model',
+    copyAnswer: 'Copy answer',
+    copyCode: 'Copy code',
+    code: 'Code',
+    copied: 'Copied',
+    copyFailed: 'Copy failed. Select the text to copy it.',
     approvalRegion: 'Approval request',
     approvalTitle: 'Allow this command?',
     approvalInputTitle: 'Your response is needed',
@@ -189,6 +197,14 @@ const translations = {
       'This conversation can access files outside the task folder and run host commands without approval. Enable full access?',
   },
   zh: {
+    assistant: '助手',
+    messageTime: '消息时间',
+    responseModel: '回复模型',
+    copyAnswer: '复制回答',
+    copyCode: '复制代码',
+    code: '代码',
+    copied: '已复制',
+    copyFailed: '复制失败，请选中文字后复制。',
     approvalRegion: '审批请求',
     approvalTitle: '允许执行此命令？',
     approvalInputTitle: '需要你的回答',

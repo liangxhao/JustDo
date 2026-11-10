@@ -48,4 +48,16 @@ describe('Chrome extension side panel markdown', () => {
     expect(html).toContain('target="_blank"');
     expect(html).toContain('rel="noopener noreferrer"');
   });
+
+  it('wraps fenced and indented code with safe language labels and copy actions', () => {
+    const html = renderMarkdownHtml('```ts\"<img src=x>\n<script>literal</script>\n```\n\n    indented');
+
+    expect(html.match(/class="code-block"/g)).toHaveLength(2);
+    expect(html.match(/class="code-copy"/g)).toHaveLength(2);
+    expect(html).toContain('class="code-block-language">ts&quot;&lt;img');
+    expect(html).toContain('&lt;script&gt;literal&lt;/script&gt;');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('<pre><code>indented\n</code></pre>');
+  });
 });

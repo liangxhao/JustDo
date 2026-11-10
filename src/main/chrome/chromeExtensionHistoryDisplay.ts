@@ -7,6 +7,7 @@ import {
   type ChromeExtensionMessageDisplay,
 } from '../../shared/chrome/chromeExtensionDisplay';
 import { isFailedRunMessage } from '../../shared/openclaw/runFailureDisplay';
+import { isGatewayInjectedModelRef, readModelRef } from '../../shared/providers/modelRef';
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -24,6 +25,20 @@ const PROCESS_BLOCK_TYPES = new Set([
   'toolresult',
 ]);
 const COMPACTION_KINDS = new Set<string>(Object.values(ChromeExtensionCompactionKind));
+const MAX_TIMESTAMP_MS = 8_640_000_000_000_000;
+const MAX_MODEL_NAME_LENGTH = 500;
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+function messageTimestamp(value: unknown): number | undefined {
+  const timestamp = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && ISO_TIMESTAMP.test(value.trim())
+      ? Date.parse(value.trim())
+      : NaN;
+  return Number.isFinite(timestamp) && timestamp > 0 && timestamp <= MAX_TIMESTAMP_MS
+    ? timestamp
+    : undefined;
+}
 
 /** Preserve only this tool's structured native result across the side chat DTO. */
 export function readChromeQuestionResult(value: unknown, toolName: unknown, toolUseId: unknown) {
@@ -59,6 +74,14 @@ export function readChromeExtensionHistoryDisplay(value: unknown): {
   if (!message || outer?.display === false || message.display === false) return {};
   const marker = record(message.__openclaw) ?? record(outer?.__openclaw);
   const display: ChromeExtensionMessageDisplay = {};
+  if (String(message.role ?? '').toLowerCase() === 'assistant') {
+    const timestampMs = [message.timestamp, outer?.timestamp, marker?.recordTimestampMs]
+      .map(messageTimestamp).find(timestamp => timestamp !== undefined);
+    if (timestampMs !== undefined) display.timestampMs = timestampMs;
+    const modelName = readModelRef(message);
+    if (modelName && modelName.length <= MAX_MODEL_NAME_LENGTH && !isGatewayInjectedModelRef(modelName))
+      display.modelName = modelName;
+  }
   const sourceId = marker?.id ?? message.id ?? outer?.id;
   if (typeof sourceId === 'string' && sourceId.trim()) display.sourceId = sourceId;
   const fallback = record(message.openclawStreamFallback ?? outer?.openclawStreamFallback);

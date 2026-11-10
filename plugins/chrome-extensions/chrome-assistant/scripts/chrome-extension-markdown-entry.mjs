@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
 
 const markdown = new MarkdownIt({
   breaks: true,
@@ -6,6 +7,23 @@ const markdown = new MarkdownIt({
   linkify: true,
   typographer: false,
 });
+
+const copyIcon = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>';
+
+function renderCodeBlock(code, info = '') {
+  // Fence metadata is untrusted. Display only its escaped first language token.
+  const language = info.trim().split(/\s+/)[0] || t('code');
+  const escape = markdown.utils.escapeHtml;
+  return '<div class="code-block"><div class="code-block-header">' +
+    `<span class="code-block-language">${escape(language)}</span>` +
+    '<span class="code-copy-status" role="status" aria-live="polite"></span>' +
+    `<button class="code-copy" type="button" aria-label="${escape(t('copyCode'))}" title="${escape(t('copyCode'))}">${copyIcon}</button>` +
+    `</div><pre><code>${escape(code)}</code></pre></div>\n`;
+}
+
+markdown.renderer.rules.fence = (tokens, index) =>
+  renderCodeBlock(tokens[index].content, tokens[index].info);
+markdown.renderer.rules.code_block = (tokens, index) => renderCodeBlock(tokens[index].content);
 
 // Admit disclosure structure without enabling arbitrary message HTML.
 const disclosureTag = /^<(\/?)(details|summary)(?:\s[^<>]*?)?>/i;

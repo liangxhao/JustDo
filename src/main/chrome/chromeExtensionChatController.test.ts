@@ -792,7 +792,7 @@ describe('ChromeExtensionChatController', () => {
         hiddenRichInput,
         { role: 'assistant', content: 'PRIVATE_ASSISTANT', display: false },
         { role: 'user', content, timestamp: 100 },
-        { role: 'assistant', content: 'Real result', timestamp: 300 },
+        { role: 'assistant', content: 'Real result', timestamp: 300, provider: 'internal', model: 'actual-model' },
         { role: 'system', content: 'Real failure', timestamp: 400 },
       ],
       pendingInputs: [
@@ -818,6 +818,7 @@ describe('ChromeExtensionChatController', () => {
       content, 'Real queued request', 'Real result', 'Real failure',
     ]);
     expect(messages[1].pendingInput).toEqual({ id: 'human-pending', state: 'queued' });
+    expect(messages[2].display).toMatchObject({ timestampMs: 300, modelName: 'internal/actual-model' });
     expect(JSON.stringify(messages)).not.toContain('PRIVATE_');
     expect(history.messages).toContain(hiddenRichInput);
   });

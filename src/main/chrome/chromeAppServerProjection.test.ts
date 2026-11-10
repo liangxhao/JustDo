@@ -5,6 +5,19 @@ import { PermissionMode } from '../../shared/security/approvals';
 import { toAppServerThread } from './chromeAppServerProjection';
 import type { ChromeExtensionMessage } from './chromeAppServerTypes';
 
+test('forwards native footer metadata without inventing a turn outcome or model selection', () => {
+  const display = { timestampMs: 1794306645000, modelName: 'internal/actual-model' };
+  const projected = toAppServerThread({
+    id: 'one', title: 'Answer', status: 'idle', createdAt: 1, updatedAt: 1, cwd: '',
+    modelRef: 'internal/selected-model', permissionMode: PermissionMode.Ask,
+  }, [{ role: 'assistant', text: 'Answer', display }]);
+  expect(projected).toMatchObject({ turns: [], chrome: { display: { turns: [{ items: [{ type: 'agentMessage', display }] }] } } });
+  const turn = (projected.chrome as { display: { turns: Array<Record<string, unknown>> } }).display.turns[0];
+  expect(turn).not.toHaveProperty('status');
+  expect(turn).not.toHaveProperty('completedAt');
+  expect(turn).not.toHaveProperty('durationMs');
+});
+
 test('retains structured question results for paired and result-only side chat history', () => {
   const questionResult: QuestionResult = {
     version: 1,

@@ -3,6 +3,37 @@ import { describe, expect, it } from 'vitest';
 import { readChromeExtensionHistoryDisplay, readChromeQuestionResult } from './chromeExtensionHistoryDisplay';
 
 describe('authenticated browser history display metadata', () => {
+  it('keeps only the native assistant message timestamp and actual model', () => {
+    const timestampMs = Date.parse('2026-11-10T10:30:45.000Z');
+    expect(readChromeExtensionHistoryDisplay({
+      timestamp: timestampMs - 5000, model: 'wrong-wrapper-model',
+      message: {
+        role: 'assistant', timestamp: '2026-11-10T18:30:45+08:00',
+        provider: 'internal', model: 'family/model',
+        content: 'Answer', metadata: { token: 'private-token' },
+      },
+    })).toEqual({ display: { timestampMs, modelName: 'internal/family/model' } });
+    expect(readChromeExtensionHistoryDisplay({
+      role: 'assistant', timestamp: timestampMs, modelName: 'internal/native-model',
+    })).toEqual({ display: { timestampMs, modelName: 'internal/native-model' } });
+    expect(readChromeExtensionHistoryDisplay({
+      model: 'wrapper-model', message: { role: 'assistant', content: 'Answer' },
+    })).toEqual({});
+  });
+
+  it('omits absent or untrusted footer metadata without inventing a time or model', () => {
+    for (const timestamp of [undefined, null, 0, -1, Infinity, NaN, 9e15, '123', '11/10/2026', '2026-11-10T10:30:45', 'not a date']) {
+      expect(readChromeExtensionHistoryDisplay({
+        role: 'assistant', timestamp, model: 'gateway-injected', startedAt: 100,
+        updatedAt: 200, modelRef: 'selected-model', content: 'Answer',
+      })).toEqual({});
+    }
+    for (const role of ['user', 'toolResult', 'system'])
+      expect(readChromeExtensionHistoryDisplay({ role, timestamp: 100, model: 'native-model' })).toEqual({});
+    expect(readChromeExtensionHistoryDisplay({ role: 'assistant', timestamp: 100, display: false })).toEqual({});
+    expect(readChromeExtensionHistoryDisplay({ role: 'assistant', model: 'x'.repeat(501) })).toEqual({});
+  });
+
   it('projects question answers only from their matched native result and structured envelope', () => {
     const questionResult = {
       version: 1,

@@ -72,6 +72,7 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/sidepanel-state.js',
   'modules/sidepanel-i18n.js',
   'modules/sidepanel-messages.js',
+  'modules/sidepanel-copy.js',
   'modules/sidepanel-activity.js',
   'modules/sidepanel-approvals.js',
   'modules/sidepanel-approvals.css',

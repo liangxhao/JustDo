@@ -1,4 +1,5 @@
-import { pendingInputLabel, renderRichContent, retryRichImages } from './sidepanel-rich-content.js';
+import { messageCopyText, pendingInputLabel, renderRichContent, retryRichImages } from './sidepanel-rich-content.js';
+import { createCopyController } from './sidepanel-copy.js';
 import { sidePanelText as t } from './sidepanel-i18n.js';
 import { toolInputSummary } from './sidepanel-state.js';
 import { renderMarkdownHtml } from './sidepanel-markdown.js';
@@ -31,6 +32,7 @@ export function createMessageRenderer(
   { readImage, latestButton, processDetailsButton },
 ) {
   const document = container.ownerDocument;
+  const copyController = createCopyController(container);
   const scopes = new Map();
   let currentScope = '';
   let scopeState = null;
@@ -305,6 +307,7 @@ export function createMessageRenderer(
     thinking.querySelector('strong').textContent = process.title;
     const content = thinking.querySelector('.message-detail');
     if (content.sourceText !== process.text) {
+      copyController.invalidate(content);
       content.innerHTML = renderMarkdownHtml(process.text || '');
       content.sourceText = process.text;
     }
@@ -491,6 +494,7 @@ export function createMessageRenderer(
     const { pendingInput, ...content } = entry;
     const signature = JSON.stringify(content);
     if (signature !== node.renderSignature) {
+      copyController.invalidate(bubble);
       bubble.replaceChildren();
       const scope = currentScope;
       renderRichContent(bubble, content, source => readImage(scope, source));
@@ -512,6 +516,93 @@ export function createMessageRenderer(
     } else label?.remove();
   }
 
+  function patchAssistantMessage(node, entry) {
+    node.className = 'message assistant';
+    let content = node.querySelector(':scope > .assistant-content');
+    if (!content) {
+      const heading = document.createElement('div');
+      heading.className = 'assistant-heading';
+      const mark = document.createElement('span');
+      mark.className = 'assistant-mark';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = '✦';
+      const label = document.createElement('span');
+      label.textContent = t('assistant');
+      heading.append(mark, label);
+      content = document.createElement('div');
+      content.className = 'assistant-content markdown-content';
+      const actions = document.createElement('div');
+      actions.className = 'message-actions';
+      const copy = document.createElement('button');
+      copy.className = 'message-copy';
+      copy.type = 'button';
+      copy.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>';
+      copy.title = t('copyAnswer');
+      copy.setAttribute('aria-label', t('copyAnswer'));
+      const status = document.createElement('span');
+      status.className = 'message-copy-status';
+      status.setAttribute('role', 'status');
+      status.setAttribute('aria-live', 'polite');
+      const metadata = document.createElement('div');
+      metadata.className = 'message-metadata';
+      const model = document.createElement('span');
+      model.className = 'message-model';
+      const time = document.createElement('time');
+      time.className = 'message-time';
+      metadata.append(model, time);
+      actions.append(copy, status, metadata);
+      node.append(heading, content, actions);
+    }
+    // Footer enrichment must preserve body selection and in-flight copy feedback.
+    const signature = JSON.stringify({ role: entry.role, text: entry.text, rawMessage: entry.rawMessage });
+    if (signature !== node.renderSignature) {
+      copyController.invalidate(node);
+      content.replaceChildren();
+      const scope = currentScope;
+      renderRichContent(content, entry, source => readImage(scope, source));
+      const copy = node.querySelector(':scope > .message-actions > .message-copy');
+      copy.copyText = messageCopyText(entry);
+      copy.hidden = !copy.copyText.trim();
+      node.renderSignature = signature;
+    } else retryRichImages(content);
+    patchMessageMetadata(node, entry.display);
+  }
+
+  function patchMessageMetadata(node, display) {
+    const metadata = node.querySelector('.message-metadata');
+    const model = metadata.querySelector('.message-model');
+    const modelName = typeof display?.modelName === 'string' ? display.modelName.trim() : '';
+    model.textContent = modelName;
+    model.title = modelName ? `${t('responseModel')}: ${modelName}` : '';
+    if (modelName) model.setAttribute('aria-label', model.title);
+    else model.removeAttribute('aria-label');
+    model.hidden = !modelName;
+    const time = metadata.querySelector('.message-time');
+    const timestamp = display?.timestampMs;
+    const date = typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp > 0
+      ? new Date(timestamp) : null;
+    const validTime = Boolean(date && Number.isFinite(date.getTime()));
+    time.hidden = !validTime;
+    if (validTime) {
+      const language = document.defaultView.navigator.language;
+      time.dateTime = date.toISOString();
+      time.textContent = date.toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit', hour12: false });
+      time.title = `${t('messageTime')}: ${date.toLocaleString(language, {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+      })}`;
+      time.setAttribute('aria-label', time.title);
+    } else {
+      time.textContent = '';
+      time.removeAttribute('datetime');
+      time.removeAttribute('title');
+      time.removeAttribute('aria-label');
+    }
+    metadata.hidden = model.hidden && time.hidden;
+    const actions = metadata.parentElement;
+    actions.hidden = actions.querySelector('.message-copy').hidden && metadata.hidden;
+  }
+
   function renderEntry(entry, index) {
     const key = entryKey(entry, index);
     let node = entryNodes.get(key);
@@ -529,6 +620,7 @@ export function createMessageRenderer(
     if (entry.role === 'completed-process') patchCompletedProcess(node, entry, key);
     else if (entry.role === 'process') patchProcessSummary(node, entry, key);
     else if (entry.role === 'user') patchUserMessage(node, entry);
+    else if (entry.role === 'assistant') patchAssistantMessage(node, entry);
     else if (entry.role === 'live-process') {
       node.className = `message process-live process-live-${entry.item.type}`;
       let list = node.firstElementChild;
@@ -542,6 +634,7 @@ export function createMessageRenderer(
       node.className = `message ${entry.role} markdown-content`;
       const signature = JSON.stringify(entry);
       if (signature !== node.renderSignature) {
+        copyController.invalidate(node);
         // Compaction uses the App's Lit renderer. Keep its host and render
         // anchors so native enrichment patches the same disclosure in place.
         if (entry.role !== 'compaction' && entry.role !== 'question-presentation') node.replaceChildren();
@@ -570,6 +663,7 @@ export function createMessageRenderer(
       rememberDisclosures();
       const changedScope = scope !== currentScope || !scopeState;
       if (changedScope) {
+        copyController.invalidate();
         if (scopeState) {
           scopeState.scrollTop = container.scrollTop;
           scopeState.following = following;
@@ -612,6 +706,7 @@ export function createMessageRenderer(
         nodes.push(node);
       }
       reconcileChildren(container, nodes);
+      copyController.prune();
       const entryKeys = new Set();
       const itemKeys = new Set();
       retainKeys(entries, entryKeys, itemKeys);
@@ -640,6 +735,7 @@ export function createMessageRenderer(
       showLatestButton();
     },
     dispose() {
+      copyController.dispose();
       resizeObserver?.disconnect();
       container.removeEventListener('wheel', onWheel);
       container.removeEventListener('touchstart', onTouchStart);

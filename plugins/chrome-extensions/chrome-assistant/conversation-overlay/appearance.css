@@ -14,6 +14,9 @@
   --chat-error-bg: #2b1d1a;
   --chat-error-border: #65352c;
   --chat-accent: #ff784f;
+  --chat-success: #85c4a3;
+  --chat-warning: #e9bb74;
+  --chat-running: #8ab4f8;
   --chat-send-bg: #3b82f6;
   --chat-send-hover: #60a5fa;
   --chat-send-text: #ffffff;
@@ -34,6 +37,9 @@
   --chat-error-bg: #fff1f0;
   --chat-error-border: #e2b5b0;
   --chat-accent: #ae3b17;
+  --chat-success: #3b785e;
+  --chat-warning: #9b6b1a;
+  --chat-running: #245fbb;
   --chat-send-bg: #4f78e6;
   --chat-send-hover: #3d67d5;
   --chat-send-text: #ffffff;
@@ -53,6 +59,9 @@
   --chat-error-bg: #fff0e6;
   --chat-error-border: #ddb2a1;
   --chat-accent: #9a431d;
+  --chat-success: #496f43;
+  --chat-warning: #8b651f;
+  --chat-running: #426894;
   --chat-send-bg: #4f78e6;
   --chat-send-hover: #3d67d5;
   --chat-send-text: #ffffff;
@@ -72,6 +81,9 @@
   --chat-error-bg: #fff1f0;
   --chat-error-border: #e2b5b0;
   --chat-accent: #a3461c;
+  --chat-success: #3a7359;
+  --chat-warning: #916326;
+  --chat-running: #205ba5;
   --chat-send-bg: #4f78e6;
   --chat-send-hover: #3d67d5;
   --chat-send-text: #ffffff;

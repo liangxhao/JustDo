@@ -146,6 +146,8 @@ OpenClaw 表示为普通工具调用，会以 `toolCall` 展示；工具卡片�
 
 ```ts
 type MessageDisplay = {
+  timestampMs?: number;
+  modelName?: string;
   nativeFailure?: true;
   stopReason?: 'error' | 'aborted';
   keepVisible?: true;
@@ -161,6 +163,11 @@ type MessageDisplay = {
   sourceSegmentId?: string;
 };
 ```
+
+`timestampMs` 与 `modelName` 仅来自该条原生助手消息。前者将合法毫秒时间或带时区的完整 ISO
+时间统一为毫秒，表示消息记录时间；后者保留实际模型身份，限 500 字符并过滤
+`gateway-injected`。缺失字段不以当前时间、会话默认模型或输入框选择填补，
+也不由这两项推断完成状态、结束时间或整轮耗时。
 
 `keepVisible` 为媒体或被过滤的交互内容保留可见边界；工具结果与匹配的调用合并时也保留该字段，
 不把工具错误变成 `nativeFailure`。纯未支持内容只返回安全占位种类，客户端显示本地化桌面查看提示，
