@@ -15,16 +15,27 @@ import {
   WorkspaceFileTransferMode,
 } from '../../../shared/preview/workspaceFiles';
 import { createLocalHtmlPreview } from '../../browser/preview/localHtmlPreviewServer';
+import { t } from '../../core/i18n';
 
-const { ipcHandle, openExternal, writeFileClipboard, trashFile } = vi.hoisted(() => ({
-  ipcHandle: vi.fn(),
-  openExternal: vi.fn(),
-  trashFile: vi.fn(async (_filePath: string) => {}),
-  writeFileClipboard: vi.fn(async (paths: string[], mode: 'copy' | 'move') => ({
-    paths,
-    mode,
-    revision: '1',
-  })),
+const { ipcHandle, openExternal, writeFileClipboard, trashFile, showOpenWith, dialogOwner } =
+  vi.hoisted(() => ({
+    ipcHandle: vi.fn(),
+    openExternal: vi.fn(),
+    trashFile: vi.fn(async (_filePath: string) => {}),
+    showOpenWith: vi.fn(),
+    dialogOwner: vi.fn(),
+    writeFileClipboard: vi.fn(async (paths: string[], mode: 'copy' | 'move') => ({
+      paths,
+      mode,
+      revision: '1',
+    })),
+  }));
+
+vi.mock('../../core/filesystem/windowsOpenWith', () => ({
+  showWindowsOpenWithDialog: showOpenWith,
+}));
+vi.mock('../../core/window/workspaceWindowManager', () => ({
+  getWorkspaceDialogOwner: dialogOwner,
 }));
 
 vi.mock('../../core/filesystem/windowsFileClipboard', () => ({
@@ -47,10 +58,10 @@ import {
   createPreviewFileVersion,
   isDownloadableImageUrl,
   listWorkspaceDirectory,
+  openPathWithSystemChooser,
   readPreviewFile,
   registerShellHandlers,
   resolveShellOpenPath,
-  resolveSystemOpenWithCommand,
   revokePreviewFileEdit,
   writePreviewFile,
 } from './shell';
@@ -63,6 +74,8 @@ beforeEach(() => {
   openExternal.mockResolvedValue(undefined);
   writeFileClipboard.mockClear();
   trashFile.mockReset().mockResolvedValue(undefined);
+  showOpenWith.mockReset().mockResolvedValue(undefined);
+  dialogOwner.mockReset();
 });
 
 afterEach(() => {
@@ -340,7 +353,7 @@ test('binds workspace listing IPC to a main-process session root and window send
   ).resolves.toMatchObject({ success: true });
 });
 
-test('rejects system app chooser requests from non-window senders', async () => {
+test('rejects system app chooser requests outside a live window main frame', async () => {
   registerShellHandlers();
   const registration = ipcHandle.mock.calls.find(([channel]) => channel === 'shell:openPathWith');
   expect(registration).toBeDefined();
@@ -349,9 +362,19 @@ test('rejects system app chooser requests from non-window senders', async () => 
     filePath: string,
   ) => Promise<unknown> | unknown;
 
-  await expect(
-    Promise.resolve(handler({ sender: { getType: () => 'webview' } }, 'C:\\archive.zip')),
-  ).resolves.toEqual({ success: false, error: 'Access denied' });
+  const frame = {};
+  const sender = { getType: () => 'window', mainFrame: frame, isDestroyed: () => false };
+  for (const event of [
+    { sender: { ...sender, getType: () => 'webview' }, senderFrame: frame },
+    { sender, senderFrame: {} },
+    { sender: { ...sender, isDestroyed: () => true }, senderFrame: frame },
+  ]) {
+    await expect(Promise.resolve(handler(event, 'C:\\archive.zip'))).resolves.toEqual({
+      success: false,
+      error: 'Access denied',
+    });
+  }
+  expect(showOpenWith).not.toHaveBeenCalled();
 });
 
 test('rejects unsafe external URL schemes and non-main-frame callers', async () => {
@@ -570,14 +593,65 @@ test('only allows validated file preview requests from a window main frame', asy
   ).resolves.toEqual({ success: false, notFound: true });
 });
 
-test('builds the Windows system app chooser command without shell interpolation', () => {
-  expect(
-    resolveSystemOpenWithCommand('C:\\workspace with spaces\\archive.zip', 'win32', 'C:\\Windows'),
-  ).toEqual({
-    command: 'C:\\Windows\\System32\\rundll32.exe',
-    args: ['shell32.dll,OpenAs_RunDLL', 'C:\\workspace with spaces\\archive.zip'],
+test('waits for the native chooser and supplies the current workspace dialog owner', async () => {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'file-chooser-'));
+  temporaryDirectories.push(directory);
+  const filePath = path.join(directory, '中文 space #100%.docx');
+  fs.writeFileSync(filePath, 'file');
+  const ownerHandle = Buffer.alloc(8);
+  ownerHandle.writeBigUInt64LE(0x123456789n);
+  dialogOwner.mockReturnValue({ getNativeWindowHandle: () => ownerHandle });
+  let finish!: () => void;
+  showOpenWith.mockReturnValue(
+    new Promise<void>(resolve => {
+      finish = resolve;
+    }),
+  );
+  registerShellHandlers();
+  const handler = ipcHandle.mock.calls.find(([name]) => name === FilePreviewIpc.OpenWith)![1];
+  const frame = {};
+  const sender = { getType: () => 'window', mainFrame: frame, isDestroyed: () => false };
+  const settled = vi.fn();
+
+  const result = handler({ sender, senderFrame: frame }, filePath).then(settled);
+  await Promise.resolve();
+  expect(settled).not.toHaveBeenCalled();
+  expect(showOpenWith).toHaveBeenCalledWith(filePath, ownerHandle);
+  expect(dialogOwner).toHaveBeenCalledWith(sender);
+  finish();
+  await result;
+  expect(settled).toHaveBeenCalledWith({ success: true });
+});
+
+test('reports native chooser errors and avoids launching for unavailable or invalid files', async () => {
+  const filePath = path.join(os.tmpdir(), 'missing-chooser-file.docx');
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  await expect(openPathWithSystemChooser(filePath)).resolves.toEqual({
+    success: false,
+    notFound: true,
   });
-  expect(resolveSystemOpenWithCommand('/tmp/archive.zip', 'linux')).toBeNull();
+  await expect(openPathWithSystemChooser('file\0.docx')).resolves.toMatchObject({ success: false });
+  expect(showOpenWith).not.toHaveBeenCalled();
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'file-chooser-'));
+  temporaryDirectories.push(directory);
+  const existingPath = path.join(directory, 'report.docx');
+  fs.writeFileSync(existingPath, 'file');
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('linux');
+  await expect(openPathWithSystemChooser(existingPath)).resolves.toEqual({
+    success: false,
+    unavailable: true,
+  });
+  expect(showOpenWith).not.toHaveBeenCalled();
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  showOpenWith.mockRejectedValue(new Error('Native chooser failed'));
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  await expect(openPathWithSystemChooser(existingPath)).resolves.toEqual({
+    success: false,
+    error: t('filePreviewOpenWithFailed'),
+  });
+  expect(warning).toHaveBeenCalledWith(expect.stringContaining('Native chooser failed'));
 });
 
 test('reads and writes an expanded previewable source file', async () => {

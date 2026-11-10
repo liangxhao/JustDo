@@ -65,6 +65,28 @@ const UnsupportedFilePreview = ({
 
   const compactButtonClass =
     'inline-flex h-8 w-8 items-center justify-center rounded-md text-secondary hover:bg-surface-raised hover:text-foreground disabled:opacity-50';
+  const renderOpenDefaultButton = (compact: boolean) => (
+    <button
+      type="button"
+      title={i18nService.t('coworkUnsupportedFileOpenDefault')}
+      disabled={pendingAction !== null}
+      onClick={() => void runAction('default', () => window.electron.shell.openPath(filePath))}
+      className={
+        compact
+          ? compactButtonClass
+          : 'flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50'
+      }
+    >
+      {pendingAction === 'default' ? (
+        <ArrowPathIcon className="h-4 w-4 animate-spin" />
+      ) : (
+        <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+      )}
+      <span className={compact ? 'sr-only' : undefined}>
+        {i18nService.t('coworkUnsupportedFileOpenDefault')}
+      </span>
+    </button>
+  );
   const closeButton = (
     <button
       type="button"
@@ -100,26 +122,7 @@ const UnsupportedFilePreview = ({
           {i18nService.t('coworkUnsupportedFileShowInFolder')}
         </span>
       </button>
-      <button
-        type="button"
-        title={i18nService.t('coworkUnsupportedFileOpenDefault')}
-        disabled={pendingAction !== null}
-        onClick={() => void runAction('default', () => window.electron.shell.openPath(filePath))}
-        className={
-          toolbarTarget
-            ? compactButtonClass
-            : 'flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-white hover:bg-primary/90 disabled:opacity-50'
-        }
-      >
-        {pendingAction === 'default' ? (
-          <ArrowPathIcon className="h-4 w-4 animate-spin" />
-        ) : (
-          <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-        )}
-        <span className={toolbarTarget ? 'sr-only' : undefined}>
-          {i18nService.t('coworkUnsupportedFileOpenDefault')}
-        </span>
-      </button>
+      {renderOpenDefaultButton(Boolean(toolbarTarget))}
       <button
         type="button"
         title={i18nService.t('coworkUnsupportedFileOpenWith')}
@@ -183,7 +186,11 @@ const UnsupportedFilePreview = ({
           <p className="mt-2 text-sm leading-6 text-secondary">
             {i18nService.t('coworkUnsupportedFilePreviewDescription')}
           </p>
-          {!toolbarTarget && <div className="mt-6 grid w-full gap-2">{fileActions}</div>}
+          {toolbarTarget ? (
+            <div className="mt-6">{renderOpenDefaultButton(false)}</div>
+          ) : (
+            <div className="mt-6 grid w-full gap-2">{fileActions}</div>
+          )}
         </div>
       </div>
     </section>

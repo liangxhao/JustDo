@@ -309,12 +309,25 @@ it('uses the shared row for image reset and native actions for the selected unsu
   expect(
     within(toolbar).queryByRole('button', { name: i18nService.t('coworkImagePreviewReset') }),
   ).toBeNull();
+  const unsupportedPreview = screen.getByRole('region', {
+    name: i18nService.t('coworkUnsupportedFilePreviewTitle'),
+  });
+  const inlineOpenButton = within(unsupportedPreview).getByRole('button', {
+    name: i18nService.t('coworkUnsupportedFileOpenDefault'),
+  });
+  expect(within(inlineOpenButton).getByText('Open with default app').className).not.toContain(
+    'sr-only',
+  );
+  expect(shell.openPath).not.toHaveBeenCalled();
+  fireEvent.click(inlineOpenButton);
+  await waitFor(() => expect(shell.openPath).toHaveBeenCalledWith(unsupportedPath));
+  await waitFor(() => expect((inlineOpenButton as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(
     within(toolbar).getByRole('button', {
       name: i18nService.t('coworkUnsupportedFileOpenDefault'),
     }),
   );
-  await waitFor(() => expect(shell.openPath).toHaveBeenCalledWith(unsupportedPath));
+  await waitFor(() => expect(shell.openPath).toHaveBeenCalledTimes(2));
   await waitFor(() =>
     expect(
       (

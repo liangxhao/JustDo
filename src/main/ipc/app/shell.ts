@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import crypto from 'crypto';
 import { dialog, ipcMain, type IpcMainInvokeEvent, Menu, shell } from 'electron';
 import fs from 'fs';
@@ -30,6 +29,7 @@ import {
   isLocalHtmlPreviewUrl,
   resolveLocalHtmlPreviewFilePath,
 } from '../../browser/preview/localHtmlPreviewServer';
+import { showWindowsOpenWithDialog } from '../../core/filesystem/windowsOpenWith';
 import { t } from '../../core/i18n';
 import { getWorkspaceDialogOwner } from '../../core/window/workspaceWindowManager';
 import { prepareMessageFileLink } from './messageFileLink';
@@ -166,42 +166,24 @@ const toFileIdentity = (stats: fs.Stats): PreviewFileIdentity => ({
 const isMissingFileError = (error: unknown): boolean =>
   error instanceof Error && 'code' in error && error.code === 'ENOENT';
 
-interface SystemOpenWithCommand {
-  args: string[];
-  command: string;
-}
-
-export const resolveSystemOpenWithCommand = (
-  filePath: string,
-  platform = process.platform,
-  windowsDirectory = process.env.WINDIR,
-): SystemOpenWithCommand | null => {
-  if (platform !== 'win32') return null;
-  return {
-    command: path.join(windowsDirectory || 'C:\\Windows', 'System32', 'rundll32.exe'),
-    args: ['shell32.dll,OpenAs_RunDLL', filePath],
-  };
-};
-
 export const openPathWithSystemChooser = async (
   filePath: string,
+  ownerHandle?: Buffer,
 ): Promise<{ success: boolean; error?: string; notFound?: boolean; unavailable?: boolean }> => {
   try {
+    if (typeof filePath !== 'string' || !filePath.trim() || filePath.includes('\0')) {
+      return { success: false, error: t('filePreviewOpenWithFailed') };
+    }
     const normalizedPath = resolveShellOpenPath(filePath);
     if (!fs.existsSync(normalizedPath)) return { success: false, notFound: true };
-    const launch = resolveSystemOpenWithCommand(normalizedPath);
-    if (!launch) return { success: false, unavailable: true };
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn(launch.command, launch.args, { detached: true, stdio: 'ignore' });
-      child.once('error', reject);
-      child.once('spawn', () => {
-        child.unref();
-        resolve();
-      });
-    });
+    if (process.platform !== 'win32') return { success: false, unavailable: true };
+    await showWindowsOpenWithDialog(normalizedPath, ownerHandle);
     return { success: true };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    console.warn(
+      `[FilePreview] System app chooser failed ${JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' })}`,
+    );
+    return { success: false, error: t('filePreviewOpenWithFailed') };
   }
 };
 
@@ -764,10 +746,17 @@ export const registerShellHandlers = (options: RegisterShellHandlersOptions = {}
   });
 
   ipcMain.handle(FilePreviewIpc.OpenWith, (event, filePath: string) => {
-    if (event.sender.getType() !== 'window') {
+    if (
+      event.sender.getType() !== 'window' ||
+      event.senderFrame !== event.sender.mainFrame ||
+      event.sender.isDestroyed()
+    ) {
       return { success: false, error: 'Access denied' };
     }
-    return openPathWithSystemChooser(filePath);
+    return openPathWithSystemChooser(
+      filePath,
+      getWorkspaceDialogOwner(event.sender)?.getNativeWindowHandle(),
+    );
   });
 
   ipcMain.handle(FilePreviewIpc.Read, (event, filePath: unknown, workingDirectory?: unknown) => {
