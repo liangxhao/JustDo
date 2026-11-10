@@ -55,7 +55,7 @@ import {
   isValidTextConfigurationValue,
   setNestedValue,
 } from './extensionConfigurationFields';
-import { prepareExtensionForInstall } from './extensionConversion';
+import { assertNativeExtensionDirectory } from './extensionConversion';
 import {
   prepareExtensionInstallArchive,
   prepareExtensionInstallSource,
@@ -2595,8 +2595,8 @@ export class OpenClawExtensionImportService {
             preservePaths: false,
             strict: true,
           });
+          assertNoSymbolicLinks(temporaryDirectory);
         }
-        assertNoSymbolicLinks(temporaryDirectory);
         reportProgress('validating', 25);
         pluginDirectory = resolveExtractedPluginDirectory(temporaryDirectory);
       } else {
@@ -2608,18 +2608,14 @@ export class OpenClawExtensionImportService {
         };
       }
 
-      const prepared = await prepareExtensionForInstall({
-        sourcePath: frozenArchivePath ?? normalizedSourcePath,
-        pluginDirectory,
-      });
-      pluginDirectory = prepared.pluginDirectory;
+      assertNativeExtensionDirectory(pluginDirectory);
       extensionId = validateNativePluginDirectory(pluginDirectory);
       this.inspectNetworkPolicy(pluginDirectory, NETWORK_POLICY_LOCATION.SOURCE);
 
       reportProgress('preparing_runtime', 35);
       const manager = this.deps.getOpenClawEngineManager();
       const cli = await manager.buildCliEnvironment();
-      let installSourcePath = prepared.sourcePath;
+      let installSourcePath = frozenArchivePath ?? normalizedSourcePath;
       if (stats.isDirectory() || options?.applyPackageMutation) {
         const installSource = await prepareExtensionInstallSource(pluginDirectory, cli.runtimeRoot,
           options?.applyPackageMutation ? {
@@ -2628,9 +2624,11 @@ export class OpenClawExtensionImportService {
           } : undefined);
         cleanupInstallSource = installSource.cleanup;
         if (installSource.directory !== pluginDirectory || options?.applyPackageMutation) {
-          pluginDirectory = installSource.directory;
           installSourcePath = frozenArchivePath ?? installSource.directory;
           retainedInstallSourcePath = installSourcePath;
+        }
+        if (installSource.directory !== pluginDirectory) {
+          pluginDirectory = installSource.directory;
           extensionId = validateNativePluginDirectory(pluginDirectory);
           this.inspectNetworkPolicy(pluginDirectory, NETWORK_POLICY_LOCATION.PREPARED);
         }
@@ -2674,7 +2672,6 @@ export class OpenClawExtensionImportService {
         'install',
         installSourcePath,
         '--force',
-        ...(options?.preserveActivation || appCompanion ? ['--no-enable'] : []),
         ...(options?.autoAcceptCapabilities || this.deps.requestGateway || options?.trustMarketplaceSource
           ? ['--accept-capabilities']
           : []),
@@ -2700,6 +2697,8 @@ export class OpenClawExtensionImportService {
       const installedPath = installOwnerId
         ? findInstalledExtensionPath(extensionsRoot, installOwnerId)
         : undefined;
+      const preserveActivation = options?.preserveActivation || !!installedPath;
+      if (preserveActivation || appCompanion) installArgs.push('--no-enable');
       const defaultTargetPath = installOwnerId
         ? path.join(extensionsRoot, installOwnerId)
         : extensionsRoot;
@@ -2808,7 +2807,7 @@ export class OpenClawExtensionImportService {
                     mode: 'update',
                     ...(reviewToken && !options?.autoAcceptCapabilities
                       ? { acknowledgeCapabilities: { reviewToken } } : {}),
-                    ...(options?.preserveActivation || appCompanion ? { enable: false } : {}),
+                    ...(preserveActivation || appCompanion ? { enable: false } : {}),
                   },
                   { timeoutMs: GATEWAY_INSTALL_TIMEOUT_MS },
                   {
@@ -2894,7 +2893,7 @@ export class OpenClawExtensionImportService {
               result.exitCode === 0 &&
               extensionId &&
               !this.deps.requestGateway &&
-              !options?.preserveActivation &&
+              !preserveActivation &&
               !appCompanion
             ) {
               try {
@@ -3020,7 +3019,7 @@ export class OpenClawExtensionImportService {
           // because required setup is missing. Submit the fresh market activation
           // intent through native validation so either condition is reported honestly.
           const activateInstalledPluginIds =
-            options?.trustMarketplaceSource && !options.preserveActivation && !appCompanion
+            options?.trustMarketplaceSource && !preserveActivation && !appCompanion
               ? artifactPluginIds : [];
           for (const pluginId of activateInstalledPluginIds) {
             const savedConfig = readJsonRecord(configPath);

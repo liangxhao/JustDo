@@ -21,8 +21,6 @@ const digestPolicy = (policy: Pick<OutboundHeaderPolicyConfig, 'enabled' | 'grou
   crypto.createHash('sha256').update(JSON.stringify(policy)).digest('hex');
 
 export class OutboundHeaderPolicyService {
-  private snapshot: EffectiveOutboundHeaderPolicySnapshot | null = null;
-
   constructor(
     private readonly deps: {
       listInstalledExtensions: () => InstalledOpenClawExtension[];
@@ -112,12 +110,7 @@ export class OutboundHeaderPolicyService {
       digest,
     });
     activateOutboundHeaderPolicyConfig(snapshot, this.deps.userInfoPath);
-    this.snapshot = snapshot;
     console.log(`[OutboundHeaderPolicyService] Activated groups=${snapshot.groups.length}`);
     return snapshot;
-  }
-
-  getSnapshot(): EffectiveOutboundHeaderPolicySnapshot {
-    return this.snapshot ?? this.reconcile();
   }
 }

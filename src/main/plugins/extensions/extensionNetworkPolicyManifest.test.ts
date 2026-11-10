@@ -117,23 +117,14 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
     expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('65537 bytes');
   });
 
-  it('reports an unexpected open-file link count without calling it a hard link and closes the file', () => {
+  it('reports a file identifier mismatch and closes the file', () => {
     const extensionRoot = createExtension();
     const stat = fs.lstatSync(path.join(extensionRoot, 'outbound-header-policy.json'));
-    vi.spyOn(fs, 'fstatSync').mockReturnValueOnce(Object.assign(stat, { nlink: 0 }));
+    vi.spyOn(fs, 'fstatSync').mockReturnValueOnce(Object.assign(stat, { dev: stat.dev + 1, nlink: 2 }));
     const close = vi.spyOn(fs, 'closeSync');
 
-    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('reported file link count is 0');
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('distinguishes file identifier mismatches from size or link errors and closes the file', () => {
-    const extensionRoot = createExtension();
-    const stat = fs.lstatSync(path.join(extensionRoot, 'outbound-header-policy.json'));
-    vi.spyOn(fs, 'fstatSync').mockReturnValueOnce(Object.assign(stat, { dev: stat.dev + 1 }));
-    const close = vi.spyOn(fs, 'closeSync');
-
-    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('file identifiers differ');
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot))
+      .toThrow('file identifiers differ');
     expect(close).toHaveBeenCalledOnce();
   });
 
@@ -166,6 +157,52 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
 
     expect(first?.manifest.groups[0].baseUrlWhitelist).toEqual(['https://api.example.com/v1/']);
     expect(first?.manifest).toEqual(second?.manifest);
+  });
+
+  it('accepts valid declarations beyond former per-field limits and ignores descriptive metadata', () => {
+    const longUrl = `https://api.example.test/${'segment-'.repeat(300)}`;
+    const longHeader = `X-${'H'.repeat(130)}`;
+    const extensionRoot = createExtension({
+      ...validManifest,
+      description: 'Not an authorization rule',
+      groups: [{
+        baseUrlWhitelist: [longUrl, ...Array.from({ length: 64 }, (_, index) => `https://api.example.test/v${index}/`)],
+        headerNames: [longHeader, ...Array.from({ length: 32 }, (_, index) => `X-Header-${index}`)],
+        description: 'Ignored group metadata',
+      }, ...Array.from({ length: 32 }, () => validManifest.groups[0])],
+    });
+
+    const manifest = inspectExtensionNetworkPolicyManifest(extensionRoot)!.manifest;
+
+    expect(manifest.groups).toHaveLength(33);
+    expect(manifest.groups[0].baseUrlWhitelist).toHaveLength(65);
+    expect(manifest.groups[0].baseUrlWhitelist).toContain(`${longUrl}/`);
+    expect(manifest.groups[0].headerNames).toHaveLength(33);
+    expect(manifest.groups[0].headerNames).toContain(longHeader);
+    expect(manifest).not.toHaveProperty('description');
+    expect(manifest.groups[0]).not.toHaveProperty('description');
+  });
+
+  it('deduplicates Header names case-insensitively while preserving the first spelling', () => {
+    const extensionRoot = createExtension({
+      schemaVersion: 1,
+      groups: [{ baseUrlWhitelist: ['https://api.example.test/'], headerNames: ['X-Token', 'x-token', 'X-TOKEN'] }],
+    });
+
+    expect(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest.groups[0].headerNames)
+      .toEqual(['X-Token']);
+  });
+
+  it('treats empty declarations as no rules', () => {
+    for (const groups of [[], [
+      { baseUrlWhitelist: [], headerNames: ['X-Token'] },
+      { baseUrlWhitelist: ['https://api.example.test/'], headerNames: [] },
+      { baseUrlWhitelist: [], headerNames: ['Host'] },
+      { baseUrlWhitelist: ['unused-invalid-url'], headerNames: [] },
+    ]]) {
+      expect(inspectExtensionNetworkPolicyManifest(createExtension({ schemaVersion: 1, groups }))?.manifest.groups)
+        .toEqual([]);
+    }
   });
 
   it.each([
@@ -209,8 +246,7 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
 
   it.each([
     { name: 'non-string', value: 42, key: 'networkPolicyUrlType' },
-    { name: 'empty', value: '', key: 'networkPolicyUrlLength' },
-    { name: 'too long', value: 'x'.repeat(2049), key: 'networkPolicyUrlLength' },
+    { name: 'empty', value: '', key: 'networkPolicyUrlAbsolute' },
     { name: 'relative address', value: './private-source', key: 'networkPolicyUrlAbsolute' },
     { name: 'unsupported protocol', value: 'ftp://private.example.test/v1/', key: 'networkPolicyUrlProtocol' },
     { name: 'credentials', value: 'https://private-user:private-password@api.example.test/', key: 'networkPolicyUrlCredentials' },
@@ -255,8 +291,17 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
     });
 
     expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow(
-      'unsupported top-level fields',
+      t('networkPolicyManifestShapeInvalid'),
     );
+  });
+
+  it('still rejects missing group fields rather than treating misspellings as empty rules', () => {
+    const extensionRoot = createExtension({
+      schemaVersion: 1, groups: [{ baseUrlWhitelist: [], headers: [] }],
+    });
+
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot))
+      .toThrow(t('networkPolicyGroupShapeInvalid').replace('{group}', '1'));
   });
 
   it('does not confuse a hexadecimal-looking DNS name with an IPv6 link-local address', () => {
@@ -273,15 +318,20 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
     expect(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest.groups).toHaveLength(1);
   });
 
-  it('rejects a hard-linked policy manifest', () => {
+  it('reads a hard-linked policy without rewriting it', () => {
     const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-network-policy-'));
     const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-network-policy-source-'));
     tempDirectories.push(extensionRoot, sourceRoot);
     const sourcePath = path.join(sourceRoot, 'policy.json');
-    fs.writeFileSync(sourcePath, JSON.stringify({ schemaVersion: 1, groups: [] }), 'utf8');
-    fs.linkSync(sourcePath, path.join(extensionRoot, 'outbound-header-policy.json'));
+    fs.writeFileSync(sourcePath, JSON.stringify(validManifest), 'utf8');
+    const policyPath = path.join(extensionRoot, 'outbound-header-policy.json');
+    fs.linkSync(sourcePath, policyPath);
 
-    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow('reported file link count is 2');
+    expect(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest)
+      .toEqual(validManifest);
+    expect(fs.statSync(policyPath).nlink).toBe(2);
+    expect(fs.statSync(policyPath).ino).toBe(fs.statSync(sourcePath).ino);
+    expect(fs.readFileSync(policyPath, 'utf8')).toBe(JSON.stringify(validManifest));
   });
 
   it('rejects a symbolic-link policy manifest when the platform permits creating one', () => {

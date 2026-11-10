@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url);
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
 const { runtimeRoot } = resolveNativeSmokeTarget();
 
-test('actual fs-safe 0.25 plugin install recovers one Windows no-DELETE publication refusal', {
+test('actual fs-safe 0.26 plugin install recovers one Windows no-DELETE publication refusal', {
   skip: process.platform !== 'win32',
 }, async () => {
   const artifacts = path.join(repository, '.agent-tasks/runtime/plugin-publication-lock');
@@ -43,7 +43,7 @@ test('actual fs-safe 0.25 plugin install recovers one Windows no-DELETE publicat
       openclaw: { extensions: ['./index.mjs'] },
     }));
     assert.equal(JSON.parse(fs.readFileSync(path.join(runtimeRoot,
-      'node_modules/@openclaw/fs-safe/package.json'), 'utf8')).version, '0.25.0');
+      'node_modules/@openclaw/fs-safe/package.json'), 'utf8')).version, '0.26.0');
     const preload = path.join(repository, 'tests/plugins/management/marketplace/publication-lock-preload.cjs');
     require(preload).install({
       helperScript: path.join(repository, 'tests/plugins/management/marketplace/hold-publication-file.ps1'),

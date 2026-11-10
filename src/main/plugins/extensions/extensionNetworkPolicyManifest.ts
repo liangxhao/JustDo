@@ -9,11 +9,6 @@ import {
 import { t } from '../../core/i18n';
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
-const MAX_GROUPS = 32;
-const MAX_BASE_URLS = 64;
-const MAX_HEADERS = 32;
-const MAX_URL_LENGTH = 2_048;
-const MAX_HEADER_LENGTH = 128;
 const FILE_CHECK = {
   BEFORE_OPEN: 'networkPolicyFileBeforeOpen',
   OPENED: 'networkPolicyFileOpened',
@@ -37,9 +32,6 @@ const FORBIDDEN_HEADER_NAMES = new Set([
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
-
-const hasOnlyKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
-  Object.keys(value).every(key => keys.includes(key)) && keys.every(key => key in value);
 
 const isDisallowedLocalHostname = (hostname: string): boolean => {
   const normalized = hostname
@@ -75,7 +67,6 @@ const normalizeBaseUrl = (raw: unknown, groupIndex: number, urlIndex: number): s
     .replace('{url}', String(urlIndex + 1))
     .replace('{reason}', t(reasonKey)));
   if (typeof raw !== 'string') throw invalid('networkPolicyUrlType');
-  if (raw.length === 0 || raw.length > MAX_URL_LENGTH) throw invalid('networkPolicyUrlLength');
   let url: URL;
   try {
     url = new URL(raw);
@@ -115,10 +106,6 @@ const assertManifestFile = (stat: fs.Stats, check: FileCheck): void => {
   }
   if (stat.size > MAX_MANIFEST_BYTES) {
     throw fileInspectionError(check, fileSizeReason(stat.size));
-  }
-  if (stat.nlink !== 1) {
-    throw fileInspectionError(check, t('networkPolicyFileLinkCount')
-      .replace('{count}', String(stat.nlink)));
   }
 };
 
@@ -166,68 +153,34 @@ export const inspectExtensionNetworkPolicyManifest = (
   }
 
   const parsed: unknown = JSON.parse(rawManifest);
-  if (!isRecord(parsed) || !hasOnlyKeys(parsed, ['schemaVersion', 'groups'])) {
-    throw new Error('The Extension network policy has unsupported top-level fields.');
-  }
-  if (parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups)) {
-    throw new Error('The Extension network policy schemaVersion must be 1.');
-  }
-  if (parsed.groups.length < 1 || parsed.groups.length > MAX_GROUPS) {
-    throw new Error('The Extension network policy must declare between 1 and 32 groups.');
+  if (!isRecord(parsed) || parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups)) {
+    throw new Error(t('networkPolicyManifestShapeInvalid'));
   }
 
-  const groups = parsed.groups.map((rawGroup, groupIndex) => {
-    if (!isRecord(rawGroup) || !hasOnlyKeys(rawGroup, ['baseUrlWhitelist', 'headerNames'])) {
-      throw new Error(`Network policy group at index ${groupIndex} has unsupported fields.`);
+  const groups = parsed.groups.flatMap((rawGroup, groupIndex) => {
+    if (!isRecord(rawGroup) || !Array.isArray(rawGroup.baseUrlWhitelist) ||
+        !Array.isArray(rawGroup.headerNames)) {
+      throw new Error(t('networkPolicyGroupShapeInvalid').replace('{group}', String(groupIndex + 1)));
     }
-    if (
-      !Array.isArray(rawGroup.baseUrlWhitelist) ||
-      rawGroup.baseUrlWhitelist.length < 1 ||
-      rawGroup.baseUrlWhitelist.length > MAX_BASE_URLS
-    ) {
-      throw new Error(
-        `Network policy group at index ${groupIndex} must declare between 1 and 64 base URLs.`,
-      );
-    }
-    if (
-      !Array.isArray(rawGroup.headerNames) ||
-      rawGroup.headerNames.length < 1 ||
-      rawGroup.headerNames.length > MAX_HEADERS
-    ) {
-      throw new Error(
-        `Network policy group at index ${groupIndex} must declare between 1 and 32 headers.`,
-      );
-    }
+    if (rawGroup.baseUrlWhitelist.length === 0 || rawGroup.headerNames.length === 0) return [];
 
     const baseUrlWhitelist = [...new Set(rawGroup.baseUrlWhitelist.map(
       (raw, urlIndex) => normalizeBaseUrl(raw, groupIndex, urlIndex),
     ))].sort();
-    const seenHeaderNames = new Set<string>();
-    const headerNames = rawGroup.headerNames
-      .map((rawHeaderName, headerIndex) => {
-        if (
-          typeof rawHeaderName !== 'string' ||
-          rawHeaderName.length > MAX_HEADER_LENGTH ||
-          !HEADER_NAME_PATTERN.test(rawHeaderName)
-        ) {
-          throw new Error(
-            `Header ${headerIndex} in network policy group ${groupIndex} has an invalid name.`,
-          );
-        }
-        const normalizedName = rawHeaderName.toLowerCase();
-        if (FORBIDDEN_HEADER_NAMES.has(normalizedName)) {
-          throw new Error(`Header ${rawHeaderName} is forbidden in Extension network policies.`);
-        }
-        if (seenHeaderNames.has(normalizedName)) {
-          throw new Error(
-            `Header ${rawHeaderName} is duplicated in network policy group ${groupIndex}.`,
-          );
-        }
-        seenHeaderNames.add(normalizedName);
-        return rawHeaderName;
-      })
+    const seenHeaderNames = new Map<string, string>();
+    for (const [headerIndex, rawHeaderName] of rawGroup.headerNames.entries()) {
+      if (typeof rawHeaderName !== 'string' || !HEADER_NAME_PATTERN.test(rawHeaderName)) {
+        throw new Error(`Header ${headerIndex} in network policy group ${groupIndex} has an invalid name.`);
+      }
+      const normalizedName = rawHeaderName.toLowerCase();
+      if (FORBIDDEN_HEADER_NAMES.has(normalizedName)) {
+        throw new Error(`Header ${rawHeaderName} is forbidden in Extension network policies.`);
+      }
+      if (!seenHeaderNames.has(normalizedName)) seenHeaderNames.set(normalizedName, rawHeaderName);
+    }
+    const headerNames = [...seenHeaderNames.values()]
       .sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
-    return { baseUrlWhitelist, headerNames };
+    return [{ baseUrlWhitelist, headerNames }];
   });
 
   const manifest: ExtensionOutboundHeaderManifestV1 = { schemaVersion: 1, groups };

@@ -84,7 +84,7 @@ test('does not duplicate a default group written by an older version', () => {
   expect(service.reconcile().groups).toEqual(PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups);
 });
 
-test('automatically merges enabled Extension contributions with the manual policy', () => {
+test('merges enabled native-retained Extension contributions with the manual policy', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-effective-policy-'));
   tempDirectories.push(directory);
   const extensionDirectory = path.join(directory, 'extension');
@@ -137,6 +137,10 @@ test('automatically merges enabled Extension contributions with the manual polic
     configPath,
     userInfoPath,
   });
+  const policyPath = path.join(extensionDirectory, 'outbound-header-policy.json');
+  fs.linkSync(policyPath, path.join(directory, 'retained-policy.json'));
+  expect(fs.statSync(policyPath).nlink).toBe(2);
+  expect(service.inspectExtension(extensionDirectory)).not.toBeNull();
 
   const enabled = service.reconcile();
   expect(enabled.groups).toHaveLength(3);
@@ -164,7 +168,6 @@ test('automatically merges enabled Extension contributions with the manual polic
     'X-Manual-Token': 'manual',
     'X-Extension-Token': 'renewed',
   });
-  expect(service.getSnapshot().groups).toHaveLength(3);
   expect(
     applyMainProcessOutboundHeaderPolicy(
       'https://extension.example/v1/models',

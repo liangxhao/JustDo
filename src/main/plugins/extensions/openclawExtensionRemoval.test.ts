@@ -7,6 +7,7 @@ import { PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG } from '../../../config/outbou
 import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import { t } from '../../core/i18n';
+import { getOutboundHeaderPolicyConfig } from '../../core/network/outboundHeaderPolicyConfig';
 import { OutboundHeaderPolicyService } from '../../core/network/outboundHeaderPolicyService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { PluginDataRemovalSnapshot } from '../data/pluginDataService';
@@ -347,11 +348,10 @@ describe('extension removal receipts and package lifecycle', () => {
     ]);
     expect(fs.existsSync(f.installedDir)).toBe(false);
     expect(JSON.parse(fs.readFileSync(f.configPath, 'utf8')).plugins.allow).toEqual(['other']);
-    const after = f.policy!.getSnapshot();
+    const after = getOutboundHeaderPolicyConfig();
     expect(after.enabled).toBe(true);
     expect(after.groups).toEqual(PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups);
     expect(after.groups[0].baseUrlWhitelist).toHaveLength(1);
-    expect(after.digest).not.toBe(before.digest);
   });
 
   it('selects native removal from its exact queued package and keeps the existing Gateway connection', async () => {

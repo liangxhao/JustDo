@@ -23,7 +23,7 @@ The earlier alias-aware canonical-readiness patch remains retired: the pristine 
 - **032 request-activity refinement:** a legacy `function_call` response can report meaningful native transport activity while buffering every assistant/tool event until terminal. The existing subscriber-only counter seam cannot observe that interval. The existing `streamWithIdleTimeout` request callback now emits one separate content-free `run-request-activity` status item per second at most, only for meaningful progress from a live, un-aborted request. Modern `run-stream-progress` counters remain unchanged; native bounded snapshots retain both item IDs independently. Per-request throttling, observer failure isolation and the original observation timestamp are retained. No timeout, signal, iterator, authorization or execution behavior changes. Creation-only local streams install the same activity callback. Public generic hooks expose no request signal; registering a replacement Provider would change its owner, and diagnostic activity timestamps have no equivalent public event. Therefore Runtime Services cannot supply this observation for arbitrary configured Providers. This closes an existing reachable blind spot rather than proving an upgrade introduced it. Historical artifact C acceptance below predates this refinement; its current consumer and validation contract is recorded in [chat rendering](../../../docs/architecture/15-chat-rendering.md).
 - **026 subscription refinement:** the .6 and .7 native subscription, stream state, reply delivery and lifecycle sources are unchanged. `subscribeEmbeddedAgentSession` wraps `onAgentEvent` by spreading the input before post-prompt admission locks; the spread evaluates the delivery getter too early. The clone now forwards `deferTerminalDelivery` to the original input on every read, so ordinary excluded runs stream immediately while owned, unknown and unlocked runs remain protected. The native event/transcript wrapper and the post-prompt admission boundary remain intact. Public plugins and host adapters cannot change this internal clone. Strict two-property pristine and three-property current clone shapes reject recursive, constant, duplicated and missing accessors, including an already marked prior revision; rebuild from pristine instead of repairing it in place. The native-subscription fixture executes the actual subscription, message/lifecycle handlers and reply delivery for ordinary and structured output, protected paths, cleanup and an in-memory fault control. Model accounting, unused tool/error collaborators and the synthetic session/event producer are fixture seams; this does not establish real model or Gateway transport behavior.
 - **031:** native lifecycle persistence rejects duplicate terminals and creates a safe-tools recovery checkpoint for `timeoutPhase:"tool_execution"`. The duplicate-terminal guard remains ahead of Goal terminal observation; the safe-tools checkpoint remains in the same native atomic write after that observation. They do not replace exact predecessor settlement, native handoff arbitration, atomic acceptance/count persistence or revision fences.
-- **033:** fs-safe moves from 0.25.0 to 0.26.0. Both patched files, `dist/move-path.js` and `dist/guarded-mutation.js`, are byte-identical between their pristine published packages. The new Root.copyIn/native platform work does not provide receipt-bound, bounded recovery for this extension installation. Retain the same local-NTFS, exact-stage, same-artifact and current-owner checks; backup/restore publication remains outside the opt-in.
+- **033:** fs-safe moves from 0.25.0 to 0.26.0. Both patched files, `dist/move-path.js` and `dist/guarded-mutation.js`, are byte-identical between their pristine published packages. The new Root.copyIn/native platform work does not provide receipt-bound, bounded recovery for this extension installation. Retain the same local-NTFS, exact-stage, same-artifact and current-owner checks for Windows refusal recovery. A separate plugin-only flag now permits hardlinks when displacing or restoring the existing installed tree; new-source publication retains its original hardlink policy. See the exact custody boundary below.
 
 The parent, native-contract and provider/plugin agents independently cross-reviewed retention and implementation. Actual target imports were separately checked for the native session-current proof, source assertion, read-only session metadata, competing-work admission, pending queue, reply registry, event generation and manual compaction custody. Fresh final-bundle verification remains a separate requirement.
 
@@ -64,7 +64,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [030-mcp-app-session-workspace.cjs](030-mcp-app-session-workspace.cjs)                           | 031    | prepare manual Apps in the same persisted session workspace as model runs, retaining their native runtime and local resources across turns.                           | upstream manual App preparation uses the native session ingress workspace resolver and fences changes during preparation.                      |
 | [031-goal-continuation-admission.cjs](031-goal-continuation-admission.cjs)                       | 032    | admit a conditional backend Goal successor after exact settlement and native handoff arbitration, atomically recording acceptance and cumulative automatic count.     | upstream agent ingress supplies equivalent final admission, durable acceptance/count and exact settled predecessor observation.                |
 | [032-run-progress-observations.cjs](032-run-progress-observations.cjs)                           | 033    | expose exact tool/model counters and buffered-request activity through separate existing native status items.                                                                         | native Gateway publishes equivalent provider-independent stream progress before tool execution, including bounded replay.                      |
-| [033-windows-plugin-directory-publication.cjs](033-windows-plugin-directory-publication.cjs)     | 034    | recover a refused local Windows plugin-directory publication within the same copied artifact, guarded transaction and bounded wait.                                   | native plugin installs provide equivalent receipt-bound, bounded Windows publication recovery.                                                 |
+| [033-windows-plugin-directory-publication.cjs](033-windows-plugin-directory-publication.cjs)     | 034    | preserve retained installed-tree hardlinks through plugin backup/restore, and recover refused local Windows publication within the same guarded transaction.             | native plugin installs support retained-tree backup/restore and equivalent receipt-bound, bounded Windows publication recovery.                 |
 | [034-commentary-block-ownership.cjs](034-commentary-block-ownership.cjs)                       | —      | declare whole-message commentary snapshot ownership for scoped generic delivery, preserving complete native text filtering.                                         | native delivery exposes an equivalent explicit cumulative commentary range across updates, mixed phases and terminal publication.              |
 | [036-acp-completion-lineage.cjs](036-acp-completion-lineage.cjs) | — | persist the structural spawn envelope for ordinary top-level ACP children before dispatch, so exact completion handoffs retain requester tools. | native ACP creation persists the same envelope independently of optional nested admission checks. |
 
@@ -151,6 +151,48 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 033 | `plugin-directory-publication.test.ts` |
 | 034 | `commentary-block-ownership.test.ts`, `reasoning-completions-semantic.test.ts`, Renderer `justdo-chat.streaming.test.ts` |
 | 036 | `acp-completion-lineage.test.ts` |
+
+### 033: plugin directory publication and retained installed files
+
+A real registered native control installed local archive A, published a retained source admission
+through the official registry, and observed link count 2 for ordinary companions such as the
+network policy, notes and a binary resource. Replacing A through the local archive installer
+then failed before publication with `Refusing to move hardlinked file`; the old version remained.
+The locked fs-safe implementation preflights hardlinks before rename in reject mode.
+
+The plugin directory installer alone supplies the internal `allowInstalledTreeHardlinks` flag.
+`installPackageDir` uses it only for displacement of the installed tree and restoration of its
+receipt-owned backup. New staging retains the existing `sourceHardlinks` policy, including the
+native package-manager allowance; hooks, skills and other generic callers keep their defaults.
+Existing authorization, directory identity, publication receipts and rollback guards remain.
+The hardlink rule is cross-platform; Windows rename recovery keeps its local-NTFS, same-stage
+boundary. There is no public flag, global fs-safe relaxation or new support helper.
+
+Public `npm-pack:` installation avoids the failure but requires additional source restrictions,
+inventory and npm-dependent routing. Uninstall/reinstall removes owned configuration. Neither
+meets the minimal local-update contract. Two independent design reviews checked backup/restore,
+source isolation and host lifecycle before extending this existing patch.
+
+Remove the retained-tree changes once native local plugin updates can back up and restore
+officially retained hardlinked companions while retaining strict source admission and exact
+transaction ownership. Remove the Windows recovery seam only when equivalent bounded,
+receipt-bound recovery exists upstream. Older/partial 033 shapes require rebuilding from the
+locked pristine package.
+
+Validation passed 38 publication cases, including six real installer transactions and a fixture
+bundle check. A fresh pristine runtime also passed full source/bundle/manifest verification.
+Real local-ZIP A → B → C updates verified new loaded versions and increasing native generations
+while preserving the Gateway PID/connection, configuration/activation, session identity, private
+history, assets and effective policy without npm-offline flags. A had registered retained
+hardlinks; B/C retained physical hardlinks. Actual Windows stage-lock recovery passed.
+Broader host regression retained one
+existing embedded-browser assertion failure.
+
+Limits: B/C registration persistence was not established. The private test Gateway required
+forced teardown after a 30-second shutdown timeout, so graceful shutdown was not established.
+User runtime/Gateway were untouched; this was isolated development-artifact/protocol validation,
+not installer or complete Electron UI acceptance. Policy reading has no hardlink-count check;
+its source snapshots and native installation keep their independent source policies.
 
 ### 034: upstream commentary block ownership defect
 

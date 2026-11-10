@@ -528,7 +528,7 @@ test('updates once despite an advisory Explorer handle and preserves the disable
   const originalConfig = fs.readFileSync(f.configPath, 'utf8');
 
   const result = await f.service.importPath(f.source, undefined, undefined, {
-    autoAcceptCapabilities: true, trustMarketplaceSource: true, preserveActivation: true,
+    autoAcceptCapabilities: true, trustMarketplaceSource: true,
     applyPackageMutation: f.applyPackageMutation,
   });
 

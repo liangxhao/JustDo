@@ -3,19 +3,10 @@ import path from 'path';
 
 import { t } from '../../core/i18n';
 
-export type ExtensionConversionInput = {
-  sourcePath: string;
-  pluginDirectory: string;
-};
-
 /** Shared format boundary for local imports and downloaded marketplace extensions. */
-export const prepareExtensionForInstall = async (
-  input: ExtensionConversionInput,
-): Promise<ExtensionConversionInput> => {
+export const assertNativeExtensionDirectory = (pluginDirectory: string): void => {
   // Detect only the native manifest marker. OpenClaw owns schema and runtime entry
   // validation; malformed native manifests must keep their native error.
-  if (fs.existsSync(path.join(input.pluginDirectory, 'openclaw.plugin.json'))) {
-    return input;
-  }
+  if (fs.existsSync(path.join(pluginDirectory, 'openclaw.plugin.json'))) return;
   throw new Error(t('extensionConversionNotImplemented'));
 };

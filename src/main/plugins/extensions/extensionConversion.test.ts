@@ -4,11 +4,11 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getLanguage, type LanguageType, setLanguage, t } from '../../core/i18n';
-import { prepareExtensionForInstall } from './extensionConversion';
+import { assertNativeExtensionDirectory } from './extensionConversion';
 
 vi.mock('../../../shared/productMetadata', () => ({ PRODUCT_NAME: 'ExampleProduct' }));
 
-describe('prepareExtensionForInstall', () => {
+describe('assertNativeExtensionDirectory', () => {
   let pluginDirectory: string;
   let previousLanguage: LanguageType;
 
@@ -24,11 +24,10 @@ describe('prepareExtensionForInstall', () => {
 
   it.each(['{"id":"native","configSchema":{}}', '{invalid json'])(
     'preserves the native source and leaves manifest validation to OpenClaw: %s',
-    async manifest => {
+    manifest => {
       fs.writeFileSync(path.join(pluginDirectory, 'openclaw.plugin.json'), manifest);
       fs.writeFileSync(path.join(pluginDirectory, 'index.mjs'), 'export default () => {};');
-      const input = { pluginDirectory, sourcePath: `${pluginDirectory}.tgz` };
-      await expect(prepareExtensionForInstall(input)).resolves.toBe(input);
+      expect(() => assertNativeExtensionDirectory(pluginDirectory)).not.toThrow();
       expect(fs.readFileSync(path.join(pluginDirectory, 'openclaw.plugin.json'), 'utf8')).toBe(
         manifest,
       );
@@ -48,24 +47,22 @@ describe('prepareExtensionForInstall', () => {
     },
   ])(
     'explains the required package format using product metadata in $language',
-    async ({ language, prefix, compiledEntry }) => {
+    ({ language, prefix, compiledEntry }) => {
       setLanguage(language);
-      const input = { pluginDirectory, sourcePath: `${pluginDirectory}.zip` };
-      const attempt = prepareExtensionForInstall(input);
-      await expect(attempt).rejects.toThrow(prefix);
-      await expect(attempt).rejects.toThrow('openclaw.plugin.json');
-      await expect(attempt).rejects.toThrow(compiledEntry);
+      const attempt = () => assertNativeExtensionDirectory(pluginDirectory);
+      expect(attempt).toThrow(prefix);
+      expect(attempt).toThrow('openclaw.plugin.json');
+      expect(attempt).toThrow(compiledEntry);
       expect(fs.readdirSync(pluginDirectory)).toEqual([]);
     },
   );
 
   it.each(['.claude-plugin', '.codex-plugin', '.cursor-plugin', 'unknown'])(
     'rejects non-native %s packages without changing files',
-    async marker => {
+    marker => {
       fs.mkdirSync(path.join(pluginDirectory, marker));
-      await expect(
-        prepareExtensionForInstall({ pluginDirectory, sourcePath: pluginDirectory }),
-      ).rejects.toThrow(t('extensionConversionNotImplemented'));
+      expect(() => assertNativeExtensionDirectory(pluginDirectory))
+        .toThrow(t('extensionConversionNotImplemented'));
       expect(fs.readdirSync(pluginDirectory)).toEqual([marker]);
     },
   );

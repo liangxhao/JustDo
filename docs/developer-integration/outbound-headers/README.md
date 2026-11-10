@@ -150,22 +150,26 @@ Extension 只声明 URL 和 Header 名称。Header 值固定从 `user_info.json`
 ### 3.3 Extension 文件约束
 
 - 文件名必须是 `outbound-header-policy.json`，并直接位于 Extension 根目录。
-- 必须是普通文件，不能是符号链接或硬链接，最大 64 KiB。
+- 必须是普通文件，不能是符号链接。应用只保留 64 KiB 总大小资源边界，避免把大文件当作配置读入；这不是 OpenClaw 对该文件的要求。
 - `schemaVersion` 当前只能是 `1`。
-- 必须包含 1–32 个 group；每个 group 可包含 1–64 个 URL、1–32 个 Header。
+- `groups` 以及每组的 `baseUrlWhitelist`、`headerNames` 必须是数组，不另设条目数量上限。空数组表示没有规则；没有目标或 Header 的空组不参与策略合并。
 - URL 必须是完整的 HTTP 或 HTTPS 地址，支持内网 HTTP 服务；不能包含用户名、密码、query 或 fragment（包括空的 `?`、`#` 标记）。路径末尾的 `/` 可省略；应用会按路径边界匹配。
 - 不允许 localhost、loopback、IPv4/IPv6 link-local 或 unspecified 地址。
-- Header 名称最长 128 个字符，必须是合法 HTTP Header 名称。
+- Header 名称必须是合法 HTTP Header 名称，不另设长度上限。同组重复名称按大小写去重，保留首次出现的拼写。
 - 禁止声明连接和传输层 Header：`Host`、`Content-Length`、`Connection`、
   `Proxy-Authorization`、`Proxy-Connection`、`Keep-Alive`、`TE`、`Trailer`、
   `Transfer-Encoding`、`Upgrade`。
-- schema 中不接受未定义字段。不要添加备注字段；JSON 本身也不支持注释。
+- 必需字段不能省略或拼错；额外说明字段忽略，不参与授权。JSON 本身不支持注释。
 
 导入来源中的 sidecar 无效时，Extension 安装会失败。已经安装的 Extension 如果 sidecar 后续损坏，
 其全部规则会被排除。最终安装目录中的文件是运行时权威。
 
+原生保留插件目录时可能为普通伴随文件建立硬链接，策略文件也可能因此共享 inode。
+策略读取不检查链接计数，也不区分安装源与已安装模式；读取不会改写文件或拆开链接。
+安装源快照和原生安装事务继续独立执行原有来源检查。
+
 导入时的文件属性校验失败会标明安装源、准备后的安装副本或已安装目录，以及打开前、打开后、路径复核或内容读取的检查位置。
-错误区分符号链接、非普通文件、超出大小上限、链接计数不为 1 和文件标识不一致；大小及链接计数包含系统实际报告的数值。
+错误区分符号链接、非普通文件、超出大小上限和文件标识不一致；大小包含系统实际报告的数值。
 文件标识不一致只表示无法确认是同一个文件，不能单凭该结果断言文件被替换。这些文件属性诊断不附带策略内容、URL 或本机完整路径。
 这类文件属性错误发生在 JSON 解析前；同一段 JSON 在不同包中的结果不一致时，应先按错误中的实际检查位置和原因排查。
 

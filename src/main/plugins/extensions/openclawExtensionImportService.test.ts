@@ -446,7 +446,6 @@ describe('OpenClawExtensionImportService', () => {
       await expect(
         service.importPath(sourceDir, undefined, undefined, {
           trustMarketplaceSource: true,
-          preserveActivation: true,
           autoAcceptCapabilities: true,
         }),
       ).resolves.toMatchObject({ success: true, extensionId: 'demo', installPath: installedDir });

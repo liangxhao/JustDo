@@ -1,10 +1,10 @@
 'use strict';
 
-// Capability: recover transient Windows refusal of an uncommitted plugin-directory publication.
+// Capability: preserve plugin directory publication, retained hardlink backup and rollback.
 // Target: pristine openclaw@2026.10.7 and @openclaw/fs-safe@0.26.0 copied-directory publication.
-// Scope: explicit native extension installs; the same copied tree, transaction and owner only.
-// Safety: local NTFS, exact syscall/source/destination, bounded wait and complete artifact revalidation.
-// Remove when: native plugin installs provide equivalent bounded, receipt-bound Windows publication recovery.
+// Scope: plugin-only backup/restore hardlinks and bounded Windows staged-publication recovery.
+// Safety: unchanged source policy, identity and owner checks; bounded local NTFS publication recovery.
+// Remove when: native installs provide retained-hardlink backup/rollback and bounded Windows recovery.
 const fs = require('node:fs');
 const path = require('node:path');
 const ts = require('typescript');
@@ -61,11 +61,14 @@ const CHANGES = {
   ]],
   install: [[
     'from,\n\t\t\tsourceHardlinks,',
-    'from,\n\t\t\twindowsPluginPublicationRecovery: params.windowsPluginPublicationRecovery === true && kind === "install",\n\t\t\tsourceHardlinks,',
+    'from,\n\t\t\twindowsPluginPublicationRecovery: params.windowsPluginPublicationRecovery === true && kind === "install",\n\t\t\tsourceHardlinks: params.allowInstalledTreeHardlinks === true && kind === "backup" ? "allow" : sourceHardlinks,',
+  ], [
+    'from: restoring.path,\n\t\t\t\tsourceHardlinks,',
+    'from: restoring.path,\n\t\t\t\tsourceHardlinks: params.allowInstalledTreeHardlinks === true ? "allow" : sourceHardlinks,',
   ]],
   plugin: [[
     'omitOpenClawHostDependency: true,',
-    'omitOpenClawHostDependency: true,\n\t\twindowsPluginPublicationRecovery: true,',
+    'omitOpenClawHostDependency: true,\n\t\twindowsPluginPublicationRecovery: true,\n\t\tallowInstalledTreeHardlinks: true,',
   ]],
 };
 
