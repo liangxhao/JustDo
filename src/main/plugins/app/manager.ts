@@ -64,6 +64,10 @@ interface Selected {
   nativeEntry: string;
   cleanupOnly: boolean;
 }
+interface PackageMutationOwner {
+  ids: ReadonlySet<string>;
+  assertCurrent(): void;
+}
 const NATIVE_HANDSHAKE_RETRY_DELAYS_MS = [100, 250, 500, 1000, 2000, 5000, 5000] as const;
 const NATIVE_PLUGIN_CHANGE_EVENTS = new Set(['plugins.changed', 'config.changed']);
 export interface AppManagerDependencies {
@@ -78,6 +82,7 @@ export interface AppManagerDependencies {
   loadModule?(url: string): Promise<AppMainModule>;
   approveArtifact?(id: string, hash: string): Promise<void>;
   withStoppedGateway?<T>(operation: () => Promise<T>): Promise<T>;
+  syncConfiguration?(): Promise<void>;
 }
 
 /** Trusted companions use a public, caller-authenticated Native registration handshake. */
@@ -127,6 +132,8 @@ export class AppPluginManager {
   private packageMutation = false;
   private stoppedPackageMutation?: object;
   private packageRepairPending = false;
+  private hotPackageMutation?: PackageMutationOwner;
+  private readonly pendingPackageOwners = new Set<string>();
   private invalidation = 0;
   private readonly nativeIdentities = new Map<string, string>();
   private readonly pendingDatabaseIds = new Set<string>();
@@ -458,7 +465,8 @@ export class AppPluginManager {
         const processGeneration = this.dependencies.getGatewayProcessGeneration?.();
         const handshakes = await Promise.all(
           [...this.selected.keys()].map(async id => {
-            if (this.selected.get(id)?.cleanupOnly || this.dependencies.readDesiredEnabled(id) !== true)
+            if (this.hotPackageMutation?.ids.has(id) || this.pendingPackageOwners.has(id) ||
+                this.selected.get(id)?.cleanupOnly || this.dependencies.readDesiredEnabled(id) !== true)
               return [id, null] as const;
             const receipt = await runWithoutPluginRequestBinding(() =>
               this.dependencies.resources.requestConnectedGateway<unknown>(
@@ -486,6 +494,12 @@ export class AppPluginManager {
         const receipts = new Map(handshakes);
         let awaitingNative = false;
         for (const [id, selected] of this.selected) {
+          if (this.hotPackageMutation?.ids.has(id)) continue;
+          if (this.pendingPackageOwners.has(id)) {
+            this.states.set(id, { enabled: false, confirmed: false,
+              configurationEnabled: this.dependencies.readDesiredEnabled(id) });
+            continue;
+          }
           if (selected.cleanupOnly) {
             this.states.set(id, { enabled: false, confirmed: true,
               configurationEnabled: this.dependencies.readDesiredEnabled(id) });
@@ -497,7 +511,7 @@ export class AppPluginManager {
             const expected = realpathSync(path.join(selected.nativeRoot, selected.nativeEntry));
             const actual = receipt?.nativeEntry;
             // Source receipts are captured at registration. New package bytes are adopted
-            // only inside a confirmed Gateway stop, never from a live directory change.
+            // only by a confirmed package operation, never from a live directory change.
             sourceMatches =
               actual !== undefined &&
               realpathSync(actual) === expected &&
@@ -605,15 +619,22 @@ export class AppPluginManager {
     });
     return { success: true };
   }
-  /** A confirmed installation may trust only its exact companion inside the existing cold owner. */
+  /** A confirmed installation may trust only its exact companion inside its package owner. */
   async approveInstalledPackage(input: {
     nativePluginId: string;
     installPath: string;
   }): Promise<void> {
     const owner = this.stoppedPackageMutation;
+    const hotOwner = this.hotPackageMutation;
     const generation = this.dependencies.getGatewayProcessGeneration?.();
     const assertOwner = () => {
       this.assertAvailable();
+      if (hotOwner) {
+        hotOwner.assertCurrent();
+        if (hotOwner !== this.hotPackageMutation || !hotOwner.ids.has(input?.nativePluginId))
+          throw new Error(t('extensionInstallMutationUnavailable'));
+        return;
+      }
       if (!owner || owner !== this.stoppedPackageMutation || !this.packageMutation ||
           this.dependencies.isGatewayConnected() || this.dependencies.getGatewayProcessId?.() != null ||
           generation !== this.dependencies.getGatewayProcessGeneration?.())
@@ -736,7 +757,7 @@ export class AppPluginManager {
           assertReservation();
           return stopped
             ? this.mutatePackageExclusive(() => write(ExtensionPackageLifecycleMode.STOPPED), assertReservation)
-            : write(ExtensionPackageLifecycleMode.HOT);
+            : this.mutateHotPackage(target, () => write(ExtensionPackageLifecycleMode.HOT), assertReservation);
         })();
         pending ??= result;
         // Retain ownership even if an internal caller accidentally detaches apply.
@@ -760,34 +781,112 @@ export class AppPluginManager {
         (target.requireStopped !== undefined && target.requireStopped !== true))
       throw new Error(AppPluginError.Invalid);
   }
+  /** Only host-owned data preparation and explicit offline work need a stopped lease. */
   private async requiresStoppedExtensionMutation(target: ExtensionPackageMutationTarget): Promise<boolean> {
-    if (target.requireStopped === true) return true;
-    const ids = new Set(target.nativePluginIds);
-    const installPath = target.installPath;
-    const matchesPath = (nativeRoot: string) =>
-      !!installPath && !!nativeRoot && samePackagePath(installPath, nativeRoot);
-    if ([target.sourceDirectory, installPath].some(directory =>
-      directory !== undefined && hasAppCompanionMarker(directory))) return true;
-    for (const [nativeId, selected] of this.selected) {
-      if (ids.has(nativeId) || ids.has(selected.artifact.artifact.manifest.id) ||
-          matchesPath(selected.nativeRoot)) return true;
-    }
-    if ([...this.registry.resourceOwners(), ...this.bootstrap.resourceOwners()]
-      .some(owner => ids.has(owner.ownerId)) ||
-        [...this.retained.values()].some(owner => ids.has(owner.id))) return true;
-    const candidates = await this.dependencies.candidates();
+    if (target.requireStopped === true ||
+        (!this.dependencies.isGatewayConnected() && this.dependencies.getGatewayProcessId?.() == null)) return true;
+    if (!target.sourceDirectory || !hasAppCompanionMarker(target.sourceDirectory)) return false;
+    const artifact = await inspectAppArtifact(path.join(target.sourceDirectory, 'app')).catch((): null => null);
     this.assertAvailable();
+    const manifest = artifact?.artifact.manifest;
+    if (!manifest?.data) return false;
+    try {
+      resolvePluginDataDirectory(this.dependencies.resources.getNativeStateDirectory(), manifest.nativePluginId,
+        manifest.data.retention === 'retain' ? { retention: 'retain' } : undefined);
+      return false;
+    } catch { return true; }
+  }
+  private async mutateHotPackage<T>(
+    target: ExtensionPackageMutationTarget,
+    operation: () => Promise<T>,
+    assertReservation: () => void,
+  ): Promise<T> {
+    const ids = new Set(target.nativePluginIds);
+    const candidates = await this.dependencies.candidates();
+    assertReservation();
     for (const candidate of candidates) {
-      if (!ids.has(candidate.nativePluginId ?? '') && !ids.has(candidate.identity?.id ?? '') &&
-          !ids.has(candidate.retainedReceipt?.id ?? '') && !matchesPath(candidate.nativeRoot)) continue;
-      if (candidate.identity || candidate.retainedReceipt || candidate.bundled ||
-          candidate.cleanupOnly || candidate.trusted ||
-          (candidate.nativeRoot && hasAppCompanionMarker(candidate.nativeRoot))) return true;
+      if (target.installPath && candidate.nativeRoot && samePackagePath(target.installPath, candidate.nativeRoot)) {
+        const id = candidate.nativePluginId ?? candidate.identity?.id ?? candidate.retainedReceipt?.id;
+        if (id) ids.add(id);
+      }
     }
-    // Offline writes need the startup fence, even when no App companion is involved.
-    // An alive disconnected process stays on the hot path, whose native admission
-    // must fail before send rather than stopping a Gateway solely for reconnect.
-    return !this.dependencies.isGatewayConnected() && this.dependencies.getGatewayProcessId?.() == null;
+    for (const [id, selected] of this.selected) {
+      if (target.installPath && samePackagePath(target.installPath, selected.nativeRoot)) ids.add(id);
+    }
+    const owner: PackageMutationOwner = { ids, assertCurrent: () => {
+      assertReservation();
+      if (this.hotPackageMutation !== owner) throw new Error(t('extensionInstallMutationUnavailable'));
+    } };
+    this.hotPackageMutation = owner;
+    const affected = [...ids];
+    const hadCompanion = affected.some(id => this.selected.has(id));
+    let entered = false;
+    let reconciled = false;
+    let unchanged = false;
+    let outcome: { value: T } | { error: unknown };
+    const clearProof = () => {
+      for (const id of ids) {
+        this.states.set(id, { enabled: false, confirmed: false,
+          configurationEnabled: this.dependencies.readDesiredEnabled(id) });
+        this.nativeIdentities.delete(id);
+      }
+      this.registry.refresh();
+    };
+    const perform = async (): Promise<T> => {
+      await this.registry.preparePackageMutation({ onlyIds: affected });
+      owner.assertCurrent();
+      entered = true;
+      for (const id of ids) this.pendingPackageOwners.add(id);
+      const value = await operation();
+      owner.assertCurrent();
+      if (value && typeof value === 'object' &&
+          (('operationUnconfirmed' in value && value.operationUnconfirmed) ||
+           ('installSourceInUse' in value && value.installSourceInUse))) return value;
+      if (value && typeof value === 'object' && 'success' in value && value.success === false &&
+          !('installationCommitted' in value && value.installationCommitted === true)) {
+        for (const id of ids) this.pendingPackageOwners.delete(id);
+        unchanged = true;
+        return value;
+      }
+      clearProof();
+      await this.reconcilePackages(false, affected);
+      owner.assertCurrent();
+      if (this.registry.snapshot().some(item => ids.has(item.id) && item.state === 'blocked'))
+        throw new Error(AppPluginError.Unavailable);
+      // The native write/config queue has been released by operation(). Publish
+      // the actual new Main contributions through the existing config owner.
+      if (hadCompanion || affected.some(id => this.selected.has(id))) await this.dependencies.syncConfiguration?.();
+      owner.assertCurrent();
+      for (const id of ids) this.pendingPackageOwners.delete(id);
+      reconciled = true;
+      return value;
+    };
+    const mutate = (index: number): Promise<T> => index === affected.length ? perform()
+      : this.registry.mutate(affected[index], false, () => mutate(index + 1), { packageMutation: true });
+    try { outcome = { value: await mutate(0) }; }
+    catch (error) { outcome = { error }; }
+    finally {
+      if (entered && !reconciled && !unchanged) {
+        for (const id of ids) {
+          this.registry.retireForReplacement(id);
+          this.selected.delete(id);
+          this.states.delete(id);
+          this.nativeIdentities.delete(id);
+        }
+      }
+      this.hotPackageMutation = undefined;
+    }
+    try {
+      await this.refresh();
+      if ('value' in outcome && reconciled && (this.registry.snapshot().some(item =>
+        ids.has(item.id) && item.state === 'blocked') || affected.some(id =>
+        this.selected.has(id) && !this.selected.get(id)!.cleanupOnly &&
+        this.dependencies.readDesiredEnabled(id) === true &&
+        (!this.states.get(id)?.confirmed || !this.states.get(id)?.enabled))))
+        throw new Error(AppPluginError.Unavailable);
+    } catch (error) { if ('value' in outcome) throw error; }
+    if ('error' in outcome) throw outcome.error;
+    return outcome.value;
   }
   /** Package changes stop only Gateway; retained Main/UI companions are reconciled in this process. */
   async mutatePackage<T>(operation: () => Promise<T>): Promise<T> {
@@ -827,7 +926,7 @@ export class AppPluginManager {
           // The operation may have committed before returning an error. Read the
           // actual inventory once; never retry an unknown package mutation.
           try {
-            await this.reconcileStoppedPackages();
+            await this.reconcilePackages(true);
           } catch (error) {
             this.packageRepairPending = true;
             this.registry.setPackageAdmissionBlocked(true);
@@ -861,12 +960,13 @@ export class AppPluginManager {
       this.packageMutation = false;
       if (!rejectedBeforeMutation) this.invalidate();
     }
-    if (!rejectedBeforeMutation && entered && wasRunning) {
+    if (!rejectedBeforeMutation && entered) {
       // The stop lease has been released. Reconnect the existing application,
       // then admit only the new registration's independently checked receipt.
       try {
-        await this.dependencies.resources.ensureReady();
-        await this.refresh();
+        if (wasRunning) await this.dependencies.resources.ensureReady();
+        await this.dependencies.syncConfiguration?.();
+        if (wasRunning) await this.refresh();
       } catch (recoveryError) {
         if (!('error' in outcome)) throw recoveryError;
         // A pending recovery must not hide an earlier reconciliation failure.
@@ -893,7 +993,7 @@ export class AppPluginManager {
       this.invalidate();
       await this.dependencies.withStoppedGateway(async () => {
         entered = true;
-        await this.reconcileStoppedPackages();
+        await this.reconcilePackages(true);
         this.packageRepairPending = false;
         this.registry.setPackageAdmissionBlocked(false);
       });
@@ -906,7 +1006,7 @@ export class AppPluginManager {
       }
     }
   }
-  private async reconcileStoppedPackages(): Promise<void> {
+  private async reconcilePackages(gatewayStopped: boolean, onlyIds?: readonly string[]): Promise<void> {
     this.executionSourceInventoryComplete = false;
     const candidates = await this.dependencies.candidates();
     const knownCandidates = this.rememberExecutionSourceCandidates(candidates);
@@ -914,18 +1014,21 @@ export class AppPluginManager {
     this.captureCurrentOwners(candidates);
     const next = new Map<string, Selected>();
     for (const candidate of candidates) {
-      if (!candidate.trusted || candidate.retainedReceipt) continue;
+      const candidateId = candidate.nativePluginId ?? candidate.identity?.id;
+      if (!candidate.trusted || candidate.retainedReceipt ||
+          (onlyIds && candidateId && !onlyIds.includes(candidateId))) continue;
       let ownerId = candidate.identity?.id;
       try {
         const inspected = await inspectCandidateArtifact(candidate);
         ownerId = inspected.artifact.manifest.id;
+        if (onlyIds && !onlyIds.includes(ownerId)) continue;
         this.captureCurrentOwner(candidate, ownerId);
         const artifact = await retainAppArtifact(inspected, this.dependencies.retentionRoot);
         const id = artifact.artifact.manifest.nativePluginId;
         this.rememberExecutionSourceCandidate(candidate, id, knownCandidates);
         if (next.has(id)) continue;
         const selected = await selectCandidateArtifact(candidate, artifact);
-        await this.prepareSelectedData(selected, true);
+        await this.prepareSelectedData(selected, gatewayStopped);
         this.assertAvailable();
         next.set(id, selected);
         this.registry.restoreResourceAdmission(ownerId);
@@ -936,6 +1039,7 @@ export class AppPluginManager {
       }
     }
     for (const [id, current] of this.selected) {
+      if (onlyIds && !onlyIds.includes(id)) continue;
       const replacement = next.get(id);
       if (
         replacement &&
@@ -958,6 +1062,7 @@ export class AppPluginManager {
       );
       this.assertAvailable();
       this.selected.set(id, selected);
+      this.pendingPackageOwners.delete(id);
       this.pendingDatabaseIds.add(selected.artifact.artifact.manifest.id);
       if (this.databaseInitialized) {
         this.registry.initializeDatabase(this.dependencies.resources.getDatabase(), {
@@ -968,12 +1073,13 @@ export class AppPluginManager {
     }
     if (this.databaseInitialized) {
       this.registry.initializeDatabase(this.dependencies.resources.getDatabase(), {
-        onlyIds: [...this.pendingDatabaseIds],
+        onlyIds: [...this.pendingDatabaseIds].filter(id => !onlyIds || onlyIds.includes(id)),
       });
-      this.pendingDatabaseIds.clear();
+      for (const id of [...this.pendingDatabaseIds])
+        if (!onlyIds || onlyIds.includes(id)) this.pendingDatabaseIds.delete(id);
     }
-    if (this.activated) this.registry.activate();
-    if (this.databaseInitialized) this.removeAbsentOwners();
+    if (this.activated) this.registry.activate(onlyIds);
+    if (this.databaseInitialized) this.removeAbsentOwners(onlyIds);
     this.executionSourceInventoryComplete = candidates.every(
       candidate => knownCandidates.has(candidate) && candidate.inventoryUnresolved !== true,
     );
@@ -1028,7 +1134,7 @@ export class AppPluginManager {
       if (id) this.captureCurrentOwner(candidate, id);
     }
   }
-  private removeAbsentOwners(): void {
+  private removeAbsentOwners(onlyIds?: readonly string[]): void {
     if (!this.discoveryComplete || !this.databaseInitialized) return;
     const previousOwners = this.registry.resourceOwners();
     for (const owner of previousOwners) {
@@ -1043,6 +1149,7 @@ export class AppPluginManager {
     for (const id of this.absentNativeOwners)
       if (!this.presentNativeOwners.has(id)) this.removedOwnerIds.add(id);
     for (const id of this.removedOwnerIds) {
+      if (onlyIds && !onlyIds.includes(id)) continue;
       this.registry.removeOwner(id);
       this.bootstrap.removeOwner(id);
       this.registry.restoreResourceAdmission(id);

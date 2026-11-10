@@ -30,7 +30,6 @@ import {
 } from '../../plugins/extensions/extensionMutation';
 import {
   type ApplyExtensionPackageMutation,
-  ExtensionPackageLifecycleMode,
   type WithExtensionPackageMutation,
 } from '../../plugins/extensions/extensionPackageLifecycle';
 import { type PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
@@ -101,10 +100,8 @@ export const registerExtensionHandlers = ({
       const payload = request.payload;
       const approveInstalled = async (
         result: Awaited<ReturnType<OpenClawExtensionImportService['importPath']>>,
-        mode: ExtensionPackageLifecycleMode,
       ): Promise<Awaited<ReturnType<OpenClawExtensionImportService['importPath']>>> => {
         if (
-          mode === ExtensionPackageLifecycleMode.HOT ||
           !approveInstalledAppPackage ||
           !result.success || result.error || result.failedStage || result.operationFailedStage ||
           result.operationUnconfirmed || result.installSourceInUse || result.capabilityReview ||
@@ -125,8 +122,8 @@ export const registerExtensionHandlers = ({
         }
         request.onProgress?.({ stage: PluginOperationStage.VALIDATING, percent: 0 });
         try {
-          // Bind app-code trust to this committed package before the existing
-          // stopped-Gateway owner reconciles artifacts and reconnects once.
+          // Approve only the confirmed installed companion before its Main/UI
+          // replacement is published. Native-only packages need no approval.
           await approveInstalledAppPackage({
             nativePluginId: result.extensionId,
             installPath: result.installPath,
@@ -170,7 +167,7 @@ export const registerExtensionHandlers = ({
       const result = withExtensionPackageMutation
         ? await withExtensionPackageMutation(importPackage)
         : await installExtensionPackage(async () => approveInstalled(
-          await importPackage(), ExtensionPackageLifecycleMode.STOPPED,
+          await importPackage(),
         ), mutateAppPackage);
       if (
         (result.success || result.installationCommitted) &&

@@ -645,14 +645,15 @@ export class AppPluginRegistry {
         instance.fenced = true;
       }
     }
-    if (!options.skipInventory) this.refreshProtection();
+    if (!options.skipInventory) this.refreshProtection(options.onlyIds);
   }
   hasReferencedOwner(id: string, hash: string): boolean {
     return this.protection?.prior(id, '').some(previous => previous.artifactHash === hash) ?? false;
   }
-  refreshProtection(): void {
+  refreshProtection(onlyIds?: readonly string[]): void {
     if (!this.protection) return;
     for (const instance of this.instances.values()) {
+      if (onlyIds && !onlyIds.includes(instance.artifact.artifact.manifest.id)) continue;
       if (instance.blocked || !instance.registration.resources?.protectedResources) continue;
       try {
         const owner = instance.artifact.artifact.manifest.id;
@@ -762,8 +763,9 @@ export class AppPluginRegistry {
     );
   }
 
-  activate(): void {
+  activate(onlyIds?: readonly string[]): void {
     for (const instance of this.instances.values()) {
+      if (onlyIds && !onlyIds.includes(instance.artifact.artifact.manifest.id)) continue;
       if (!instance.activated && !instance.blocked) {
         try {
           const lease = { active: true };
@@ -1100,8 +1102,9 @@ export class AppPluginRegistry {
     )
       this.disposeInstance(instance);
   }
-  registrations(): readonly AppMainRegistration[] {
+  registrations(onlyIds?: readonly string[]): readonly AppMainRegistration[] {
     const retained = [...this.cleanupOwners].flatMap(([hash, owner]) =>
+      (!onlyIds || onlyIds.includes(owner.id)) &&
       !owner.instance.blocked &&
       !owner.instance.controller.signal.aborted &&
       ![...this.instances.values()].some(instance => instance.artifact.artifact.hash === hash) &&
@@ -1109,7 +1112,9 @@ export class AppPluginRegistry {
         ? [owner.registration]
         : [],
     );
-    return [...this.instances.values()].map(instance => instance.registration).concat(retained);
+    return [...this.instances.values()]
+      .filter(instance => !onlyIds || onlyIds.includes(instance.artifact.artifact.manifest.id))
+      .map(instance => instance.registration).concat(retained);
   }
   async resolveExecutionSession(
     query: AppExecutionSessionQuery,
@@ -1190,16 +1195,18 @@ export class AppPluginRegistry {
     return owners[0].owner;
   }
   async preparePackageMutation(
-    options: { allowPackageAdmissionBlocked?: boolean } = {},
+    options: { allowPackageAdmissionBlocked?: boolean; onlyIds?: readonly string[] } = {},
   ): Promise<void> {
-    this.refreshProtection();
+    this.refreshProtection(options.onlyIds);
     if (
       this.inventoryUnresolved ||
       (this.packageAdmissionBlocked && !options.allowPackageAdmissionBlocked) ||
-      [...this.instances.values()].some(instance => instance.blocked)
+      [...this.instances.values()].some(instance => instance.blocked &&
+        (!options.onlyIds || options.onlyIds.includes(instance.artifact.artifact.manifest.id)))
     )
       throw new Error('appPluginCleanupUnresolved');
     for (const locator of this.protection?.allOwners() ?? []) {
+      if (options.onlyIds && !options.onlyIds.includes(locator.ownerId)) continue;
       const current = this.instances.get(locator.ownerId);
       if (
         current?.artifact.artifact.hash === locator.artifactHash &&
@@ -1218,7 +1225,7 @@ export class AppPluginRegistry {
       )
         throw new Error('appPluginCleanupUnresolved');
     }
-    for (const registration of this.registrations()) {
+    for (const registration of this.registrations(options.onlyIds)) {
       if (registration.beforePackageMutation) await registration.beforePackageMutation();
       else if (registration.resources?.protectedResources?.().length)
         throw new Error('appPluginCleanupUnresolved');

@@ -2723,7 +2723,7 @@ export class OpenClawExtensionImportService {
             throw new Error(t('extensionInstallMutationUnavailable'));
           if (options?.applyPackageMutation &&
               ((mode === ExtensionPackageLifecycleMode.STOPPED && !stopped) ||
-               (mode === ExtensionPackageLifecycleMode.HOT && (!hotRequest || appCompanion))))
+               (mode === ExtensionPackageLifecycleMode.HOT && !hotRequest)))
             throw new Error(t('extensionInstallMutationUnavailable'));
           const requestGateway = options?.applyPackageMutation
             ? hotRequest
@@ -2750,8 +2750,9 @@ export class OpenClawExtensionImportService {
               }
             }
           };
-          if (appCompanion && extensionId) {
-            // Native execution waits for companion validation and explicit activation.
+          if (appCompanion && !installedPath && extensionId) {
+            // First installation stays disabled until explicitly enabled. Updates
+            // leave the saved activation and compatible config to Native.
             updateExtensionAllowlist(
               manager.getConfigPath(), extensionId, 'add',
               this.deps.getManagedPluginIds?.() ?? [], true,

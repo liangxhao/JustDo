@@ -364,7 +364,7 @@ test('installs a local extension without a review token once inside the package 
 });
 
 test.each([ExtensionPackageLifecycleMode.HOT, ExtensionPackageLifecycleMode.STOPPED])(
-  'reserves package ordering and approves only the selected stopped lifecycle: %s', async mode => {
+  'reserves package ordering and approves only an owned App lifecycle: %s', async mode => {
     let reserved = false;
     let applying = false;
     const apply: ApplyExtensionPackageMutation = vi.fn(async (_target, operation) => {
@@ -404,8 +404,7 @@ test.each([ExtensionPackageLifecycleMode.HOT, ExtensionPackageLifecycleMode.STOP
     expect(apply).toHaveBeenCalledOnce();
     expect(f.service.importPath).toHaveBeenCalledOnce();
     expect(mutateAppPackage).not.toHaveBeenCalled();
-    expect(approveInstalledAppPackage).toHaveBeenCalledTimes(
-      mode === ExtensionPackageLifecycleMode.STOPPED ? 1 : 0);
+    expect(approveInstalledAppPackage).toHaveBeenCalledOnce();
     expect(reserved).toBe(false);
   },
 );

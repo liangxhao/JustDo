@@ -588,6 +588,10 @@ const getAppPlugins = (): AppPluginManager =>
     retentionRoot: getAppPluginStoragePaths().artifacts,
     withStoppedGateway: operation =>
       getOpenClawEngineManager().withStoppedGatewayForMutation(operation),
+    syncConfiguration: async () => {
+      const result = await getOpenClawConfigSyncService().syncConfig({ reason: 'app-plugin-package-change' });
+      if (!result.success || !result.configSynced) throw new Error(result.error || t('extensionPackageRecoveryFailed'));
+    },
     isGatewayConnected: () => !!getOpenClawRuntimeAdapter()?.getGatewayClient(),
     getGatewayProcessId: () => getOpenClawEngineManager().getGatewayProcessId(),
     getGatewayProcessGeneration: () => getOpenClawEngineManager().getGatewayProcessGeneration(),

@@ -8,14 +8,15 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { resolvePluginDataDirectory } from '../../../../plugins/sdk/app-plugin-sdk/data';
-import type { AppMainModule, AppResourceParticipant } from '../../../../plugins/sdk/app-plugin-sdk/main';
+import type { AppMainModule, AppMainRegistration, AppResourceParticipant } from '../../../../plugins/sdk/app-plugin-sdk/main';
 import { appNativeGatewayMethodAlias, type AppNativeHandshake } from '../../../../plugins/sdk/app-plugin-sdk/native-contract';
 import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { t } from '../../core/i18n';
 import { EnginePreparationPendingCode, EnginePreparationPendingError } from '../../engine/enginePreparationError';
 import { bindPluginGatewayClient } from '../../engine/gateway/pluginRequestBinding';
-import { removeExtensionPackage } from '../extensions/extensionMutation';
+import { preparePluginDataDirectory } from '../data/pluginDataService';
+import { installExtensionPackage, removeExtensionPackage } from '../extensions/extensionMutation';
 import { type ApplyExtensionPackageMutation, ExtensionPackageLifecycleMode } from '../extensions/extensionPackageLifecycle';
 import { artifactDigest } from './artifact';
 import { readAppAsset } from './assets';
@@ -33,6 +34,9 @@ async function fixture(options: {
   resources?: AppResourceParticipant;
   ensureReady?(): Promise<void>;
   stopGateway?(): Promise<void>;
+  syncConfiguration?(): Promise<void>;
+  nativePolicy?(): AppMainRegistration['nativePolicy'];
+  activate?(): void;
   cleanupOnly?: boolean;
   data?: AppPluginManifest['data'];
   initiallyOffline?: boolean;
@@ -113,6 +117,7 @@ async function fixture(options: {
       return candidates;
     },
     broadcast: () => {}, isGatewayConnected: () => connected,
+    syncConfiguration: options.syncConfiguration,
     getGatewayProcessId: options.unknownGatewayProcess ? undefined : () => processId,
     getGatewayProcessGeneration: () => generation,
     loadModule: async url => {
@@ -134,6 +139,8 @@ async function fixture(options: {
               id: 'native', invoke: () => host.requestGateway('lifecycle.start', {}),
             }],
             beforePackageMutation: options.beforePackageMutation,
+            nativePolicy: options.nativePolicy?.(),
+            activate: options.activate,
             resources: options.resources,
           };
         },
@@ -363,7 +370,7 @@ test('offline ordinary package changes retain the startup fence without starting
 });
 
 test.each(['malformed', 'directory', 'broken symlink'] as const)(
-  'incoming %s App artifact markers use stopped reconciliation', async kind => {
+  'incoming %s App artifact markers do not force a Native restart', async kind => {
     const f = await fixture();
     const sourceDirectory = path.join(f.root, 'incoming');
     const appRoot = path.join(sourceDirectory, 'app');
@@ -378,8 +385,8 @@ test.each(['malformed', 'directory', 'broken symlink'] as const)(
       nativePluginIds: ['new-app-package'], sourceDirectory,
     }, async mode => mode));
 
-    expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
-    expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+    expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+    expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
   },
 );
 
@@ -414,12 +421,12 @@ test('plain package replacement still cleans the selected App owner when its mar
     return mode;
   }));
 
-  expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
-  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
   expect(f.manager.snapshot()).toEqual([]);
 });
 
-test('a selected cleanup-only App owner still requires stopped package mutation', async () => {
+test('a selected cleanup-only App owner participates without forcing a Native restart', async () => {
   const f = await fixture({ cleanupOnly: true });
   expect(f.manager.isAppCompanion(id)).toBe(false);
 
@@ -427,8 +434,8 @@ test('a selected cleanup-only App owner still requires stopped package mutation'
     nativePluginIds: [id],
   }, async mode => mode));
 
-  expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
-  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
 });
 
 test('an ordinary plugin data removal requires the stopped package lifecycle', async () => {
@@ -457,10 +464,132 @@ test.each(['unapproved', 'bundled', 'retained'] as const)(
       nativePluginIds: ['package-child', 'historical-app'],
     }, async mode => mode));
 
-    expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
-    expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+    expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+    expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
   },
 );
+
+test('prepares newly declared managed data under the existing stopped lease', async () => {
+  const f = await fixture();
+  const next = await f.version('2.0.0', { directory: 'managed-v1' });
+
+  const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: [id], sourceDirectory: next.candidate.nativeRoot,
+    installPath: path.join(f.root, '1.0.0'),
+  }, async mode => { f.replace(next); return mode; }));
+
+  expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+  expect(f.counts()).toEqual({ stops: 1, resumes: 1 });
+  expect(resolvePluginDataDirectory(f.stateDirectory, id)).toBe(path.join(f.stateDirectory, 'plugin-data', id));
+});
+
+test('uses prepared managed data without moving it or stopping Native', async () => {
+  const f = await fixture({ data: { directory: 'managed-v1' }, prepareState: state =>
+    preparePluginDataDirectory(state, id, { directory: 'managed-v1' }).then(() => undefined) });
+  const directory = resolvePluginDataDirectory(f.stateDirectory, id);
+  await writeFile(path.join(directory, 'history.json'), '{"history":"kept"}');
+  const next = await f.version('2.0.0');
+
+  const mode = await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: [id], sourceDirectory: next.candidate.nativeRoot,
+    installPath: path.join(f.root, '1.0.0'),
+  }, async mode => { f.replace(next); return mode; }));
+
+  expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+  expect(resolvePluginDataDirectory(f.stateDirectory, id)).toBe(directory);
+  expect(await readFile(path.join(directory, 'history.json'), 'utf8')).toBe('{"history":"kept"}');
+});
+
+test('publishes new Main policy after the native write queue is released and before business admission', async () => {
+  let manager!: AppPluginManager;
+  let writing = false;
+  let policy = { skills: ['previous-skill'] };
+  const syncConfiguration = vi.fn(async () => {
+    expect(writing).toBe(false);
+    expect(manager.registry.nativePolicy(id).skills).toEqual(['next-skill']);
+    expect(manager.snapshot()[0].state).not.toBe('active');
+  });
+  const f = await fixture({ syncConfiguration, nativePolicy: () => policy });
+  manager = f.manager;
+  const next = await f.version('2.0.0');
+
+  await manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: [id], sourceDirectory: next.candidate.nativeRoot,
+    installPath: path.join(f.root, '1.0.0'),
+  }, async mode => {
+    expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
+    writing = true;
+    policy = { skills: ['next-skill'] };
+    f.replace(next);
+    writing = false;
+    return { success: true };
+  }));
+
+  expect(syncConfiguration).toHaveBeenCalledOnce();
+  expect(f.manager.snapshot()[0]).toMatchObject({ state: 'active', version: '2.0.0' });
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+});
+
+test.each(['rejected', 'not-sent'] as const)(
+  'a known %s package operation preserves old Main without schema or config recovery', async resultKind => {
+    const activate = vi.fn();
+    const syncConfiguration = vi.fn();
+    const f = await fixture({ activate, syncConfiguration });
+    const result = { success: false, error: resultKind };
+
+    expect(await f.manager.withExtensionPackageMutation(apply => apply({
+      nativePluginIds: [id], installPath: path.join(f.root, '1.0.0'),
+    }, async () => {
+      if (resultKind === 'not-sent') f.disconnect();
+      return result;
+    }))).toBe(result);
+
+    expect(activate).toHaveBeenCalledOnce();
+    expect(syncConfiguration).not.toHaveBeenCalled();
+    expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+    expect(f.manager.snapshot()[0]).toMatchObject({ version: '1.0.0',
+      state: resultKind === 'rejected' ? 'active' : 'cleanup' });
+    if (resultKind === 'rejected') expect(await f.read()).toEqual({ success: true, value: '1.0.0' });
+  },
+);
+
+test('a committed native failure still reconciles the installed Main and configuration', async () => {
+  const syncConfiguration = vi.fn();
+  const f = await fixture({ syncConfiguration });
+  const next = await f.version('2.0.0');
+  const result = { success: false, installationCommitted: true, error: 'native followup failed' };
+
+  expect(await f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: [id], installPath: path.join(f.root, '1.0.0'),
+  }, async () => { f.replace(next); return result; }))).toBe(result);
+
+  expect(syncConfiguration).toHaveBeenCalledOnce();
+  expect(f.manager.snapshot()[0]).toMatchObject({ version: '2.0.0', state: 'active' });
+});
+
+test('reports a committed install when the new Main activation is blocked', async () => {
+  let failActivation = false;
+  const syncConfiguration = vi.fn();
+  const f = await fixture({ syncConfiguration, activate: () => {
+    if (failActivation) throw new Error('new Main activation failed');
+  } });
+  const next = await f.version('2.0.0');
+  failActivation = true;
+
+  const result = await installExtensionPackage(async () => {
+    f.replace(next);
+    return { success: true, extensionId: id };
+  }, operation => f.manager.withExtensionPackageMutation(apply => apply({
+    nativePluginIds: [id], installPath: path.join(f.root, '1.0.0'),
+  }, operation)));
+
+  expect(result).toMatchObject({ success: false, installationCommitted: true,
+    operationFailedStage: PluginOperationStage.PREPARING_RUNTIME });
+  expect(syncConfiguration).not.toHaveBeenCalled();
+  expect(f.manager.snapshot().some(item => item.state === 'active')).toBe(false);
+  expect(f.counts()).toEqual({ stops: 0, resumes: 0 });
+});
 
 test('unreadable App inventory rejects ordinary admission before stopping or writing', async () => {
   const f = await fixture();

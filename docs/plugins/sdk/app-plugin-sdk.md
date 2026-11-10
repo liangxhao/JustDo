@@ -42,7 +42,9 @@ The source package must include:
 - `package.json.app.main` and `.browser` pointing to source entries.
 - Explicit npm dependencies and a LICENSE. The complete package includes license files for actual bundled dependencies and strips install hooks and bundled npm dependency declarations.
 
-The result `output/packages/<id>/<artifact-hash>/` is a complete local native install package with its `app/` companion, native single-file ESM entry, and skills. Install that directory through extension management. Explicit installation or update authorizes the exact app artifact: the host confirms the installed native identity and canonical path, validates the native binding and artifact hashes, retains immutable code, and records hash-bound trust within the same stopped-Gateway package operation. A native capability token or marketplace source does not replace these checks. No second app-code confirmation or restart is needed after a successful managed install. Package changes stop and restart the owned Gateway before admitting the new Main/UI artifact; the application stays open. Native execution remains disabled until explicitly enabled. Unconfirmed installation or failed artifact validation cannot grant trust, and externally modified or previously unapproved code still requires explicit confirmation or re-import. Rebuilding only the plugin changes its artifact hash and does not require rebuilding the application. The supported native profile bundles business dependencies, allows literal public OpenClaw SDK imports, and rejects alternate code loaders. It is a format restriction, not a malicious-code sandbox.
+The result `output/packages/<id>/<artifact-hash>/` is a complete local native install package with its `app/` companion, native single-file ESM entry, and skills. Install that directory through extension management. OpenClaw's official lifecycle owns the entire installation directory and Native installation, updates, removal and enablement. Explicit installation or update also authorizes the exact app artifact: after confirmed native success, the host checks the installed native identity and canonical path, validates the native binding and artifact hashes, retains immutable code, and records hash-bound trust within the same package operation. A native capability token or marketplace source does not replace these checks. No second app-code confirmation is needed after a successful managed install.
+
+First installs keep Native execution disabled until explicitly enabled. Updates preserve the existing activation intent and compatible configuration, subject to native validation. Reloading Main/Browser alone does not require a Gateway restart; genuine native restart requirements use the existing convergence flow. Offline operations, explicit private-data deletion and required managed-data preparation retain the stopped lifecycle. The application stays open. See [Companion update lifecycle](#companion-update-lifecycle) for admission and failure boundaries. Unconfirmed installation or failed artifact validation cannot grant trust, and externally modified or previously unapproved code still requires explicit confirmation or re-import. Rebuilding only the plugin changes its artifact hash and does not require rebuilding the application. The supported native profile bundles business dependencies, allows literal public OpenClaw SDK imports, and rejects alternate code loaders. It is a format restriction, not a malicious-code sandbox.
 
 ## Main contract
 
@@ -53,6 +55,38 @@ The host provides an explicit session metadata/execution port, the real product 
 Cleanup capability declarations and parameter predicates are explicit. Cleanup must not create sessions or send turns. Receipt listeners consume identity/status only. Protected resources are recorded with their owner and exact artifact hash. An old approved artifact may recover cleanup for journal-referenced resources, but receives no business commands or UI. Unknown or failed cleanup vetoes destructive deletion and package changes. Never replay an uncertain send, duplicate native transcripts, or infer settled execution from a chat final.
 
 Use `host.publishEvent(name, payload)` for transient bounded metadata and Browser `host.onEvent(name, listener)` to observe it. The host binds the active plugin ID, artifact hash and business epoch; stale or foreign events are ignored and subscriptions retire with their browser instance. Validate and project native events in the plugin before publication. These events do not create another transcript or configuration authority.
+
+### Companion update lifecycle
+
+Before a package mutation, the host withdraws the target Main/Browser epoch and
+checks its current and retained cleanup owners. Busy, unknown or failed cleanup
+can veto the operation. Native owns the directory transaction and runtime
+application through its official management API. The host validates and loads
+the installed companion only after confirmed native success.
+
+Only confirmed successful native installation can grant trust to the exact
+installed app artifact. The host retains it under an immutable hash, loads the
+replacement module and initializes its schema. New `projectNativeConfig` and
+`nativePolicy` contributions then use the existing configuration synchronization
+flow. Main/Browser business becomes available only after a current authenticated
+Native handshake; old epochs, bindings and callbacks cannot execute as the
+replacement. Unrelated Main/Browser instances are not proactively retired.
+
+Keep registration synchronous and place effects in declared schema, activation,
+business or cleanup callbacks. Already prepared managed data is reused during
+updates; creation, retention preparation or legacy migration still requires the
+existing stopped-Gateway path. Native may require a real Gateway restart, and
+the host honors that receipt without replaying the package operation. An unknown
+sent operation stays fenced and is never retried or switched to CLI. Post-commit
+trust, schema, configuration or handshake failure preserves the committed result
+and required cleanup ownership rather than reviving old business code.
+
+Normal uninstall cleans the plugin's native settings, list entries, install
+record, owned slots and channel configuration through OpenClaw. Native may retain
+a disabled marker, which does not establish installation. Uninstall preserves
+unrelated configuration, product metadata, native history and private data by
+default. Explicit private-data cleanup remains subject to ownership and retention
+checks.
 
 ### Managed private data (SDK 1.2)
 
@@ -152,6 +186,6 @@ Each companion can provide its own Vitest configuration and SDK-port fixtures. `
 
 ## Trust and limits
 
-Main runs trusted code in the Electron process and browser modules run in the application page. The SDK guards lifetimes and accidental misuse; it does not isolate hostile JavaScript. Only SDK v1, the declared native single-file profile, and the current React 18 host adapter are supported. A new host primitive may require an SDK change. Package code is cold-loaded; live binary hot replacement and production installer certification are outside this implementation's acceptance claim.
+Main runs trusted code in the Electron process and browser modules run in the application page. The SDK guards lifetimes and accidental misuse; it does not isolate hostile JavaScript. Only SDK v1, the declared native single-file profile, and the current React 18 host adapter are supported. A new host primitive may require an SDK change. Main/Browser modules load from immutable hash paths; Native runtime application and genuine restart requirements belong to OpenClaw's official lifecycle. This contract does not claim production installer certification or successful validation on every platform.
 
 [返回 SDK 文档索引](README.md)

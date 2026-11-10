@@ -51,6 +51,28 @@ const setup = async (register: (host: AppMainHost) => AppMainRegistration) => {
   };
 };
 
+it('checks only the changing owner while preserving global unresolved-inventory protection', async () => {
+  const target = vi.fn(async () => {});
+  const peer = vi.fn(async () => { throw new Error('peer remains busy'); });
+  const registry = new AppPluginRegistry(() => ({ enabled: false, confirmed: true }));
+  try {
+    await registry.prepare(artifact, {} as AppHostResources,
+      async () => ({ register: () => ({ commands: [], beforePackageMutation: target }) }));
+    await registry.prepare({ ...artifact, artifact: { ...artifact.artifact,
+      hash: 'b'.repeat(64), manifest: { ...manifest, id: 'peer', nativePluginId: 'peer' } } },
+    {} as AppHostResources, async () => ({ register: () => ({ commands: [], beforePackageMutation: peer }) }));
+
+    await registry.preparePackageMutation({ onlyIds: ['fixture'] });
+    expect(target).toHaveBeenCalledOnce();
+    expect(peer).not.toHaveBeenCalled();
+    await expect(registry.preparePackageMutation()).rejects.toThrow('peer remains busy');
+    registry.blockResourceAdmission();
+    await expect(registry.preparePackageMutation({ onlyIds: ['fixture'] }))
+      .rejects.toThrow('appPluginCleanupUnresolved');
+  } finally { registry.dispose(); }
+});
+
+
 it.each([
   undefined,
   { ...binding, gatewayMethods: undefined },

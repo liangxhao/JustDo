@@ -338,6 +338,7 @@ test('preserves the saved installation and unknown activation outcome after a co
 
 function routedFixture(options: {
   companion?: boolean;
+  stopped?: boolean;
   outcome?: 'unknown' | 'persisted-error' | 'incomplete' | 'not-sent';
   restartRequired?: boolean;
   policyChanged?: boolean;
@@ -467,11 +468,9 @@ function routedFixture(options: {
   const applyPackageMutation: ApplyExtensionPackageMutation = vi.fn(async (target, operation) => {
     expect(configMutation).toBe(false);
     targets.push(target);
-    stopped = fs.existsSync(path.join(target.sourceDirectory!, 'app', 'app.artifact.json')) ||
-      fs.existsSync(path.join(target.installPath!, 'app', 'app.artifact.json'));
+    stopped = options.stopped === true;
     try {
-      return await operation(stopped
-        ? ExtensionPackageLifecycleMode.STOPPED : ExtensionPackageLifecycleMode.HOT);
+      return await operation(stopped ? ExtensionPackageLifecycleMode.STOPPED : ExtensionPackageLifecycleMode.HOT);
     } finally {
       // Recovery can enter the same config queue only after the write releases it.
       expect(configMutation).toBe(false);
@@ -510,6 +509,82 @@ test.each([
   expect(f.requestGateway).not.toHaveBeenCalled();
   expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
   expect(fs.existsSync(f.sources[0])).toBe(false);
+});
+
+test.each([
+  { input: 'directory', enabled: true },
+  { input: 'archive', enabled: false },
+])('updates a companion from a frozen $input preserving enabled=$enabled', async ({ input, enabled }) => {
+  const f = routedFixture({ companion: true });
+  fs.cpSync(f.source, f.installed, { recursive: true });
+  const config = { plugins: {
+    allow: ['package-plugin'], entries: { 'package-plugin': { enabled, config: { label: 'saved' } } },
+  } };
+  fs.writeFileSync(f.configPath, JSON.stringify(config));
+  let selectedSource = f.source;
+  if (input === 'archive') {
+    selectedSource = path.join(fixtureRoot, 'companion.tgz');
+    await tar.create({ cwd: fixtureRoot, file: selectedSource, gzip: true }, [path.basename(f.source)]);
+  }
+
+  const result = await f.service.importPath(selectedSource, undefined, undefined, {
+    autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({ success: true, extensionId: 'package-plugin' });
+  expect(f.connectedRequest).toHaveBeenCalledExactlyOnceWith('plugins.install', {
+    source: 'local', path: f.sources[0], mode: 'update', enable: false,
+  }, { timeoutMs: 600_000 });
+  if (input === 'archive') expect(f.sources[0]).toMatch(/\.tgz$/);
+  expect(f.sources[0]).not.toBe(selectedSource);
+  expect(JSON.parse(fs.readFileSync(f.configPath, 'utf8'))).toEqual(config);
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test('does not retry an explicitly not-entered companion install on a retired connection', async () => {
+  const f = routedFixture({ companion: true });
+  f.connectedRequest.mockImplementationOnce(async () => {
+    f.disconnect();
+    throw Object.assign(new Error(
+      'Another plugin or config operation is already running; retry when it completes.',
+    ), { code: 'UNAVAILABLE', gatewayCode: 'UNAVAILABLE', retryable: true, retryAfterMs: 1 });
+  });
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({ success: false, error: 'OpenClaw gateway client is unavailable.' });
+  expect(result.installSourceInUse).not.toBe(true);
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test.each([{ restartRequired: true }, { policyChanged: true }])(
+  'uses the existing convergence when Native or the network requires a companion restart: %j', async outcome => {
+    const f = routedFixture({ companion: true, ...outcome });
+    const result = await f.service.importPath(f.source, undefined, undefined, {
+      autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation,
+    });
+    expect(result).toMatchObject({ success: true, extensionId: 'package-plugin' });
+    expect(f.connectedRequest).toHaveBeenCalledOnce();
+    expect(f.restartGatewayAfterMutation).toHaveBeenCalledOnce();
+    expect(f.runCommand).not.toHaveBeenCalled();
+  },
+);
+
+test('retains the companion source after an unknown reply without a restart or replay', async () => {
+  const f = routedFixture({ companion: true, outcome: 'unknown' });
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation,
+  });
+  expect(result).toMatchObject({ success: false, installSourceInUse: true });
+  expect(fs.existsSync(f.targets[0].sourceDirectory!)).toBe(true);
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
 });
 
 test('updates once despite an advisory Explorer handle and preserves the disabled state', async () => {
@@ -755,7 +830,7 @@ test.each(['unknown', 'persisted-error', 'incomplete', 'not-sent'] as const)(
 );
 
 test('selects a stopped companion install before writes and approves before releasing the config lane', async () => {
-  const f = routedFixture({ companion: true });
+  const f = routedFixture({ companion: true, stopped: true });
   const onInstalled = vi.fn(async (result, mode) => {
     expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
     expect(f.inConfigMutation()).toBe(true);
@@ -771,7 +846,7 @@ test('selects a stopped companion install before writes and approves before rele
   expect(onInstalled).toHaveBeenCalledOnce();
 });
 
-test('classifies an existing broken companion at the actual destination before replacing it', async () => {
+test('passes the actual broken companion destination to the lifecycle owner before replacing it', async () => {
   const f = routedFixture();
   fs.mkdirSync(path.join(f.installed, 'app'), { recursive: true });
   fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), '{broken');
@@ -780,8 +855,8 @@ test('classifies an existing broken companion at the actual destination before r
     autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation,
   })).toMatchObject({ success: true });
   expect(f.targets[0].installPath).toBe(f.installed);
-  expect(f.runCommand).toHaveBeenCalledOnce();
-  expect(f.connectedRequest).not.toHaveBeenCalled();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
 });
 
 test('uses the frozen source when the original changes after lifecycle classification', async () => {
@@ -863,7 +938,7 @@ test('classifies the native package directory before a misleading archive root m
   const archive = path.join(fixtureRoot, 'mixed-package.tgz');
   await tar.create({ file: archive, cwd: archiveRoot }, ['openclaw.plugin.json', 'package']);
   const onInstalled = vi.fn(async (result, mode) => {
-    expect(mode).toBe(ExtensionPackageLifecycleMode.STOPPED);
+    expect(mode).toBe(ExtensionPackageLifecycleMode.HOT);
     return result;
   });
   expect(await f.service.importPath(archive, undefined, undefined, {
@@ -871,9 +946,9 @@ test('classifies the native package directory before a misleading archive root m
   })).toMatchObject({ success: true, extensionId: 'package-plugin' });
   expect(path.basename(f.targets[0].sourceDirectory!)).toBe('package');
   expect(f.targets[0].nativePluginIds).toEqual(['package-plugin']);
-  expect(f.runCommand).toHaveBeenCalledOnce();
-  expect(f.runCommand.mock.calls[0][1]).toContain('--no-enable');
-  expect(f.connectedRequest).not.toHaveBeenCalled();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.connectedRequest.mock.calls[0][1]).toMatchObject({ enable: false });
   expect(onInstalled).toHaveBeenCalledOnce();
 });
 
@@ -943,7 +1018,7 @@ test('preserves a committed install and unknown activation while honoring its re
 });
 
 test('keeps the committed receipt when selective lifecycle recovery fails after the write', async () => {
-  const f = routedFixture({ companion: true });
+  const f = routedFixture({ companion: true, stopped: true });
   const applyPackageMutation: ApplyExtensionPackageMutation = async (target, operation) => {
     await f.applyPackageMutation(target, operation);
     throw new Error('Synthetic reconnection failure');
