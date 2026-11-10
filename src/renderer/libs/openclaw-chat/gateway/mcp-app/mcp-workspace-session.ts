@@ -46,6 +46,7 @@ export class McpWorkspaceSession {
     private readonly host: {
       isCurrent: () => boolean;
       canInteract?: () => boolean;
+      getWorkingDirectory?: () => string | undefined;
       addDraft: (text: string) => Promise<boolean>;
       openFile: (file: { path: string; name: string }) => Promise<boolean>;
     },
@@ -300,6 +301,10 @@ export class McpWorkspaceSession {
       return {
         apps: this.apps,
         sessionKey: native.sessionKey,
+        getWorkingDirectory: () =>
+          this.current()
+            ? this.host.getWorkingDirectory ? this.host.getWorkingDirectory() : this.scope.cwd
+            : undefined,
         isCurrent: () =>
           this.current() && binding.isCurrent() && this.host.canInteract?.() !== false,
         canDraft: () =>

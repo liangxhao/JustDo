@@ -930,6 +930,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     : MAIN_USER_AGENT_ID;
   const homeApps = useHomeFileApps({
     currentSessionId,
+    currentSessionCwd: currentSession?.cwd,
     sessionIds: sessions.map(session => session.id),
     sessionInteractive:
       sessionTranscriptMutation === null &&

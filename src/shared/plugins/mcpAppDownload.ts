@@ -17,6 +17,8 @@ export interface McpAppDownloadInput {
   fileName: string;
   mimeType: string;
   dataBase64: string;
+  /** Host-owned Save dialog suggestion; never supplied by the sandboxed App. */
+  cwd?: string;
 }
 
 export function validMcpAppDownloadBase64(value: unknown): value is string {

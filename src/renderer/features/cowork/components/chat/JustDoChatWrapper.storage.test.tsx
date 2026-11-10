@@ -14,6 +14,7 @@ const fixture = vi.hoisted(() => ({
   session: { id: 'old', agentId: 'main' } as {
     id: string;
     agentId: string;
+    cwd?: string;
     branchCreationPending?: boolean;
   },
   mcpControls: null as null | {
@@ -291,6 +292,7 @@ it('blocks captured App entrypoints when branch creation becomes pending', async
 });
 
 it('resumes App bindings only after returning to the same ready native incarnation', async () => {
+  fixture.session = { ...fixture.session, cwd: '/workspace/old' };
   const request = vi.fn().mockResolvedValue({});
   const client = { generation: 1, request, stop: vi.fn() };
   const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
@@ -317,10 +319,15 @@ it('resumes App bindings only after returning to the same ready native incarnati
   const controller = connect.mock.instances[0] as ChatController;
   const context = (await fixture.mcpControls!.prepare()) as McpAppViewContext;
   expect(context.isCurrent()).toBe(true);
+  expect(context.getWorkingDirectory?.()).toBe('/workspace/old');
+  fixture.session = { ...fixture.session, cwd: '/workspace/new' };
+  fixtureView.rerender(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
+  expect(context.getWorkingDirectory?.()).toBe('/workspace/new');
 
   fixture.session = { id: 'other', agentId: 'main' };
   fixtureView.rerender(<JustDoChatWrapper onWidgetDraft={onWidgetDraft} />);
   expect(context.isCurrent()).toBe(false);
+  expect(context.getWorkingDirectory?.()).toBeUndefined();
   expect(context.resume?.()).toBeUndefined();
   controller.state.currentSessionId = 'native-other';
   controller.state.initialHistoryReady = true;

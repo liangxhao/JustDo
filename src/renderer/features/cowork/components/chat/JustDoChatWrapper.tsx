@@ -243,6 +243,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const activeProductSessionId = useRef(currentSessionId);
     const previousProductSessionId = useRef(currentSessionId);
     activeProductSessionId.current = currentSessionId;
+    const workingDirectoryRef = useRef(currentSession?.cwd);
+    workingDirectoryRef.current = currentSession?.cwd;
     const currentSessionAgentId = currentSession?.agentId;
     const canonicalSessionKey = currentSessionId
       ? currentSession.nativeSessionKey ||
@@ -384,6 +386,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           apps: controller.mcpApps,
           sessionKey,
           presentationScope: currentSessionId,
+          getWorkingDirectory: () =>
+            activeProductSessionId.current === currentSessionId ? workingDirectoryRef.current : undefined,
           isCurrent: () =>
             activeProductSessionId.current === currentSessionId &&
             controllerRef.current === controller &&

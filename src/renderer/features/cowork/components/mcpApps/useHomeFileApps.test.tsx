@@ -9,6 +9,7 @@ import type { McpAppWorkspaceFileEntry } from './workspaceApps';
 interface TestHost {
   isCurrent: () => boolean;
   canInteract?: () => boolean;
+  getWorkingDirectory?: () => string | undefined;
 }
 interface TestConnection {
   connected: boolean;
@@ -118,6 +119,7 @@ function setup(running = false, prepare?: (host: TestHost) => Promise<TestHost>)
   f.launch.mockResolvedValue({ viewId: 'view' });
   const options = {
     currentSessionId: null as string | null,
+    currentSessionCwd: undefined as string | undefined,
     sessionInteractive: true,
     enabled: true,
     cwd: 'E:/workspace',
@@ -529,6 +531,7 @@ test('first-send promotion keeps the same canvas and adopts its owner without a 
   });
   const host = f.hosts[0];
   let requestId: string | undefined;
+  expect(host.getWorkingDirectory?.()).toBe(h.options.cwd);
   act(() => {
     requestId = h.result.current.beginStart('temp-first');
   });
@@ -538,12 +541,16 @@ test('first-send promotion keeps the same canvas and adopts its owner without a 
   expect(host.canInteract?.()).toBe(true);
   expect(f.invalidate).not.toHaveBeenCalled();
   act(() => h.result.current.promote('temp-first', 'conversation'));
-  h.rerender({ ...h.options, enabled: false, currentSessionId: 'conversation' });
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'conversation', currentSessionCwd: 'E:/adopted' });
+  expect(host.getWorkingDirectory?.()).toBe('E:/adopted');
+  h.rerender({ ...h.options, enabled: false, currentSessionId: 'conversation', currentSessionCwd: 'E:/changed' });
+  expect(host.getWorkingDirectory?.()).toBe('E:/changed');
   expect(f.adopt).toHaveBeenCalledExactlyOnceWith('conversation');
   expect(host.isCurrent()).toBe(true);
   expect(host.canInteract?.()).toBe(true);
   expect(f.invalidate).not.toHaveBeenCalled();
   h.rerender({ ...h.options, enabled: false, currentSessionId: 'other' });
+  expect(host.getWorkingDirectory?.()).toBeUndefined();
   expect(host.canInteract?.()).toBe(false);
   expect(f.invalidate).toHaveBeenCalled();
   expect(f.launch).not.toHaveBeenCalled();

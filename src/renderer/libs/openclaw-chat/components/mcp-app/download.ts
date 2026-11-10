@@ -7,7 +7,7 @@ import {
 import { mcpAppRecord } from '@shared/plugins/mcpApps';
 
 /** Accept embedded bytes only. Resource URIs are names, never a network fetch instruction. */
-export function prepareMcpAppDownload(contents: unknown): McpAppDownloadInput {
+export function prepareMcpAppDownload(contents: unknown, cwd?: string): McpAppDownloadInput {
   if (!Array.isArray(contents) || contents.length !== 1) throw new Error('Expected one App file');
   const wrapper = mcpAppRecord(contents[0]);
   if (wrapper?.type !== 'resource') throw new Error('Expected embedded App file');
@@ -30,5 +30,5 @@ export function prepareMcpAppDownload(contents: unknown): McpAppDownloadInput {
     dataBase64 = content.blob;
     if (!validMcpAppDownloadBase64(dataBase64)) throw new Error('Invalid App file bytes');
   } else throw new Error('Missing embedded App file');
-  return { fileName, mimeType: content.mimeType, dataBase64 };
+  return { fileName, mimeType: content.mimeType, dataBase64, ...(cwd !== undefined ? { cwd } : {}) };
 }

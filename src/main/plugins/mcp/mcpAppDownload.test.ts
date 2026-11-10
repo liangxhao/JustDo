@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 import type { IpcMainInvokeEvent } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -25,19 +27,30 @@ beforeEach(() => {
 });
 describe('native MCP App file save', () => {
   it('writes exact bytes only to the path selected in the owner-bound native dialog', async () => {
+    const cwd = path.resolve('工作目录 with spaces');
     mocks.choose.mockResolvedValue({ canceled: false, filePath: 'D:/chosen/flow.drawio' });
-    await expect(saveMcpAppDownload({ sender: {} } as IpcMainInvokeEvent, input)).resolves.toEqual({
+    await expect(saveMcpAppDownload({ sender: {} } as IpcMainInvokeEvent, { ...input, cwd })).resolves.toEqual({
       canceled: false,
     });
     expect(mocks.choose).toHaveBeenCalledWith(
       mocks.owner,
-      expect.objectContaining({ defaultPath: '流程.drawio' }),
+      expect.objectContaining({ defaultPath: path.join(cwd, '流程.drawio') }),
     );
     expect(mocks.write).toHaveBeenCalledWith(
       'D:/chosen/flow.drawio',
       Buffer.from('<mxfile>中文</mxfile>'),
     );
   });
+  it.each(['relative/workspace', 42, '/workspace\0invalid', 'x'.repeat(4097)])(
+    'rejects an invalid host directory before opening the dialog (%#)',
+    async cwd => {
+      await expect(
+        saveMcpAppDownload({ sender: {} } as IpcMainInvokeEvent, { ...input, cwd }),
+      ).rejects.toThrow('Invalid App download');
+      expect(mocks.choose).not.toHaveBeenCalled();
+      expect(mocks.write).not.toHaveBeenCalled();
+    },
+  );
   it('does not write on cancellation or invalid input', async () => {
     mocks.choose.mockResolvedValue({ canceled: true });
     await expect(saveMcpAppDownload({ sender: {} } as IpcMainInvokeEvent, input)).resolves.toEqual({

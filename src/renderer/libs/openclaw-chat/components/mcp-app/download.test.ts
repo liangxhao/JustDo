@@ -4,6 +4,19 @@ import { prepareMcpAppDownload } from './download';
 
 const embedded = (resource: unknown) => [{ type: 'resource', resource }];
 describe('MCP App download admission', () => {
+  it('uses only the host directory hint and ignores App paths and directory fields', () => {
+    const contents = embedded({
+      uri: 'file:///untrusted/directory/diagram.drawio',
+      mimeType: 'application/vnd.jgraph.mxfile',
+      text: '<mxfile/>',
+      cwd: '/forged',
+    });
+    expect(prepareMcpAppDownload(contents, '/workspace/current')).toMatchObject({
+      fileName: 'diagram.drawio',
+      cwd: '/workspace/current',
+    });
+    expect(prepareMcpAppDownload(contents)).not.toHaveProperty('cwd');
+  });
   it('preserves Unicode source and binary exports as embedded bytes', () => {
     const file = prepareMcpAppDownload(
       embedded({

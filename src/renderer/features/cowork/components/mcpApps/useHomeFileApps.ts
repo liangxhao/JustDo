@@ -17,6 +17,7 @@ import { openWorkspaceAppFile, openWorkspaceAppLaunch } from './workspaceApps';
 
 interface Options {
   currentSessionId?: string | null;
+  currentSessionCwd?: string;
   sessionIds?: readonly string[];
   sessionInteractive?: boolean;
   enabled: boolean;
@@ -145,6 +146,12 @@ export function useHomeFileApps(options: Options): {
             (Boolean(created.targetSessionId) ||
               (active.current && latest.current.key === scope.key)),
           canInteract: interactive,
+          getWorkingDirectory: () =>
+            created.targetSessionId
+              ? latest.current.currentSessionId === created.targetSessionId
+                ? latest.current.currentSessionCwd
+                : undefined
+              : scope.cwd,
           addDraft: text =>
             interactive() ? latest.current.addDraft(text) : Promise.resolve(false),
           openFile: async file => {

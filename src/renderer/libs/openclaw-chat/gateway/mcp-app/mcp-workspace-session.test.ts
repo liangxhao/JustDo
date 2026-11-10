@@ -100,6 +100,20 @@ function setup() {
 }
 
 describe('homepage MCP workspace connection', () => {
+  it('suggests the workspace directory and delegates live directory changes after adoption', async () => {
+    const f = setup();
+    const context = await f.session.prepare();
+    expect(context.getWorkingDirectory?.()).toBe('/workspace');
+    let cwd: string | undefined = '/adopted';
+    Object.assign(f.host, { getWorkingDirectory: () => cwd });
+    f.session.adopt('drawing-chat');
+    expect(context.getWorkingDirectory?.()).toBe('/adopted');
+    cwd = '/updated';
+    expect(context.getWorkingDirectory?.()).toBe('/updated');
+    cwd = undefined;
+    expect(context.getWorkingDirectory?.()).toBeUndefined();
+    f.session.dispose();
+  });
   it('keeps an adopted canvas owner while its chat is hidden, then revokes it on disconnect', async () => {
     const f = setup();
     await f.session.prepare();

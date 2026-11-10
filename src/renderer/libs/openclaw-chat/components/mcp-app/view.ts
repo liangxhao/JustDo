@@ -37,6 +37,8 @@ export interface McpAppViewContext {
   sessionKey: string;
   isCurrent: () => boolean;
   canDraft: () => boolean;
+  /** Live host directory used only to suggest a native Save dialog location. */
+  getWorkingDirectory?: () => string | undefined;
   addDraft: (text: string) => Promise<boolean>;
   openFile?: (file: { path: string; name: string }) => Promise<boolean>;
   addNewDraft?: (text: string, content: unknown[]) => Promise<boolean>;
@@ -541,7 +543,7 @@ export class McpAppView extends LitElement {
         )
           return { isError: true };
         try {
-          const input = prepareMcpAppDownload(contents);
+          const input = prepareMcpAppDownload(contents, this.context?.getWorkingDirectory?.());
           const result = await window.electron.mcpApps.downloadFile(input);
           return result.success
             ? result.value.canceled
