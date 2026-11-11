@@ -12,6 +12,7 @@ type AppShutdownOptions = {
 export type AppShutdownController = {
   isQuitting: () => boolean;
   quitAndInstall: (installUpdate: () => void) => void;
+  quitForMaintenance: (afterCleanup: () => void, afterTimeout: () => void) => void;
 };
 
 export const registerAppShutdown = ({
@@ -24,7 +25,7 @@ export const registerAppShutdown = ({
   let cleanupInProgress = false;
   let quitting = false;
 
-  const beginCleanup = (context: string, afterCleanup?: () => void): void => {
+  const beginCleanup = (context: string, afterCleanup?: () => void, afterTimeout?: () => void): void => {
     if (cleanupFinished || cleanupInProgress) return;
 
     cleanupInProgress = true;
@@ -41,11 +42,20 @@ export const registerAppShutdown = ({
       app.exit(code);
     };
 
+    const timeoutMs = afterTimeout ? SHUTDOWN_BUDGET_MS.storageRelocationGrace : cleanupTimeoutMs;
     const timeout =
-      cleanupTimeoutMs === undefined
+      timeoutMs === undefined
         ? undefined
         : setTimeout(() => {
             timedOut = true;
+            if (afterTimeout) {
+              console.warn('[Main] Storage relocation shutdown timed out; stopping the old process tree.');
+              try { afterTimeout(); }
+              catch (error) { console.error('[Main] Storage relocation forced handoff failed: ' +
+                JSON.stringify(error instanceof Error ? error.message.slice(0, 400) : 'Unknown error')); }
+              exit(1);
+              return;
+            }
             console.error('[Main] Application cleanup timed out; resource retirement remains unconfirmed.');
             const forceExit = setTimeout(() => exit(1), SHUTDOWN_BUDGET_MS.forceExitObservation);
             forceExit.unref();
@@ -56,7 +66,7 @@ export const registerAppShutdown = ({
                 clearTimeout(forceExit);
                 exit(1);
               });
-          }, cleanupTimeoutMs);
+          }, timeoutMs);
     timeout?.unref();
 
     void Promise.resolve()
@@ -66,8 +76,8 @@ export const registerAppShutdown = ({
         console.error(`[Main] Cleanup error (${context}):`, error);
       })
       .finally(() => {
+        if (timedOut || (cleanupFailed && afterTimeout)) return;
         clearTimeout(timeout);
-        if (timedOut) return;
         if (cleanupFailed) {
           exit(1);
           return;
@@ -99,5 +109,10 @@ export const registerAppShutdown = ({
   return {
     isQuitting: () => quitting,
     quitAndInstall: installUpdate => beginCleanup('Installing downloaded update', installUpdate),
+    quitForMaintenance: (afterCleanup, afterTimeout) =>
+      beginCleanup('Preparing offline storage maintenance', () => {
+        afterCleanup();
+        app.exit(0);
+      }, afterTimeout),
   };
 };

@@ -86,7 +86,7 @@ test('a new client tolerates an old HTTP service and resumes reporting after its
 });
 
 test('the real login callback finishes while optional activity reporting remains pending', async () => {
-  const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../main.ts', import.meta.url), 'utf8'),
+  const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../application.ts', import.meta.url), 'utf8'),
     ts.ScriptTarget.Latest, true);
   let initializer: ts.Expression | undefined;
   const visit = (node: ts.Node) => {

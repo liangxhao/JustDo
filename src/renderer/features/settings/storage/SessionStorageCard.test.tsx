@@ -52,6 +52,16 @@ it('counts external files once and has matching translations', () => {
     Object.keys(sessionStorageTranslations.en).sort(),
   );
 });
+it('labels native history separately and keeps database details collapsed initially', async () => {
+  render(<SessionStorageCard />);
+  const total = await screen.findByText('15 B');
+  expect(total.closest('div')?.textContent).toContain('storageHistoryBytes');
+  expect(screen.getByRole('region', { name: 'storageHistoryTitle' })).toBeTruthy();
+  const details = screen.getByText('storageDetails').closest('details');
+  expect(details?.open).toBe(false);
+  expect(details?.textContent).toContain('storageWal');
+  expect(details?.textContent).toContain('storageEmbeddedHint');
+});
 it('shows unknown agents and preserves custom input through polling', async () => {
   render(<SessionStorageCard />);
   const days = await screen.findByRole('spinbutton');

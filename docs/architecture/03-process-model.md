@@ -197,7 +197,7 @@ interaction response/replay 使用固定请求身份。ask_user_question 与 pre
 
 ## 5. 注册、订阅与重连
 
-`main.ts` 组合并注册 app/cowork/openclaw/scheduledTask 等 handler；preload 与 `src/renderer/types/electron.d.ts` 必须同步。IPC 兼容入口也只能允许白名单 channel，不能演变成任意 invoke。
+`main.ts` 先完成数据位置的轻量引导，正常路由才加载 `application.ts` 组合并注册 app/cowork/openclaw/scheduledTask 等 handler；preload 与 `src/renderer/types/electron.d.ts` 必须同步。IPC 兼容入口也只能允许白名单 channel，不能演变成任意 invoke。
 
 订阅建立时捕获的 session、连接 generation 和请求代次必须参与响应准入。页面卸载移除 listener；Gateway 重启刷新连接与待处理交互；系统唤醒触发连接恢复。不会因为网络恢复而重放所有未完成写请求。
 
@@ -276,6 +276,8 @@ Gateway 启动由 Main 管理运行包准备、配置与进程生命周期。启
 ### Windows 首次启动初始化
 
 安装器只把应用和运行资源写入安装目录，AppData 中只追加安装日志。用户数据目录准备、SQLite 打开、本地运行环境及 Gateway 启动属于 Main 的启动流程。
+
+安装版在导入普通应用模块前，先于固定 AppData 引导根取得 singleton，重新读取数据 locator，并在 Electron ready 前设置活动 `userData/sessionData`。未完成迁移或坏定位进入隔离维护 profile，只加载受限维护页，不打开完整产品 Store 或 Gateway，不自动回到旧位置或建立空环境。确认迁移后复用正常退出监督，旧写入者和 Gateway 退出后进入离线迁移，核对目标并清理已确认的旧副本后再启动应用。离线迁移及恢复合同见[数据目录](../features/app/data-directory.md)。
 
 Windows 启动先使用不持久化的初始化窗口，避免用户目录不可用时先打开 Chromium profile。初始化窗口与正常窗口都从应用拥有的随机本地 HTTP origin 读取安装目录的不可变 dist，保留静态资源校验、CSP 和页面导航限制；Main 等待初始化页实际加载，再准备真实目录和数据库，加载错误记录后仍继续数据准备。真实目录创建及数据库打开成功后交接到正常窗口；Renderer 先订阅初始化事件再读取快照，在 Main 就绪前不启动配置和业务服务。正式窗口保持 UI 偏好先恢复、App/Redux 再导入的顺序。首次启动首页显示四个实际阶段的完成数，不估算耗时百分比。失败保留阶段、目录和原始错误，允许重启重试。
 

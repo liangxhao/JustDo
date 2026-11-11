@@ -43,7 +43,7 @@ export default defineConfig({
     electron([
       {
         // 主进程入口文件
-        entry: 'src/main/main.ts',
+        entry: { main: 'src/main/main.ts', application: 'src/main/application.ts' },
         vite: {
           root: projectRoot,
           resolve: { alias: {
@@ -81,7 +81,7 @@ export default defineConfig({
               },
               output: {
                 // Keep CJS format (default), but load via ESM loader.mjs
-                codeSplitting: false,
+                codeSplitting: true,
               },
             },
           },
@@ -126,6 +126,20 @@ export default defineConfig({
                 pluginTimings: false,
               },
             },
+          },
+        },
+        onstart() {},
+      },
+      {
+        entry: { storageMaintenancePreload: 'src/main/preload/storageMaintenancePreload.ts' },
+        vite: {
+          root: projectRoot,
+          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'storageMaintenancePreload' })],
+          build: {
+            outDir: 'dist-electron',
+            sourcemap: !isProductionBuild,
+            minify: isProductionBuild ? 'esbuild' : false,
+            rollupOptions: { checks: { pluginTimings: false } },
           },
         },
         onstart() {},
@@ -209,6 +223,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: path.join(rendererRoot, 'index.html'),
+        storageMaintenance: path.join(rendererRoot, 'storage-maintenance.html'),
         startupBootstrap: path.join(rendererRoot, 'startup-bootstrap.html'),
         imagePreview: path.join(rendererRoot, 'image-preview.html'),
         workspace: path.join(rendererRoot, 'workspace.html'),

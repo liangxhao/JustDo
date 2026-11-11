@@ -105,6 +105,8 @@ export const verifyAppModuleGraph = (
   const presentation = new Set<string>();
   const visitGraph = (entry: string, kind: 'main' | 'browser' | 'presentation'): void => {
     const main = kind === 'main';
+    if (!main && entry === manifest.entries.relocation)
+      throw new Error('Browser module referenced a retained host entry');
     const key = `${kind}:${entry}`;
     if (visited.has(key)) return;
     visited.add(key);
@@ -148,6 +150,8 @@ export const verifyAppModuleGraph = (
   visitGraph(manifest.entries.main, 'main');
   visitGraph(manifest.entries.browser, 'browser');
   if (manifest.entries.presentation) visitGraph(manifest.entries.presentation, 'presentation');
+  // Old approved artifacts keep their indexed host-only bytes and hash, without loading them.
+  if (manifest.entries.relocation) visitGraph(manifest.entries.relocation, 'main');
   // Workers and separately mounted browser modules have the browser capability boundary.
   for (const entry of sources.keys()) if (!covered.has(entry)) visitGraph(entry, 'browser');
   return { browser, presentation };

@@ -14,6 +14,10 @@ npm run electron:dev:openclaw
 
 首次启动会准备当前平台的 OpenClaw runtime 和开发资源。后续只修改应用代码时，可直接运行 `npm run electron:dev`；修改运行时补丁或扩展后需重新准备 runtime，再重启应用。
 
+Windows 普通开发启动与安装版共用固定 AppData 下的 `storage-location.json` 和单实例锁。安装版完成迁移后，运行 `npm run electron:dev` 即使用同一数据目录。数据位置暂不可用时，开发启动直接退出。
+
+需要独立测试数据时，继续使用 `electron:dev:isolated` 或显式设置 `JUSTDO_DEV_USER_DATA_DIR`。同生产 profile 的旧根或目标路径不视为独立目录，仍读取实际活动位置。开发版的数据迁移按钮与离线维护入口保持关闭，迁移仍由 Windows 安装版发起。
+
 `electron:dev` 和隔离开发入口都会先构建独立 App 插件，首次检出无需手工生成 `build/app-plugins/catalog.json`。修改插件源码后重新运行对应启动命令即可生成当前产物；运行中的应用仍遵守插件代次与重启契约。
 
 | 命令                                                                     | 用途                                        |

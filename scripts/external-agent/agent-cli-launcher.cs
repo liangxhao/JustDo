@@ -58,8 +58,8 @@ internal static class AgentCliLauncher
                 return Fail(64, "INVALID_ARGUMENTS", Localized(
                     "Unsupported command. Use --help for the agent CLI commands.",
                     "不支持此命令，请使用 --help 查看命令行帮助。"));
-            string userData = UserDataPathOverride ?? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), ProductDisplayName);
+            string userData = ResolveUserData(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), ProductDisplayName), UserDataPathOverride);
             string metadataPath = Path.Combine(userData, "external-agent", "bridge.json");
             if (!File.Exists(metadataPath))
             {
@@ -163,6 +163,9 @@ internal static class AgentCliLauncher
                 }
             }
         }
+        catch (StorageLocationException error) { return Fail(69, "STORAGE_UNAVAILABLE", error.Maintenance
+            ? Localized("Data relocation is in progress. Wait for the application to finish.", "数据目录正在迁移，请等待应用完成迁移。")
+            : Localized("The data directory is unavailable. Open the desktop application to recover it.", "数据目录暂时不可用，请打开桌面应用恢复数据位置。")); }
         catch (TimeoutException) { return Fail(69, "HOST_UNAVAILABLE", Localized("The application bridge is unavailable. Restart the application.", "无法连接应用后台，请重启应用。")); }
         // Deserializer exceptions can quote credentials or task content. Report
         // the transport failure without copying raw exception messages.
@@ -205,6 +208,126 @@ internal static class AgentCliLauncher
         Stream output = error ? Console.OpenStandardError() : Console.OpenStandardOutput();
         output.Write(bytes, 0, bytes.Length);
         output.Flush();
+    }
+
+    private sealed class StorageLocationException : Exception
+    {
+        public readonly bool Maintenance;
+        public StorageLocationException(string message, bool maintenance = false) : base(message) { Maintenance = maintenance; }
+    }
+
+    // Resolve the fixed control plane before reading any bridge credential. A copied
+    // launcher must never reconnect to the retained source profile by accident.
+    private static string ResolveUserData(string bootstrap, string profileOverride)
+    {
+        bool production = profileOverride == null || SameDirectory(bootstrap, profileOverride);
+        Dictionary<string, object> location = null;
+        if (!production)
+        {
+            var overrideRoot = ReadStorageControl(Path.Combine(profileOverride, "storage-root.json"));
+            if (overrideRoot != null && !ValidStorageRoot(overrideRoot))
+                throw new StorageLocationException("The profile identity is invalid.");
+            try { location = ReadStorageLocation(bootstrap); }
+            catch
+            {
+                // A separate development profile may still prove independence from
+                // the fixed bootstrap identity when production needs recovery.
+            }
+            if (location != null && SameDirectory(profileOverride, StringField(location, "activeRoot")))
+                production = true;
+            else if (overrideRoot == null)
+                return profileOverride;
+            else
+            {
+                var identity = location ?? ReadStorageControl(Path.Combine(bootstrap, "storage-root.json"));
+                if (location == null && identity != null && !ValidStorageRoot(identity))
+                    throw new StorageLocationException("The bootstrap identity is invalid.");
+                if (identity != null && !String.Equals(StringField(overrideRoot, "profileId"),
+                    StringField(identity, "profileId"), StringComparison.OrdinalIgnoreCase))
+                    return profileOverride;
+                if (identity == null && !HasStorageControlArtifacts(bootstrap)) return profileOverride;
+            }
+        }
+        if (location == null) location = ReadStorageLocation(bootstrap);
+        if (location == null)
+        {
+            if (!production || HasStorageControlArtifacts(bootstrap))
+                throw new StorageLocationException("The data location is unavailable. Open the application to recover it.");
+            return bootstrap;
+        }
+        var transaction = ReadStorageControl(Path.Combine(bootstrap, "storage-relocation", "active.json"));
+        if (transaction != null)
+        {
+            string stage = StringField(transaction, "stage");
+            if (stage != "activated" && stage != "cancelled")
+                throw new StorageLocationException("Data relocation is in progress. Wait for the application to finish.", true);
+        }
+        string profileId = StringField(location, "profileId");
+        string activeRoot = StringField(location, "activeRoot");
+        string rootId = StringField(location, "activeRootId");
+        var root = ReadStorageControl(Path.Combine(activeRoot, "storage-root.json"));
+        if (!ValidStorageRoot(root) ||
+            !String.Equals(StringField(root, "profileId"), profileId, StringComparison.OrdinalIgnoreCase) ||
+            !String.Equals(StringField(root, "rootId"), rootId, StringComparison.OrdinalIgnoreCase))
+            throw new StorageLocationException("The data directory identity does not match. Open the application to recover it.");
+        return activeRoot;
+    }
+
+    private static Dictionary<string, object> ReadStorageLocation(string bootstrap)
+    {
+        var location = ReadStorageControl(Path.Combine(bootstrap, "storage-location.json"));
+        if (location == null) return null;
+        Guid parsed;
+        object version, revision;
+        if (!location.TryGetValue("version", out version) || !(version is int) || (int)version != 1 ||
+            !location.TryGetValue("revision", out revision) || !(revision is int || revision is long) ||
+            Convert.ToInt64(revision) < 1 || Convert.ToInt64(revision) > 9007199254740991L ||
+            !Guid.TryParse(StringField(location, "profileId"), out parsed))
+            throw new StorageLocationException("The data location is invalid. Open the application to recover it.");
+        string activeRoot = StringField(location, "activeRoot");
+        if (!Guid.TryParse(StringField(location, "activeRootId"), out parsed) || String.IsNullOrEmpty(activeRoot) ||
+            !Regex.IsMatch(activeRoot, @"^[A-Za-z]:[\\/]") || activeRoot.IndexOfAny(new[] { '\r', '\n', '\0' }) >= 0 ||
+            SameDirectory(activeRoot, Path.GetPathRoot(activeRoot)))
+            throw new StorageLocationException("The data directory is invalid.");
+        return location;
+    }
+
+    private static bool HasStorageControlArtifacts(string bootstrap)
+    {
+        return new[] { "storage-location.json", "storage-root.json", "storage-location.initializing.json", "storage-relocation" }
+            .Any(name => StorageControlAttributes(Path.Combine(bootstrap, name)).HasValue);
+    }
+
+    private static bool SameDirectory(string first, string second)
+    {
+        return String.Equals(Path.GetFullPath(first).TrimEnd('\\', '/'),
+            Path.GetFullPath(second).TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ValidStorageRoot(Dictionary<string, object> value)
+    {
+        object version;
+        Guid parsed;
+        return value != null && value.TryGetValue("version", out version) && version is int && (int)version == 1 &&
+            Guid.TryParse(StringField(value, "profileId"), out parsed) && Guid.TryParse(StringField(value, "rootId"), out parsed);
+    }
+
+    private static FileAttributes? StorageControlAttributes(string file)
+    {
+        try { return File.GetAttributes(file); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    private static Dictionary<string, object> ReadStorageControl(string file)
+    {
+        var attributes = StorageControlAttributes(file);
+        if (!attributes.HasValue) return null;
+        if ((attributes.Value & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0 || new FileInfo(file).Length > 65536)
+            throw new StorageLocationException("The storage control file is invalid.");
+        var value = Json().Deserialize<Dictionary<string, object>>(File.ReadAllText(file, Utf8));
+        if (value == null) throw new StorageLocationException("The storage control file is invalid.");
+        return value;
     }
 
     private static string StringField(Dictionary<string, object> value, string key)

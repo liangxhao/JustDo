@@ -3,6 +3,7 @@ import {
   ArrowLeftIcon,
   ChartBarIcon,
   ChatBubbleLeftRightIcon,
+  CircleStackIcon,
   Cog6ToothIcon,
   ComputerDesktopIcon,
   CpuChipIcon,
@@ -46,6 +47,7 @@ const ICONS = {
   integrations: PuzzlePieceIcon,
   im: ChatBubbleLeftRightIcon,
   usage: ChartBarIcon,
+  storage: CircleStackIcon,
   help: InformationCircleIcon,
 };
 

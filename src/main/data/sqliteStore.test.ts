@@ -257,6 +257,47 @@ test('persists one idempotent user run and cascades it with the session', () => 
   sqlite.close();
 });
 
+test('reads the distinct workspaces addressed by product records', () => {
+  const dir = createTempDir();
+  const sqlite = SqliteStore.create(dir);
+  try {
+    const db = sqlite.getDatabase();
+    const cowork = new CoworkStore(db);
+    const defaultDirectory = path.join(dir, 'default-project');
+    const sessionDirectory = path.join(dir, 'session-project');
+    const externalDirectory = path.join(dir, 'external-project');
+    const planDirectory = path.join(dir, 'plan-project');
+    cowork.setConfig({ workingDirectory: defaultDirectory });
+    const session = cowork.createSession('Session project', sessionDirectory);
+    cowork.createSession('Second conversation in the same project', sessionDirectory);
+    db.prepare(
+      `INSERT INTO cowork_external_sessions
+        (source, external_session_key, cowork_session_id, agent_id, cwd, status, created_at, updated_at)
+       VALUES ('cli', 'external', ?, 'main', ?, 'completed', 1, 1)`,
+    ).run(session.id, externalDirectory);
+    cowork.createPlanHandoff({
+      sessionId: session.id,
+      planId: 'plan',
+      planningSessionKey: `agent:main:justdo:${session.id}`,
+      artifact: {
+        sessionId: session.id,
+        planId: 'plan',
+        workspaceRoot: planDirectory,
+        relativePath: path.join(`.${PRODUCT_NAME_LOWERCASE}`, 'plans', session.id, 'plan.md'),
+        sha256: 'a'.repeat(64),
+        byteLength: 10,
+      },
+      presentedAt: 1,
+    });
+
+    expect(cowork.listReferencedWorkspaceDirectories().sort()).toEqual(
+      [defaultDirectory, sessionDirectory, externalDirectory, planDirectory].sort(),
+    );
+  } finally {
+    sqlite.close();
+  }
+});
+
 test('rejects a client turn reused by another session and interrupts open runs on startup', () => {
   const dir = createTempDir();
   const sqlite = SqliteStore.create(dir);

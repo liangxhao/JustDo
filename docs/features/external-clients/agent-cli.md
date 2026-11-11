@@ -16,7 +16,7 @@
 | 环境            | 入口位置与规则                                                                                                        |
 | --------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Windows 安装版  | 应用旁的 `<productName lowercase>-cli.exe`；使用明确路径，不修改 PATH                                                 |
-| Windows 开发版  | `.agent-tasks/external-agent/development/<profile-hash>/` 下的 profile 专属程序；准备命令以 `package.json` 为准       |
+| Windows 开发版  | `.agent-tasks/external-agent/development/<profile-hash>/` 下的隔离 profile 程序。默认启动器直接在工程的 `.agent-tasks/external-agent/development/` 下，连接时读取活动数据位置       |
 | macOS / Linux   | profile 私有 `external-agent/bin/<productName lowercase>-cli` wrapper；明确绑定所属 profile 并剔除 bootstrap 环境覆盖 |
 | POSIX PATH 别名 | 优先 `~/.local/bin`，仅作为首个所属 profile 的便利入口；准备其他 profile 不覆盖它                                     |
 

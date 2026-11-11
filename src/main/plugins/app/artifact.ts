@@ -84,6 +84,7 @@ export const inspectAppArtifact = async (directory: string): Promise<VerifiedApp
     !actual.has(manifest.entries.main) ||
     !actual.has(manifest.entries.browser) ||
     (manifest.entries.presentation !== undefined && !actual.has(manifest.entries.presentation)) ||
+    (manifest.entries.relocation !== undefined && !actual.has(manifest.entries.relocation)) ||
     artifactDigest(manifest, files) !== input.hash
   )
     throw new Error('App artifact identity mismatch');

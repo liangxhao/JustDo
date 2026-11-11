@@ -52,6 +52,21 @@ const fixture = async () => {
 };
 
 describe('app artifact identity and retention', () => {
+  it('retains a historical host-entry hash without executing it or exposing it to the browser graph', async () => {
+    const { root, artifact } = await fixture();
+    const entry = 'relocation.mjs';
+    const bytes = "import fs from 'node:fs'; throw new Error('Must never execute during file inspection');";
+    artifact.manifest.entries.relocation = entry;
+    artifact.files[entry] = createHash('sha256').update(bytes).digest('hex');
+    artifact.hash = artifactDigest(artifact.manifest, artifact.files);
+    await writeFile(path.join(root, entry), bytes);
+    await writeFile(path.join(root, 'app.artifact.json'), JSON.stringify(artifact));
+
+    const inspected = await inspectAppArtifact(root);
+
+    expect(inspected.artifact.hash).toBe(artifact.hash);
+    expect(inspected.moduleGraphs?.browser.has(entry)).toBe(false);
+  });
   it('retains the complete graph independently of native uninstall', async () => {
     const { directory, root, artifact } = await fixture();
     const verified = await inspectAppArtifact(root);

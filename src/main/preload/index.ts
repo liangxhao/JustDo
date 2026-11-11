@@ -310,6 +310,8 @@ import {
   type BuiltinSpeechPreviewRequest,
   SpeechSynthesisIpc,
 } from '../../shared/speech/speechSynthesis';
+import { StorageDirectoryIpc } from '../../shared/storage/storageDirectory';
+import { StorageRelocationIpc } from '../../shared/storage/storageRelocation';
 import { createAutomaticErrorRetryApi } from './automaticErrorRetry';
 import { createExtensionChangedSubscription } from './extensions';
 import { createMcpAppPreloadApi } from './mcpApps';
@@ -1344,6 +1346,22 @@ contextBridge.exposeInMainWorld('electron', {
   },
   builtinModels: {
     refresh: () => ipcRenderer.invoke('builtinModels:refresh'),
+  },
+  storageDirectory: {
+    info: () => ipcRenderer.invoke(StorageDirectoryIpc.Info),
+    scan: () => ipcRenderer.invoke(StorageDirectoryIpc.Scan),
+    open: () => ipcRenderer.invoke(StorageDirectoryIpc.Open),
+    openConfig: () => ipcRenderer.invoke(StorageDirectoryIpc.OpenConfig),
+    clearBrowserCache: () => ipcRenderer.invoke(StorageDirectoryIpc.ClearBrowserCache),
+    upgradeBackupStatus: () => ipcRenderer.invoke(StorageDirectoryIpc.UpgradeBackupStatus),
+    deleteUpgradeBackup: () => ipcRenderer.invoke(StorageDirectoryIpc.DeleteUpgradeBackup),
+    cleanupStatus: () => ipcRenderer.invoke(StorageDirectoryIpc.CleanupStatus),
+  },
+  storageRelocation: {
+    status: () => ipcRenderer.invoke(StorageRelocationIpc.Status),
+    prepare: () => ipcRenderer.invoke(StorageRelocationIpc.Prepare),
+    commit: (planId: string) => ipcRenderer.invoke(StorageRelocationIpc.Commit, planId),
+    discard: (planId: string) => ipcRenderer.invoke(StorageRelocationIpc.Discard, planId),
   },
   log: {
     getPath: () => ipcRenderer.invoke('log:getPath'),

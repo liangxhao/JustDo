@@ -24,7 +24,8 @@ export interface AppPluginManifest {
   id: string;
   version: string;
   nativePluginId: string;
-  entries: { main: string; browser: string; presentation?: string };
+  /** relocation is retained only as historical artifact/hash metadata; it is never invoked. */
+  entries: { main: string; browser: string; presentation?: string; relocation?: string };
   capabilities: string[];
   commands: string[];
   slots: string[];
@@ -152,12 +153,16 @@ export const parseAppPluginManifest = (value: unknown): AppPluginManifest => {
     !/\.(?:mjs|js)$/u.test(entries.main) ||
     !isAppArtifactPath(entries.browser) ||
     !/\.(?:mjs|js)$/u.test(entries.browser) ||
-    Object.keys(entries).some(key => !['main', 'browser', 'presentation'].includes(key)) ||
+    Object.keys(entries).some(key => !['main', 'browser', 'presentation', 'relocation'].includes(key)) ||
     (entries.presentation !== undefined &&
       (!isAppArtifactPath(entries.presentation) ||
         !/\.(?:mjs|js)$/u.test(entries.presentation) ||
         entries.presentation === entries.main ||
         entries.presentation === entries.browser)) ||
+    (entries.relocation !== undefined &&
+      (!isAppArtifactPath(entries.relocation) ||
+        !/\.(?:mjs|js)$/u.test(entries.relocation) ||
+        [entries.main, entries.browser, entries.presentation].includes(entries.relocation))) ||
     !identifiers(input.capabilities) ||
     !identifiers(input.commands) ||
     !identifiers(input.slots)
@@ -198,6 +203,7 @@ export const parseAppPluginManifest = (value: unknown): AppPluginManifest => {
       main: entries.main,
       browser: entries.browser,
       ...(entries.presentation ? { presentation: entries.presentation as string } : {}),
+      ...(entries.relocation ? { relocation: entries.relocation as string } : {}),
     },
     capabilities: [...input.capabilities],
     commands: [...input.commands],

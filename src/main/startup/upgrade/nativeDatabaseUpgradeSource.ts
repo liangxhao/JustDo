@@ -17,6 +17,8 @@ process.on('message', (message) => {
 process.on('disconnect', () =>
   cancelled.abort(new Error('Database maintenance lost its application owner.')),
 );
+if (!process.connected || globalThis.storageOwnerAbortedBeforeStart)
+  cancelled.abort(new Error('Database maintenance was interrupted before admission.'));
 const current = () => cancelled.signal.throwIfAborted();
 const send = (value) => {
   if (process.connected) process.send(value);
@@ -79,6 +81,7 @@ async function native(role, symbol) {
   assert.equal(typeof value, 'function', 'Native database export is not callable.');
   return value;
 }
+/* Relocation worker extensions */
 const prepare = await native('schemaContracts', 'prepareOpenClawDatabaseSchemaContracts');
 prepare();
 const preflight = await native('preflight', 'prepareDoctorDatabasePreflight');
@@ -88,9 +91,8 @@ const readScope = await native('readScope', 'withSqliteReadOnlyWorkerScope');
 const closeAgents = await native('agentLifecycle', 'closeOpenClawAgentDatabasesAsync');
 const closeState = await native('stateLifecycle', 'closeOpenClawStateDatabaseAsync');
 const statePath = (await native('paths', 'resolveOpenClawStateSqlitePath'))(process.env);
-const configBytes = fs.existsSync(configPath) ? fs.readFileSync(configPath) : undefined;
-// Application-managed configuration is JSON. This owner never repairs or rewrites configuration.
-const cfg = configBytes ? JSON.parse(configBytes.toString('utf8')) : {};
+let configBytes;
+let cfg;
 const assertConfig = () => {
   current();
   assert.equal(
@@ -186,6 +188,13 @@ async function inspect(strict) {
 let result;
 let failure;
 try {
+  configBytes = fs.existsSync(configPath) ? fs.readFileSync(configPath) : undefined;
+  // Application-managed configuration is JSON. This owner never rewrites it.
+  cfg = configBytes ? JSON.parse(configBytes.toString('utf8')) : {};
+  if (operation === 'prepare' && input.relocationPlugins) {
+    await prepareManagedPluginRelocation(input.relocationPlugins, cfg);
+    await closeState();
+  }
   await readScope(
     async () => {
       const initial = await inspect(false);
@@ -493,8 +502,12 @@ if (failure) {
   const code = nativeFailureCode(failure);
   send({
     type: 'failure',
-    message: failure instanceof Error ? failure.message : 'Native database maintenance failed.',
-    ...(code ? { code } : {}),
+    ...(input.relocationFailureRoot
+      ? relocationNativeFailureDetails(failure, [input.relocationFailureRoot], code)
+      : {
+        message: failure instanceof Error ? failure.message : 'Native database maintenance failed.',
+        ...(code ? { code } : {}),
+      }),
   });
   process.exitCode = 1;
 } else {

@@ -18,7 +18,7 @@ import { runApplicationCleanup } from '../../core/app/cleanupPhases';
 
 // Execute Main's actual supervisor options with real cleanup/controller owners.
 // No Electron process, user database, Gateway or child process is created.
-const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../main.ts', import.meta.url), 'utf8'),
+const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../application.ts', import.meta.url), 'utf8'),
   ts.ScriptTarget.Latest, true);
 const registrations: ts.ObjectLiteralExpression[] = [];
 const visit = (node: ts.Node) => {

@@ -116,8 +116,9 @@ import {
 } from '@/features/settings/settingsPersistence';
 import { createSettingsPreviewRestore } from '@/features/settings/settingsPreviewRestore';
 import VoiceSettingsTab from '@/features/settings/speech/VoiceSettingsTab';
+import SessionStoragePage from '@/features/settings/storage/SessionStoragePage';
 import AppUpdateSection from '@/features/settings/updates/AppUpdateSection';
-import UsageAndStorageSettings from '@/features/settings/usage/UsageAndStorageSettings';
+import UsageStatsTab from '@/features/settings/usage/UsageStatsTab';
 import { configService } from '@/services/config';
 import { i18nService, LanguageType } from '@/services/i18n';
 import { themeService } from '@/theme/themeService';
@@ -1718,7 +1719,10 @@ const Settings: React.FC<SettingsProps> = ({
         );
 
       case 'usage':
-        return <UsageAndStorageSettings />;
+        return <UsageStatsTab />;
+
+      case 'storage':
+        return <SessionStoragePage />;
 
       case 'runtime':
         return (
@@ -1874,7 +1878,8 @@ const Settings: React.FC<SettingsProps> = ({
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
           <form
             onSubmit={event => {
-              if (activeTab === 'agents' || activeTab === 'computer') event.preventDefault();
+              if (['agents', 'computer', 'usage', 'storage'].includes(activeTab))
+                event.preventDefault();
               else void handleSubmit(event);
             }}
             className="flex min-h-0 flex-col flex-1 overflow-hidden"
@@ -1986,9 +1991,11 @@ const Settings: React.FC<SettingsProps> = ({
                 onClick={handleCloseSettings}
                 className="h-9 rounded-xl border border-border bg-background px-4 text-sm font-medium text-secondary shadow-sm transition-all hover:bg-surface-raised hover:text-foreground active:scale-[0.98]"
               >
-                {i18nService.t(activeTab === 'computer' ? 'close' : 'cancel')}
+                {i18nService.t(
+                  ['computer', 'usage', 'storage'].includes(activeTab) ? 'close' : 'cancel',
+                )}
               </button>
-              {activeTab !== 'computer' && activeTab !== 'browser' && (
+              {!['computer', 'browser', 'usage', 'storage'].includes(activeTab) && (
                 <button
                   type="submit"
                   aria-busy={isSaving}

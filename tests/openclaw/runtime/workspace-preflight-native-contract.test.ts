@@ -108,7 +108,7 @@ test.skipIf(!available)('the actual target describe handler distinguishes an abs
 });
 
 test('actual Main workspace DI waits for its connected owner and fences service/router/adapter/manager replacement', async () => {
-  const file = path.join(root, 'src/main/main.ts');
+  const file = path.join(root, 'src/main/application.ts');
   const tree = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true);
   const matches: ts.ArrowFunction[] = [];
   const visit = (node: ts.Node): void => {

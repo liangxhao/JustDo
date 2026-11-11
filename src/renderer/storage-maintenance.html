@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>%PRODUCT_NAME%</title>
+  </head>
+  <body>
+    <main id="storage-maintenance" hidden>
+      <header class="maintenance-header">
+        <span class="maintenance-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <path d="M3 11h18" />
+          </svg>
+        </span>
+        <div>
+          <h1 id="title"></h1>
+          <p id="phase" class="maintenance-status" role="status"></p>
+        </div>
+      </header>
+      <dl class="maintenance-paths">
+        <div class="path-row" id="data-row">
+          <dt id="data-label"></dt><dd id="data-path"></dd>
+        </div>
+        <div class="path-row" id="source-row" hidden>
+          <dt id="source-label"></dt><dd id="source-path"></dd>
+        </div>
+        <div class="path-row" id="target-row" hidden>
+          <dt id="target-label"></dt><dd id="target-path"></dd>
+        </div>
+        <div class="path-row" id="failure-row" hidden>
+          <dt id="failure-label"></dt><dd id="failure-path"></dd>
+        </div>
+      </dl>
+      <section class="maintenance-error" id="error-card" hidden>
+        <h2 id="error-label"></h2>
+        <p id="error" role="alert"></p>
+        <section class="maintenance-blocking" id="blocking" aria-labelledby="blocking-title" hidden>
+          <h3 id="blocking-title"></h3>
+          <ul class="maintenance-processes" id="blocking-processes" aria-labelledby="blocking-title" tabindex="0" hidden></ul>
+          <p id="blocking-guidance" role="status"></p>
+        </section>
+      </section>
+      <ol class="maintenance-steps" id="transfer" hidden></ol>
+      <footer class="maintenance-actions" id="actions" hidden>
+        <button id="cancel" type="button" hidden></button>
+        <button id="retry" type="button" hidden></button>
+      </footer>
+    </main>
+    <script type="module" src="/storageMaintenance.ts"></script>
+  </body>
+</html>

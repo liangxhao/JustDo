@@ -7,7 +7,7 @@ import { AppInitializationActivity, AppInitializationPhase, AppInitializationSte
 import { StartupRoute } from '../../../shared/app/startup/routing';
 
 // Execute Main's real launch/ingress composition without starting Electron or a Gateway.
-const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../main.ts', import.meta.url), 'utf8'),
+const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../application.ts', import.meta.url), 'utf8'),
   ts.ScriptTarget.Latest, true);
 
 test('releases inherited profile cwd after path selection and before logging or startup windows', () => {

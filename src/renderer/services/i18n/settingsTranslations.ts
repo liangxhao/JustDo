@@ -89,7 +89,8 @@ export const settingsTranslations = {
     computerControlSaveFailed: '电脑操控设置未能完成更新，请重试读取当前状态。',
     settingsDescription_integrations: '连接外部工具与服务，配置任务委派。',
     settingsDescription_im: '查看即时通讯机器人接入的可用状态。',
-    settingsDescription_usage: '查看模型用量，管理本地数据与存储空间。',
+    settingsDescription_usage: '查看 Token 用量、会话活动与模型使用情况。',
+    settingsDescription_storage: '查看本机数据位置、空间占用，管理会话历史归档。',
     settingsDescription_help: '查看应用版本、检查更新与获取帮助。',
     // 设置
     settings: '设置',
@@ -260,7 +261,6 @@ export const settingsTranslations = {
     voiceModelDownload: '下载',
     voiceModelRemove: '删除本地模型',
     voiceModelUnavailable: '当前设备不支持或本地模型资源不完整',
-    usageAndStorage: '用量与存储',
     usageStats: '使用统计',
     usageStatsActiveDays: '活跃天数',
     usageStatsToolKinds: '使用工具种类',
@@ -1110,7 +1110,9 @@ export const settingsTranslations = {
     settingsDescription_integrations:
       'Connect external tools and services and configure task delegation.',
     settingsDescription_im: 'Check availability of messaging bot integrations.',
-    settingsDescription_usage: 'Review model usage and manage local data and storage.',
+    settingsDescription_usage: 'Review token usage, conversation activity and model usage.',
+    settingsDescription_storage:
+      'View local data locations and disk usage, and manage history archiving.',
     settingsDescription_help: 'View the app version, check for updates and get help.',
     // Settings
     settings: 'Settings',
@@ -1301,7 +1303,6 @@ export const settingsTranslations = {
     voiceModelDownload: 'Download',
     voiceModelRemove: 'Remove local model',
     voiceModelUnavailable: 'This device is unsupported or local model files are incomplete',
-    usageAndStorage: 'Usage & storage',
     usageStats: 'Usage',
     usageStatsActiveDays: 'Active days',
     usageStatsToolKinds: 'Distinct tools',

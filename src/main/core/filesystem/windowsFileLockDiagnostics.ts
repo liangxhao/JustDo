@@ -15,8 +15,8 @@ export type WindowsLockDiagnosticResult = {
 
 const RESTART_MANAGER_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$ProgressPreference = 'SilentlyContinue'
 Add-Type -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -157,12 +157,12 @@ public static class JustDoHandleScanner {
     return value.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
   }
 
-  private static bool IsWithinTarget(string candidate, string target) {
+  private static bool IsWithinTarget(string candidate, string target, bool exact) {
     if (candidate.Equals(target, StringComparison.OrdinalIgnoreCase)) return true;
-    return candidate.StartsWith(target + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    return !exact && candidate.StartsWith(target + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
   }
 
-  public static bool Find(string targetPath, int priorityPid, Action<LockingProcess> report) {
+  public static bool Find(string targetPath, int priorityPid, bool exact, Action<LockingProcess> report) {
     string target = NormalizePath(Path.GetFullPath(targetPath));
     int bufferLength = 1024 * 1024;
     IntPtr buffer = IntPtr.Zero;
@@ -215,7 +215,7 @@ public static class JustDoHandleScanner {
             var pathBuffer = new StringBuilder(32768);
             uint length = GetFinalPathNameByHandle(duplicate, pathBuffer, (uint)pathBuffer.Capacity, 0);
             if (length == 0 || length >= pathBuffer.Capacity) continue;
-            if (!IsWithinTarget(NormalizePath(pathBuffer.ToString()), target)) continue;
+            if (!IsWithinTarget(NormalizePath(pathBuffer.ToString()), target, exact)) continue;
 
             string name;
             try { name = Process.GetProcessById(pid).ProcessName; }
@@ -295,7 +295,7 @@ try {
     param($entry)
     & $emitProcess $entry
   }
-  $complete = [JustDoHandleScanner]::Find($env:JUSTDO_LOCK_TARGET, [int]$env:FILE_LOCK_PRIORITY_PID, $report)
+  $complete = [JustDoHandleScanner]::Find($env:JUSTDO_LOCK_TARGET, [int]$env:FILE_LOCK_PRIORITY_PID, ($env:FILE_LOCK_EXACT_PATH -eq '1'), $report)
   if ($complete) { [Console]::Out.WriteLine('{"complete":true}') }
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
@@ -311,7 +311,7 @@ const resolveWindowsPowerShell = (): string => {
 
 export const findWindowsLockingProcesses = async (
   targetPath: string,
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; exact?: boolean } = {},
 ): Promise<WindowsLockDiagnosticResult> => {
   if (process.platform !== 'win32' || options.signal?.aborted) return { available: false, processes: [] };
 
@@ -327,7 +327,9 @@ export const findWindowsLockingProcesses = async (
   }
 
   let lookupTarget = resolvedTarget;
-  try { lookupTarget = fs.realpathSync.native(resolvedTarget); } catch { /* Keep inaccessible aliases unknown. */ }
+  if (!options.exact) {
+    try { lookupTarget = fs.realpathSync.native(resolvedTarget); } catch { /* Keep inaccessible aliases unknown. */ }
+  }
 
   const encodedCommand = Buffer.from(RESTART_MANAGER_SCRIPT, 'utf16le').toString('base64');
   type LookupResult = { stdout: string; stderr: string; error?: Error };
@@ -341,7 +343,12 @@ export const findWindowsLockingProcesses = async (
         ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encodedCommand],
         {
           encoding: 'utf8',
-          env: { ...process.env, JUSTDO_LOCK_TARGET: lookupTarget, FILE_LOCK_PRIORITY_PID: String(process.pid) },
+          env: {
+            ...process.env,
+            JUSTDO_LOCK_TARGET: lookupTarget,
+            FILE_LOCK_PRIORITY_PID: String(process.pid),
+            FILE_LOCK_EXACT_PATH: options.exact ? '1' : '0',
+          },
           timeout: 10_000,
           windowsHide: true,
           maxBuffer: 1024 * 1024,

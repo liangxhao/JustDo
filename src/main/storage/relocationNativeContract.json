@@ -1,0 +1,73 @@
+{
+  "formatVersion": 1,
+  "openclawVersion": "v2026.10.7",
+  "modules": {
+    "pluginInstallPaths": {
+      "path": "dist/install-paths-Ik5BUD8W.mjs",
+      "sha256": "b0127e3cf162f9b9046062e06fb5c88bd278d8f30589701dc2d7dcea92f329d9",
+      "exports": {
+        "resolveDefaultPluginExtensionsDir": "a",
+        "resolveDefaultPluginNpmDir": "s",
+        "resolveDefaultPluginGitDir": "o",
+        "resolvePluginInstallDir": "c"
+      }
+    },
+    "pluginNpmRoots": {
+      "path": "dist/managed-npm-retention-CxCSY-Og.mjs",
+      "sha256": "dab06f8e3803b78f455967933449ac35c9d3377d53c55125bd763cf1e5a6d9fc",
+      "exports": { "listManagedPluginNpmRootsSync": "d" }
+    },
+    "pluginPeerLinks": {
+      "path": "dist/plugin-peer-link-C9DP5GSB.mjs",
+      "sha256": "f17e260b3cbe57833887a00ae1ad6411a8ccaf52b294b284194f95429139c3de",
+      "exports": {
+        "listNpmPackageDirs": "l",
+        "linkOpenClawPeerDependencies": "a",
+        "resolveOpenClawHostDependency": "c"
+      }
+    },
+    "pluginPackageMetadata": {
+      "path": "dist/json-files-C5mNTScg.mjs",
+      "sha256": "9c0490a9eb013e9470ee43f2c864f4ee8b4532470fd9498c7e2fe584844a0f4b",
+      "exports": { "readRootJsonObjectSync": "c" }
+    },
+    "pluginRecords": {
+      "path": "dist/installed-plugin-index-record-reader-q2TXH6uZ.mjs",
+      "sha256": "1dd5de6dfd56f3fa20100af04f9ed054296ac60198337d7a55e9679be9ce1a1d",
+      "exports": { "readPersistedInstalledPluginIndexInstallRecords": "a" }
+    },
+    "pluginIndexWrite": {
+      "path": "dist/installed-plugin-index-store-write-pz0CEYjT.mjs",
+      "sha256": "82dbf7d057b3c9f1148033a8b06819d1267b0cd9e5bd6b5b793b1430a9c7a951",
+      "exports": { "refreshPersistedInstalledPluginIndexWithReceipt": "i" }
+    },
+    "gatewayPaths": {
+      "exports": {
+        "resolveGatewayLockPaths": "u"
+      },
+      "sha256": "9bc91c0f7d8061bba94e4476d492706692c1f242fbbdf1379ef8fbd1bbf5766a",
+      "path": "dist/gateway-lock-BaQQOBLf.mjs"
+    },
+    "sanitizer": {
+      "exports": {
+        "sanitizeOpenClawStateLeaseRows": "n"
+      },
+      "sha256": "540cae7e1f3c7494ad02db6ca46186271b0d63c357d897336b62420e357afa08",
+      "path": "dist/openclaw-state-snapshot-sanitizer-CB5a7od0.mjs"
+    },
+    "snapshot": {
+      "exports": {
+        "createVerifiedSqliteSnapshot": "t"
+      },
+      "sha256": "6750f9ddda4b9f16d651b322bc49e2c248b6b5ee5780b53bea42f13fa1de46e9",
+      "path": "dist/sqlite-snapshot-CIB7iu3V.mjs"
+    },
+    "storagePaths": {
+      "path": "dist/openclaw-state-db.paths-CmKkMYdo.mjs",
+      "exports": {
+        "resolveQuarantineStorePath": "l"
+      },
+      "sha256": "f592ef97e2b8fe65226210faa091ed58ca5008c2eb4da079907c63d08fe08032"
+    }
+  }
+}

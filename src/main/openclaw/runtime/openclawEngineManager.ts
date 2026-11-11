@@ -1332,6 +1332,12 @@ export class OpenClawEngineManager extends EventEmitter {
     this.gatewayRestartWait?.abort();
   }
 
+  async stopForApplicationShutdown(): Promise<void> {
+    const pending = Promise.allSettled([this.startGatewayPromise, this.restartGatewayPromise]);
+    await this.stopGateway();
+    await pending;
+  }
+
   async stopGateway(): Promise<void> {
     this.shutdownRequested = true;
     this.gatewayRestartWait?.abort();

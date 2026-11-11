@@ -186,6 +186,45 @@ describe('registerAppShutdown', () => {
     expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
   });
 
+  test('starts offline maintenance only after cleanup completes', async () => {
+    let finish!: () => void;
+    const afterCleanup = vi.fn();
+    const controller = registerAppShutdown({
+      cleanup: () => new Promise<void>(resolve => { finish = resolve; }),
+    });
+
+    controller.quitForMaintenance(afterCleanup, vi.fn());
+    await flushPromises();
+    expect(afterCleanup).not.toHaveBeenCalled();
+    expect(electronMocks.app.exit).not.toHaveBeenCalled();
+
+    finish();
+    await flushPromises();
+    expect(afterCleanup).toHaveBeenCalledOnce();
+    expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(0);
+  });
+
+  test.each(['stalled', 'failed'])('uses only the forced handoff after the relocation deadline when cleanup is %s', async mode => {
+    vi.useFakeTimers();
+    const cleanup = Promise.withResolvers<void>();
+    const afterCleanup = vi.fn();
+    const afterTimeout = vi.fn();
+    const controller = registerAppShutdown({ cleanup: () => cleanup.promise });
+
+    controller.quitForMaintenance(afterCleanup, afterTimeout);
+    if (mode === 'failed') cleanup.reject(new Error('retirement unconfirmed'));
+    await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.storageRelocationGrace - 1);
+    expect(afterTimeout).not.toHaveBeenCalled();
+    expect(electronMocks.app.exit).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(afterTimeout).toHaveBeenCalledOnce();
+    expect(electronMocks.app.exit).toHaveBeenCalledExactlyOnceWith(1);
+    cleanup.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(afterCleanup).not.toHaveBeenCalled();
+  });
+
   test.each([new Error('unconfirmed'), undefined, null])('failed cleanup never becomes a normal exit (%s)', async failure => {
     registerAppShutdown({ cleanup: async () => Promise.reject(failure) });
     electronMocks.handlers.get('before-quit')?.({ preventDefault: vi.fn() });

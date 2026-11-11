@@ -75,7 +75,7 @@ const allowedPackagedAsset = (relative: string): boolean => {
   )
     return false;
   if (
-    ['index.html', 'startup-bootstrap.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html', 'embed-viewer.html'].includes(relative)
+    ['index.html', 'startup-bootstrap.html', 'storage-maintenance.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html', 'embed-viewer.html'].includes(relative)
   )
     return true;
   const extension = path.extname(relative).toLowerCase();
@@ -157,6 +157,7 @@ const readPackagedAsset = async (
 const collectPackagedAssets = async (
   directory: string,
   bootstrapOnly: boolean,
+  entry: string,
 ): Promise<{ root: string; assets: Map<string, PackagedAsset> }> => {
   const absolute = path.resolve(directory);
   const rootStats = await lstat(absolute);
@@ -192,7 +193,7 @@ const collectPackagedAssets = async (
     assets.set(resource, { ...metadata, digest: digestAsset(bytes) });
   };
   await visit('');
-  if (!assets.has(bootstrapOnly ? 'startup-bootstrap.html' : 'index.html'))
+  if (!assets.has(entry))
     throw new Error('Packaged renderer entry missing');
   return { root, assets };
 };
@@ -200,10 +201,10 @@ const collectPackagedAssets = async (
 /** A read-only artifact server: no workspace roots, routes, credentials or IPC endpoints. */
 export const startApplicationRendererHost = async (
   directory: string,
-  options: { bootstrapOnly?: boolean } = {},
+  options: { bootstrapOnly?: boolean; entry?: 'storage-maintenance.html' } = {},
 ): Promise<ApplicationRendererHost> => {
-  const entry = options.bootstrapOnly ? 'startup-bootstrap.html' : 'index.html';
-  const { root, assets } = await collectPackagedAssets(directory, options.bootstrapOnly === true);
+  const entry = options.entry ?? (options.bootstrapOnly ? 'startup-bootstrap.html' : 'index.html');
+  const { root, assets } = await collectPackagedAssets(directory, options.bootstrapOnly === true, entry);
   const index = await readPackagedAsset(root, assets.get(entry)!);
   const inlineScriptHashes = [
     ...index.toString('utf8').matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/giu),

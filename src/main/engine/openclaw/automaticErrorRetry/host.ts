@@ -6,7 +6,7 @@ import {
   type AutomaticErrorRetryPresentation,
 } from '../../../../shared/cowork/automaticErrorRetry';
 import type { CoworkStore } from '../../../data/coworkStore';
-import { assertStorageExecutionAdmission } from '../../../storage/relocationGate';
+import { assertStorageExecutionAdmission } from '../../../storage/relocationAdmission';
 import type { GatewayClientLike } from '../../gateway/types';
 import type { ExecutionSuccessorClaims } from '../executionSuccessorClaims';
 import {

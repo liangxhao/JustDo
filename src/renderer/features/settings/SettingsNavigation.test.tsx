@@ -16,6 +16,18 @@ vi.mock('@/services/i18n', () => ({
 afterEach(cleanup);
 
 describe('SettingsNavigation', () => {
+  it('routes usage and storage independently and finds storage by archive settings', () => {
+    const onSelect = vi.fn();
+    render(<SettingsNavigation activeTab="usage" onSelect={onSelect} onClose={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /用量与存储|统计与存储/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '会话存储' }));
+    expect(onSelect).toHaveBeenLastCalledWith('storage');
+    fireEvent.click(screen.getByRole('button', { name: '使用统计' }));
+    expect(onSelect).toHaveBeenLastCalledWith('usage');
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: '归档' } });
+    expect(screen.getByRole('button', { name: /^会话存储/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '使用统计' })).toBeNull();
+  });
   it('opens computer control from navigation and finds it by the image requirement', () => {
     const onSelect = vi.fn();
     render(<SettingsNavigation activeTab="general" onSelect={onSelect} onClose={vi.fn()} />);

@@ -8,17 +8,17 @@ const { createAgentCliLauncher } = require('./create-agent-cli-launcher.cjs');
 
 function prepareDevelopmentLauncher(userDataPath = process.env.JUSTDO_DEV_USER_DATA_DIR) {
   if (process.platform !== 'win32') return null;
-  const appData = process.env.APPDATA;
-  if (!userDataPath && !appData) throw new Error('APPDATA is required.');
-  const directory = path.resolve(userDataPath || path.join(appData, packageJson.productName));
-  // Separate profiles must not overwrite launchers bound to different bridge metadata.
-  const profile = createHash('sha256').update(directory).digest('hex').slice(0, 16);
+  const directory = userDataPath ? path.resolve(userDataPath) : undefined;
+  // Only explicitly selected profiles need separate launchers in the checkout.
+  const profileSlot = directory
+    ? [createHash('sha256').update(directory).digest('hex').slice(0, 16)]
+    : [];
   const target = path.join(
     path.resolve(__dirname, '../..'),
     '.agent-tasks',
     'external-agent',
     'development',
-    profile,
+    ...profileSlot,
     `${getAgentCliCommandName(packageJson.productName)}.exe`,
   );
   createAgentCliLauncher(target, { userDataPath: directory });

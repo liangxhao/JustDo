@@ -12,6 +12,11 @@
 上游证据、依赖与删除条件以该目录 `README.md` 为唯一总账。本文不固定补丁数量，
 也不把历史版本验收结果当作目标版本的通过记录。
 
+数据目录迁移另有 `src/main/storage/relocationNativeContract.json`，升级时须与既有
+`nativeDatabaseContract.json` 一并核对 snapshot/sanitizer、Doctor/maintenance 租约及
+canonical owner 的导出和字节身份；运行显式 `storage-relocation.native-smoke.mjs` 的
+`transaction` 用例。该用例只用合成数据，不能代替安装版全部历史/附件验收。
+
 版本对应的产物身份、验证范围与未验收项见[升级记录](../openclaw-upgrades/README.md)。
 
 本文中的勾选项是升级时需要执行的检查。每个领域应记录「通过 / 需适配 / 未验证 /

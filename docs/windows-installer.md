@@ -594,6 +594,12 @@ The upstream copy of the setup EXE into the Local AppData updater cache is also
 removed. Subsequent updater downloads remain owned by the running application.
 Windows shortcuts and uninstall registry entries retain their normal OS locations.
 
+The installed application may relocate its active data root through Settings.
+Its fixed AppData bootstrap retains the validated locator and recovery journal;
+ordinary startup resolves that location before loading application services.
+Uninstall preserves a custom data root. Existing AppData cleanup does not follow
+the locator or recursively delete an external root. See [data directory relocation](features/app/data-directory.md).
+
 For first installation, history migration, runtime upgrade or interrupted preparation,
 Main classifies the active data generation before opening the product Store or Gateway.
 A completed same-runtime profile instead takes the journal-based normal startup path
@@ -804,6 +810,10 @@ files but preserves Roaming and Local app-data directories. Selecting it removes
 the current user's product/package-name variants below `%APPDATA%` and
 `%LOCALAPPDATA%`, plus the package updater cache; external projects, downloads,
 and workspaces remain untouched.
+This also preserves the fixed Roaming `storage-location.json`, root identity and
+relocation recovery records when data deletion is not selected. Reinstalling the
+same product under the same Windows account reads that locator before opening
+data, independently of the installation directory, and reuses the retained data root.
 For an all-users uninstall, deletion runs synchronously in the initiating
 desktop user's context rather than an administrator credential account. The
 cleanup does not traverse junctions or symbolic links, and a partial failure is

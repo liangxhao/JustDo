@@ -28,6 +28,8 @@ import type {
   SessionReviewResult,
 } from '../../shared/cowork/sessionReview';
 import type { SessionStorageApi } from '../../shared/openclaw/sessionStorage';
+import type { StorageDirectoryApi } from '../../shared/storage/storageDirectory';
+import type { StorageRelocationApi } from '../../shared/storage/storageRelocation';
 type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
@@ -1563,6 +1565,8 @@ interface IElectronAPI {
   builtinModels: {
     refresh: () => Promise<{ success: boolean; error?: string }>;
   };
+  storageDirectory: StorageDirectoryApi;
+  storageRelocation: StorageRelocationApi;
   log: {
     getPath: () => Promise<string>;
     openFolder: () => Promise<void>;

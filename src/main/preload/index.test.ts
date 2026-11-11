@@ -6,6 +6,7 @@ import { AppInitializationIpc, INITIALIZATION_WINDOW_ARGUMENT } from '../../shar
 import { SessionDirectoryIpc } from '../../shared/cowork/sessionDirectory';
 import { AgentCliIntegrationIpc } from '../../shared/integrations/agentCliIntegration';
 import { type ExtensionChangedEvent, ExtensionIpc } from '../../shared/plugins/extensions';
+import { StorageDirectoryIpc } from '../../shared/storage/storageDirectory';
 
 const electronMocks = vi.hoisted(() => ({
   expose: vi.fn(),
@@ -42,6 +43,17 @@ test('exposes CLI status without access switches or a client-specific configurat
   expect(electronMocks.invoke).not.toHaveBeenCalled();
   await bridge.agentCli.getStatus();
   expect(electronMocks.invoke).toHaveBeenCalledExactlyOnceWith(AgentCliIntegrationIpc.GetStatus);
+});
+
+test('exposes cleanup observation as a parameter-free status read without subscribing or mutating', async () => {
+  await import('./index');
+  const bridge = electronMocks.expose.mock.calls[0][1];
+  expect(electronMocks.invoke).not.toHaveBeenCalled();
+
+  await bridge.storageDirectory.cleanupStatus();
+
+  expect(electronMocks.invoke).toHaveBeenCalledExactlyOnceWith(StorageDirectoryIpc.CleanupStatus);
+  expect(electronMocks.on).not.toHaveBeenCalled();
 });
 
 test('keeps session directory, bounded summary reads and search snapshots on separate bridge calls', async () => {

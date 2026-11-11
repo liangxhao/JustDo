@@ -14,6 +14,7 @@ export type SettingsTab =
   | 'integrations'
   | 'im'
   | 'usage'
+  | 'storage'
   | 'help';
 
 export const SETTINGS_GROUPS = [
@@ -133,10 +134,17 @@ export const SETTINGS_PAGES: readonly SettingsPage[] = [
   },
   {
     id: 'usage',
-    label: 'usageAndStorage',
+    label: 'usageStats',
     description: 'settingsDescription_usage',
     group: 'application',
     keywords: [],
+  },
+  {
+    id: 'storage',
+    label: 'storageTitle',
+    description: 'settingsDescription_storage',
+    group: 'application',
+    keywords: ['storageDirectoryTitle', 'storageDirectoryUsage', 'storageManagement'],
   },
   {
     id: 'help',

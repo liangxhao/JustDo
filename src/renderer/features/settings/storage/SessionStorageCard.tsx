@@ -1,12 +1,6 @@
 import './sessionStorage.css';
 
-import {
-  AdjustmentsHorizontalIcon,
-  ArchiveBoxIcon,
-  BoltIcon,
-  CircleStackIcon,
-  ServerStackIcon,
-} from '@heroicons/react/24/outline';
+import { ArchiveBoxIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type {
   SessionStorageErrorCode,
   SessionStoragePolicy,
@@ -18,13 +12,6 @@ import { useSelector } from 'react-redux';
 import { i18nService } from '@/services/i18n';
 import type { RootState } from '@/store';
 
-const storageIcons = {
-  storageTotal: ServerStackIcon,
-  storageDatabase: CircleStackIcon,
-  storageWal: BoltIcon,
-  storageArchive: ArchiveBoxIcon,
-};
-
 const t = (key: string) => i18nService.t(key);
 export const totalSessionStorageBytes = (status: SessionStorageStatus) =>
   status.agents.reduce(
@@ -34,6 +21,7 @@ export const totalSessionStorageBytes = (status: SessionStorageStatus) =>
 const bytes = (value: number) => {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(2)} KiB`;
+  if (value >= 1024 * 1024 * 1024) return `${(value / 1024 / 1024 / 1024).toFixed(2)} GiB`;
   return `${(value / 1024 / 1024).toFixed(2)} MiB`;
 };
 const buttonClass =
@@ -200,7 +188,6 @@ export default function SessionStorageCard() {
     status.maintenance.running;
   const metrics = status
     ? ([
-        ['storageTotal', totalSessionStorageBytes(status)],
         ['storageDatabase', status.agents.reduce((n, a) => n + a.databaseBytes, 0)],
         ['storageWal', status.agents.reduce((n, a) => n + a.walBytes, 0)],
         ['storageArchive', status.agents.reduce((n, a) => n + a.archiveBytes, 0)],
@@ -210,11 +197,11 @@ export default function SessionStorageCard() {
   const coldCount = status?.agents.reduce((n, a) => n + a.coldTranscripts, 0) ?? 0;
 
   return (
-    <section className="session-storage space-y-5" aria-label={t('storageTitle')}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className="session-storage space-y-5" aria-label={t('storageHistoryTitle')}>
+      <div className="storage-history-heading">
         <div>
-          <h3 className="text-base font-semibold text-foreground">{t('storageTitle')}</h3>
-          <p className="mt-1 text-xs text-secondary">{t('storageScope')}</p>
+          <h3 className="text-base font-semibold text-foreground">{t('storageHistoryTitle')}</h3>
+          <p className="mt-1 text-sm text-secondary">{t('storageScope')}</p>
         </div>
         <button
           type="button"
@@ -222,6 +209,7 @@ export default function SessionStorageCard() {
           disabled={busy || checking}
           onClick={() => void refresh()}
         >
+          <ArrowPathIcon className="h-4 w-4" aria-hidden="true" />
           {t(checking ? 'storageRefreshing' : 'storageRefresh')}
         </button>
       </div>
@@ -243,150 +231,110 @@ export default function SessionStorageCard() {
         </p>
       )}
       {status && (
-        <div className="storage-overview space-y-4 rounded-xl border border-border bg-surface p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h4 className="text-sm font-semibold">{t('storageOverview')}</h4>
-            {updatedAt && (
-              <span className="text-xs text-secondary">
-                {t('storageUpdated')}: {new Date(updatedAt).toLocaleString()}
-              </span>
-            )}
-          </div>
-          <dl className="storage-metrics">
-            {metrics.map(([key, value]) => {
-              const Icon = storageIcons[key];
-              return (
-                <div key={key} className={`storage-metric storage-tone-${key}`}>
-                  <dt className="flex items-center justify-between gap-2 text-xs text-secondary">
-                    <span>{t(key)}</span>
-                    <Icon className="storage-icon" aria-hidden="true" />
-                  </dt>
-                  <dd className="mt-2 text-xl font-semibold tabular-nums text-foreground">
-                    {bytes(value)}
-                  </dd>
-                </div>
-              );
-            })}
+        <div className="storage-history-overview">
+          <dl className="storage-history-summary">
+            <div className="storage-history-total">
+              <dt className="text-sm text-secondary">{t('storageHistoryBytes')}</dt>
+              <dd className="mt-2 text-2xl font-semibold tabular-nums text-foreground">
+                {bytes(totalSessionStorageBytes(status))}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-secondary">{t('storageHot')}</dt>
+              <dd className="mt-2 text-xl font-medium tabular-nums text-foreground">{hotCount}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-secondary">{t('storageCold')}</dt>
+              <dd className="mt-2 text-xl font-medium tabular-nums text-foreground">{coldCount}</dd>
+            </div>
           </dl>
-          <div
-            className="storage-composition"
-            role="img"
-            aria-label={metrics
-              .slice(1)
-              .map(([key, value]) => `${t(key)}: ${bytes(value)}`)
-              .join(' · ')}
-          >
-            {metrics.slice(1).map(([key, value]) => (
-              <span
-                key={key}
-                className={`storage-tone-${key}`}
-                title={`${t(key)}: ${bytes(value)}`}
-                style={{
-                  width: `${totalSessionStorageBytes(status) ? (value / totalSessionStorageBytes(status)) * 100 : 0}%`,
-                }}
-              />
-            ))}
-          </div>
-          <div className="storage-transcripts">
-            <div className="storage-transcript storage-hot">
-              <BoltIcon aria-hidden="true" />
-              <span>{t('storageHot')}</span>
-              <strong className="tabular-nums">{hotCount}</strong>
-            </div>
-            <div className="storage-transcript storage-cold">
-              <ArchiveBoxIcon aria-hidden="true" />
-              <span>{t('storageCold')}</span>
-              <strong className="tabular-nums">{coldCount}</strong>
-            </div>
-          </div>
-          <details className="border-t border-border pt-3">
-            <summary className="cursor-pointer text-sm font-medium">{t('storageAgents')}</summary>
-            <div className="mt-3 overflow-x-auto rounded-lg border border-border">
-              <table className="w-full min-w-[760px] border-collapse text-xs">
-                <thead className="bg-surface-raised text-secondary">
-                  <tr>
-                    {[
-                      'storageAssistant',
-                      'storageDatabase',
-                      'storageWal',
-                      'storageArchive',
-                      'storageHot',
-                      'storageCold',
-                      'storageEmbedded',
-                    ].map((key, index) => (
-                      <th
-                        key={key}
-                        scope="col"
-                        className={`px-3 py-2.5 font-medium ${index === 0 ? 'text-left' : 'text-right'}`}
-                      >
-                        {t(key)}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {status.agents.map(agent => (
-                    <tr key={agent.agentId} className="border-t border-border">
-                      <th scope="row" className="px-3 py-2.5 text-left font-medium text-foreground">
-                        {agents.find(a => a.id === agent.agentId)?.name ?? agent.agentId}
-                      </th>
+          <details className="storage-history-details">
+            <summary className="cursor-pointer text-sm font-medium">{t('storageDetails')}</summary>
+            <div className="space-y-4 pt-4">
+              <dl className="storage-history-breakdown">
+                {metrics.map(([key, value]) => (
+                  <div key={key}>
+                    <dt className="text-xs text-secondary">{t(key)}</dt>
+                    <dd className="mt-1 text-sm font-medium tabular-nums text-foreground">
+                      {bytes(value)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[760px] border-collapse text-xs">
+                  <caption className="pb-3 text-left text-sm font-medium">
+                    {t('storageAgents')}
+                  </caption>
+                  <thead className="text-secondary">
+                    <tr>
                       {[
-                        bytes(agent.databaseBytes),
-                        bytes(agent.walBytes),
-                        bytes(agent.archiveBytes),
-                        agent.hotTranscripts,
-                        agent.coldTranscripts,
-                        bytes(agent.embeddedArchiveBytes),
-                      ].map((value, index) => (
-                        <td
-                          key={index}
-                          className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums"
+                        'storageAssistant',
+                        'storageDatabase',
+                        'storageWal',
+                        'storageArchive',
+                        'storageHot',
+                        'storageCold',
+                        'storageEmbedded',
+                      ].map((key, index) => (
+                        <th
+                          key={key}
+                          scope="col"
+                          className={`px-3 py-2.5 font-medium ${index === 0 ? 'text-left' : 'text-right'}`}
                         >
-                          {value}
-                        </td>
+                          {t(key)}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {status.agents.map(agent => (
+                      <tr key={agent.agentId} className="border-t border-border">
+                        <th
+                          scope="row"
+                          className="px-3 py-2.5 text-left font-medium text-foreground"
+                        >
+                          {agents.find(a => a.id === agent.agentId)?.name ?? agent.agentId}
+                        </th>
+                        {[
+                          bytes(agent.databaseBytes),
+                          bytes(agent.walBytes),
+                          bytes(agent.archiveBytes),
+                          agent.hotTranscripts,
+                          agent.coldTranscripts,
+                          bytes(agent.embeddedArchiveBytes),
+                        ].map((value, index) => (
+                          <td
+                            key={index}
+                            className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums"
+                          >
+                            {value}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-secondary">{t('storageEmbeddedHint')}</p>
             </div>
           </details>
+          {updatedAt && (
+            <p className="storage-history-updated text-xs text-secondary">
+              {t('storageUpdated')}: {new Date(updatedAt).toLocaleString()}
+            </p>
+          )}
         </div>
       )}
-      <div className="storage-management overflow-hidden rounded-xl border border-border bg-surface">
-        <div className="storage-management-heading border-b border-border px-4 py-3">
+      <section className="storage-management" aria-label={t('storageManagement')}>
+        <div className="storage-management-heading">
           <h4 className="flex items-center gap-2 text-sm font-semibold">
-            <AdjustmentsHorizontalIcon className="storage-icon" aria-hidden="true" />
+            <ArchiveBoxIcon className="h-4 w-4 text-secondary" aria-hidden="true" />
             {t('storageManagement')}
           </h4>
           <p className="mt-1 text-xs text-secondary">{t('storageIndependent')}</p>
         </div>
-        <div className="space-y-4 p-4">
-          <div
-            className={`storage-maintenance text-sm ${status?.maintenance.lastError ? 'storage-maintenance-error' : status?.maintenance.running ? 'storage-maintenance-running' : ''}`}
-            role="status"
-          >
-            <span className="font-medium">{t('storageMaintenance')}：</span>{' '}
-            {!status ? (
-              t('storageLoading')
-            ) : status.maintenance.running ? (
-              t('storageRunning')
-            ) : status.maintenance.lastCompletedAt ? (
-              <>
-                {t('storageCompleted')}:{' '}
-                {new Date(status.maintenance.lastCompletedAt).toLocaleString()} ·{' '}
-                {t('storageArchivedCount')}: {status.maintenance.archivedTranscripts} ·{' '}
-                {t('storageExternalizedCount')}: {status.maintenance.externalizedTranscripts}
-              </>
-            ) : (
-              t('storageNoRun')
-            )}
-            {status?.maintenance.lastError && (
-              <p role="alert" className="mt-2 text-sm">
-                {t('storageMaintenanceFailed')}
-              </p>
-            )}
-          </div>
+        <div className="space-y-4 p-4 sm:p-5">
           {policy && !policy.applied && (
             <p role="status" className="rounded-lg bg-surface-raised p-3 text-sm">
               {t('storageError_pending')}
@@ -394,7 +342,7 @@ export default function SessionStorageCard() {
           )}
           <fieldset
             disabled={!policy || busy || !!status?.maintenance.running}
-            className="space-y-4 border-t border-border pt-4"
+            className="space-y-4"
           >
             <label className="storage-policy flex items-start gap-3 text-sm">
               <input
@@ -410,7 +358,7 @@ export default function SessionStorageCard() {
                 </span>
               </span>
             </label>
-            <div className="flex flex-wrap items-center gap-3">
+            <div className="storage-policy-days">
               <label className="flex items-center gap-2 text-sm font-medium">
                 {t('storageDays')}
                 <input
@@ -465,9 +413,34 @@ export default function SessionStorageCard() {
               {t(`storageError_${writeError}`)} {t('storageWriteNotReplayed')}
             </p>
           )}
+          <div
+            className={`storage-maintenance text-sm ${status?.maintenance.lastError ? 'storage-maintenance-error' : status?.maintenance.running ? 'storage-maintenance-running' : ''}`}
+            role="status"
+          >
+            <p className="mb-1 text-xs font-medium text-secondary">{t('storageMaintenance')}</p>
+            {!status ? (
+              t('storageLoading')
+            ) : status.maintenance.running ? (
+              t('storageRunning')
+            ) : status.maintenance.lastCompletedAt ? (
+              <>
+                {t('storageCompleted')}:{' '}
+                {new Date(status.maintenance.lastCompletedAt).toLocaleString()} ·{' '}
+                {t('storageArchivedCount')}: {status.maintenance.archivedTranscripts} ·{' '}
+                {t('storageExternalizedCount')}: {status.maintenance.externalizedTranscripts}
+              </>
+            ) : (
+              t('storageNoRun')
+            )}
+            {status?.maintenance.lastError && (
+              <p role="alert" className="mt-2 text-sm">
+                {t('storageMaintenanceFailed')}
+              </p>
+            )}
+          </div>
+          <p className="text-xs leading-relaxed text-secondary">{t('storageRetention')}</p>
         </div>
-      </div>
-      <p className="px-1 text-xs leading-relaxed text-secondary">{t('storageRetention')}</p>
+      </section>
     </section>
   );
 }

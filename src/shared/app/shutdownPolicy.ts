@@ -7,6 +7,7 @@ const applicationCleanup = startupRetirement + policy.otherAppCleanupMs + gatewa
 const applicationExit = applicationCleanup + policy.outerSchedulingMarginMs;
 
 export const SHUTDOWN_BUDGET_MS = Object.freeze({
+  storageRelocationGrace: 60_000,
   nativeShutdown: policy.nativeShutdownMs,
   nativeExitMargin: policy.nativeExitMarginMs,
   gatewayGrace,

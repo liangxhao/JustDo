@@ -177,6 +177,27 @@ async function fixture(options: {
   };
 }
 
+test('application shutdown waits for an admitted package operation to settle', async () => {
+  const { manager } = await fixture();
+  const entered = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const operation = manager.withExtensionPackageMutation(async () => {
+    entered.resolve();
+    await finish.promise;
+  });
+  await entered.promise;
+
+  let stopped = false;
+  manager.dispose();
+  const stopping = manager.settleShutdown().then(() => { stopped = true; });
+  await Promise.resolve();
+  expect(stopped).toBe(false);
+
+  finish.resolve();
+  await Promise.all([operation, stopping]);
+  expect(stopped).toBe(true);
+});
+
 test('prepares managed data and migrates a declared legacy directory before the first Gateway exists', async () => {
   const f = await fixture({ initiallyOffline: true,
     data: { directory: 'managed-v1', migrateLegacyDirectory: { requiredFiles: ['selection.json'] } },

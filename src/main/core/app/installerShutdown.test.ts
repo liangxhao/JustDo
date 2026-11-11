@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 test('a compatibility quit invocation hands off to an incumbent or exits without starting application services', () => {
-  const main = readFileSync(path.resolve(__dirname, '../../main.ts'), 'utf8');
+  const main = readFileSync(path.resolve(__dirname, '../../application.ts'), 'utf8');
   const dispatch = main.slice(main.indexOf('const gotTheLock = agentBridgeArgv'),
     main.indexOf('  const releaseRuntimeDevLease =')) + 'normalStart(); }';
   for (const lock of [false, true]) {

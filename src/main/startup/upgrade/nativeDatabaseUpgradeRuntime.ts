@@ -2,6 +2,10 @@ import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import path from 'node:path';
 
 import { StartupCompatibilityErrorCode } from '../../../shared/app/startup/versionPolicy';
+import relocationContract from '../../storage/relocationNativeContract.json';
+import { decodeRelocationNativeFailure, NATIVE_RELOCATION_FAILURE_DETAILS } from '../../storage/relocationNativeFailure';
+import { NATIVE_RELOCATION_PLUGINS } from '../../storage/relocationNativePlugins';
+import type { NativeRelocationPluginPlan } from '../../storage/relocationNativeRuntime';
 import contract from './nativeDatabaseContract.json';
 import { nativeDatabaseEnvironment } from './nativeDatabaseEnvironment';
 import {
@@ -51,6 +55,7 @@ async function terminateOwnedChildTree(child: ChildProcess): Promise<void> {
 
 /** One offline child owns inspection/maintenance and is joined before Gateway admission or application exit. */
 export class NativeDatabaseUpgradeRuntime {
+  get retirementConfirmed(): boolean { return this.child === null && this.operation === null; }
   private child: ChildProcess | null = null;
   private operation: Promise<NativeDatabaseResult> | null = null;
   private admission: Promise<NativeDatabaseRuntimeIdentity> | null = null;
@@ -68,6 +73,8 @@ export class NativeDatabaseUpgradeRuntime {
     admit?: typeof admitNativeDatabaseRuntime;
     readDeliveryIdentity?: typeof readNativeDatabaseDeliveryIdentity;
     spawn?: typeof spawn;
+    relocationPlugins?: NativeRelocationPluginPlan;
+    relocationFailureRoot?: string;
     terminate?: (child: ChildProcess) => Promise<void>;
     inspectTimeoutMs?: number;
     upgradeTimeoutMs?: number;
@@ -149,14 +156,24 @@ export class NativeDatabaseUpgradeRuntime {
     const identity = await this.admitted();
     if (this.stopped || !this.deps.gatewayStopped())
       throw new Error('Native database startup admission changed.');
+    const relocationPlugins = operation === 'prepare' ? this.deps.relocationPlugins : undefined;
+    const relocationFailureRoot = operation === 'prepare' ? this.deps.relocationFailureRoot : undefined;
     const input = { runtimeRoot: identity.runtimeRoot, stateDir: this.deps.stateDir,
-      configPath: this.deps.configPath, identity, contract, operation,
+      configPath: this.deps.configPath, identity, operation,
+      contract: relocationPlugins ? { ...contract, modules: { ...contract.modules, ...relocationContract.modules } } : contract,
+      ...(relocationPlugins ? { relocationPlugins } : {}),
+      ...(relocationFailureRoot ? { relocationFailureRoot } : {}),
       unsupportedCode: StartupCompatibilityErrorCode.NativeSchemaUnsupported,
       nativeFailureCodes,
       ...(operation !== 'inspect' && this.inventory ? { expectedInventory: this.inventory } : {}) };
+    const relocationSource = (relocationFailureRoot ? NATIVE_RELOCATION_FAILURE_DETAILS : '') +
+      (relocationPlugins ? NATIVE_RELOCATION_PLUGINS : '');
+    const source = relocationSource
+      ? NATIVE_DATABASE_UPGRADE_SOURCE.replace('/* Relocation worker extensions */', () => relocationSource)
+      : NATIVE_DATABASE_UPGRADE_SOURCE;
     return await new Promise<NativeDatabaseResult>((resolve, reject) => {
       const child = (this.deps.spawn ?? spawn)(identity.executable,
-        ['--input-type=module', '-e', NATIVE_DATABASE_UPGRADE_SOURCE, JSON.stringify(input)], {
+        ['--input-type=module', '-e', source, JSON.stringify(input)], {
           cwd: identity.runtimeRoot, env: nativeDatabaseEnvironment(process.env, this.deps),
           windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         });
@@ -206,8 +223,10 @@ export class NativeDatabaseUpgradeRuntime {
           try { onActivity?.(value.activity as NativeDatabaseUpgradeActivity); }
           catch (error) { failure ??= error instanceof Error ? error : new Error('Native upgrade progress owner failed.'); requestAbort(); }
         } else if (value.type === 'failure') {
-          failure ??= Object.assign(new Error(typeof value.message === 'string' ? value.message.slice(0, 1000) : 'Native database maintenance failed.'),
-            typeof value.code === 'string' && nativeFailureCodes.includes(value.code) ? { code: value.code } : {});
+          failure ??= relocationFailureRoot
+            ? decodeRelocationNativeFailure('Native relocation target preparation failed.', value, [relocationFailureRoot], nativeFailureCodes)
+            : Object.assign(new Error(typeof value.message === 'string' ? value.message.slice(0, 1000) : 'Native database maintenance failed.'),
+              typeof value.code === 'string' && nativeFailureCodes.includes(value.code) ? { code: value.code } : {});
         } else if (value.type === 'result') {
           const proof = value.identity as Record<string, unknown> | undefined;
           if (receipt || value.operation !== operation || proof?.runtimeVersion !== identity.runtimeVersion ||

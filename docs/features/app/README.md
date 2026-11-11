@@ -4,5 +4,6 @@
 
 - [导航、会话列表与设置外壳](navigation-and-session-list.md)
 - [启动分流与历史升级](startup-and-history-upgrade.md)
+- [数据目录位置与离线迁移](data-directory.md)
 
 [返回功能文档索引](../README.md)

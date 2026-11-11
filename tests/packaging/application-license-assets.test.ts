@@ -60,8 +60,8 @@ function packagedCopy(repoRoot: string, assets: string) {
 test('collects actual transitive owners, package metadata and original legal bytes, including zero-length module wrappers', () => {
   const { repoRoot, files, assets } = fixture();
   const result = verifyApplicationLicenseAssets({ repoRoot });
-  expect(result.scopes).toBe(8);
-  expect(result.packages).toBe(16);
+  expect(result.scopes).toBe(9);
+  expect(result.packages).toBe(18);
   const manifest = JSON.parse(fs.readFileSync(path.join(assets, 'renderer/manifest.json'), 'utf8'));
   expect(manifest.packages.map((entry: { name: string }) => entry.name).sort()).toEqual(['top', 'transitive']);
   const top = manifest.packages.find((entry: { name: string }) => entry.name === 'top');
@@ -110,7 +110,7 @@ test('rebuilding one scope replaces its old package graph while preserving sibli
   expect(renderer.packages).toEqual([]);
   expect(fs.readdirSync(path.join(assets, 'renderer')).sort()).toEqual(['manifest.json', 'source-proof.json']);
   expect(fs.readFileSync(path.join(assets, 'main/manifest.json'))).toEqual(oldMain);
-  expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(14);
+  expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(16);
 });
 
 test.each(['EPERM', 'EBUSY', 'EACCES'])('retries a transient Windows %s while publishing the complete license scope', code => {
@@ -130,7 +130,7 @@ test.each(['EPERM', 'EBUSY', 'EACCES'])('retries a transient Windows %s while pu
   expect(attempts).toBe(2);
   expect(wait.mock.calls.map(call => call[3])).toEqual([50]);
   expect(fs.readdirSync(assets).sort()).toEqual([...REQUIRED_APPLICATION_LICENSE_SCOPES].sort());
-  expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(14);
+  expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(16);
   expect(publish).toHaveBeenCalledTimes(2);
 });
 
@@ -241,5 +241,5 @@ test('recognizes real dependency paths when node_modules is a junction to a diff
   fs.symlinkSync(physical, path.join(repoRoot, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   const actualId = path.join(physical, 'top/esm/index.js');
   for (const scope of REQUIRED_APPLICATION_LICENSE_SCOPES) emit(repoRoot, scope, [actualId]);
-  expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(8);
+  expect(verifyApplicationLicenseAssets({ repoRoot }).packages).toBe(9);
 });

@@ -44,6 +44,8 @@ Custody 存储会话使用原生 harness 命名空间，以 `agentHarnessId` 和
 
 每个插件有 `openclaw.plugin.json` 和 `app.plugin.json`。应用清单固定 `manifestVersion:1`、`apiVersion:1`，声明相同的应用/原生 ID、版本、Main/Browser 文件、能力、命令与插槽；`package.json.app` 指向源码入口。清单 `native.defaultEnabled` 和 `native.userToggleable` 声明捆绑默认策略；宿主在 Main/schema 激活之前独立验证可信捆绑产物元数据，外部包不能凭这两个字段自动启用。构建脚本按文件发现清单，不维护业务入口列表。
 
+历史批准产物中的可选 `entries.relocation` 仅保留为不可变索引与 hash 元数据，不调用或作为 Browser 资源开放。数据目录迁移直接复制退休后的文件，不需要插件声明专用迁移入口或接受业务内容审核。
+
 ### 纯历史展示入口
 
 文本投影分为两个阶段：`text(source)` 处理归一化和草稿恢复前的传输包裹；

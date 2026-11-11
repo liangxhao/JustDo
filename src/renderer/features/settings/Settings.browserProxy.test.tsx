@@ -15,18 +15,26 @@ import Settings from './Settings';
 const mocks = vi.hoisted(() => ({ getConfig: vi.fn(), updateConfig: vi.fn() }));
 
 vi.mock('@/app/shell/window/WindowHeader', () => ({ default: () => null }));
+vi.mock('./storage/SessionStoragePage', () => ({ default: () => <p>storagePageFixture</p> }));
+vi.mock('./usage/UsageStatsTab', () => ({ default: () => <p>usagePageFixture</p> }));
 vi.mock('./preferences/GeneralSettingsPage', () => ({
-  GeneralSettingsPage: ({ developerModeAvailable, controlUiEnabled, setControlUiEnabled }: {
+  GeneralSettingsPage: ({
+    developerModeAvailable,
+    controlUiEnabled,
+    setControlUiEnabled,
+  }: {
     developerModeAvailable: boolean;
     controlUiEnabled: boolean;
     setControlUiEnabled: (enabled: boolean) => void;
-  }) => <>
-    <p>General preferences</p>
-    {developerModeAvailable && <section aria-label="developerMode">Developer controls</section>}
-    <button type="button" onClick={() => setControlUiEnabled(!controlUiEnabled)}>
-      {controlUiEnabled ? 'fixtureControlUiOn' : 'fixtureControlUiOff'}
-    </button>
-  </>,
+  }) => (
+    <>
+      <p>General preferences</p>
+      {developerModeAvailable && <section aria-label="developerMode">Developer controls</section>}
+      <button type="button" onClick={() => setControlUiEnabled(!controlUiEnabled)}>
+        {controlUiEnabled ? 'fixtureControlUiOn' : 'fixtureControlUiOff'}
+      </button>
+    </>
+  ),
 }));
 vi.mock('@/services/config', () => ({ configService: mocks }));
 vi.mock('@/theme/themeService', () => ({
@@ -105,6 +113,21 @@ function renderSettings(onClose = vi.fn()) {
 
 const proxySection = () => screen.getByRole('region', { name: 'browserProxySettings' });
 const saveButton = () => screen.getByRole('button', { name: 'save' });
+
+test.each([
+  ['storageTitle', 'storagePageFixture'],
+  ['usageStats', 'usagePageFixture'],
+])('opens %s independently without a global save or form submission', async (label, content) => {
+  const onClose = vi.fn();
+  const view = renderSettings(onClose);
+  fireEvent.click(screen.getByRole('button', { name: label }));
+  await screen.findByText(content);
+  expect(screen.queryByRole('button', { name: 'save' })).toBeNull();
+  fireEvent.submit(view.container.querySelector('form')!);
+  expect(mocks.updateConfig).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
+  await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
+});
 
 test.each(['section', 'form'] as const)(
   '%s submit saves the browser proxy independently of the application debugging proxy',
@@ -251,8 +274,10 @@ test('cancel discards an unsaved Control UI draft without changing its saved pre
 test('reveals developer controls on the tenth title click and saves without another mode switch', async () => {
   renderSettings();
   fireEvent.click(screen.getByRole('button', { name: 'general' }));
-  const title = within(screen.getByRole('heading', { name: 'general', level: 3 }))
-    .getByRole('button', { name: 'general' });
+  const title = within(screen.getByRole('heading', { name: 'general', level: 3 })).getByRole(
+    'button',
+    { name: 'general' },
+  );
   for (let index = 0; index < 9; index += 1) fireEvent.click(title);
   expect(screen.queryByRole('region', { name: 'developerMode' })).toBeNull();
   fireEvent.click(title);
@@ -268,8 +293,10 @@ test('reveals developer controls on the tenth title click and saves without anot
 test('leaving General resets reveal visibility and cancel discards the developer draft', () => {
   renderSettings();
   fireEvent.click(screen.getByRole('button', { name: 'general' }));
-  const title = within(screen.getByRole('heading', { name: 'general', level: 3 }))
-    .getByRole('button', { name: 'general' });
+  const title = within(screen.getByRole('heading', { name: 'general', level: 3 })).getByRole(
+    'button',
+    { name: 'general' },
+  );
   for (let index = 0; index < 10; index += 1) fireEvent.click(title);
   expect(screen.getByRole('region', { name: 'developerMode' })).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'browserSettings' }));

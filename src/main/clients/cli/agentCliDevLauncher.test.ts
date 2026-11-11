@@ -64,17 +64,18 @@ describe('Agent CLI development launcher location', () => {
 
   it('keeps normal and isolated bridge profiles in separate checkout launchers', () => {
     const root = path.resolve('checkout');
-    const appData = path.resolve('roaming');
     const isolatedData = path.join(root, '.work', 'profile');
-    const normal = developmentScript(root, { APPDATA: appData });
+    const normal = developmentScript(root, {});
     const isolated = developmentScript(root, { JUSTDO_DEV_USER_DATA_DIR: isolatedData });
 
     const normalExecutable = normal.prepare();
     const isolatedExecutable = isolated.prepare();
 
+    expect(normalExecutable).toBe(resolveDevelopmentAgentCliExecutable(root));
     expect(normalExecutable).toBe(
-      resolveDevelopmentAgentCliExecutable(root, path.join(appData, PRODUCT_NAME)),
+      path.join(root, '.agent-tasks', 'external-agent', 'development', path.basename(normalExecutable)),
     );
+    expect(normal.createLauncher).toHaveBeenCalledWith(normalExecutable, { userDataPath: undefined });
     expect(isolatedExecutable).toBe(resolveDevelopmentAgentCliExecutable(root, isolatedData));
     expect(isolatedExecutable).not.toBe(normalExecutable);
     expect(isolated.createLauncher).toHaveBeenCalledWith(isolatedExecutable, {
@@ -91,19 +92,16 @@ describe('Agent CLI development launcher location', () => {
 
   it('uses a changed productName consistently for development and installed launchers', async () => {
     const root = path.resolve('工程 预览');
-    const appData = path.resolve('用户 数据');
     const productName = 'Acme';
-    const script = developmentScript(root, { APPDATA: appData }, productName);
+    const script = developmentScript(root, {}, productName);
     vi.resetModules();
     vi.doMock('../../../shared/productMetadata', () => ({ PRODUCT_NAME: productName }));
     try {
       const renamed = await import('./agentCliDevLauncher');
       const executable = script.prepare();
-      const userData = path.join(appData, productName);
-
-      expect(executable).toBe(renamed.resolveDevelopmentAgentCliExecutable(root, userData));
+      expect(executable).toBe(renamed.resolveDevelopmentAgentCliExecutable(root));
       expect(path.basename(executable)).toBe('acme-cli.exe');
-      expect(script.createLauncher).toHaveBeenCalledWith(executable, { userDataPath: userData });
+      expect(script.createLauncher).toHaveBeenCalledWith(executable, { userDataPath: undefined });
       expect(renamed.resolvePackagedAgentCliExecutable(path.join(root, 'Acme.exe'))).toBe(
         path.join(root, 'acme-cli.exe'),
       );

@@ -32,7 +32,11 @@ npm test
   Routine repackaging uses existing tests and required build-time checks; do not
   add installation/cold-start rehearsals or repeated whole-artifact inventories
   unless investigating a directly related failure or explicitly requested.
-  Prefer representative failure cases over Cartesian products of the same branch.
+- Reuse existing coverage first. Add or extend a test only when it covers a
+  concrete regression the suite would otherwise miss or when explicitly required.
+  Use representative cases that assert observable behavior. Avoid duplicate
+  coverage and tests that mirror implementation branches. When removing a check,
+  drop tests that only require that check.
 - For docs-only changes, run `git diff --check`.
 - `npm test` prepares a private Node better-sqlite3 under `build/test-dependencies/`
   without replacing the application's Electron binary; `npm run rebuild:electron-native`
@@ -108,6 +112,12 @@ npm test
 - Organize by feature/domain and preserve existing entry points. Co-locate
   helpers, styles and tests with their consumers; `shared/` is for actual reuse.
   Do not split/merge directories merely to equalize file counts.
+- Let authorized operations proceed by default. Add a blocking check only when
+  a specific requirement calls for it or it prevents a concrete, consequential
+  failure. Enforce it where the operation owns the decision and reuse existing
+  checks or operation errors when they already cover the failure. Repeat a check
+  only when the relevant state can change and checking again prevents harm.
+  Keep optional diagnostics out of the path that decides whether work can start.
 - Group repository scripts by responsibility: runtime preparation in
   `scripts/openclaw/` and `scripts/runtime/`, archives/installers in
   `scripts/packaging/`, read-only evidence in `scripts/diagnostics/`, and host

@@ -174,17 +174,21 @@ test('retains the workspace preparation fence until every in-flight native creat
     : new Promise((resolve, reject) => pending.push({ resolve, reject })));
   internals.gatewayClient = { request } as unknown as GatewayClientLike;
   internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+  expect(adapter.hasActiveSessions()).toBe(false);
   const first = adapter.prepareSession(session.id);
   const second = adapter.prepareSession(session.id).catch(error => error);
   expect(adapter.isSessionPreparing(session.id)).toBe(true);
+  expect(adapter.hasActiveSessions()).toBe(true);
   expect(adapter.isSessionPreparing('another-session')).toBe(false);
   await vi.waitFor(() => expect(pending).toHaveLength(2));
   pending[0].resolve(createPreparedSessionReceipt());
   await first;
   expect(adapter.isSessionPreparing(session.id)).toBe(true);
+  expect(adapter.hasActiveSessions()).toBe(true);
   pending[1].reject(new Error('native preparation failed'));
   await expect(second).resolves.toBeInstanceOf(Error);
   expect(adapter.isSessionPreparing(session.id)).toBe(false);
+  expect(adapter.hasActiveSessions()).toBe(false);
   expect(adapter.hasUnconfirmedSessionPreparation(session.id)).toBe(false);
 });
 

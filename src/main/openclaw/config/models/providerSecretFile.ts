@@ -11,8 +11,32 @@ export function restrictCredentialFile(filePath: string): void {
   restrictCredentialPath(filePath, false);
 }
 
-export function restrictCredentialDirectory(directory: string): void {
-  restrictCredentialPath(directory, true);
+export function restrictCredentialDirectory(
+  directory: string,
+  options?: { replaceWindowsAccess?: boolean },
+): void {
+  if (process.platform !== 'win32' || !options?.replaceWindowsAccess) {
+    restrictCredentialPath(directory, true);
+    return;
+  }
+
+  // A pre-existing empty folder can already grant explicit access to other users.
+  const executable = path.join(
+    process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+  );
+  execFileSync(executable, ['-NoProfile', '-NonInteractive', '-Command', String.raw`
+    $ErrorActionPreference = 'Stop'
+    $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $directory = $env:PRIVATE_DIRECTORY_PATH
+    $acl = [System.IO.Directory]::GetAccessControl($directory, 'Access')
+    $acl.SetSecurityDescriptorSddlForm("D:P(A;OICI;FA;;;$sid)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", 'Access')
+    [System.IO.Directory]::SetAccessControl($directory, $acl)
+  `], {
+    env: { ...process.env, PRIVATE_DIRECTORY_PATH: directory },
+    windowsHide: true,
+    timeout: 5_000,
+  });
 }
 
 function restrictCredentialPath(filePath: string, directory: boolean): void {

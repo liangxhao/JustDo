@@ -120,6 +120,21 @@ test('physical target lookup matches aliases and always prioritizes the current 
   }), expect.any(Function));
 });
 
+test('keeps an exact relocation lookup on the requested item', async () => {
+  const exec = mockLookupOutput('{"complete":true}\n');
+  const realpath = vi.spyOn(fs.realpathSync, 'native');
+
+  await findWindowsLockingProcesses('C:\\profile\\file.sqlite', { exact: true });
+
+  expect(realpath).not.toHaveBeenCalled();
+  expect(exec).toHaveBeenCalledWith(expect.any(String), expect.any(Array), expect.objectContaining({
+    env: expect.objectContaining({
+      JUSTDO_LOCK_TARGET: 'C:\\profile\\file.sqlite',
+      FILE_LOCK_EXACT_PATH: '1',
+    }),
+  }), expect.any(Function));
+});
+
 test('a later scan timeout retains earlier complete process records but discards a truncated record', async () => {
   mockLookupOutput('{"name":"ObservedApp","pid":4321}\n{"name":"unfinished',
     Object.assign(new Error('lookup timed out'), { code: 'ETIMEDOUT' }));

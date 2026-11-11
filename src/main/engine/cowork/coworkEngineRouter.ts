@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 
+import { assertStorageExecutionAdmission } from '../../storage/relocationAdmission';
 import type {
   CoworkGenerateTitleOptions,
   CoworkPreparedSession,
@@ -48,6 +49,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     prompt: string,
     options: CoworkStartOptions = {},
   ): Promise<void> {
+    assertStorageExecutionAdmission();
     await this.runtime.startSession(sessionId, prompt, options);
   }
 
@@ -55,7 +57,10 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     sessionId: string,
     options?: CoworkPrepareSessionOptions,
   ): Promise<CoworkPreparedSession> {
-    return this.runtime.prepareSession(sessionId, options);
+    assertStorageExecutionAdmission();
+    const prepared = await this.runtime.prepareSession(sessionId, options);
+    assertStorageExecutionAdmission();
+    return prepared;
   }
 
   async armAutomaticErrorRetry(sessionId: string, clientTurnId: string): Promise<void> {

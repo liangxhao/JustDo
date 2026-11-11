@@ -9,18 +9,17 @@ export const resolvePackagedAgentCliExecutable = (productExecutable: string): st
 
 export const resolveDevelopmentAgentCliExecutable = (
   appPath: string,
-  userDataPath: string,
+  profileOverride?: string,
 ): string => {
-  const profile = createHash('sha256')
-    .update(path.resolve(userDataPath))
-    .digest('hex')
-    .slice(0, 16);
+  const profileSlot = profileOverride
+    ? [createHash('sha256').update(path.resolve(profileOverride)).digest('hex').slice(0, 16)]
+    : [];
   return path.join(
     path.resolve(appPath),
     '.agent-tasks',
     'external-agent',
     'development',
-    profile,
+    ...profileSlot,
     `${getAgentCliCommandName(PRODUCT_NAME)}.exe`,
   );
 };

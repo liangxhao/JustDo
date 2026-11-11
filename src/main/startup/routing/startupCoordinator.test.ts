@@ -16,6 +16,7 @@ import { GroupStore } from '../../data/groupStore';
 import { SqliteStore } from '../../data/sqliteStore';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import { SessionPermissionModeCoordinator } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
+import { UpgradeBackupService } from '../../storage/upgradeBackupService';
 import {
   createHistoryBackup,
   verifyHistoryBackup,
@@ -1688,6 +1689,9 @@ test('empty history checkpoints preceding schema and default writes before the g
 test('recovers an interrupted native import without another backup, environment replacement or transcript restaging', async () => {
   const target = root();
   legacy(target);
+  const oldMedia = path.join(target, 'openclaw/state/media/upgrade-image.bin');
+  fs.mkdirSync(path.dirname(oldMedia), { recursive: true });
+  fs.writeFileSync(oldMedia, 'synthetic media fixture');
   const old = new Database(path.join(target, DB_FILENAME));
   old.exec(`ALTER TABLE cowork_sessions ADD COLUMN pinned INTEGER;
     ALTER TABLE cowork_sessions ADD COLUMN group_id TEXT;
@@ -1784,6 +1788,26 @@ test('recovers an interrupted native import without another backup, environment 
     expect(fs.existsSync(path.join(target, 'backups', journal.transactionId, 'retired'))).toBe(
       true,
     );
+    const activeTranscript = path.join(state, 'agents/main/sessions/original-native.jsonl');
+    const currentHistory = fs.readFileSync(activeTranscript);
+    const currentJournal = fs.readFileSync(path.join(target, STARTUP_STATE_FILE));
+    const backups = new UpgradeBackupService({
+      getDirectory: () => target, isReady: () => true, confirmDelete: async () => true,
+    });
+
+    expect(await backups.delete()).toEqual({ success: true, value: null });
+
+    expect(fs.existsSync(path.join(target, 'backups'))).toBe(false);
+    expect(fs.readFileSync(activeTranscript)).toEqual(currentHistory);
+    expect(fs.readFileSync(oldMedia, 'utf8')).toBe('synthetic media fixture');
+    expect(fs.readFileSync(path.join(target, STARTUP_STATE_FILE))).toEqual(currentJournal);
+    expect(cowork.getSession('native')?.title).toBe('current title');
+    const normal = new StartupCoordinator(target);
+    expect(normal.route).toBe(StartupRoute.Normal);
+    runNative.mockClear();
+    await normal.prepareBeforeStore(progress());
+    await normal.restoreHistory(store.getDatabase(), state, progress(), runNative);
+    expect(runNative).not.toHaveBeenCalled();
   } finally {
     store.close();
   }

@@ -1,0 +1,157 @@
+.session-storage {
+  container-type: inline-size;
+}
+
+.storage-history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.storage-history-heading > div {
+  min-width: 0;
+}
+
+.storage-history-heading > button {
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.storage-history-overview,
+.storage-management {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--justdo-border);
+  border-radius: 12px;
+  background: var(--justdo-surface);
+}
+
+.storage-history-summary {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr 1fr;
+  gap: 20px;
+  padding: 20px;
+}
+
+.storage-history-summary > div {
+  min-width: 0;
+}
+
+.storage-history-summary dd {
+  overflow-wrap: anywhere;
+}
+
+.storage-history-details {
+  border-top: 1px solid var(--justdo-border);
+  padding: 14px 20px;
+}
+
+.storage-history-details > summary {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.storage-history-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.storage-history-updated {
+  border-top: 1px solid var(--justdo-border);
+  padding: 12px 20px;
+}
+
+.storage-management-heading {
+  border-bottom: 1px solid var(--justdo-border);
+  padding: 16px 20px;
+}
+
+.storage-policy {
+  padding: 0;
+}
+
+.storage-policy-days {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-left: 28px;
+}
+
+.storage-maintenance {
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--justdo-surface-raised);
+  line-height: 1.7;
+}
+
+.storage-maintenance-running {
+  background: var(--justdo-primary-muted);
+}
+
+.storage-maintenance-error {
+  color: var(--justdo-destructive);
+  background: color-mix(in srgb, var(--justdo-destructive) 7%, var(--justdo-surface));
+}
+
+.storage-preset[aria-pressed='true']:not(:disabled) {
+  border-color: var(--justdo-primary);
+  color: var(--justdo-primary);
+  background: var(--justdo-primary-muted);
+}
+
+.session-storage tbody tr:hover {
+  background: var(--justdo-surface-raised);
+}
+
+@keyframes storage-progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes storage-cleanup-travel {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(410%); }
+}
+
+.storage-cleanup-indicator {
+  animation: storage-cleanup-travel 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-storage .animate-spin,
+  .storage-directory .animate-spin,
+  .storage-cleanup-dialog .animate-spin {
+    animation: storage-progress-spin 1s linear infinite !important;
+  }
+  .storage-cleanup-indicator {
+    animation: storage-cleanup-travel 1.5s ease-in-out infinite !important;
+  }
+}
+
+@container (max-width: 520px) {
+  .storage-history-heading {
+    flex-wrap: wrap;
+  }
+
+  .storage-history-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .storage-history-total {
+    grid-column: 1 / -1;
+  }
+
+  .storage-history-breakdown {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .storage-policy-days {
+    padding-left: 0;
+  }
+}

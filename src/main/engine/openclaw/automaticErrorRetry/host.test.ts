@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
     getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: broadcast } }],
   },
 }));
-vi.mock('../../../storage/relocationGate', () => ({
+vi.mock('../../../storage/relocationAdmission', () => ({
   assertStorageExecutionAdmission: assertStorageAdmission,
 }));
 

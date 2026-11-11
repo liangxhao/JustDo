@@ -152,6 +152,24 @@ test('application shutdown cancels native ready waiting and rejects late Running
   expect(vi.getTimerCount()).toBe(0);
 });
 
+test('application shutdown waits for an admitted Gateway launch to finish writing', async () => {
+  const { manager } = fixture();
+  const preparing = Promise.withResolvers<OpenClawEngineStatus>();
+  const stop = vi.spyOn(manager, 'stopGateway').mockResolvedValue(undefined);
+  Object.assign(manager, { startGatewayPromise: preparing.promise });
+  manager.beginApplicationShutdown();
+
+  let settled = false;
+  const stopping = manager.stopForApplicationShutdown().then(() => { settled = true; });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(stop).toHaveBeenCalledOnce();
+  expect(settled).toBe(false);
+
+  preparing.resolve(manager.getStatus());
+  await stopping;
+  expect(settled).toBe(true);
+});
+
 test('start cancellation releases an in-flight HTTP probe before its late response', async () => {
   const f = fixture();
   const health = Promise.withResolvers<boolean>();

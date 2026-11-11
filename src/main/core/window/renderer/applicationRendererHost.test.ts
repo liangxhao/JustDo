@@ -110,6 +110,22 @@ describe('packaged application renderer host', () => {
     expect((await read(host, '/startup-bootstrap.html')).status).toBe(404);
   });
 
+  it('serves maintenance independently with the same CSP and immutable content checks', async () => {
+    await writeFile(path.join(dist, 'storage-maintenance.html'), '<html>Offline maintenance</html>');
+    await rm(path.join(dist, 'index.html'));
+
+    host = await startApplicationRendererHost(dist, { entry: 'storage-maintenance.html' });
+
+    expect(host.url).toBe(`${host.origin}/storage-maintenance.html`);
+    const page = await read(host, '/storage-maintenance.html');
+    expect(page.status).toBe(200);
+    expect(page.body).toContain('Offline maintenance');
+    expect(page.headers['content-security-policy']).toContain("default-src 'self'");
+    expect((await read(host, '/storage-maintenance.html?path=untrusted')).status).toBe(404);
+    await writeFile(path.join(dist, 'storage-maintenance.html'), '<html>changed</html>');
+    expect((await read(host, '/storage-maintenance.html')).status).toBe(404);
+  });
+
   it('serves the immutable widget viewer with only its bounded mount query', async () => {
     host = await startApplicationRendererHost(dist);
     const mount = '2e4ec192-521e-4b76-b132-e34598e41bb2';

@@ -1326,6 +1326,10 @@ export class AppPluginManager {
     }
     this.dependencies.broadcast(AppPluginIpc.Changed, snapshots);
   }
+  async settleShutdown(): Promise<void> {
+    await this.mutationLane.catch((): void => undefined);
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;

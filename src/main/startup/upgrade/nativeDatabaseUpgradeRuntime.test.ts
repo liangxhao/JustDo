@@ -29,7 +29,7 @@ const identity: NativeDatabaseRuntimeIdentity = { runtimeRoot: path.resolve('imm
   executable: path.resolve('immutable-runtime/node-runtime/node.exe'), runtimeVersion: 'v2026.10.6',
   runtimeBuildId: 'b'.repeat(64), manifestSha256: 'b'.repeat(64), schemaVersions: { state: 20, agent: 25 } };
 const inventory = [{ agentId: 'main', path: path.resolve('state/agent.sqlite'), realPath: path.resolve('state/agent.sqlite'), dev: '1', ino: '2' }];
-function fixture() {
+function fixture(relocationFailureRoot?: string) {
   const children: FixtureChild[] = [];
   const spawnChild = vi.fn(() => { const child = new FixtureChild(); children.push(child); return child as unknown as ChildProcess; });
   const admit = vi.fn(async () => identity);
@@ -40,7 +40,7 @@ function fixture() {
   const terminate = vi.fn(async () => {});
   const runtime = new NativeDatabaseUpgradeRuntime({ getRuntimeRoot: () => identity.runtimeRoot,
     stateDir: path.resolve('state'), configPath: path.resolve('state/openclaw.json'),
-    gatewayStopped: stoppedGateway, admit, readDeliveryIdentity, spawn: spawnChild as unknown as typeof spawn,
+    gatewayStopped: stoppedGateway, admit, readDeliveryIdentity, spawn: spawnChild as unknown as typeof spawn, relocationFailureRoot,
     terminate, inspectTimeoutMs: 100, upgradeTimeoutMs: 1000, abortGraceMs: 30, retirementObservationMs: 50 });
   return { runtime, children, spawnChild, admit, readDeliveryIdentity, stoppedGateway, terminate };
 }
@@ -184,6 +184,24 @@ describe('native database startup owner', () => {
       expect(normalize(error)).toBeUndefined();
     const cycle: { cause?: unknown } = {}; cycle.cause = cycle;
     expect(normalize(cycle)).toBeUndefined();
+  });
+  it('uses structured diagnostics during relocation without a plugin plan or native error text', async () => {
+    const root = path.resolve('relocated-profile');
+    const filename = path.join(root, 'openclaw/state/state/openclaw.sqlite');
+    const f = fixture(root);
+    const preparing = f.runtime.prepareCanonical();
+    const rejected = expect(preparing).rejects.toMatchObject({
+      message: 'Native relocation target preparation failed.', code: 'EACCES', path: filename,
+    });
+    await flush();
+    const [, args] = f.spawnChild.mock.calls[0] as unknown as [string, string[]];
+    expect(JSON.parse(args.at(-1)!)).toMatchObject({ relocationFailureRoot: root });
+    expect(args[2]).toContain('function relocationNativeFailureDetails');
+    f.children[0].emit('message', { type: 'failure', code: 'EACCES', path: filename, message: 'private native text' });
+    f.children[0].close(1);
+
+    await rejected;
+    expect(f.runtime.retirementConfirmed).toBe(true);
   });
   it('rejects duplicate receipts and concurrent operations without a second submission', async () => {
     const f = fixture(); const pending = f.runtime.inspect(); const checked = expect(pending).rejects.toThrow(/invalid receipt/);

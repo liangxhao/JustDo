@@ -22,7 +22,7 @@ beforeEach(() => handlers.clear());
 
 // Exercise the actual pre-Store composition and its guarded getter in one scope.
 // Stubbing prepareStartup or the getter would conceal an eager engine dependency.
-const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../main.ts', import.meta.url), 'utf8'),
+const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../application.ts', import.meta.url), 'utf8'),
   ts.ScriptTarget.Latest, true);
 const declarations = new Map<string, ts.VariableDeclaration>();
 let failure: ts.Expression | undefined;

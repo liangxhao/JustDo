@@ -991,6 +991,16 @@ export class CoworkStore {
     return readSessionSummaryProjection(this.db, { agentId });
   }
 
+  /** Workspaces that product records still address, including historical plan artifacts. */
+  listReferencedWorkspaceDirectories(): string[] {
+    const rows = this.getAll<{ directory: string }>(`
+      SELECT cwd AS directory FROM cowork_sessions
+      UNION SELECT cwd FROM cowork_external_sessions
+      UNION SELECT artifact_workspace_root FROM cowork_plan_handoffs
+    `);
+    return [...new Set([this.getConfig().workingDirectory, ...rows.map(row => row.directory)])];
+  }
+
   listSessionDirectory(agentId?: string): SessionDirectoryEntry[] {
     return readSessionDirectory(this.db, agentId);
   }

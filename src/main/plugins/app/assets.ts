@@ -27,7 +27,7 @@ export const publishAppAssets = (
     ]);
   for (const file of Object.keys(artifact.artifact.files)) {
     // Keep the privilege boundary even if a caller supplies an incomplete graph.
-    if (file === artifact.artifact.manifest.entries.main) continue;
+    if (file === artifact.artifact.manifest.entries.main || file === artifact.artifact.manifest.entries.relocation) continue;
     if (!graph.has(file) && (kind === 'presentation' || !/\.(?:css|png|svg|woff2?)$/u.test(file)))
       continue;
     const route = appAssetPath(artifact.artifact.hash, epoch, file);

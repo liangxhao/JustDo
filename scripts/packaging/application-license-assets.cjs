@@ -7,7 +7,7 @@ const { fileURLToPath } = require('node:url');
 const { isLegalMetadataFile } = require('../openclaw/prune-openclaw-runtime.cjs');
 
 const REQUIRED_APPLICATION_LICENSE_SCOPES = Object.freeze([
-  'renderer', 'main', 'preload', 'imagePreviewPreload', 'browserGuestPreload', 'widgetViewerPreload', 'webpageEmbedPreload', 'mediaPlaybackPreload',
+  'renderer', 'main', 'preload', 'imagePreviewPreload', 'browserGuestPreload', 'widgetViewerPreload', 'webpageEmbedPreload', 'mediaPlaybackPreload', 'storageMaintenancePreload',
 ]);
 const SOURCE_PROOF = 'source-proof.json';
 const SCOPE_RENAME_MAX_RETRIES = 5;

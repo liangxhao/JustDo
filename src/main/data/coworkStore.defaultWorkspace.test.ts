@@ -22,7 +22,7 @@ vi.mock('better-sqlite3', () => ({
 
 const main = ts.createSourceFile(
   'main.ts',
-  fs.readFileSync(new URL('../main.ts', import.meta.url), 'utf8'),
+  fs.readFileSync(new URL('../application.ts', import.meta.url), 'utf8'),
   ts.ScriptTarget.Latest,
   true,
 );
