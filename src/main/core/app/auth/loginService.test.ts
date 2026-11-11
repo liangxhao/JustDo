@@ -7,6 +7,10 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { LOGIN_STORAGE_CONFIG } from '../../../../config/loginStorage';
 import type { AuthState } from '../../../../shared/app/auth';
 import { AuthErrorCode, AuthStatus, AuthSyncStatus } from '../../../../shared/app/auth';
+import {
+  getOutboundHeaderUserInfo,
+  publishOutboundHeaderUserInfoCache,
+} from '../../network/outboundHeaderPolicyConfig';
 import type { AuthenticatedLogin, LoginSdkAdapter, LoginSdkResult } from './loginSdkAdapter';
 import { LoginService } from './loginService';
 import { LoginUserInfoStore } from './loginUserInfoStore';
@@ -25,7 +29,10 @@ afterEach(() => {
     fs.rmSync(directory, { recursive: true, force: true });
 });
 
-function setup(adapterOverrides: Partial<LoginSdkAdapter> = {}) {
+function setup(
+  adapterOverrides: Partial<LoginSdkAdapter> = {},
+  publishCommittedHeaders?: (values: Readonly<Record<string, unknown>>) => void,
+) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-login-'));
   directories.push(directory);
   const file = path.join(
@@ -41,14 +48,14 @@ function setup(adapterOverrides: Partial<LoginSdkAdapter> = {}) {
   };
   const onLoginCommitted = vi.fn(async () => undefined);
   const onLogoutCommitted = vi.fn(async () => undefined);
-  const onHeadersCommitted = vi.fn();
+  const onHeadersCommitted = vi.fn<() => void>();
   const changes: AuthState[] = [];
   const service = new LoginService({
     store,
     adapter,
     onLoginCommitted,
     onLogoutCommitted,
-    onHeadersCommitted,
+    ...(publishCommittedHeaders ? { publishCommittedHeaders } : { onHeadersCommitted }),
     onStateChanged: state => changes.push(state),
   });
   return {
@@ -218,15 +225,59 @@ test('Cookie renewal preserves long-lived mtoken and other tool fields and refre
     cookieExpiresAt: 1_800_000_000_000,
   });
   expect(context.onHeadersCommitted).toHaveBeenCalledTimes(1);
+  expect(context.onHeadersCommitted).toHaveBeenCalledWith();
   expect(context.onLoginCommitted).not.toHaveBeenCalled();
+});
+
+test.each([false, true])('Cookie renewal publishes committed values without reopening the login file (mtoken rotated: %s)', async rotateMtoken => {
+  const publish = vi.fn((values: Readonly<Record<string, unknown>>) => {
+    publishOutboundHeaderUserInfoCache(values, ['X-Cookie']);
+  });
+  const context = setup({}, publish);
+  await context.service.login();
+  context.onLoginCommitted.mockClear();
+  publish.mockClear();
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  publish.mockImplementationOnce(values => {
+    const read = vi.spyOn(fs, 'readFileSync').mockImplementation(() => {
+      throw new Error('Login file temporarily unavailable');
+    });
+    try {
+      publishOutboundHeaderUserInfoCache(values, ['X-Cookie']);
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      read.mockRestore();
+    }
+  });
+
+  const result = await context.service.updateCredentials(
+    context.service.captureCredentialLease()!,
+    {
+      headerValues: { 'X-Cookie': 'renewed-cookie' },
+      ...(rotateMtoken ? { mtoken: 'rotated-mtoken' } : {}),
+    },
+  );
+
+  expect(result.success).toBe(true);
+  expect(context.store.read()?.values['X-Cookie']).toBe('renewed-cookie');
+  expect(getOutboundHeaderUserInfo(context.file)).toEqual({ 'X-Cookie': 'renewed-cookie' });
+  expect(publish).toHaveBeenCalledOnce();
+  expect(context.onLoginCommitted).toHaveBeenCalledTimes(rotateMtoken ? 1 : 0);
+  expect(info).toHaveBeenCalledWith(
+    '[LoginService] Credential update {"result":"success","cookieProvided":true,"cookieChanged":true}',
+  );
 });
 
 test('mtoken rotation refreshes model authentication and invalidates old renewal leases', async () => {
   const context = setup();
   await context.service.login();
   const oldLease = context.service.captureCredentialLease()!;
-  await context.service.updateCredentials(oldLease, { mtoken: 'rotated-mtoken' });
+  await context.service.updateCredentials(oldLease, {
+    mtoken: 'rotated-mtoken',
+    headerValues: { 'X-Cookie': 'rotated-cookie' },
+  });
   expect(context.onLoginCommitted).toHaveBeenCalledTimes(2);
+  expect(context.onLoginCommitted).toHaveBeenLastCalledWith();
   expect(context.onHeadersCommitted).not.toHaveBeenCalled();
   expect(
     (
@@ -235,7 +286,7 @@ test('mtoken rotation refreshes model authentication and invalidates old renewal
       })
     ).errorCode,
   ).toBe(AuthErrorCode.SessionChanged);
-  expect(context.store.read()?.values['X-Cookie']).toBe('synthetic-cookie');
+  expect(context.store.read()?.values['X-Cookie']).toBe('rotated-cookie');
 });
 
 test('a committed Cookie renewal invalidates older results and allows a fresh renewal lease', async () => {
@@ -245,10 +296,14 @@ test('a committed Cookie renewal invalidates older results and allows a fresh re
   await context.service.updateCredentials(oldLease, {
     headerValues: { 'X-Cookie': 'newer-cookie' },
   });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   const lateResult = await context.service.updateCredentials(oldLease, {
     headerValues: { 'X-Cookie': 'older-cookie' },
   });
   expect(lateResult.errorCode).toBe(AuthErrorCode.SessionChanged);
+  expect(warn).toHaveBeenCalledWith(
+    '[LoginService] Credential update {"result":"session-changed","cookieProvided":true,"cookieChanged":false}',
+  );
   expect((await context.service.expireSession(oldLease)).errorCode).toBe(
     AuthErrorCode.SessionChanged,
   );

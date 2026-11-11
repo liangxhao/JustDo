@@ -132,6 +132,7 @@ import {
 import { getRetainedLogPaths, LogKind } from './core/logging/logMaintenance';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
+  publishOutboundHeaderUserInfoCache,
   resolveOutboundHeaderUserInfoPath,
   updateOutboundHeaderUserInfoCache,
 } from './core/network/outboundHeaderPolicyConfig';
@@ -1062,14 +1063,18 @@ const refreshBuiltinModelCredentialFromLoginFile = async (refreshCatalog = false
   return getBuiltinModelAuthCoordinator().refresh(refreshCatalog);
 };
 
-// Authentication handlers should call these only after the Main process has
-// committed the corresponding authenticated/logged-out state.
-export const refreshAfterLogin = async (): Promise<void> => {
-  updateOutboundHeaderUserInfoCache();
+const finishLoginSync = async (): Promise<void> => {
   getBuiltinModelTokenExchange().resume();
   await refreshBuiltinModelCredentialFromLoginFile(true);
   userActivityService?.start();
   void userActivityService?.sync();
+};
+
+// Authentication handlers should call these only after the Main process has
+// committed the corresponding authenticated/logged-out state.
+export const refreshAfterLogin = async (): Promise<void> => {
+  updateOutboundHeaderUserInfoCache();
+  await finishLoginSync();
 };
 
 export const refreshAfterLogout = (): Promise<void> => {
@@ -1082,11 +1087,9 @@ const getLoginService = (): LoginService => {
   loginService ??= new LoginService({
     store: new LoginUserInfoStore(resolveOutboundHeaderUserInfoPath()),
     adapter: createLoginSdkAdapter({ getParentWindow: () => mainWindow }),
-    onLoginCommitted: refreshAfterLogin,
+    onLoginCommitted: finishLoginSync,
     onLogoutCommitted: refreshAfterLogout,
-    onHeadersCommitted: () => {
-      updateOutboundHeaderUserInfoCache();
-    },
+    publishCommittedHeaders: publishOutboundHeaderUserInfoCache,
     onStateChanged: state => {
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
         try {

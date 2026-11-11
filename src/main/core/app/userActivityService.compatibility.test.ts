@@ -90,7 +90,7 @@ test('the real login callback finishes while optional activity reporting remains
     ts.ScriptTarget.Latest, true);
   let initializer: ts.Expression | undefined;
   const visit = (node: ts.Node) => {
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'refreshAfterLogin') {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'finishLoginSync') {
       initializer = node.initializer;
     }
     ts.forEachChild(node, visit);
@@ -103,7 +103,6 @@ test('the real login callback finishes while optional activity reporting remains
   const calls: string[] = [];
   const sync = vi.fn(() => new Promise<void>(() => {}));
   const dependencies = {
-    updateOutboundHeaderUserInfoCache: () => { calls.push('headers'); },
     getBuiltinModelTokenExchange: () => ({ resume: () => { calls.push('credentials'); } }),
     refreshBuiltinModelCredentialFromLoginFile: async () => { calls.push('models'); },
     userActivityService: { start: () => { calls.push('activity'); }, sync },
@@ -115,6 +114,6 @@ test('the real login callback finishes while optional activity reporting remains
   void login().then(() => { finished = true; });
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(finished).toBe(true);
-  expect(calls).toEqual(['headers', 'credentials', 'models', 'activity']);
+  expect(calls).toEqual(['credentials', 'models', 'activity']);
   expect(sync).toHaveBeenCalledOnce();
 });

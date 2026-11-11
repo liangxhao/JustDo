@@ -107,7 +107,7 @@ const update = await adapter.refreshCredentials({ signal });
 await service.updateCredentials(lease, update);
 ```
 
-Cookie 更新合并当前文件并保留 mtoken、账号和其他工具字段，原子写入后仅刷新请求头值缓存。
+Cookie 更新合并当前文件并保留 mtoken、账号和其他工具字段。原子写入后直接用已提交的值刷新请求头缓存。
 mtoken 改变则重新执行完整登录刷新以换取新 JWT。lease 同时绑定账号 generation、mtoken/账号身份
 和完整文件内容的版本散列（仅 Main 可见）。退出、重新登录、Cookie 提交、mtoken 轮换或文件内容
 被外部更新会使旧 lease 失效；每次续期须重新捕获，过时的结果不改文件或界面。

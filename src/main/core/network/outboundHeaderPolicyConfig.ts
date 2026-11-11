@@ -235,9 +235,6 @@ export const updateOutboundHeaderUserInfoCache = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
   headerNames?: readonly string[],
 ): Readonly<Record<string, string>> => {
-  const effectiveHeaderNames = headerNames ?? Array.from(
-    new Set(cachedOutboundHeaderPolicyConfig.groups.flatMap(group => group.headerNames)),
-  );
   let userInfo: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(userInfoPath, 'utf8'));
@@ -254,9 +251,19 @@ export const updateOutboundHeaderUserInfoCache = (
     }
   }
 
+  return publishOutboundHeaderUserInfoCache(userInfo, headerNames);
+};
+
+/** Uses the login values already committed by Main, without reopening the file. */
+export const publishOutboundHeaderUserInfoCache = (
+  userInfo: Readonly<Record<string, unknown>>,
+  headerNames: readonly string[] = Array.from(
+    new Set(cachedOutboundHeaderPolicyConfig.groups.flatMap(group => group.headerNames)),
+  ),
+): Readonly<Record<string, string>> => {
   cachedOutboundHeaderValues = Object.freeze(
     Object.fromEntries(
-      effectiveHeaderNames.map(headerName => [
+      headerNames.map(headerName => [
         headerName,
         normalizeHeaderValue(userInfo[headerName]),
       ]),

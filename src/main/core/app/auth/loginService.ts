@@ -10,14 +10,18 @@ import {
 import { type CredentialUpdate, type LoginSdkAdapter, LoginSdkStatus } from './loginSdkAdapter';
 import { LoginStorageError, LoginUserInfoStore, type StoredLogin } from './loginUserInfoStore';
 
+const COOKIE_HEADER_NAME = 'X-Cookie';
+
 type Dependencies = {
   store: LoginUserInfoStore;
   adapter: LoginSdkAdapter;
   onLoginCommitted: () => Promise<void>;
   onLogoutCommitted: () => Promise<void>;
-  onHeadersCommitted: () => void;
   onStateChanged: (state: AuthState) => void;
-};
+} & (
+  | { publishCommittedHeaders: (values: Readonly<StoredLogin['values']>) => void }
+  | { publishCommittedHeaders?: undefined; onHeadersCommitted: () => void }
+);
 
 /** Main-only lease captured BEFORE an asynchronous SDK renewal starts. */
 export type AuthCredentialLease = Readonly<{
@@ -112,7 +116,7 @@ export class LoginService {
       return this.failure(AuthErrorCode.StorageFailed);
     }
     this.applyLogin(null, AuthStatus.SignedOut);
-    const synced = await this.sync(false);
+    const synced = await this.sync(null);
     let sdkCleared = true;
     try {
       await this.dependencies.adapter.logout?.({
@@ -137,7 +141,7 @@ export class LoginService {
         return this.failure(AuthErrorCode.SessionChanged);
       }
       this.setState({ operation: AuthOperation.Sync, errorCode: null });
-      const synced = await this.sync(this.state.status !== AuthStatus.SignedOut && login !== null);
+      const synced = await this.sync(this.state.status === AuthStatus.SignedOut ? null : login);
       this.setState({ operation: AuthOperation.Idle });
       return synced ? this.success() : this.failure(AuthErrorCode.SyncFailed);
     });
@@ -159,31 +163,50 @@ export class LoginService {
     update: CredentialUpdate,
   ): Promise<AuthActionResult> {
     return this.enqueue(async () => {
+      const cookieProvided = Object.hasOwn(update?.headerValues ?? {}, COOKIE_HEADER_NAME);
+      const report = (result: AuthActionResult, cookieChanged = false): AuthActionResult => {
+        const message = `[LoginService] Credential update ${JSON.stringify({
+          result: result.success ? 'success' : result.errorCode,
+          cookieProvided,
+          cookieChanged,
+        })}`;
+        if (result.success) console.info(message);
+        else console.warn(message);
+        return result;
+      };
       const current = this.dependencies.store.read();
       if (!this.matchesCredentialLease(lease, current)) {
-        return this.failure(AuthErrorCode.SessionChanged);
+        return report(this.failure(AuthErrorCode.SessionChanged));
       }
       let next: StoredLogin;
       try {
         next = this.dependencies.store.update(current, update);
       } catch {
-        return this.failure(AuthErrorCode.StorageFailed);
+        return report(this.failure(AuthErrorCode.StorageFailed));
       }
+      const cookieChanged = current.values[COOKIE_HEADER_NAME] !== next.values[COOKIE_HEADER_NAME];
       this.identity = next.identity;
       this.credentialVersion = next.credentialVersion;
       if (next.identity !== current.identity) {
         this.setState({ operation: AuthOperation.Sync, errorCode: null });
-        const synced = await this.sync(true);
+        const synced = await this.sync(next);
         this.setState({ operation: AuthOperation.Idle });
-        return synced ? this.success() : this.failure(AuthErrorCode.SyncFailed);
+        return report(
+          synced ? this.success() : this.failure(AuthErrorCode.SyncFailed),
+          cookieChanged,
+        );
       }
       try {
-        this.dependencies.onHeadersCommitted();
-        return this.success();
+        if ('onHeadersCommitted' in this.dependencies) {
+          this.dependencies.onHeadersCommitted();
+        } else {
+          this.dependencies.publishCommittedHeaders(next.values);
+        }
       } catch {
         this.setState({ syncStatus: AuthSyncStatus.Failed });
-        return this.failure(AuthErrorCode.SyncFailed);
+        return report(this.failure(AuthErrorCode.SyncFailed), cookieChanged);
       }
+      return report(this.success(), cookieChanged);
     });
   }
 
@@ -233,7 +256,7 @@ export class LoginService {
         if (this.identity) {
           this.dependencies.store.clear();
           this.applyLogin(null, AuthStatus.SignedOut);
-          if (!(await this.sync(false))) {
+          if (!(await this.sync(null))) {
             this.setState({ operation: AuthOperation.Idle });
             return this.failure(AuthErrorCode.SyncFailed);
           }
@@ -243,7 +266,7 @@ export class LoginService {
         }
         const login = this.dependencies.store.writeLogin(result.session);
         this.applyLogin(login, AuthStatus.SignedIn);
-        const synced = await this.sync(true);
+        const synced = await this.sync(login);
         this.setState({ operation: AuthOperation.Idle });
         return synced ? this.success() : this.failure(AuthErrorCode.SyncFailed);
       });
@@ -260,12 +283,15 @@ export class LoginService {
     }
   }
 
-  private async sync(loggedIn: boolean): Promise<boolean> {
+  private async sync(login: StoredLogin | null): Promise<boolean> {
     this.setState({ syncStatus: AuthSyncStatus.Pending });
     try {
-      await (loggedIn
-        ? this.dependencies.onLoginCommitted()
-        : this.dependencies.onLogoutCommitted());
+      if (login) {
+        this.dependencies.publishCommittedHeaders?.(login.values);
+        await this.dependencies.onLoginCommitted();
+      } else {
+        await this.dependencies.onLogoutCommitted();
+      }
       // Completed means the callback settled, NOT that a model or the runtime is ready.
       this.setState({ syncStatus: AuthSyncStatus.Completed, errorCode: null });
       return true;
