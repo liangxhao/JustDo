@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -164,11 +164,15 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
       assert.equal(model.headers['X-ACCESS-JWT'], first, 'captured run model remains immutable');
       process.stdout.write('verified-native-rotation-and-revocation');
     `;
-    const output = execFileSync(process.execPath, ['--require', preload, '--input-type=module', '-e', script], {
+    const result = spawnSync(process.execPath, ['--require', preload, '--input-type=module', '-e', script], {
       encoding: 'utf8', timeout: 30_000, windowsHide: true,
       env: { ...process.env, OPENCLAW_STATE_DIR: directory, OPENCLAW_CONFIG_PATH: path.join(directory, 'openclaw.json') },
     });
-    expect(output).toContain('verified-native-rotation-and-revocation');
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('verified-native-rotation-and-revocation');
+    expect(result.stderr).toContain('"resolverStage":"secret_ref","resolverCode":"SECRET_PROVIDER_UNAVAILABLE","resolverReason":"snapshot_missing"');
+    expect(result.stderr).toContain('"resolverStage":"secret_ref","resolverCode":"SECRET_PROVIDER_UNAVAILABLE","resolverReason":"session_mismatch"');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

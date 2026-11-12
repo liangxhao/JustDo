@@ -6,6 +6,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { CredentialReaderExitCode } from '../../../../../plugins/extensions/runtime-services/contracts/model-auth';
 import { BUILTIN_MODEL_USER_ACCOUNT_FIELD } from '../../../providers/builtinModelCredential';
 import {
   BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential, publishBuiltinCredentialFile,
@@ -157,12 +158,12 @@ describe('opaque JSON builtin credentials', () => {
     expect(accountDenied.status).not.toBe(0);
     expect(accountDenied.stdout).toBe('');
     const denied = run(['other']);
-    expect(denied.status).not.toBe(0);
+    expect(denied.status).toBe(CredentialReaderExitCode.invalid_request);
     expect(denied.stdout).toBe('');
     expect(denied.stderr).not.toContain(secret);
     fs.writeFileSync(path.join(state, 'credentials', 'credentials.json'), sealBuiltinCredential(JSON.stringify({ ...credential, authSessionId: sessionId, expiresAt: 1 })));
     const expired = run([BUILTIN_SECRET_ID]);
-    expect(expired.status).not.toBe(0);
+    expect(expired.status).toBe(CredentialReaderExitCode.credential_expired);
     expect(expired.stdout).toBe('');
     expect(expired.stderr).not.toContain(secret);
   });
@@ -250,10 +251,10 @@ describe('opaque JSON builtin credentials', () => {
     syncBuiltinCredentialFile(first.config, state, { ...credential, accessToken: 'rotated' });
     expect(JSON.parse(run().stdout).values[BUILTIN_SECRET_ID]).toBe('rotated');
     syncBuiltinCredentialFile({}, state, null);
-    expect(run().status).not.toBe(0);
+    expect(run().status).toBe(CredentialReaderExitCode.snapshot_missing);
     syncBuiltinCredentialFile(source(), state, { ...credential, accessToken: 'next-login' }, 'b'.repeat(32));
     const denied = run();
-    expect(denied.status).not.toBe(0);
+    expect(denied.status).toBe(CredentialReaderExitCode.session_mismatch);
     expect(denied.stdout).toBe('');
     expect(denied.stderr).toBe('Builtin credential resolution failed.');
   });

@@ -9,8 +9,13 @@ import {
 } from '../contracts/model-auth';
 import { buildBuiltinModelAuthProvider, wrapBuiltinModelAuth } from '../model-auth';
 
-const sdk = vi.hoisted(() => ({ resolve: vi.fn() }));
-vi.mock('openclaw/plugin-sdk/secret-ref-runtime', () => ({ resolveSecretRefValues: sdk.resolve }));
+const sdk = vi.hoisted(() => ({ resolve: vi.fn(), loadError: undefined as Error | undefined }));
+vi.mock('openclaw/plugin-sdk/secret-ref-runtime', () => ({
+  get resolveSecretRefValues() {
+    if (sdk.loadError) throw sdk.loadError;
+    return sdk.resolve;
+  },
+}));
 const authLog = vi.fn();
 
 const key = `exec:${BUILTIN_SECRET_SOURCE}:${BUILTIN_SECRET_ID}`;
@@ -51,6 +56,7 @@ const request = (wrap: ReturnType<typeof fixture>['wrap'], options = {}) =>
 
 beforeEach(() => {
   vi.resetAllMocks();
+  sdk.loadError = undefined;
   vi.spyOn(console, 'warn').mockImplementation(authLog);
   sdk.resolve.mockResolvedValue(new Map([[key, 'current']]));
 });
@@ -111,10 +117,23 @@ describe('managed model request authentication', () => {
 
     expect(inner).not.toHaveBeenCalled();
     expect(authLog).toHaveBeenCalledExactlyOnceWith(
-      '[BuiltinModelAuth] {"event":"request_credentials_rejected","reason":"secret_resolution_failed","resolverCode":"SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE"}',
+      '[BuiltinModelAuth] {"event":"request_credentials_rejected","reason":"secret_resolution_failed","resolverStage":"secret_ref","resolverCode":"SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE"}',
     );
     expect(authLog.mock.calls[0]).toHaveLength(1);
     expect(authLog.mock.calls[0][0]).not.toMatch(/[\r\n]|private|models\.example|a{32}/);
+  });
+
+  it('distinguishes a failure to load the SDK from a SecretRef rejection', async () => {
+    const { wrap, inner } = fixture();
+    sdk.loadError = Object.assign(new Error('private/path\nprivate-token'), { code: 'ERR_MODULE_NOT_FOUND' });
+
+    await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
+
+    expect(sdk.resolve).not.toHaveBeenCalled();
+    expect(inner).not.toHaveBeenCalled();
+    expect(authLog).toHaveBeenCalledExactlyOnceWith(
+      '[BuiltinModelAuth] {"event":"request_credentials_rejected","reason":"secret_resolution_failed","resolverStage":"sdk_load","resolverCode":"ERR_MODULE_NOT_FOUND"}',
+    );
   });
 
   it('does not expose unknown resolver codes or log successful credential reads', async () => {

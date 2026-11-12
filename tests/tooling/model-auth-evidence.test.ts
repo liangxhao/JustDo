@@ -83,7 +83,15 @@ describe.skipIf(process.platform !== 'win32')('minimal model authentication evid
       diagnostic('2026-11-04 21:30:01.000', { event: 'reload.acknowledged', ackState: 'accepted', warningCount: 2 }),
       '[2026-11-04 21:30:01.300] [info] [OpenClaw stdout] 2026-11-04T21:30:01.250+08:00 [ws] ⇄ res ✓ secrets.reload 620ms bytes=111 conn=SYNTHETIC_CONNECTION_ID',
       '[2026-11-04 21:30:01.700] [error] [OpenClaw stderr] 2026-11-04T21:30:01.600+08:00 [agent/embedded] embedded run agent end: runId=SYNTHETIC_CONNECTION_ID isError=true error=Secret owner provider:builtin_models is configured but unavailable (secret provider failed)',
-      diagnostic('2026-11-04 21:30:02.000', { event: 'request_credentials_rejected', reason: 'secret_resolution_failed', resolverCode: 'SECRET_PROVIDER_UNAVAILABLE' }),
+      diagnostic('2026-11-04 21:30:01.900', {
+        event: 'request_credentials_rejected', reason: 'secret_resolution_failed',
+        resolverStage: 'sdk_load', resolverCode: 'ERR_MODULE_NOT_FOUND', resolverReason: 'PRIVATE_PERSON',
+      }),
+      diagnostic('2026-11-04 21:30:02.000', {
+        event: 'request_credentials_rejected', reason: 'secret_resolution_failed',
+        resolverStage: 'secret_ref', resolverCode: 'SECRET_PROVIDER_UNAVAILABLE',
+        resolverReason: 'session_mismatch',
+      }),
       '[2026-11-04 22:00:00.000] [info] [Chat] User quoted: Secret owner provider:builtin_models is configured but unavailable (secret provider failed)',
       diagnostic('2026-11-04 23:00:00.000', { event: 'discovery.optional-http-rejected', discoveryStage: 'model-info', httpStatus: 404 }),
       diagnostic('2026-11-04 23:01:00.000', { event: 'SYNTHETIC_PRIVATE_VALUE', reason: 'PRIVATE_PERSON' }),
@@ -111,6 +119,13 @@ describe.skipIf(process.platform !== 'win32')('minimal model authentication evid
     expect(report.rows).toContainEqual(expect.objectContaining({ event: 'exchange.failed', stage: 'credential', credentialCode: 'expired-or-expiring' }));
     expect(report.rows).toContainEqual(expect.objectContaining({ event: 'native.reload-acknowledged', elapsedMs: 620 }));
     expect(report.rows).toContainEqual(expect.objectContaining({ event: 'native.owner-unavailable', builtinOwner: true }));
+    expect(report.rows).toContainEqual(expect.objectContaining({
+      event: 'request_credentials_rejected', resolverStage: 'sdk_load', resolverCode: 'ERR_MODULE_NOT_FOUND',
+    }));
+    expect(report.rows).toContainEqual(expect.objectContaining({
+      event: 'request_credentials_rejected', resolverStage: 'secret_ref', resolverCode: 'SECRET_PROVIDER_UNAVAILABLE',
+      resolverReason: 'session_mismatch',
+    }));
     expect(report.rows.some(row => row.recordCount >= 3 && row.sources.length >= 2)).toBe(true);
     expect([main, gateway, native].map(file => createHash('sha256').update(fs.readFileSync(file)).digest('hex'))).toEqual(hashes);
   }, 60_000);

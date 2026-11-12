@@ -53,8 +53,11 @@ UNABLE_TO_GET_ISSUER_CERT_LOCALLY ERR_SSL_WRONG_VERSION_NUMBER UNAVAILABLE CLIEN
 SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE SECRET_PROVIDER_INVALID SECRET_PROVIDER_NOT_CONFIGURED SECRET_PROVIDER_UNAVAILABLE
 SECRET_REF_NOT_FOUND SECRET_REF_POLICY_DENIED SECRET_REF_INVALID SECRET_REF_REDACTED_VALUE SECRET_REF_PROVIDER_ERROR SECRET_REF_PROVIDER_CONTRACT
 '@
+$resolverCodes = New-AllowedSet (($codes -join ' ') + ' MODULE_NOT_FOUND ERR_MODULE_NOT_FOUND ERR_PACKAGE_PATH_NOT_EXPORTED ERR_REQUIRE_ESM')
 $stringFields = [ordered]@{
-  reason = $reasons; errorCode = $codes; networkCode = $codes; configErrorCode = $codes; resolverCode = $codes
+  reason = $reasons; errorCode = $codes; networkCode = $codes; configErrorCode = $codes; resolverCode = $resolverCodes
+  resolverStage = (New-AllowedSet 'sdk_load secret_ref')
+  resolverReason = (New-AllowedSet 'invalid_request snapshot_missing snapshot_read_failed snapshot_invalid session_mismatch auth_type_mismatch credential_expired')
   credentialCode = (New-AllowedSet 'invalid-account invalid-token-format invalid-jwt-json invalid-lifetime-policy unsupported-algorithm missing-subject account-mismatch missing-issuer missing-token-id audience-mismatch invalid-timestamps issued-in-future lifetime-exceeded invalid-lifetime expiry-too-far expired-or-expiring expires-in-mismatch')
   authType = (New-AllowedSet 'jwt api-key none'); stage = (New-AllowedSet 'url device request response credential identity')
   trigger = (New-AllowedSet 'deadline login-file-change error-retry login-retry')

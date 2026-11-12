@@ -143,6 +143,11 @@ URL、请求/响应体、mtoken、JWT、Cookie、MAC 和原始异常均不写日
 
 Runtime Services 在模型请求前被拒绝时记录独立的单行原因，包括捕获配置、会话环境、
 认证类型、请求路由、原生解析器失败和凭据格式；取消不记成认证失败。
+`request_credentials_rejected` 的 `resolverStage` 区分 SDK 加载（`sdk_load`）与 SecretRef 解析（`secret_ref`），
+`resolverCode` 仅保留 SDK 加载错误和原生解析错误的允许码。凭据读取器用固定非零退出码标识协议无效、
+文件缺失、文件读取失败、快照无效、会话不符、认证类型不符和到期。SDK 将这些退出码统一视为凭据不可用，
+Runtime Services 仅从本受管 exec provider 的固定原生退出错误提取脱敏的 `resolverReason`。
+日志与提取报告只记录固定阶段和原因码。
 服务端 JWT／Team 拒绝继续使用 LiteLLM 的 `litellm.validation` 单行
 `code/reason/request_id` 日志；客户端的本地解析错误不能替代服务端验签证据。
 

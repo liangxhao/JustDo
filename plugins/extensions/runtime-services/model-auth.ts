@@ -4,6 +4,7 @@ import {
   BUILTIN_MODEL_PROVIDER_ID,
   BUILTIN_SECRET_ID,
   BUILTIN_SECRET_SOURCE,
+  CredentialReaderExitCode,
   MODEL_AUTH_SESSION_ENV,
   MODEL_AUTH_SESSION_PATTERN,
   MODEL_AUTH_TYPE_ENV,
@@ -25,6 +26,17 @@ const AuthFailureReason = {
   InvalidResolvedCredential: 'invalid_resolved_credential',
 } as const;
 type AuthFailureReason = (typeof AuthFailureReason)[keyof typeof AuthFailureReason];
+const ResolverStage = {
+  LoadSdk: 'sdk_load',
+  ResolveSecretRef: 'secret_ref',
+} as const;
+type ResolverStage = (typeof ResolverStage)[keyof typeof ResolverStage];
+const SDK_LOAD_ERROR_CODES = new Set([
+  'MODULE_NOT_FOUND',
+  'ERR_MODULE_NOT_FOUND',
+  'ERR_PACKAGE_PATH_NOT_EXPORTED',
+  'ERR_REQUIRE_ESM',
+]);
 const RESOLUTION_ERROR_CODES = new Set([
   'SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE',
   'SECRET_PROVIDER_INVALID',
@@ -37,16 +49,41 @@ const RESOLUTION_ERROR_CODES = new Set([
   'SECRET_REF_PROVIDER_ERROR',
   'SECRET_REF_PROVIDER_CONTRACT',
 ]);
+const READER_FAILURES = new Map(Object.entries(CredentialReaderExitCode).map(([reason, code]) => [
+  `Exec provider "${BUILTIN_SECRET_SOURCE}" exited with code ${code}.`,
+  reason,
+]));
+
+function credentialReaderFailure(error: object): string | undefined {
+  // Only the locked SDK's exact exec error for our provider carries a reader status.
+  if ('scope' in error && error.scope === 'provider' && 'source' in error && error.source === 'exec' &&
+      'provider' in error && error.provider === BUILTIN_SECRET_SOURCE &&
+      'message' in error && typeof error.message === 'string') {
+    return READER_FAILURES.get(error.message);
+  }
+  return undefined;
+}
 
 /** Never project provider error text, routes, captured identities or credentials. */
-function logAuthFailure(reason: AuthFailureReason, error?: unknown): void {
+function logAuthFailure(
+  reason: AuthFailureReason,
+  error?: unknown,
+  resolverStage?: ResolverStage,
+): void {
   try {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    const allowedCodes = resolverStage === ResolverStage.LoadSdk ? SDK_LOAD_ERROR_CODES : RESOLUTION_ERROR_CODES;
+    const resolverReason = resolverStage === ResolverStage.ResolveSecretRef &&
+      code === 'SECRET_PROVIDER_UNAVAILABLE' && error && typeof error === 'object'
+      ? credentialReaderFailure(error)
+      : undefined;
     console.warn(`[BuiltinModelAuth] ${JSON.stringify({
       event: AUTH_FAILURE_EVENT,
       reason,
       ...(reason === AuthFailureReason.SecretResolutionFailed ? {
-        resolverCode: typeof code === 'string' && RESOLUTION_ERROR_CODES.has(code) ? code : 'unknown',
+        resolverStage,
+        resolverCode: typeof code === 'string' && allowedCodes.has(code) ? code : 'unknown',
+        resolverReason,
       } : {}),
     })}`);
   } catch {
@@ -118,10 +155,12 @@ export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
     }
     let token: string;
     let failureReason: AuthFailureReason = AuthFailureReason.SecretResolutionFailed;
+    let resolverStage: ResolverStage = ResolverStage.LoadSdk;
     try {
       // A fresh resolver call deliberately has no cache: reload cannot replace a run's
       // captured resolvedApiKey/model.headers, and a settled read must not outlive logout.
       const { resolveSecretRefValues } = await import('openclaw/plugin-sdk/secret-ref-runtime');
+      resolverStage = ResolverStage.ResolveSecretRef;
       const values = await resolveSecretRefValues(
         [{ source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID }],
         { config, manifestRegistry: { plugins: [] } },
@@ -141,7 +180,7 @@ export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
       // Resolver diagnostics can contain paths/secret provider errors. Never expose them
       // through a model error, and never fall back to the old run credential.
       options?.signal?.throwIfAborted();
-      logAuthFailure(failureReason, error);
+      logAuthFailure(failureReason, error, resolverStage);
       throw new Error(AUTH_UNAVAILABLE);
     }
     options?.signal?.throwIfAborted();

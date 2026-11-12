@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   BUILTIN_SECRET_ID,
   BUILTIN_SECRET_SOURCE,
+  CredentialReaderExitCode,
   MODEL_AUTH_SESSION_ENV,
   MODEL_AUTH_SESSION_PATTERN,
   MODEL_AUTH_TYPE_ENV,
@@ -85,25 +86,32 @@ export const builtinCredentialResolverSource = (): string => `
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const exitCodes = ${JSON.stringify(CredentialReaderExitCode)};
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => {
   input += chunk;
-  if (Buffer.byteLength(input) > 8192) process.exit(1);
+  if (Buffer.byteLength(input) > 8192) process.exit(exitCodes.invalid_request);
 });
 process.stdin.on('end', () => {
+  let failureCode = exitCodes.invalid_request;
+  const reject = code => {
+    failureCode = code;
+    throw new Error();
+  };
   try {
     const request = JSON.parse(input);
     if (request.protocolVersion !== 1 || request.provider !== ${JSON.stringify(BUILTIN_SECRET_SOURCE)} ||
         !Array.isArray(request.ids) || request.ids.length !== 1 ||
         request.ids[0] !== ${JSON.stringify(BUILTIN_SECRET_ID)}) throw new Error();
     const file = path.join(__dirname, ${JSON.stringify(CREDENTIAL_FILE_NAME)});
-    if (fs.lstatSync(file).isSymbolicLink()) throw new Error();
+    failureCode = exitCodes.snapshot_read_failed;
+    if (fs.lstatSync(file).isSymbolicLink()) reject(exitCodes.snapshot_invalid);
     const fd = fs.openSync(file, 'r');
     let data;
     try {
       const stat = fs.fstatSync(fd);
-      if (!stat.isFile() || stat.size > 65536) throw new Error();
+      if (!stat.isFile() || stat.size > 65536) reject(exitCodes.snapshot_invalid);
       const buffer = Buffer.alloc(65537);
       let count = 0;
       while (count < buffer.length) {
@@ -111,9 +119,10 @@ process.stdin.on('end', () => {
         if (!size) break;
         count += size;
       }
-      if (count > 65536) throw new Error();
+      if (count > 65536) reject(exitCodes.snapshot_invalid);
       data = buffer.subarray(0, count);
     } finally { fs.closeSync(fd); }
+    failureCode = exitCodes.snapshot_invalid;
     const envelope = JSON.parse(data.toString('utf8'));
     const decode = (value, length) => {
       if (typeof value !== 'string') throw new Error();
@@ -131,19 +140,21 @@ process.stdin.on('end', () => {
     const authType = process.env[${JSON.stringify(MODEL_AUTH_TYPE_ENV)}];
     if (!credential || typeof credential.accessToken !== 'string' || !credential.accessToken ||
         credential.accessToken.length > 8192 || /[\\s\\u0000-\\u001f\\u007f]/.test(credential.accessToken) ||
-        typeof sessionId !== 'string' || !${MODEL_AUTH_SESSION_PATTERN}.test(sessionId) ||
-        credential.authSessionId !== sessionId ||
-        !['jwt', 'api-key'].includes(authType) || (credential.authType || 'jwt') !== authType ||
-        typeof credential.userAccount !== 'string' ||
-        !Number.isInteger(credential.expiresAt) || credential.expiresAt <= Date.now() / 1000 + 15 ||
+        typeof credential.userAccount !== 'string' || !Number.isInteger(credential.expiresAt) ||
         (credential.authType === 'api-key' ? credential.userAccount !== '' : !credential.userAccount)) throw new Error();
+    if (typeof sessionId !== 'string' || !${MODEL_AUTH_SESSION_PATTERN}.test(sessionId) ||
+        credential.authSessionId !== sessionId) reject(exitCodes.session_mismatch);
+    if (!['jwt', 'api-key'].includes(authType) || (credential.authType || 'jwt') !== authType)
+      reject(exitCodes.auth_type_mismatch);
+    if (credential.expiresAt <= Date.now() / 1000 + 15) reject(exitCodes.credential_expired);
     const available = {
       [${JSON.stringify(BUILTIN_SECRET_ID)}]: credential.accessToken,
     };
     process.stdout.write(JSON.stringify({ protocolVersion: 1, values: Object.fromEntries(request.ids.map(id => [id, available[id]])) }));
-  } catch {
+  } catch (error) {
     process.stderr.write('Builtin credential resolution failed.');
-    process.exitCode = 1;
+    process.exitCode = failureCode === exitCodes.snapshot_read_failed && error?.code === 'ENOENT'
+      ? exitCodes.snapshot_missing : failureCode;
   }
 });
 `;
