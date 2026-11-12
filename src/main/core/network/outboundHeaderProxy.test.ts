@@ -1211,6 +1211,9 @@ test('requires coordinated recovery when a live raw CONNECT tunnel newly needs i
     expect(rawRequests.every(value => !value.includes(HEADER_NAMES.COOKIE))).toBe(true);
     raw.destroy();
     await vi.waitFor(() => expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(true));
+    expect(await requestHttpThroughConnectProxy(proxyUrl, 'raw.runtime.invalid', 8182,
+      authorization)).toBe(200);
+    expect(forwardedHeaders.at(-1)?.[HEADER_NAMES.COOKIE.toLowerCase()]).toBe('fixture-cookie');
   } finally {
     clients.forEach(socket => socket.destroy());
     outboundProxy.stop();

@@ -126,9 +126,10 @@ it.each([true, false])('hot-applies an App policy change on enable=%s through it
   expect(f.ordinaryRequest).not.toHaveBeenCalled();
 });
 
-it('requires a reusable route before hot-applying an App policy change', async () => {
+it('converges a confirmed App policy change through the safe Gateway restart coordinator', async () => {
   const f = fixture();
   const manager = { ...f.manager, canReuseGatewayNetworkEnvironment: vi.fn(() => false) };
+  f.restartGatewayAfterMutation.mockResolvedValue({ phase: 'running', deferred: true });
   const reconcile = vi.fn()
     .mockReturnValueOnce({ enabled: true, groups: [], digest: 'before' })
     .mockReturnValue({ enabled: true, groups: [], digest: 'after' });
@@ -139,13 +140,31 @@ it('requires a reusable route before hot-applying an App policy change', async (
   });
 
   await expect(service.setEnabled('swarm-workflow', true)).resolves.toMatchObject({
-    success: false, error: t('extensionHotToggleRestartRequired'),
+    success: true, warnings: [t('extensionNetworkPolicyRecoveryPending')],
   });
 
   expect(f.requestGateway).toHaveBeenCalledOnce();
-  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-network-policy-change');
   expect(f.manager.withStoppedGatewayForMutation).not.toHaveBeenCalled();
   expect(f.runCommand).not.toHaveBeenCalled();
+});
+
+it('does not converge the Gateway network when the Native hot toggle receipt is unconfirmed', async () => {
+  const f = fixture();
+  f.requestGateway.mockResolvedValueOnce({ ok: false, restartRequired: false });
+  const reconcile = vi.fn()
+    .mockReturnValueOnce({ enabled: true, groups: [], digest: 'before' })
+    .mockReturnValue({ enabled: true, groups: [], digest: 'after' });
+  const service = new OpenClawExtensionImportService({
+    ...f.deps,
+    outboundHeaderPolicy: { inspectExtension: vi.fn(), reconcile },
+  });
+
+  await expect(service.setEnabled('swarm-workflow', true)).resolves.toMatchObject({
+    success: false, operationUnconfirmed: true,
+  });
+  expect(f.requestGateway).toHaveBeenCalledOnce();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
 });
 
 it('does not use a cold mutation when the hot-reload bridge is unavailable', async () => {

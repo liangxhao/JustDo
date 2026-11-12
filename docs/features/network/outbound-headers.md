@@ -245,24 +245,26 @@ Gateway、Node/npm 启动脚本及 MCP 显式 `--require` 共用的用户目录 
 
 ## 5. 一个请求如何匹配和注入
 
-### HTTP
+### 使用绝对 URL 转发的 HTTP 请求
 
 明文 HTTP 请求必须提供本地 Proxy-Authorization。代理验证后移除凭证、解析绝对 URL、选择上游路径，再按完整 URL 匹配白名单。只有匹配时才复制业务 Header 到该请求的 upstream headers。
 
-### HTTPS CONNECT
+### CONNECT 隧道
 
+客户端也可以通过 CONNECT 发送明文 HTTP，例如 Gateway 使用代理环境的 Node `fetch`。
 CONNECT 首先验证 capability 和 `host:port`。连接建立后读取首个 tunnel 数据包，区分 HTTP/TLS：
 
 - origin 是拦截候选时交给 MITM 路径；
 - 非候选 origin 使用 raw tunnel，不生成站点证书、不解密内容；
-- 解密后的 request authority 必须与 CONNECT authority 和 forwarding target 一致；
+- 隧道内 HTTP 请求的 authority 必须与 CONNECT authority 和 forwarding target 一致；
 - 最终仍按 scheme/host/port/path 的完整 URL 判断是否注入。
 
 选择性 MITM 最细只能在 CONNECT 阶段按 origin 决定。某 origin 只要存在任一白名单 path，该 origin 的其他 path 也会经过本地 TLS 解密，但不会注入 Header。这是 HTTPS 协议边界，不能声称做到同 origin 的 path 级“不解密”。
 
 ### Raw tunnel
 
-非候选 HTTPS 保持端到端 TLS，只由本地代理转发 socket。它可能经过配置的上游 HTTP proxy，但本地看不到请求 path 或 header。CONNECT 解析失败、authority 不合法或 capability 失效时 fail closed。
+非候选 origin 通过原始 socket 转发，代理不解析隧道内的请求 path 或 header。HTTPS 继续使用端到端 TLS。
+CONNECT 解析失败、authority 不合法或 capability 失效时 fail closed。
 
 ### URL 与 Header 校验
 
@@ -308,8 +310,9 @@ Gateway 到本地代理是第一跳；本地代理到目标或企业代理是第
 
 ### 启动
 
-Main 在启动 Gateway 前 reconcile 策略。若存在有效规则，则确保本地代理已启动，并把代理环境
-只注入到受管 Gateway 进程。Main 请求入口同时读取同一份已激活快照。
+Main 在每次启动 Gateway 进程前 reconcile 策略并确认本地代理已启动。策略摘要相同且代理仍在监听时复用现有代理；
+代理启动失败后即使回退到相同摘要，也重新尝试启动。有效规则对应的代理环境只注入到受管 Gateway 进程。
+Main 请求入口同时读取同一份已激活快照。
 
 ### 安装
 
@@ -320,8 +323,9 @@ Main 在启动 Gateway 前 reconcile 策略。若存在有效规则，则确保�
 
 ### 启用与禁用
 
-状态写入成功后 reconcile。只有有效策略 digest 变化时才额外刷新网络运行时；OpenClaw 返回的
-常规 `restartRequired` 仍照常处理。
+状态写入成功后 reconcile。有效策略摘要变化时，若当前 Gateway 路由可以复用，新请求立即使用新策略。
+需要重建路由时，已确认成功的启停交给既有重启协调，等待 Gateway 安全挂起后再重启进程。
+延后时启停结果会提示路由仍待更新。应用伴随扩展仍保留原生 `restartRequired` 的热更新结果处理。
 
 ### 卸载
 
@@ -329,9 +333,10 @@ Main 在启动 Gateway 前 reconcile 策略。若存在有效规则，则确保�
 
 ### 哪些变化需要重启
 
-默认构造的代理会在请求时读取当前配置和用户值，使已有 interception origin 内的 path/value 变化可反映；但 `start()` 固化的候选 origin、CA、capability 和 Gateway env 不会自动扩展到全新 origin。生产级配置变更仍应受控重启 Gateway generation 与 proxy，不能把局部动态读取当完整热重载。
+默认构造的代理会在新 CONNECT 和请求时读取当前策略，已有拦截连接上的新请求也会采用当前路径规则和值。
+已建立的直通 CONNECT 无法切换为拦截。当前进程缺少代理环境，或已存在新规则需要拦截的直通连接时，需受控重启 Gateway 进程。
 
-非浏览器代理偏好的 system/custom/direct 切换只改变第二跳上游选择。Manager 保留绑定到实际子进程的私有环境快照，由代理核对当前第一跳 URL/capability、证书变量及 bypass 环境；全部匹配且没有待更新启动环境时，新请求使用动态上游，不重启 Gateway，不切断已建立的流或 CONNECT。没有受控本地路由、旧 capability、代理停止或启动环境变化时仍走安全完整重启。此例外不适用于 Extension Header 白名单、候选 origin 或授权策略变化。
+非浏览器代理偏好的 system/custom/direct 切换只改变第二跳上游选择。Manager 保留绑定到实际子进程的私有环境快照，由代理核对当前第一跳 URL/capability、证书变量及 bypass 环境；全部匹配且没有待更新启动环境时，新请求使用动态上游，不重启 Gateway，不切断已建立的流或 CONNECT。没有受控本地路由、旧 capability、代理停止或启动环境变化时仍走安全完整重启。
 
 ### 失败处理
 
@@ -382,7 +387,7 @@ credential 对象、URL query 或代理认证信息。
 
 允许记录：request id、origin、matched、注入 header 数、route 类型、耗时和错误类别。禁止记录完整 URL query（可能含 token）、Header 值、Proxy-Authorization、上游密码、capability 与 CA 私钥。
 
-当前匹配日志包含随机 request id、origin 和 injectedHeaderCount。生产诊断还应关联 Gateway generation，但不能通过把 secret 写入 correlation id 达成。
+策略激活日志包含规则组数与目标条目数，目标为零时没有可命中的地址。匹配日志包含随机 request id、origin 和 injectedHeaderCount。生产诊断还应关联 Gateway generation，但不能通过把 secret 写入 correlation id 达成。
 
 ## 8. 支持范围与验证
 

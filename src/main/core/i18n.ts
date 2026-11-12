@@ -183,6 +183,8 @@ const translations: Record<LanguageType, Record<string, string>> = {
     extensionHotToggleUnavailable: '暂时无法连接插件热更新服务，请恢复 Gateway 连接后再操作。',
     extensionCatalogUnavailable: 'Gateway 连接暂时不可用，插件列表将在连接恢复后刷新。',
     extensionHotToggleRestartRequired: '原生运行时未完成插件热更新；已保留配置，但未重启 Gateway。',
+    extensionToggleRecoveryFailed: '扩展开关已保存，但 Gateway 恢复失败。',
+    extensionNetworkPolicyRecoveryPending: '扩展开关已保存。请求头注入路由将在 Gateway 可安全重启时更新。',
     extensionInstallUnconfirmed: '原生运行时未确认扩展安装结果，请稍后刷新状态。',
     extensionInstallReceiptIncomplete:
       '扩展安装已保存，但 Gateway 运行态回执不完整，请刷新扩展状态。',
@@ -435,6 +437,9 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'Plugin hot reload is unavailable. Restore the Gateway connection before trying again.',
     extensionHotToggleRestartRequired:
       'The native runtime did not complete plugin hot reload. Configuration was retained and the Gateway was not restarted.',
+    extensionToggleRecoveryFailed: 'The extension toggle was saved, but Gateway recovery failed.',
+    extensionNetworkPolicyRecoveryPending:
+      'The extension toggle was saved. The header injection route will update when the Gateway can safely restart.',
     extensionInstallUnconfirmed:
       'The native runtime did not confirm the extension installation. Refresh its status later.',
     extensionInstallReceiptIncomplete:

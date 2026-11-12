@@ -723,9 +723,8 @@ const getOutboundHeaderPolicyService = (): OutboundHeaderPolicyService => {
 
 const prepareOutboundHeaderNetworkGeneration = async (): Promise<void> => {
   const snapshot = getOutboundHeaderPolicyService().reconcile();
-  if (activeOutboundHeaderPolicyDigest === snapshot.digest) return;
   const proxy = getOutboundHeaderProxy();
-  proxy.stop();
+  if (activeOutboundHeaderPolicyDigest !== snapshot.digest) proxy.stop();
   await proxy.start();
   activeOutboundHeaderPolicyDigest = snapshot.digest;
 };

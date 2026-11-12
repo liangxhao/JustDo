@@ -89,6 +89,7 @@ type SyncOpenClawConfigResult = {
   configSynced: boolean;
   /** Default preference persistence is independent of runtime application evidence. */
   modelDefaultsApplicationPending?: true;
+  gatewayRestartDeferred?: true;
   hostPolicyVerified?: boolean;
   status?: OpenClawEngineStatus;
   error?: string;
@@ -313,7 +314,7 @@ export class OpenClawConfigSyncService {
   async restartGatewayAfterExclusiveMutation(
     reason: string,
     options?: { networkPolicyChanged?: true },
-  ): Promise<OpenClawEngineStatus> {
+  ): Promise<OpenClawEngineStatus & { deferred?: true }> {
     const engineManager = this.deps.getOpenClawEngineManager();
     const restartReason = options?.networkPolicyChanged &&
       !engineManager.canReuseGatewayNetworkEnvironment()
@@ -340,7 +341,8 @@ export class OpenClawConfigSyncService {
       }
     }
     const result = await this.restartGatewayOrDefer(restartReason, true, true);
-    return result.status ?? this.deps.getOpenClawEngineManager().getStatus();
+    const status = result.status ?? engineManager.getStatus();
+    return result.gatewayRestartDeferred ? { ...status, deferred: true } : status;
   }
 
   async prepareGatewayStopAfterExclusiveMutation(
@@ -1729,6 +1731,7 @@ export class OpenClawConfigSyncService {
         success: true,
         changed,
         configSynced: true,
+        gatewayRestartDeferred: true,
         status,
       };
     }
@@ -1765,6 +1768,7 @@ export class OpenClawConfigSyncService {
         success: true,
         changed,
         configSynced: true,
+        ...(this.deferredRestartGeneration !== null ? { gatewayRestartDeferred: true as const } : {}),
         status: engineManager.getStatus(),
       };
     }

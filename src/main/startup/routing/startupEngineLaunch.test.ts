@@ -28,7 +28,11 @@ test('releases inherited profile cwd after path selection and before logging or 
 });
 
 let statements: readonly ts.Statement[] = [];
+let prepareNetworkGeneration: ts.Expression | undefined;
 const visit = (node: ts.Node) => {
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
+      node.name.text === 'prepareOutboundHeaderNetworkGeneration')
+    prepareNetworkGeneration = node.initializer;
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'initApp' &&
       node.initializer && ts.isArrowFunction(node.initializer) && ts.isBlock(node.initializer.body))
     statements = node.initializer.body.statements;
@@ -41,6 +45,30 @@ if (first < 0 || last < first) throw new Error('The Main engine startup composit
 const javascript = ts.transpileModule(statements.slice(first, last + 1).map(node => node.getText(source)).join('\n'), {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText;
+
+test('starts the proxy when a failed policy change rolls back to the previous digest', async () => {
+  if (!prepareNetworkGeneration) throw new Error('Main network preparation unavailable');
+  const callback = ts.transpileModule(`const prepare = ${prepareNetworkGeneration.getText(source)};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const proxy = {
+    stop: vi.fn(),
+    start: vi.fn().mockRejectedValueOnce(new Error('Proxy start failed')).mockResolvedValue(undefined),
+  };
+  const reconcile = vi.fn()
+    .mockReturnValueOnce({ digest: 'new' })
+    .mockReturnValueOnce({ digest: 'previous' });
+  const prepare = new Function('getOutboundHeaderPolicyService', 'getOutboundHeaderProxy',
+    `let activeOutboundHeaderPolicyDigest = 'previous'; ${callback} return prepare;`)(
+    () => ({ reconcile }), () => proxy,
+  ) as () => Promise<void>;
+
+  await expect(prepare()).rejects.toThrow('Proxy start failed');
+  await expect(prepare()).resolves.toBeUndefined();
+
+  expect(proxy.stop).toHaveBeenCalledOnce();
+  expect(proxy.start).toHaveBeenCalledTimes(2);
+});
 
 test('history isolation finishes before the persistent main window can open its profile stores', async () => {
   const isolation = statements.findIndex(node => node.getText(source).startsWith('await startupCoordinator.prepareBeforeStore('));

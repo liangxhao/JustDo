@@ -110,7 +110,8 @@ export class OutboundHeaderPolicyService {
       digest,
     });
     activateOutboundHeaderPolicyConfig(snapshot, this.deps.userInfoPath);
-    console.log(`[OutboundHeaderPolicyService] Activated groups=${snapshot.groups.length}`);
+    const targetCount = snapshot.groups.reduce((count, group) => count + group.baseUrlWhitelist.length, 0);
+    console.log(`[OutboundHeaderPolicyService] Activated groups=${snapshot.groups.length} targets=${targetCount}`);
     return snapshot;
   }
 }

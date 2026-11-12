@@ -2354,9 +2354,17 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.suspend.prepare', expect.anything());
   });
 
-  it('cold-restarts extension network policy changes when the child environment cannot be reused', async () => {
-    const harness = createHarness({ nativeRestartStatus: 'scheduled' });
-    await harness.service.restartGatewayAfterExclusiveMutation('extension-network-policy-change');
+  it('defers a required extension network restart until the native Gateway is idle', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({ activeWorkloads: true });
+
+    await expect(harness.service.restartGatewayAfterExclusiveMutation('extension-network-policy-change'))
+      .resolves.toMatchObject({ phase: 'running', deferred: true });
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+
     expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
     expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.restart.request', expect.anything());
   });

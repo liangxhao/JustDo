@@ -2308,15 +2308,15 @@ export class OpenClawExtensionImportService {
           },
           requestGateway,
         );
+        if ((hotToggle || options?.deferRuntimeConvergence) &&
+            (result?.ok !== true || typeof result.restartRequired !== 'boolean')) {
+          return {
+            success: false, operationUnconfirmed: true, error: t('extensionToggleUnconfirmed'),
+          };
+        }
         if (hotToggle && result.restartRequired)
           return { success: false, error: t('extensionHotToggleRestartRequired') };
-        if (options?.deferRuntimeConvergence) {
-          if (result?.ok !== true || typeof result.restartRequired !== 'boolean')
-            return {
-              success: false, operationUnconfirmed: true, error: t('extensionToggleUnconfirmed'),
-            };
-          options.deferRuntimeConvergence({ restartRequired: result.restartRequired });
-        }
+        options?.deferRuntimeConvergence?.({ restartRequired: result.restartRequired });
         let skillSyncError: string | undefined;
         if ((this.deps.getNativeSkillIds?.(extensionId)?.length ?? 0) > 0) {
           // A skills.* mutation invalidates persisted session skill snapshots even
@@ -2329,25 +2329,32 @@ export class OpenClawExtensionImportService {
           }
         }
         const policyDigestAfter = this.deps.outboundHeaderPolicy?.reconcile().digest;
-        if (hotToggle && policyDigestAfter !== policyDigestBefore &&
-            !manager.canReuseGatewayNetworkEnvironment?.())
-          return { success: false, error: t('extensionHotToggleRestartRequired') };
-        if (!hotToggle && !options?.deferRuntimeConvergence && (
-          result.restartRequired ||
-          policyDigestAfter !== policyDigestBefore
-        )) {
+        const networkPolicyChanged = policyDigestAfter !== policyDigestBefore;
+        const needsNetworkConvergence = networkPolicyChanged &&
+          (!hotToggle || !manager.canReuseGatewayNetworkEnvironment?.());
+        if (!options?.deferRuntimeConvergence && (result.restartRequired || needsNetworkConvergence)) {
           onProgress?.(PluginOperationStage.RESTARTING_GATEWAY);
-          const status = await this.restartGatewayAfterMutation(
-            result.restartRequired ? 'extension-status-change' : 'extension-network-policy-change',
-            result.restartRequired && policyDigestAfter !== policyDigestBefore
-              ? { networkPolicyChanged: true } : undefined,
-          );
-          if (status.phase !== 'running' && !status.deferred) {
+          try {
+            const status = await this.restartGatewayAfterMutation(
+              result.restartRequired ? 'extension-status-change' : 'extension-network-policy-change',
+              result.restartRequired && networkPolicyChanged ? { networkPolicyChanged: true } : undefined,
+            );
+            if (status.phase !== 'running' && !status.deferred) {
+              return {
+                success: false,
+                error: status.message || t('extensionToggleRecoveryFailed'),
+              };
+            }
+            if (status.deferred && networkPolicyChanged && !skillSyncError) {
+              return {
+                success: true,
+                warnings: [...(result.warnings ?? []), t('extensionNetworkPolicyRecoveryPending')],
+              };
+            }
+          } catch (error) {
             return {
               success: false,
-              error:
-                status.message ||
-                'Plugin status changed, but the OpenClaw Gateway failed to restart.',
+              error: error instanceof Error ? error.message : t('extensionToggleRecoveryFailed'),
             };
           }
         }
