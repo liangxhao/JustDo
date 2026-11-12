@@ -6,13 +6,13 @@
     "plugins/sdk/*",
     "plugins/extensions/runtime-services/sdk"
   ],
-  "description": "AI-powered assistant application",
+  "description": "Local-first desktop AI assistant for everyday work",
   "author": {
     "name": "JustDo",
     "email": "liangxhao@example.com"
   },
   "license": "MIT",
-  "version": "v2026.11.5",
+  "version": "v2026.11.16",
   "openclaw": {
     "version": "v2026.10.7",
     "repo": "https://github.com/openclaw/openclaw.git",
