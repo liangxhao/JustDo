@@ -127,7 +127,7 @@
   "dmg": {
     "sign": false
   },
-  "afterSign": "scripts/packaging/notarize.js",
+  "afterSign": "./scripts/packaging/electron-builder-hooks.cjs",
   "win": {
     "target": ["nsis"],
     "icon": "resources/icons/win/icon.ico",

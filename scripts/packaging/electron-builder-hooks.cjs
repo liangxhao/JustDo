@@ -3,6 +3,8 @@
 const path = require('path');
 const os = require('os');
 const {
+  constants,
+  copyFileSync,
   createReadStream,
   existsSync,
   readdirSync,
@@ -52,6 +54,7 @@ const {
 const { isLegalMetadataFile } = require('../openclaw/prune-openclaw-runtime.cjs');
 const { readWindowsUpdateConfig } = require('./windows-update-config.cjs');
 const { normalizeStableVersion, validatePackageVersions } = require('./electron-builder-product-metadata.cjs');
+const { BROWSER_AUTHENTICATION_EXECUTABLE } = require('./browser-authentication-config.cjs');
 
 function readBuiltinModelDevelopmentAuthConfig(projectDir) {
   const configPath = path.join(projectDir, 'src', 'config', 'builtinModelAuth.ts');
@@ -1426,6 +1429,26 @@ function sha512File(filePath) {
   });
 }
 
+async function afterSign(context) {
+  if (isMacTarget(context)) {
+    await require('./notarize.js').default(context);
+    return;
+  }
+  if (!isWindowsTarget(context) || !BROWSER_AUTHENTICATION_EXECUTABLE) return;
+
+  const executable = `${context.packager.appInfo.productFilename}.exe`;
+  if (executable.toLowerCase() === BROWSER_AUTHENTICATION_EXECUTABLE) return;
+
+  // Copy after resource editing, fuses and signing so the helper is the same PE image.
+  const source = path.join(context.appOutDir, executable);
+  const helper = path.join(context.appOutDir, BROWSER_AUTHENTICATION_EXECUTABLE);
+  copyFileSync(source, helper, constants.COPYFILE_EXCL);
+  const [sourceHash, helperHash] = await Promise.all([sha512File(source), sha512File(helper)]);
+  if (sourceHash !== helperHash) {
+    throw new Error('[electron-builder-hooks] Browser authentication executable differs from the application executable.');
+  }
+}
+
 function findSingleWindowsInstaller(artifactPaths) {
   const installerPaths = artifactPaths.filter(
     artifactPath => artifactPath.toLowerCase().endsWith('.exe') && existsSync(artifactPath),
@@ -1462,8 +1485,12 @@ function verifyWindowsInstallerArchiveListing(listing, productFilename) {
       .filter(line => line.startsWith('Path = '))
       .map(line => line.slice('Path = '.length).trim().replace(/\\/g, '/').toLowerCase()),
   );
+  const mainExecutable = `${productFilename}.exe`;
   const requiredPaths = [
-    `${productFilename}.exe`,
+    mainExecutable,
+    ...(BROWSER_AUTHENTICATION_EXECUTABLE && mainExecutable.toLowerCase() !== BROWSER_AUTHENTICATION_EXECUTABLE
+      ? [BROWSER_AUTHENTICATION_EXECUTABLE]
+      : []),
     'chrome_100_percent.pak',
     'icudtl.dat',
     'libEGL.dll',
@@ -1867,6 +1894,7 @@ module.exports = {
   readBuiltinModelDevelopmentAuthConfig,
   verifyPackagedBuiltinModelAuthConfig,
   afterPack,
+  afterSign,
   artifactBuildCompleted,
   afterAllArtifactBuild,
   buildReleaseHistory,

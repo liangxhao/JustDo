@@ -57,7 +57,9 @@ import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/bui
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { BrowserAgentBridge } from './browser/browserAgentBridge';
+import { BrowserAuthenticationNavigation } from './browser/browserAuthenticationNavigation';
 import { resolveBrowserDesktopSession } from './browser/browserDesktopSession';
+import { configureBrowserAuthenticationNavigation } from './browser/browserSessionPolicy';
 import { EmbeddedBrowserGatewayBridge } from './browser/embeddedBrowserGatewayBridge';
 import { captureWebpageEmbedConnection } from './chat/embed/webpageEmbedConnection';
 import { ChromeExtensionChatController } from './chrome/chromeExtensionChatController';
@@ -1392,6 +1394,11 @@ const browserAgentBridge = new BrowserAgentBridge(
   isWorkspaceBrowserHost,
   () => getStore().get<AppConfigSettings>('app_config')?.browserTabLimit,
 );
+const browserAuthenticationNavigation = process.platform === 'win32' && app.isPackaged
+  ? new BrowserAuthenticationNavigation(() => store?.get<AppConfigSettings>('app_config'))
+  : undefined;
+if (browserAuthenticationNavigation)
+  configureBrowserAuthenticationNavigation(browserAuthenticationNavigation);
 let embeddedBrowserGatewayBridge: EmbeddedBrowserGatewayBridge | null = null;
 
 const bindEmbeddedBrowserGateway = (): void => {
@@ -2322,6 +2329,7 @@ if (agentBridgeArgv) {
           () => startupEnginePreparationController?.settle(),
           () => embeddedBrowserGatewayBridge?.revoke(),
           () => browserAgentBridge.stop(),
+          () => browserAuthenticationNavigation?.stop(),
           () => outboundHeaderProxy?.stop(),
         ]),
       // Never initialize a Store during shutdown, or close it underneath an unjoined owner.

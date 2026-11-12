@@ -16,6 +16,7 @@ import path from 'node:path';
 import { create as createTar } from 'tar';
 import { afterEach, describe, expect, it } from 'vitest';
 
+
 const nsisScript = readFileSync(
   path.resolve(__dirname, '../../scripts/packaging/nsis-installer.nsh'),
   'utf8',
@@ -125,24 +126,25 @@ afterEach(() => {
 });
 
 describe('Windows uninstaller process handling', () => {
-  it.runIf(process.platform === 'win32')(
-    'recognizes a real executable sharing lock when process enumeration fails',
-    () => {
+  const authenticationExecutable = 'electron.exe';
+  it.runIf(process.platform === 'win32').each(['probe.exe', authenticationExecutable])(
+    'recognizes a real sharing lock on %s when process enumeration fails',
+    lockedExecutable => {
       const root = mkdtempSync(path.join(os.tmpdir(), 'justdo-lock-probe-'));
       tempDirs.push(root);
-      writeFileSync(path.join(root, 'probe.exe'), 'test executable');
+      writeFileSync(path.join(root, lockedExecutable), 'test executable');
       const command = `
         function global:Get-Process { throw 'Simulated unavailable process inventory' }
-        $held = [IO.File]::Open((Join-Path $env:JUSTDO_INSTALL_ROOT 'probe.exe'), 'Open', 'Read', 'None')
+        $held = [IO.File]::Open((Join-Path $env:JUSTDO_INSTALL_ROOT $env:TEST_LOCKED_EXECUTABLE), 'Open', 'Read', 'None')
         try {
-          & $env:JUSTDO_TEST_HELPER -Action Find
+          & $env:JUSTDO_TEST_HELPER -Action Find -BrowserAuthenticationExecutable $env:TEST_AUTH_EXECUTABLE
           Write-Output "locked-find=$LASTEXITCODE"
-          & $env:JUSTDO_TEST_HELPER -Action Wait -MaxAttempts 1
+          & $env:JUSTDO_TEST_HELPER -Action Wait -MaxAttempts 1 -BrowserAuthenticationExecutable $env:TEST_AUTH_EXECUTABLE
           Write-Output "locked-wait=$LASTEXITCODE"
         } finally { $held.Dispose() }
-        & $env:JUSTDO_TEST_HELPER -Action Find
+        & $env:JUSTDO_TEST_HELPER -Action Find -BrowserAuthenticationExecutable $env:TEST_AUTH_EXECUTABLE
         Write-Output "unlocked-find=$LASTEXITCODE"
-        & $env:JUSTDO_TEST_HELPER -Action Wait -MaxAttempts 1
+        & $env:JUSTDO_TEST_HELPER -Action Wait -MaxAttempts 1 -BrowserAuthenticationExecutable $env:TEST_AUTH_EXECUTABLE
         Write-Output "unlocked-wait=$LASTEXITCODE"
         exit 0
       `;
@@ -162,6 +164,8 @@ describe('Windows uninstaller process handling', () => {
             JUSTDO_APP_PROCESS_NAME: 'probe',
             JUSTDO_CALLER_PID: String(process.pid),
             JUSTDO_TEST_HELPER: processHelperPath,
+            TEST_LOCKED_EXECUTABLE: lockedExecutable,
+            TEST_AUTH_EXECUTABLE: authenticationExecutable,
           },
         },
       );
@@ -218,7 +222,6 @@ describe('Windows installer process handling', () => {
     expect(processHelper).not.toContain('Get-CimInstance');
     expect(nsisScript).toContain('$WINDIR\\Sysnative\\WindowsPowerShell');
     expect(nsisScript).toContain('JUSTDO_APP_PROCESS_NAME');
-    expect(processHelper).toContain('$process.ProcessName -ieq $appProcessName');
     expect(nsisScript).toContain('!insertmacro FindJustDoProcesses $0');
     expect(nsisScript).toContain('!insertmacro RequestAndWaitForInstallerQuit $0');
     expect(nsisScript).toContain('!insertmacro WaitForJustDoProcesses ${_RESULT} ${INSTALLER_SHUTDOWN_ATTEMPTS}');
@@ -1684,7 +1687,7 @@ describe('Windows installer presentation', () => {
     expect(loadTarModule).not.toContain('process.exit');
   });
 
-  it('reports a missing main executable before starting resource extraction', () => {
+  it('reports missing executables before starting resource extraction', () => {
     const customInstall = nsisScript.slice(
       nsisScript.indexOf('!macro customInstall'),
       nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro customInstall')),
@@ -1692,10 +1695,14 @@ describe('Windows installer presentation', () => {
     const executableCheck = customInstall.indexOf(
       '${IfNot} ${FileExists} "$INSTDIR\\${APP_EXECUTABLE_FILENAME}"',
     );
+    const authenticationExecutableCheck = customInstall.indexOf(
+      '${AndIfNot} ${FileExists} "$INSTDIR\\${BROWSER_AUTHENTICATION_EXECUTABLE}"',
+    );
     const resourceLaunch = customInstall.indexOf('Call JustDoLaunchResourceExtractor');
 
     expect(executableCheck).toBeGreaterThan(-1);
-    expect(resourceLaunch).toBeGreaterThan(executableCheck);
+    expect(authenticationExecutableCheck).toBeGreaterThan(executableCheck);
+    expect(resourceLaunch).toBeGreaterThan(authenticationExecutableCheck);
     expect(customInstall).toContain('reason=core-payload-missing component=$R6');
     expect(customInstall).toContain('resource-unpack-script');
     expect(customInstall).toContain('resource-archive');

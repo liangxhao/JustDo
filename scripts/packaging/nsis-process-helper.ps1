@@ -4,7 +4,10 @@ param(
   [string]$Action,
 
   [ValidateRange(1, 1200)]
-  [int]$MaxAttempts = 120
+  [int]$MaxAttempts = 120,
+
+  [ValidatePattern('^[A-Za-z]+\.exe$')]
+  [string]$BrowserAuthenticationExecutable
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +21,16 @@ try {
     ) + [IO.Path]::DirectorySeparatorChar
   $callerPid = [int][Environment]::GetEnvironmentVariable('JUSTDO_CALLER_PID', 'Process')
   $appProcessName = [Environment]::GetEnvironmentVariable('JUSTDO_APP_PROCESS_NAME', 'Process')
+  $installedExecutables = @{}
+  if (-not [string]::IsNullOrWhiteSpace($appProcessName)) {
+    $installedExecutables[$appProcessName] = Join-Path $installRoot "$appProcessName.exe"
+  }
+  if ($BrowserAuthenticationExecutable) {
+    $authenticationProcessName = [IO.Path]::GetFileNameWithoutExtension($BrowserAuthenticationExecutable)
+    if (-not $installedExecutables.ContainsKey($authenticationProcessName)) {
+      $installedExecutables[$authenticationProcessName] = Join-Path $installRoot $BrowserAuthenticationExecutable
+    }
+  }
   $helperPid = $PID
 
   function Stop-MatchedProcess($process) {
@@ -30,13 +43,11 @@ try {
     }
   }
 
-  function Test-AppExecutableLocked {
-    if ([string]::IsNullOrWhiteSpace($appProcessName)) { return $false }
-    $appExecutablePath = Join-Path $installRoot "$appProcessName.exe"
-    if (-not (Test-Path -LiteralPath $appExecutablePath)) { return $false }
+  function Test-ExecutableLocked([string]$executablePath) {
+    if (-not (Test-Path -LiteralPath $executablePath)) { return $false }
     try {
       $stream = [IO.File]::Open(
-        $appExecutablePath,
+        $executablePath,
         [IO.FileMode]::Open,
         [IO.FileAccess]::Read,
         [IO.FileShare]::None
@@ -59,11 +70,12 @@ try {
     @(
       Get-Process -ErrorAction Stop | Where-Object {
         $process = $_
+        $installedExecutable = $null
         try {
+          $processName = $process.ProcessName
+          if ($processName) { $installedExecutable = $installedExecutables[$processName] }
           $executablePath = $process.Path
-          if ([string]::IsNullOrWhiteSpace($executablePath) -and
-              -not [string]::IsNullOrWhiteSpace($appProcessName) -and
-              $process.ProcessName -ieq $appProcessName) {
+          if ([string]::IsNullOrWhiteSpace($executablePath) -and $installedExecutable) {
             throw 'Application process path is unavailable.'
           }
           $process.Id -ne $helperPid -and
@@ -77,9 +89,7 @@ try {
           # A same-named application whose path cannot be inspected must not be
           # silently treated as closed. Other protected system processes are
           # irrelevant and remain safely ignored.
-          if (-not [string]::IsNullOrWhiteSpace($appProcessName) -and
-              $process.ProcessName -ieq $appProcessName -and
-              (Test-AppExecutableLocked)) {
+          if ($installedExecutable -and (Test-ExecutableLocked $installedExecutable)) {
             throw
           }
           $false
@@ -172,13 +182,16 @@ try {
   Write-Output "error-type=$exceptionType hresult=$hresult category=$($failure.CategoryInfo.Category) detail=$detail"
   # Process inventory is only an optimization before the installer performs
   # the real filesystem replacement. If Windows denies process enumeration,
-  # fall back to an exclusive-open probe of the installed executable. This
+  # fall back to an exclusive-open probe of the installed executables. This
   # keeps a genuinely locked application blocking the upgrade without making
   # WMI/process API health a prerequisite for installation. Locks on any other
   # installed file are still reported by the old-version removal/copy step.
   if ($Action -in @('Find', 'Wait', 'Stop') -and
       -not [string]::IsNullOrWhiteSpace($installRoot)) {
-    $locked = Test-AppExecutableLocked
+    $locked = $false
+    foreach ($executablePath in $installedExecutables.Values) {
+      if (Test-ExecutableLocked $executablePath) { $locked = $true; break }
+    }
     Write-Output "fallback=executable-lock-probe locked=$locked"
     if ($Action -eq 'Find') {
       if ($locked) { exit 0 }

@@ -524,7 +524,7 @@ FunctionEnd
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
   !insertmacro JustDoResolveNativePowerShell $R8
-  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Find'
+  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Find ${BROWSER_AUTHENTICATION_PROCESS_ARGUMENT}'
   Pop ${_RESULT}
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -540,7 +540,7 @@ FunctionEnd
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
   !insertmacro JustDoResolveNativePowerShell $R8
-  nsExec::ExecToStack /TIMEOUT=${INSTALLER_PROCESS_WAIT_TIMEOUT} '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Wait -MaxAttempts ${_MAX_ATTEMPTS}'
+  nsExec::ExecToStack /TIMEOUT=${INSTALLER_PROCESS_WAIT_TIMEOUT} '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Wait -MaxAttempts ${_MAX_ATTEMPTS} ${BROWSER_AUTHENTICATION_PROCESS_ARGUMENT}'
   Pop ${_RESULT}
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -554,7 +554,7 @@ FunctionEnd
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
   System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
   !insertmacro JustDoResolveNativePowerShell $R8
-  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action RequestQuit'
+  nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action RequestQuit ${BROWSER_AUTHENTICATION_PROCESS_ARGUMENT}'
   Pop ${_RESULT}
   Pop $R9
   System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -590,7 +590,7 @@ FunctionEnd
       System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
       System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
       !insertmacro JustDoResolveNativePowerShell $R8
-      nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Stop'
+      nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Stop ${BROWSER_AUTHENTICATION_PROCESS_ARGUMENT}'
       Pop ${_RESULT}
       Pop $R9
       System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -1023,6 +1023,12 @@ FunctionEnd
   ${IfNot} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
     StrCpy $R6 "main-executable"
     StrCpy $R7 "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+!if "${BROWSER_AUTHENTICATION_EXECUTABLE}" != ""
+  ${ElseIf} "${APP_EXECUTABLE_FILENAME}" != "${BROWSER_AUTHENTICATION_EXECUTABLE}"
+  ${AndIfNot} ${FileExists} "$INSTDIR\${BROWSER_AUTHENTICATION_EXECUTABLE}"
+    StrCpy $R6 "browser-authentication-executable"
+    StrCpy $R7 "$INSTDIR\${BROWSER_AUTHENTICATION_EXECUTABLE}"
+!endif
   ${ElseIfNot} ${FileExists} "$INSTDIR\resources\app.asar"
     StrCpy $R6 "app-asar"
     StrCpy $R7 "$INSTDIR\resources\app.asar"

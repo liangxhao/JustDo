@@ -11,10 +11,17 @@
 | -------------------------------------------- | ------------------------------------------------------------ |
 | [appUpdate.ts](appUpdate.ts)                 | 应用更新地址、语音模型路径与版本历史限制                     |
 | [builtinModels.ts](builtinModels.ts)         | 内置模型开关 `enabled`、LiteLLM API 地址 `baseUrl`           |
+| [browserAuthentication.ts](browserAuthentication.ts) | 企业 SPES 登录来源 `providerOrigin` 和 Windows 认证辅助程序文件名 `executableName` |
 | [activityReporting.ts](activityReporting.ts) | 活动信息上报开关 `enabled`，默认开启                         |
 | [builtinModelAuth.ts](builtinModelAuth.ts)   | Jalor 换证地址、JWT 生命周期上限、开发认证模式与临时 API Key |
 | [loginStorage.ts](loginStorage.ts)           | 登录存储目录 `directoryName`、用户信息文件 `userInfoFileName` |
 | [outboundHeaders.ts](outboundHeaders.ts)     | 请求头注入开关、URL 白名单与请求头名称的分组预设             |
+
+## 企业浏览器认证
+
+`providerOrigin` 和 `executableName` 默认为空。启用时填写统一登录服务的 HTTPS origin，
+以及辅助程序文件名，例如 `electron.exe` 或 `chrome.exe`。文件名由 1–64 个英文字母和 `.exe`
+组成，打包时统一为小写。填写两项后重新打包 Windows 安装程序。
 
 ## 登录信息目录
 

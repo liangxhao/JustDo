@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const shutdownPolicy = require('../../src/shared/app/shutdownPolicy.json');
+const { BROWSER_AUTHENTICATION_EXECUTABLE } = require('./browser-authentication-config.cjs');
 
 function installerShutdownDefinitions() {
   // Cover Main cleanup, its emergency exit observation, and scheduling margin.
@@ -277,8 +278,13 @@ function configureWindowsInstallerScript(projectDir) {
     // includes already consume animation constants here, before the final body.
     const { prepareInstallerAnimationScript } = require('./installer-animation-script.cjs');
     const { prepareInstallerClockAssets } = require('./installer-clock-assets.cjs');
+    const authenticationArgument = BROWSER_AUTHENTICATION_EXECUTABLE
+      ? `-BrowserAuthenticationExecutable "${BROWSER_AUTHENTICATION_EXECUTABLE}"`
+      : '';
     const definitions = this.isPortable ? '' : prepareInstallerAnimationScript(projectDir)
       + installerShutdownDefinitions()
+      + `!define BROWSER_AUTHENTICATION_EXECUTABLE "${BROWSER_AUTHENTICATION_EXECUTABLE}"\n`
+      + `!define BROWSER_AUTHENTICATION_PROCESS_ARGUMENT '${authenticationArgument}'\n`
       + `!define INSTALLER_CLOCK_LIBRARY "${prepareInstallerClockAssets(projectDir).path.replaceAll('$', () => '$$')}"\n`;
     return orderNsisPluginDirectories(definitions + header);
   };

@@ -389,6 +389,16 @@ temporary-storage corrections in this change.
 
 ### Process handling
 
+When both enterprise browser authentication settings are filled in, the Windows
+package includes a sibling executable named by `executableName` in the [deployment
+configuration](../src/config/browserAuthentication.ts). Both settings default to
+empty. The helper is copied from the finalized desktop executable after
+resource editing and signing. The installed desktop executable, shortcuts and
+upgrade identity use the product name. The installer verifies the configured
+helper in the application payload. The application's normal shutdown also
+retires any owned authentication process, and installer process checks retain
+their exact installation-directory scope.
+
 - A pristine install, with no per-user or per-machine registration and an empty
   target directory, does not start the PowerShell helper. No previous process
   tree or runtime exists to protect or stage.

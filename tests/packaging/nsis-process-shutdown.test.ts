@@ -61,9 +61,11 @@ const start = async (executable: string, code: string, args: string[] = []) => {
   return child;
 };
 
-const helper = (installRoot: string, action: string) => new Promise<{ code: number | null; output: string }>((resolve, reject) => {
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', helperPath, '-Action', action, '-MaxAttempts', '1'], {
+const helper = (installRoot: string, action: string, authenticationExecutable?: string) => new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+  const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', helperPath, '-Action', action, '-MaxAttempts', '1'];
+  if (authenticationExecutable) args.push('-BrowserAuthenticationExecutable', authenticationExecutable);
+  const child = spawn('powershell.exe', args, {
     windowsHide: true,
     env: { ...process.env, JUSTDO_INSTALL_ROOT: installRoot, JUSTDO_CALLER_PID: String(process.pid), JUSTDO_APP_PROCESS_NAME: 'probe' },
   });
@@ -74,27 +76,29 @@ const helper = (installRoot: string, action: string) => new Promise<{ code: numb
   child.once('close', code => resolve({ code, output }));
 });
 
-test.runIf(process.platform === 'win32')('signals existing Main without touching another installation and waits for scoped children', async () => {
+test.runIf(process.platform === 'win32').each(['electron.exe', 'chrome.exe'])('signals existing Main and only stops the installed copy of %s', async authenticationExecutable => {
   const f = fixture();
   const portableRoot = f.installRoot + '-portable';
   mkdirSync(portableRoot);
-  const portableExe = path.join(portableRoot, 'probe.exe');
+  const portableExe = path.join(portableRoot, authenticationExecutable);
+  const workerExe = path.join(f.installRoot, authenticationExecutable);
   copyFileSync(process.execPath, portableExe);
+  copyFileSync(process.execPath, workerExe);
   const portable = await start(portableExe, 'setInterval(() => {}, 1000); console.log("ready");');
-  const worker = await start(f.executable, 'setInterval(() => {}, 1000); console.log("ready");');
+  const worker = await start(workerExe, 'setInterval(() => {}, 1000); console.log("ready");');
   const main = await start(f.executable,
     'setInterval(() => {}, 1000); const listener = require(process.argv[1]).createInstallerShutdownListener(() => process.exit(0)); listener.ready.then(() => console.log("ready"));',
     [f.listenerModule]);
   const mainExited = exited(main);
-  const request = await helper(f.installRoot, 'RequestQuit');
+  const request = await helper(f.installRoot, 'RequestQuit', authenticationExecutable);
   expect(request.code, request.output).toBe(0);
   expect(await mainExited).toBe(0);
-  expect((await helper(f.installRoot, 'Wait')).code).toBe(1);
-  const stopped = await helper(f.installRoot, 'Stop');
+  expect((await helper(f.installRoot, 'Wait', authenticationExecutable)).code).toBe(1);
+  const stopped = await helper(f.installRoot, 'Stop', authenticationExecutable);
   expect(stopped.code, stopped.output).toBe(0);
   await exited(worker);
   expect(portable.exitCode).toBeNull();
-  expect((await helper(f.installRoot, 'RequestQuit')).code).toBe(1);
+  expect((await helper(f.installRoot, 'RequestQuit', authenticationExecutable)).code).toBe(1);
 }, 30_000);
 
 test.runIf(process.platform === 'win32')('reports legacy processes as unsupported and does not launch a new instance', async () => {
