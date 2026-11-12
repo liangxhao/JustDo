@@ -24,11 +24,11 @@ export const mergeOutboundHeaderEntries = (entries: Iterable<OutboundHeaderEntry
 export const parseOutboundHeaderObject = (value: unknown): OutboundHeaderObject | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const entry = value as Record<string, unknown>;
-  if (!Object.hasOwn(entry, 'name') || typeof entry.name !== 'string' ||
+  if (!Object.prototype.hasOwnProperty.call(entry, 'name') || typeof entry.name !== 'string' ||
       !HTTP_HEADER_NAME_PATTERN.test(entry.name)) return null;
 
-  const hasSource = Object.hasOwn(entry, 'from');
-  const hasLiteral = Object.hasOwn(entry, 'value');
+  const hasSource = Object.prototype.hasOwnProperty.call(entry, 'from');
+  const hasLiteral = Object.prototype.hasOwnProperty.call(entry, 'value');
   if (hasSource === hasLiteral) return null;
   if (hasSource) {
     return typeof entry.from === 'string' && entry.from.trim() && !/[\u0000-\u001f\u007f]/.test(entry.from)
