@@ -79,7 +79,7 @@ import {
   parseGoalStartObjective,
   SlashCommandBeforeSendHook,
 } from '../../../shared/cowork/slashCommands';
-import { type NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
+import { type NormalizedAgentEvent, type NormalizedChatEvent } from '../../../shared/openclaw/agentEvent';
 import { isChatSendStopReceipt } from '../../../shared/openclaw/chatSendReceipt';
 import { isGatewayRequestOutcomeUnknown } from '../../../shared/openclaw/gatewayRequestOutcome';
 import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
@@ -157,8 +157,10 @@ import type {
   CoworkStopOptions,
   GatewayRequestOptions,
 } from '../types';
+import { isSessionReaderErrorHint, readBlockedContextOverflow } from './automaticErrorRetry/failureCode';
 import { AutomaticErrorRetryHost } from './automaticErrorRetry/host';
 import { AutomaticErrorRetryLifecycle } from './automaticErrorRetry/lifecycle';
+import { logSessionReaderRecovery } from './automaticErrorRetry/sessionReaderRecoveryLog';
 import { ExecutionSuccessorClaims } from './executionSuccessorClaims';
 import { type GatewaySubagent, listGatewaySubagents, SUBAGENT_STATUSES } from './subagentGateway';
 
@@ -2605,6 +2607,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       (timedOut ||
         event.data.status === 'error' ||
         (event.data.phase === 'error' && !isInternalManagedSubagentHandoffError(event.data.error)));
+    const observedFailureCode = failed && !timedOut ? readBlockedContextOverflow(event.data) : undefined;
     this.runTerminalReceipts.set(event.runId, {
       runId: event.runId,
       sessionKey: binding.sessionKey,
@@ -2621,6 +2624,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       ...(failed && typeof event.data.error === 'string'
         ? { error: event.data.error.slice(0, 4096) }
         : {}),
+      ...(observedFailureCode ? { observedFailureCode } : {}),
     });
     this.automaticErrorRetryHost.coordinator.observeSettled(this.runTerminalReceipts.get(event.runId)!);
     while (this.runTerminalReceipts.size > 100) {
@@ -3148,8 +3152,90 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.automaticErrorRetryLifecycle.forwardGoalLifecycle(event);
   }
 
-  private deferRetryError(sessionId: string, runId: string, error: string): boolean {
-    return this.automaticErrorRetryLifecycle.deferError(sessionId, runId, error);
+  private deferRetryError(sessionId: string, runId: string, error: string, retiredEvent?: NormalizedChatEvent): boolean {
+    if (retiredEvent) {
+      const retired = this.retiredRunBindings.get(runId);
+      const metadata = this.automaticErrorRetryHost.coordinator.getRunMetadata(runId);
+      if (!retired || !metadata || retired.clientGeneration !== this.gatewayClientGeneration ||
+          (retired.gatewaySessionId && retired.gatewaySessionId !== metadata.nativeSessionId) ||
+          normalizeMessageSessionKey(retiredEvent.sessionKey) !== normalizeMessageSessionKey(retired.sessionKey) ||
+          (retiredEvent.sessionId && retiredEvent.sessionId !== metadata.nativeSessionId) ||
+          (retiredEvent.lifecycleGeneration && retired.lifecycleGeneration &&
+            retiredEvent.lifecycleGeneration !== retired.lifecycleGeneration)) return false;
+    }
+    return this.automaticErrorRetryLifecycle.deferError(sessionId, runId, retiredEvent ? undefined : error);
+  }
+
+  /** chat.error wakes an exact wait lookup for native dispatch failures that have no live terminal. */
+  private async verifyRetryChatFailure(sessionId: string, event: NormalizedChatEvent): Promise<void> {
+    if (!isSessionReaderErrorHint(event.errorMessage) || !event.runId) return;
+    const { runId } = event;
+    const log = (check: Parameters<typeof logSessionReaderRecovery>[1]) =>
+      logSessionReaderRecovery({ sessionId, runId }, check);
+    const client = this.gatewayClient;
+    if (!client) return log({ stage: 'chat_error', outcome: 'gateway_unavailable' });
+    const generation = this.gatewayClientGeneration;
+    const active = this.activeTurns.get(sessionId);
+    const turn = active?.runId === runId ? active : this.retiredRunBindings.get(runId);
+    const { coordinator } = this.automaticErrorRetryHost;
+    const binding = coordinator.getCandidateBinding(sessionId, runId);
+    if (!binding) return log({ stage: 'chat_error', outcome: 'candidate_unavailable' });
+    if (binding.clientGeneration !== generation ||
+        normalizeMessageSessionKey(event.sessionKey) !== normalizeMessageSessionKey(binding.sessionKey) ||
+        (turn?.gatewaySessionId && turn.gatewaySessionId !== binding.nativeSessionId) ||
+        (event.sessionId && event.sessionId !== binding.nativeSessionId) ||
+        (event.lifecycleGeneration && turn?.lifecycleGeneration && event.lifecycleGeneration !== turn.lifecycleGeneration)) {
+      return log({ stage: 'chat_error', outcome: 'identity_mismatch' });
+    }
+    const isCurrent = () => {
+      const current = this.activeTurns.get(sessionId);
+      return client === this.gatewayClient && generation === this.gatewayClientGeneration &&
+        !this.unknownSessionRuns.has(sessionId) && (!current || (current.runId === runId && !current.stopRequested)) &&
+        coordinator.getCandidateBinding(sessionId, runId)?.clientTurnId === binding.clientTurnId;
+    };
+    let stage: 'agent.wait' | 'sessions.describe' | 'settlement' = 'agent.wait';
+    if (!isCurrent()) return log({ stage, outcome: 'candidate_changed' });
+
+    try {
+      const result = await client.request<Record<string, unknown>>('agent.wait', { runId, timeoutMs: 0 }, { timeoutMs: 4_000 });
+      if (!isCurrent()) return log({ stage, outcome: 'candidate_changed' });
+      if (result.runId === runId && result.pendingError === true) return log({ stage, outcome: 'terminal_pending' });
+      if (result.runId === runId && (result.yielded === true ||
+          (result.stopReason !== undefined && result.stopReason !== 'error'))) {
+        const outcome = result.stopReason === 'restart' ? 'run_restarted'
+          : result.stopReason === 'superseded' ? 'run_superseded' : 'terminal_ineligible';
+        return log({ stage, outcome });
+      }
+      if (result.runId !== runId || result.status !== 'error' ||
+          typeof result.endedAt !== 'number' || !Number.isFinite(result.endedAt) || !isSessionReaderErrorHint(result.error)) {
+        return log({ stage, outcome: 'terminal_unconfirmed' });
+      }
+
+      stage = 'sessions.describe';
+      const { session } = await client.request<{ session?: Record<string, unknown> }>(
+        'sessions.describe', { key: binding.sessionKey }, { timeoutMs: 4_000 },
+      );
+      if (!isCurrent()) return log({ stage, outcome: 'candidate_changed' });
+      if (session?.key !== binding.sessionKey || session.sessionId !== binding.nativeSessionId ||
+          session.lifecycleRevision !== binding.lifecycleRevision || session.lastRunId !== runId) {
+        const identityReported = typeof session?.key === 'string' && typeof session.sessionId === 'string' &&
+          typeof session.lifecycleRevision === 'string' && typeof session.lastRunId === 'string';
+        return log({ stage, outcome: identityReported ? 'session_changed' : 'identity_unconfirmed' });
+      }
+
+      stage = 'settlement';
+      log({ stage, outcome: 'verified',
+        providerStarted: typeof result.providerStarted === 'boolean' ? result.providerStarted : undefined,
+      });
+      await this.automaticErrorRetryLifecycle.reconcileVerifiedWaitTerminal({
+        runId, sessionKey: binding.sessionKey, sessionId: binding.nativeSessionId,
+        lifecycleGeneration: turn?.lifecycleGeneration ?? event.lifecycleGeneration, executionSettled: true,
+        phase: 'error', error: result.error,
+      }, { client, generation }, 'failed', result.endedAt);
+    } catch {
+      if (stage === 'settlement') log({ stage, outcome: 'reconcile_failed' });
+      else log({ stage, outcome: 'request_failed' });
+    }
   }
 
   getGatewayClient(): GatewayClientLike | null {
@@ -3329,10 +3415,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         endedAt?: number;
         stopReason?: string;
         error?: string;
+        pendingError?: boolean;
         yielded?: boolean;
       }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
       if (!isCurrent()) return;
-      if (result.runId !== turn.runId) return;
+      if (result.runId !== turn.runId || result.pendingError === true) return;
       if (retryMetadata) {
         const described = await client.request<{ session?: Record<string, unknown> }>(
           'sessions.describe', { key: turn.sessionKey },
@@ -3389,6 +3476,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       )
         return;
       const aborted = result.stopReason === 'aborted' || result.stopReason === 'rpc';
+      const stopReason = result.status === 'timeout' && !aborted ? 'timeout' : result.stopReason;
       this.confirmUnknownSessionRunAdmission(sessionId, turn);
       if (this.unknownSessionRuns.get(sessionId)?.runId === turn.runId) {
         this.unknownSessionRuns.delete(sessionId);
@@ -3404,6 +3492,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         phase: result.status === 'ok' ? 'end' : 'error',
         executionSettled: true,
         aborted,
+        ...(stopReason ? { stopReason } : {}),
         ...(result.error ? { error: result.error } : {}),
       }, aborted ? 'interrupted' : result.status === 'ok' ? 'completed' : 'failed', result.endedAt);
       this.handleChatEvent({
@@ -3983,6 +4072,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       observeRunTerminal: { get: () => this.observeRunTerminal.bind(this) },
       forwardGoalLifecycle: { get: () => this.forwardGoalLifecycle.bind(this) },
       deferRetryError: { get: () => this.deferRetryError.bind(this) },
+      verifyRetryChatFailure: { get: () => this.verifyRetryChatFailure.bind(this) },
       cancelAutomaticErrorRetry: { get: () => this.cancelAutomaticErrorRetry.bind(this) },
       cleanupSessionTurn: { get: () => this.cleanupSessionTurn.bind(this) },
       store: { get: () => this.store },

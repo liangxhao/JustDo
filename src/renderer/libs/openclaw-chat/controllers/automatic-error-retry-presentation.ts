@@ -17,15 +17,13 @@ type RetryApi = {
   onAutomaticErrorRetryChanged(callback: (value: AutomaticErrorRetryPresentation) => void): () => void;
 };
 
-const PENDING_DECISION_TIMEOUT_MS = 5_000;
+const HYDRATION_TIMEOUT_MS = 5_000;
 /** View-owned metadata projection. Never changes transcript state or execution outcomes. */
 export class AutomaticErrorRetryPresentationController {
   private sessionId: string | null = null;
   private generation = 0;
   private snapshots = new Map<string, AutomaticErrorRetryPresentation>();
   private removeListener?: () => void;
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private expired = new Set<string>();
   private hydrationTimer?: ReturnType<typeof setTimeout>;
   private loading = false;
   private api?: RetryApi;
@@ -48,7 +46,7 @@ export class AutomaticErrorRetryPresentationController {
       if (generation !== this.generation) return;
       this.loading = false;
       this.changed();
-    }, PENDING_DECISION_TIMEOUT_MS);
+    }, HYDRATION_TIMEOUT_MS);
     void this.api.getAutomaticErrorRetry(sessionId).then(result => {
       if (generation !== this.generation || sessionId !== this.sessionId) return;
       if (result.success) for (const value of result.presentations ??
@@ -76,32 +74,24 @@ export class AutomaticErrorRetryPresentationController {
     const failedRuns = new Set(messages.filter(isRetryFailureMessage).map(retryMessageRunId));
     if (turn?.status === 'error') failedRuns.add(turn.runId);
     for (const snapshot of this.snapshots.values()) {
-      if (snapshot.phase === Phase.Unknown) continue;
       for (const run of snapshot.runs) {
         if (run.sessionKey !== binding.sessionKey || run.nativeSessionId !== binding.nativeSessionId) continue;
-        if (run.disposition === Disposition.Superseded || run.disposition === Disposition.Pending) {
+        if (run.disposition === Disposition.Superseded || run.disposition === Disposition.Pending ||
+            (run.disposition === Disposition.Candidate && failedRuns.has(run.runId))) {
           hidden.add(run.runId);
-        } else if (run.disposition === Disposition.Candidate && failedRuns.has(run.runId) &&
-          snapshot.phase !== Phase.Failed && snapshot.phase !== Phase.Cancelled &&
-          !this.expired.has(run.runId)) {
-          hidden.add(run.runId);
-          if (!this.timers.has(run.runId)) this.timers.set(run.runId, setTimeout(() => {
-            this.timers.delete(run.runId);
-            this.expired.add(run.runId);
-            this.changed();
-          }, PENDING_DECISION_TIMEOUT_MS));
         }
       }
     }
     return hidden;
   }
 
-  progress(binding: Binding): AutomaticErrorRetryPresentation | undefined {
-    return [...this.snapshots.values()].filter(value =>
+  progress(binding: Binding, hiddenRuns: ReadonlySet<string>): AutomaticErrorRetryPresentation | undefined {
+    return [...this.snapshots.values()].filter(value => value.runs.some(run =>
+      run.sessionKey === binding.sessionKey && run.nativeSessionId === binding.nativeSessionId &&
       ([Phase.Checking, Phase.Preparing, Phase.Running].some(phase => phase === value.phase) ||
-        (value.phase === Phase.Eligible && value.runs.some(run => this.timers.has(run.runId)))) &&
-      value.runs.some(run => run.sessionKey === binding.sessionKey &&
-        run.nativeSessionId === binding.nativeSessionId),
+        (value.phase === Phase.Eligible && run.disposition === Disposition.Candidate && hiddenRuns.has(run.runId)) ||
+        ((value.phase === Phase.Unknown || value.phase === Phase.Cancelled) && run.disposition === Disposition.Pending)),
+    ),
     ).sort((a, b) => b.revision - a.revision)[0];
   }
 
@@ -110,9 +100,6 @@ export class AutomaticErrorRetryPresentationController {
     this.removeListener?.();
     this.removeListener = undefined;
     clearTimeout(this.hydrationTimer);
-    for (const timer of this.timers.values()) clearTimeout(timer);
-    this.timers.clear();
-    this.expired.clear();
     this.snapshots.clear();
     this.loading = false;
     this.sessionId = null;

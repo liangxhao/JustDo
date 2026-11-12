@@ -9,7 +9,7 @@ import {
   type AutomaticErrorRetryLaunchResult,
   type AutomaticErrorRetryWaitReceipt,
 } from './coordinator';
-import { createAutomaticErrorRetryRuleIndex, REPEATED_TOOL_ERROR_CODE } from './rules';
+import { CONTEXT_OVERFLOW_ERROR_CODE, createAutomaticErrorRetryRuleIndex, REPEATED_TOOL_ERROR_CODE, SESSION_READER_FAILURE_CODE } from './rules';
 
 const arm: AutomaticErrorRetryArm = {
   sessionId: 'product-session', sessionKey: 'agent:main:justdo:product-session',
@@ -25,7 +25,7 @@ function deferred<T>() {
   const promise = new Promise<T>(value => { resolve = value; });
   return { promise, resolve };
 }
-function fixture(maxContinuations = 2) {
+function fixture(maxContinuations = 2, retryDelayMs = 0) {
   let current = true;
   let sequence = 0;
   const read = vi.fn(async () => REPEATED_TOOL_ERROR_CODE as string | null);
@@ -35,6 +35,7 @@ function fixture(maxContinuations = 2) {
   const changed = vi.fn();
   const unclaimed = vi.fn();
   const coordinator = new AutomaticErrorRetryCoordinator({
+    retryDelayMs,
     readFailureCode: read, isCurrent: () => current, reserveSuccessor: reserve,
     releaseSuccessor: release, launchSuccessor: launch, onChanged: changed,
     onUnclaimedSettled: unclaimed, createRunId: () => `technical-${++sequence}`,
@@ -45,6 +46,38 @@ function fixture(maxContinuations = 2) {
 }
 
 describe('automatic error retry coordinator', () => {
+  it('waits before each eligible continuation and cancels the wait before dispatch', async () => {
+    const delayMs = 25;
+    const f = fixture(2, delayMs);
+    try {
+      f.coordinator.observeSettled(receipt());
+      await Promise.resolve();
+      expect(f.launch).not.toHaveBeenCalled();
+      expect(f.coordinator.getPresentation(arm.sessionId)).toMatchObject({ attempt: 0 });
+      await vi.waitFor(() => expect(f.launch).toHaveBeenCalledOnce());
+
+      f.coordinator.observeSettled(receipt('technical-1'));
+      await Promise.resolve();
+      expect(f.launch).toHaveBeenCalledOnce();
+      f.coordinator.cancel(arm.sessionId);
+      await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+      expect(f.launch).toHaveBeenCalledOnce();
+      expect(f.coordinator.getPresentation(arm.sessionId)).toMatchObject({ attempt: 1 });
+      expect(f.release).toHaveBeenCalledTimes(2);
+    } finally {
+      f.coordinator.clear();
+    }
+  });
+
+  it('ends an unconfirmed candidate before a late terminal can start a retry', () => {
+    const f = fixture();
+    f.coordinator.expireUnsettledCandidate(arm.sessionId, arm.runId);
+    expect(f.coordinator.getPresentation(arm.sessionId)?.phase).toBe(AutomaticErrorRetryPhase.Failed);
+    expect(f.coordinator.getSettledReceipt(arm.runId)).toBeNull();
+    expect(f.coordinator.observeSettled(receipt())).toBe(false);
+    expect(f.launch).not.toHaveBeenCalled();
+  });
+
   it('claims the exact predecessor before waiting and deduplicates its terminal', async () => {
     const f = fixture();
     const code = deferred<string | null>();
@@ -70,13 +103,14 @@ describe('automatic error retry coordinator', () => {
     f.coordinator.observeSettled(receipt('technical-1'));
     await vi.waitFor(() => expect(f.launch).toHaveBeenCalledTimes(2));
     const final = receipt('technical-2');
-    expect(f.coordinator.observeSettled(final)).toBe(true);
-    await vi.waitFor(() => expect(f.unclaimed).toHaveBeenCalledExactlyOnceWith(final));
+    expect(f.coordinator.observeSettled(final)).toBe(false);
+    expect(f.coordinator.getSettledReceipt(final.runId)).toEqual(final);
     expect(f.launch).toHaveBeenCalledTimes(2);
     expect(f.coordinator.getPresentation(arm.sessionId)).toMatchObject({ attempt: 2, phase: AutomaticErrorRetryPhase.Failed });
     expect(f.coordinator.observeSettled(final)).toBe(false);
-    expect(f.unclaimed).toHaveBeenCalledOnce();
-    expect(f.release).toHaveBeenCalledTimes(3);
+    expect(f.unclaimed).not.toHaveBeenCalled();
+    expect(f.read).toHaveBeenCalledTimes(2);
+    expect(f.release).toHaveBeenCalledTimes(2);
   });
 
   it('uses a common counter when registered error A is followed by error B', async () => {
@@ -84,6 +118,7 @@ describe('automatic error retry coordinator', () => {
     const unclaimed = vi.fn();
     let sequence = 0;
     const coordinator = new AutomaticErrorRetryCoordinator({
+      retryDelayMs: 0,
       readFailureCode: async (_binding, value) => value.runId === arm.runId ? 'error_a' : 'error_b',
       isCurrent: () => true, reserveSuccessor: () => true, releaseSuccessor() {},
       launchSuccessor: async request => { launches.push(request); return { status: 'accepted' }; },
@@ -95,8 +130,8 @@ describe('automatic error retry coordinator', () => {
     await vi.waitFor(() => expect(launches).toHaveLength(1));
     coordinator.observeSettled(receipt('retry-1'));
     await vi.waitFor(() => expect(launches).toHaveLength(2));
-    coordinator.observeSettled(receipt('retry-2'));
-    await vi.waitFor(() => expect(unclaimed).toHaveBeenCalledOnce());
+    expect(coordinator.observeSettled(receipt('retry-2'))).toBe(false);
+    expect(unclaimed).not.toHaveBeenCalled();
     expect(launches.map(value => [value.attempt, value.fixedPrompt, value.chainId])).toEqual([[1, 'A', arm.clientTurnId], [2, 'B', arm.clientTurnId]]);
   });
 
@@ -180,11 +215,13 @@ describe('automatic error retry coordinator', () => {
     await vi.waitFor(() => expect(f.coordinator.getPresentation(arm.sessionId)?.phase).toBe(AutomaticErrorRetryPhase.Unknown));
     f.coordinator.cancel(arm.sessionId);
     f.coordinator.clear();
-    expect(f.coordinator.getRunMetadata(arm.runId)?.disposition).toBe(AutomaticErrorRetryDisposition.Final);
+    expect(f.coordinator.getRunMetadata(arm.runId)?.disposition).toBe(AutomaticErrorRetryDisposition.Pending);
     expect(f.release).not.toHaveBeenCalled();
     expect(f.coordinator.holdsTerminal(arm.runId)).toBe(true);
     expect(f.coordinator.arm({ ...arm, clientTurnId: 'new-input', runId: 'new-run' })).toBe(false);
     expect(f.coordinator.observeSettled(receipt('technical-1', 'completed'))).toBe(false);
+    expect(f.coordinator.getRunMetadata(arm.runId)?.disposition).toBe(AutomaticErrorRetryDisposition.Superseded);
+    expect(f.coordinator.getRunMetadata('technical-1')?.disposition).toBe(AutomaticErrorRetryDisposition.Final);
     expect(f.release).toHaveBeenCalledOnce();
     expect(f.launch).toHaveBeenCalledOnce();
   });
@@ -200,6 +237,7 @@ describe('automatic error retry coordinator', () => {
     result.resolve({ status: 'rejected' });
     await vi.waitFor(() => expect(f.release).toHaveBeenCalledOnce());
     expect(f.coordinator.getPresentation(arm.sessionId)?.phase).toBe(AutomaticErrorRetryPhase.Cancelled);
+    expect(f.coordinator.getRunMetadata(arm.runId)?.disposition).toBe(AutomaticErrorRetryDisposition.Final);
     expect(f.unclaimed).not.toHaveBeenCalled();
   });
 
@@ -284,22 +322,22 @@ describe('automatic error retry coordinator', () => {
     const f = fixture(1);
     f.coordinator.observeSettled(receipt());
     await vi.waitFor(() => expect(f.launch).toHaveBeenCalledOnce());
-    f.coordinator.observeSettled(receipt('technical-1'));
-    await vi.waitFor(() => expect(f.unclaimed).toHaveBeenCalledOnce());
+    expect(f.coordinator.observeSettled(receipt('technical-1'))).toBe(false);
     expect(f.coordinator.adoptBusinessRun({ ...arm, runId: 'business-retry', clientTurnId: 'business-retry',
       predecessorRunId: 'technical-1', businessRetry: true })).toBe(true);
     expect(f.coordinator.isTechnicalRun('business-retry')).toBe(false);
     expect(f.coordinator.getPresentation(arm.sessionId)).toMatchObject({ attempt: 1, maxContinuations: 1, chainId: arm.clientTurnId });
-    f.coordinator.observeSettled(receipt('business-retry'));
-    await vi.waitFor(() => expect(f.unclaimed).toHaveBeenCalledTimes(2));
+    expect(f.coordinator.observeSettled(receipt('business-retry'))).toBe(false);
     expect(f.launch).toHaveBeenCalledOnce();
     expect(() => f.launch.mock.calls[0][0].assertCurrent()).toThrow();
   });
 });
 
 describe('automatic retry rule registry', () => {
-  it('ships only the structured repeated-tool rule and rejects duplicate codes and IDs', () => {
-    expect([...createAutomaticErrorRetryRuleIndex().keys()]).toEqual([REPEATED_TOOL_ERROR_CODE]);
+  it('registers the supported native codes and rejects duplicate codes and IDs', () => {
+    expect([...createAutomaticErrorRetryRuleIndex().keys()]).toEqual([
+      REPEATED_TOOL_ERROR_CODE, CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE,
+    ]);
     expect(() => createAutomaticErrorRetryRuleIndex([
       { id: 'a', errorCodes: ['same'], fixedPrompt: 'a' }, { id: 'b', errorCodes: ['same'], fixedPrompt: 'b' },
     ])).toThrow();

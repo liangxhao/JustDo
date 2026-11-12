@@ -7,35 +7,55 @@ import { projectTurnItems } from '@/libs/openclaw-chat/model/timeline/project-tu
 import { withFailureDetailsForDisplay } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { projectWaitingStatus } from '@/libs/openclaw-chat/model/turn/run-activity';
 
-test.each(['exec', 'plugin'])('hides internal %s input on live append and history reload', async sourceTool => {
-  const sessionKey = 'agent:main:chat:exec-display';
-  const human = { role: 'user', content: 'Run the command', timestamp: 100 };
+test.each([
+  ['exec', 'Exec completed (job, code 0)\nSession selected: provider/model'],
+  ['plugin', 'Plugin reload result: {"ok":true}\nContinue the original task in this conversation. Do not repeat a completed reload.'],
+  ['execution-error-retry', 'Continue the task requested in the saved user message from the current conversation and workspace state.'],
+])('hides internal %s input during message updates, refresh, and history reopen', async (sourceTool, content) => {
+  const sessionKey = 'agent:main:chat:internal-input-display';
+  const sessionId = 'sid-internal-input';
+  const human = { role: 'user', content, timestamp: 100 };
   const internal = {
     role: 'user',
-    content: sourceTool === 'exec'
-      ? 'Exec completed (job, code 0)\nSession selected: provider/model'
-      : 'Plugin reload result: {"ok":true}\nContinue the original task in this conversation. Do not repeat a completed reload.',
+    content,
     timestamp: 200, provenance: { kind: 'internal_system', sourceTool },
-    __openclaw: { id: 'exec-input', messageSeq: 2 },
+    __openclaw: { id: 'internal-input', seq: 2 },
   };
-  const request = vi.fn().mockResolvedValue({ messages: [human], sessionId: 'sid-exec' });
-  const controller = new ChatController();
-  controller.state.client = { request, stop: vi.fn() } as never;
-  controller.state.connected = true;
-  controller.state.sessionKey = sessionKey;
+  const reply = { role: 'assistant', content: 'Task continued.', timestamp: 300 };
+  const request = vi.fn().mockResolvedValue({ messages: [human], sessionId });
+  const createController = () => {
+    const controller = new ChatController();
+    controller.state.client = { request, stop: vi.fn() } as never;
+    controller.state.connected = true;
+    controller.state.sessionKey = sessionKey;
+    return controller;
+  };
+  const controller = createController();
   await controller.loadHistory();
   const handleEvent = (
     controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
   ).handleEvent.bind(controller);
   handleEvent({
     event: 'session.message',
-    payload: { sessionKey, sessionId: 'sid-exec', message: internal, messageSeq: 2 },
+    payload: { sessionKey, sessionId, message: internal, messageSeq: 2 },
   });
   expect(controller.state.chatMessages).toEqual([human]);
-  request.mockResolvedValue({ messages: [human, internal], sessionId: 'sid-exec' });
-  await controller.loadHistory();
+  const updated = { ...internal, content: [{ type: 'text', text: content }] };
+  handleEvent({
+    event: 'session.message',
+    payload: { sessionKey, sessionId, message: updated, messageSeq: 2 },
+  });
   expect(controller.state.chatMessages).toEqual([human]);
+
+  request.mockResolvedValue({ messages: [human, updated, reply], sessionId });
+  await controller.loadHistory();
+  expect(controller.state.chatMessages).toEqual([human, reply]);
   controller.disconnect();
+
+  const reopened = createController();
+  await reopened.loadHistory();
+  expect(reopened.state.chatMessages).toEqual([human, reply]);
+  reopened.disconnect();
 });
 
 afterEach(() => {

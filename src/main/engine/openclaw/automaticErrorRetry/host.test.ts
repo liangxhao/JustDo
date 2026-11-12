@@ -25,7 +25,7 @@ import type { CoworkStore } from '../../../data/coworkStore';
 import type { GatewayClientLike, NativeRunTerminalReceipt } from '../../gateway/types';
 import { ExecutionSuccessorClaims } from '../executionSuccessorClaims';
 import { AutomaticErrorRetryHost } from './host';
-import { AUTOMATIC_ERROR_RETRY_RULES, REPEATED_TOOL_ERROR_CODE } from './rules';
+import { AUTOMATIC_ERROR_RETRY_RULES, CONTEXT_OVERFLOW_ERROR_CODE, REPEATED_TOOL_ERROR_CODE } from './rules';
 
 const sessionId = 'desktop-session';
 const sessionKey = `agent:main:justdo:${sessionId}`;
@@ -44,7 +44,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fixture() {
+function fixture(transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE) {
   // Ordinary prepared desktop sessions need not have an imported history binding.
   const session = {
     id: sessionId, agentId: 'main', cwd: 'E:/workspace/task', permissionMode: 'full',
@@ -53,7 +53,8 @@ function fixture() {
   const rows = new Map<string, SessionRunTiming>([[rootRunId, {
     id: 'receipt-root', sessionId, clientTurnId: rootRunId, startedAt: 1, state: 'running',
   }]]);
-  const native = { key: sessionKey, sessionId: nativeSessionId, lifecycleRevision, activeRunIds: [] as string[] };
+  const native = { key: sessionKey, sessionId: nativeSessionId, lifecycleRevision,
+    lastRunId: rootRunId, activeRunIds: [] as string[] };
   const getSession = vi.fn(() => session);
   const beginSessionRun = vi.fn((input: BeginSessionRunInput) => {
     if ([...rows.values()].some(row => row.state === 'running')) throw new Error('A run is already open');
@@ -80,8 +81,8 @@ function fixture() {
   const request = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> => {
     if (method === 'sessions.describe') return { session: native };
     if (method === 'runtimeServices.executionFailure') return {
-      sessionKey, sessionId: nativeSessionId, lifecycleRevision, runId: params?.runId,
-      errorCode: REPEATED_TOOL_ERROR_CODE,
+      sessionKey, sessionId: nativeSessionId, lifecycleRevision, runId: params?.runId, identityMatched: true,
+      errorCode: transcriptErrorCode,
     };
     if (method === 'agent') return { runId: params?.idempotencyKey, status: 'accepted' };
     throw new Error(`Unexpected method ${method}`);
@@ -100,6 +101,7 @@ function fixture() {
   const onPresentation = vi.fn();
   const claims = new ExecutionSuccessorClaims();
   const host = new AutomaticErrorRetryHost({
+    retryDelayMs: 0,
     store: store as unknown as CoworkStore,
     successorClaims: claims,
     getClient: () => client,
@@ -178,6 +180,57 @@ describe('automatic error retry host transport', () => {
     });
     expect(f.host.coordinator.observeSettled(terminal())).toBe(true);
     expect(f.agentCalls()).toHaveLength(1);
+  });
+
+  it('continues a settled context overflow with saved work and spends the existing retry allowance', async () => {
+    const f = fixture(null);
+    await f.arm();
+    const overflow = (runId?: string): NativeRunTerminalReceipt => ({
+      ...terminal(runId), observedFailureCode: CONTEXT_OVERFLOW_ERROR_CODE,
+    });
+
+    expect(f.host.coordinator.observeSettled(overflow())).toBe(true);
+    await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledOnce());
+    const params = f.agentCalls()[0]![1]!;
+    expect(params).toMatchObject({
+      expectedExistingSessionId: nativeSessionId,
+      expectedExistingSessionLifecycleRevision: lifecycleRevision,
+      message: expect.stringContaining('Review completed work and existing results before acting.'),
+      suppressPromptPersistence: true,
+    });
+    expect(f.rows.get(rootRunId)?.automaticErrorRetry).toMatchObject({ ruleId: 'context-overflow' });
+
+    const nextFailure = overflow(params.idempotencyKey as string);
+    expect(f.host.coordinator.observeSettled(nextFailure)).toBe(false);
+    expect(f.host.coordinator.getPresentation(sessionId)?.phase).toBe(AutomaticErrorRetryPhase.Failed);
+    expect(f.agentCalls()).toHaveLength(1);
+  });
+
+  it.each([true, false])('resumes a stale reader only while its failed run is the native head (%s)', async isLatest => {
+    const f = fixture(null);
+    await f.arm();
+    const error = 'Session reader operation is no longer current';
+    const normalRequest = f.request.getMockImplementation()!;
+    f.request.mockImplementation((method, params) => method === 'chat.history'
+      ? Promise.resolve({ sessionKey, sessionId: nativeSessionId, sessionInfo: { sessionId: nativeSessionId },
+        messages: [{ role: 'user', idempotencyKey: `${rootRunId}:user` },
+          { role: 'custom', customType: 'run-failed-before-reply', __openclaw: { runId: rootRunId },
+            content: `Your request couldn't be completed: ${error}` }] })
+      : normalRequest(method, params));
+    if (!isLatest) f.native.lastRunId = 'newer-native-run';
+
+    const { agentSeq: _agentSeq, ...failed } = terminal();
+    expect(f.host.coordinator.observeWaitSettled({ ...failed, source: 'agent.wait', error })).toBe(true);
+    if (isLatest) {
+      await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledOnce());
+      expect(f.agentCalls()[0]?.[1]).toMatchObject({
+        message: expect.stringContaining('Continue the task requested in the saved user message'),
+        expectedExistingSessionId: nativeSessionId, suppressPromptPersistence: true,
+      });
+    } else {
+      await vi.waitFor(() => expect(f.unclaimed).toHaveBeenCalledOnce());
+      expect(f.agentCalls()).toHaveLength(0);
+    }
   });
 
   it('does not send when the business owner refuses technical adoption', async () => {

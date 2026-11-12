@@ -4,10 +4,11 @@
 
 [错误自动重试](../features/execution/automatic-error-retry.md)使用 Main 提供的精确运行关联
 收敛中间合成失败及提示，保留部分正文、工具和文件。其呈现控制器不修改原生 reducer、
-历史源或 Goal 计数；应用重试的忙碌状态独立保证准备间隙仍可停止。无关联、最终失败、
-未知或无法取得决议的情况正常展示原生错误，不根据报错字符串隐藏记录。
+历史源或 Goal 计数。应用重试的忙碌状态保证等待和准备期间仍可停止。Renderer 按 Main
+的决议保持中间错误隐藏，发送结果未知时显示核对状态。没有可用续跑关联的错误和续跑结束
+后的最终失败正常展示。
 
-订阅、元数据修订与计时器归 `controllers/automatic-error-retry-presentation.ts`；
+订阅、元数据修订与加载计时器归 `controllers/automatic-error-retry-presentation.ts`；
 纯消息和 Turn 显示变换归 `pipeline/automatic-error-retry-display.ts`。
 聊天组件组合两者，桌面活动 hook 仍由 Cowork 聊天功能持有，不复制执行状态。
 

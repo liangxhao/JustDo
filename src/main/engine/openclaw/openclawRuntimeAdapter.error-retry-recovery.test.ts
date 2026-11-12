@@ -22,6 +22,7 @@ async function fixture(result: Record<string, unknown>) {
   const release = vi.fn();
   const reconcile = vi.fn(async () => {});
   const coordinator = new AutomaticErrorRetryCoordinator({
+    retryDelayMs: 0,
     isCurrent: () => true, readFailureCode: async () => REPEATED_TOOL_ERROR_CODE,
     reserveSuccessor: () => true, releaseSuccessor: release, launchSuccessor: launch,
     onChanged() {}, onUnclaimedSettled() {}, createRunId: () => `technical-${++sequence}`,
@@ -69,6 +70,20 @@ describe('exact agent.wait recovery through automatic error retry', () => {
     expect(f.reconcile).not.toHaveBeenCalled();
     expect(f.coordinator.holdsTerminal('technical-1')).toBe(true);
     expect(f.coordinator.getPresentation('app')?.attempt).toBe(2);
+  });
+
+  it('keeps the original identity when agent.wait reports a provisional error', async () => {
+    const f = await fixture({ status: 'error', error: 'tool error', endedAt: 2, pendingError: true });
+    await f.adapter.performDisconnectedTurnRecovery('app');
+    expect(f.coordinator.getPresentation('app')?.phase).toBe(AutomaticErrorRetryPhase.Unknown);
+    expect(f.launch).toHaveBeenCalledOnce();
+    expect(f.displayFinal).not.toHaveBeenCalled();
+  });
+
+  it('preserves a settled native timeout on the wait receipt even without a stop reason', async () => {
+    const f = await fixture({ status: 'timeout', error: 'tool error', endedAt: 2 });
+    await f.adapter.performDisconnectedTurnRecovery('app');
+    expect(f.coordinator.getSettledReceipt('technical-1')).toMatchObject({ stopReason: 'timeout' });
   });
 
   it('clears Unknown on exact success without inventing a native sequence or terminal timestamp', async () => {

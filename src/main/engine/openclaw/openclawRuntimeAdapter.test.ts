@@ -25,6 +25,7 @@ import { CoworkPlanHandoffState } from '../../../shared/cowork/interactions/plan
 import type { BeginSessionRunInput, SessionRunState, SessionRunTiming } from '../../../shared/cowork/sessionRun';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
+import { AUTOMATIC_ERROR_RETRY_DELAY_MS } from './automaticErrorRetry/coordinator';
 import type { AutomaticErrorRetryHost } from './automaticErrorRetry/host';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -1524,10 +1525,18 @@ test.each([false, true])('holds a prepared desktop error until native classifica
     expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Checking);
     expect(errors).not.toHaveBeenCalled();
 
+    // The continuation delay uses Node's promise timer. Switch to its real clock
+    // after proving the error stays hidden while classification is outstanding.
+    vi.useRealTimers();
     resolveFailure({ sessionKey: key, sessionId: nativeSessionId,
       lifecycleRevision, runId, errorCode: supported ? 'openclaw_repeated_tool_error' : 'unregistered_error' });
     if (supported) {
-      await vi.waitFor(() => expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Running));
+      expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Checking);
+      expect(errors).not.toHaveBeenCalled();
+      expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+      await vi.waitFor(() => expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Running), {
+        timeout: AUTOMATIC_ERROR_RETRY_DELAY_MS + 1_000,
+      });
       const successor = adapter.getAutomaticErrorRetry(session.id)!.runs.at(-1)!;
       internals.automaticErrorRetryHost.coordinator.observeSettled({
         runId: successor.runId, sessionKey: key, sessionId: nativeSessionId, lifecycleGeneration: null,

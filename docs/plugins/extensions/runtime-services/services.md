@@ -4,9 +4,10 @@
 
 `runtimeServices.executionFailure` 是 `operator.read` 的窄只读接口。调用方提供精确的
 `sessionKey`、`sessionId`、`lifecycleRevision`（未分配时显式为 null）和 `runId`。
-Runtime Services 通过公开异步会话和可见原生 transcript SDK 读取当前分支，只返回这组
-身份及最后一条对应 assistant 消息的结构化 `errorCode`；没有匹配失败时返回 null。
-读取前后均核对 SID 和 lifecycle revision，不返回原始错误、参数、消息正文或凭据。
+Runtime Services 通过公开异步会话和可见原生 transcript SDK 读取当前分支，返回这组身份、
+最后一条对应 assistant 消息的结构化 `errorCode` 和 `identityMatched`。没有匹配失败时
+`errorCode` 为 null。只有读取前后 SID 和 lifecycle revision 均匹配时 `identityMatched`
+才为 true。响应不含原始错误、参数、消息正文或凭据。
 该接口不能证明整轮已经结算；Main 必须另行关联精确 `executionSettled:true` 回执，
 不能根据失败代码推断工具权限、原始发送授权或终态。当前读取复用原生完整可见分支的
 异步 owner，不宣称支持按 run 索引的局部存储查询。

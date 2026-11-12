@@ -9,7 +9,7 @@ import type { GoalLifecycleEvent } from '../../../openclaw/goals/goalContinuatio
 import type { GatewayClientLike, NativeRunTerminalReceipt } from '../../gateway/types';
 import { AutomaticErrorRetryCoordinator, type AutomaticErrorRetryLaunchResult,
   type AutomaticErrorRetryWaitReceipt } from './coordinator';
-import { AutomaticErrorRetryLifecycle } from './lifecycle';
+import { AUTOMATIC_ERROR_RETRY_SETTLEMENT_GRACE_MS, AutomaticErrorRetryLifecycle } from './lifecycle';
 import { REPEATED_TOOL_ERROR_CODE } from './rules';
 
 const event: GoalLifecycleEvent & { phase: 'error'; executionSettled: true } = {
@@ -34,6 +34,8 @@ function fixture() {
   const coordinator = {
     getRunMetadata: vi.fn((runId: string) => presentation.runs.find(run => run.runId === runId) ?? null),
     getPresentation: vi.fn(() => presentation), holdsTerminal: vi.fn(() => true),
+    getSettledReceipt: vi.fn((): AutomaticErrorRetryWaitReceipt | null => null),
+    expireUnsettledCandidate: vi.fn(),
     retireWaitSettled: vi.fn((_receipt: AutomaticErrorRetryWaitReceipt, _identity: unknown) => false),
     observeWaitSettled: vi.fn((_receipt: AutomaticErrorRetryWaitReceipt) => true),
   };
@@ -53,19 +55,20 @@ function fixture() {
 afterEach(() => { vi.useRealTimers(); });
 
 describe('automatic error retry lifecycle', () => {
-  it('bounds a candidate error delay and stops hiding unknown or finalized errors', () => {
+  it('releases an unconfirmed error only after Main closes the candidate', () => {
     vi.useFakeTimers();
     const f = fixture();
     expect(f.lifecycle.deferError('app', 'run', 'tool failure')).toBe(true);
     expect(f.lifecycle.deferError('app', 'run', 'duplicate')).toBe(true);
-    vi.advanceTimersByTime(4_999);
+    vi.advanceTimersByTime(AUTOMATIC_ERROR_RETRY_SETTLEMENT_GRACE_MS - 1);
     expect(f.emit).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
-    expect(f.emit).toHaveBeenCalledExactlyOnceWith('app', 'tool failure');
-    f.presentation.phase = AutomaticErrorRetryPhase.Unknown;
-    expect(f.lifecycle.deferError('app', 'run', 'unknown')).toBe(false);
+    expect(f.coordinator.expireUnsettledCandidate).toHaveBeenCalledExactlyOnceWith('app', 'run');
+    expect(f.emit).not.toHaveBeenCalled();
     f.presentation.phase = AutomaticErrorRetryPhase.Failed;
     f.presentation.runs[0].disposition = AutomaticErrorRetryDisposition.Final;
+    f.lifecycle.onPresentation(f.presentation);
+    expect(f.emit).toHaveBeenCalledExactlyOnceWith('app', 'tool failure');
     expect(f.lifecycle.deferError('app', 'run', 'final')).toBe(false);
   });
 
@@ -76,13 +79,17 @@ describe('automatic error retry lifecycle', () => {
     f.presentation.phase = AutomaticErrorRetryPhase.Checking;
     f.presentation.runs[0].disposition = AutomaticErrorRetryDisposition.Pending;
     f.lifecycle.onPresentation(f.presentation);
+    f.presentation.phase = AutomaticErrorRetryPhase.Unknown;
+    f.lifecycle.onPresentation(f.presentation);
     vi.advanceTimersByTime(10_000);
     expect(f.emit).not.toHaveBeenCalled();
+    expect(f.coordinator.expireUnsettledCandidate).not.toHaveBeenCalled();
     f.presentation.phase = AutomaticErrorRetryPhase.Failed;
     f.presentation.runs[0].disposition = AutomaticErrorRetryDisposition.Final;
+    f.coordinator.getSettledReceipt.mockReturnValue({ ...receipt, error: 'actual terminal failure' });
     f.lifecycle.onPresentation(f.presentation);
     f.lifecycle.onPresentation(f.presentation);
-    expect(f.emit).toHaveBeenCalledExactlyOnceWith('app', 'tool failure');
+    expect(f.emit).toHaveBeenCalledExactlyOnceWith('app', 'actual terminal failure');
   });
 
   it('hands the original held native terminal back once when retry declines', () => {
@@ -146,6 +153,7 @@ describe('automatic error retry lifecycle', () => {
     const reconcile = vi.fn(async () => {});
     let lifecycle!: AutomaticErrorRetryLifecycle;
     const coordinator = new AutomaticErrorRetryCoordinator({
+      retryDelayMs: 0,
       isCurrent: () => true, readFailureCode: async () => REPEATED_TOOL_ERROR_CODE,
       reserveSuccessor: () => true, releaseSuccessor() {}, launchSuccessor: launch,
       onChanged: presentation => lifecycle.onPresentation(presentation),

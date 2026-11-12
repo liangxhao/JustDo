@@ -6,6 +6,7 @@
  * 1. Directly via properties (messages, stream, etc.)
  * 2. Via a ChatController reference (controller property)
  */
+import { AutomaticErrorRetryPhase } from '@shared/cowork/automaticErrorRetry';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { McpAppEvent } from '@shared/plugins/mcpApps';
@@ -764,9 +765,12 @@ export class JustDoChatElement extends LitElement {
     const hiddenRetryRunIds = this.automaticErrorRetry.hiddenRuns(
       retryBinding, sourcePersistedMessages, sourceActiveTurn,
     );
-    const retryProgress = this.automaticErrorRetry.progress(retryBinding);
+    const retryProgress = this.automaticErrorRetry.progress(retryBinding, hiddenRetryRunIds);
+    const retryUncertain = retryProgress?.phase === AutomaticErrorRetryPhase.Unknown ||
+      retryProgress?.phase === AutomaticErrorRetryPhase.Cancelled;
+    const retryBusy = Boolean(retryProgress) && !retryUncertain;
     const retryStatus = retryProgress
-      ? retryProgress.attempt > 0
+      ? retryProgress.attempt > 0 && !retryUncertain
         ? i18nService.t('coworkErrorRetryProgress')
           .replace('{attempt}', String(retryProgress.attempt))
           .replace('{max}', String(retryProgress.maxContinuations))
@@ -830,7 +834,7 @@ export class JustDoChatElement extends LitElement {
     this.userMessageHistoryActionsAvailable = Boolean(
       ctrl &&
       ctrl.state.connected &&
-      !retryProgress &&
+      !retryBusy &&
       !isStreaming &&
       !ctrl.state.chatLoading &&
       !ctrl.state.historyLoadingOlder &&
@@ -967,10 +971,11 @@ export class JustDoChatElement extends LitElement {
           <div
             class="chat-container"
             role="log"
-            aria-busy=${activeTurn?.status === 'running' || isStreaming || Boolean(retryProgress)}
+            aria-busy=${activeTurn?.status === 'running' || isStreaming || retryBusy}
           >
             <div class="sr-only" role="status" aria-live="polite">
-              ${activeTurn ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
+              ${activeTurn && (activeTurn.status !== 'error' || !hiddenRetryRunIds.has(activeTurn.runId))
+                ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
             ${retryStatus ? html`<div role="status" aria-live="polite" data-automatic-error-retry>
               ${retryStatus}

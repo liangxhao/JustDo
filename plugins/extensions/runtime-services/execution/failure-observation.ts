@@ -15,7 +15,7 @@ const identifier = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 512 && value.trim() === value &&
   !/[\u0000-\u001f\u007f]/u.test(value);
 
-/** Keeps raw errors and task content inside native storage; only an exact failure code leaves. */
+/** Keeps raw errors and task content inside native storage. */
 export async function readExecutionFailureObservation(value: unknown, dependencies: Dependencies) {
   const params = record(value);
   if (!params || !identifier(params.sessionKey) || !identifier(params.sessionId) || !identifier(params.runId) ||
@@ -27,7 +27,9 @@ export async function readExecutionFailureObservation(value: unknown, dependenci
   };
   const matches = (entry: Entry | undefined) => entry?.sessionId === identity.sessionId &&
     (entry.lifecycleRevision ?? null) === identity.lifecycleRevision;
-  if (!matches(await dependencies.readEntry(identity.sessionKey))) return { ...identity, errorCode: null };
+  if (!matches(await dependencies.readEntry(identity.sessionKey))) {
+    return { ...identity, identityMatched: false, errorCode: null };
+  }
   const entries = await dependencies.readMessages(identity);
   let errorCode: string | null = null;
   for (let index = entries.length - 1; index >= 0; index--) {
@@ -38,8 +40,8 @@ export async function readExecutionFailureObservation(value: unknown, dependenci
         /^[A-Za-z0-9_.:-]{1,128}$/u.test(message.errorCode)) errorCode = message.errorCode;
     break;
   }
-  if (!matches(await dependencies.readEntry(identity.sessionKey))) errorCode = null;
-  return { ...identity, errorCode };
+  const identityMatched = matches(await dependencies.readEntry(identity.sessionKey));
+  return { ...identity, identityMatched, errorCode: identityMatched ? errorCode : null };
 }
 
 export function registerExecutionFailureObservation(api: OpenClawPluginApi): void {

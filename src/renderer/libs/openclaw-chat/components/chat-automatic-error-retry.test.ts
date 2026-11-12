@@ -31,7 +31,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test('holds the first error paint, projects live/history together, and reveals a final or unknown error', async () => {
+test('holds errors across pending and unknown retries and reveals only the final failure', async () => {
   let publish!: (value: AutomaticErrorRetryPresentation) => void;
   let resolve!: (value: unknown) => void;
   const remove = vi.fn();
@@ -68,14 +68,24 @@ test('holds the first error paint, projects live/history together, and reveals a
     expect(chat.shadowRoot!.textContent).not.toContain(error);
     expect(chat.shadowRoot!.querySelector('[data-automatic-error-retry]')).not.toBeNull();
 
-    publish(receipt(Disposition.Final, Phase.Failed, 2));
+    const finalError = 'last retry failure';
+    const successor = { ...pending.runs[0], runId: 'successor', clientTurnId: 'successor', attempt: 1 };
+    chat.messages = [...chat.messages, { role: 'assistant', content: finalError, errorMessage: finalError,
+      stopReason: 'error', runId: 'successor', __openclaw: { id: 'successor-entry', runId: 'successor' } }];
+    publish({ ...pending, revision: 2, phase: Phase.Unknown, runs: [...pending.runs, successor] });
     await chat.updateComplete;
-    expect(chat.shadowRoot!.textContent).toContain(error);
-    expect(chat.shadowRoot!.querySelector('[data-automatic-error-retry]')).toBeNull();
+    expect(chat.shadowRoot!.textContent).not.toContain(error);
+    expect(chat.shadowRoot!.textContent).not.toContain(finalError);
+    expect(chat.shadowRoot!.querySelector('[data-automatic-error-retry]')).not.toBeNull();
 
-    publish(receipt(Disposition.Pending, Phase.Unknown, 3));
+    publish({ ...pending, revision: 3, phase: Phase.Failed, runs: [
+      { ...pending.runs[0], disposition: Disposition.Superseded },
+      { ...successor, disposition: Disposition.Final },
+    ] });
     await chat.updateComplete;
-    expect(chat.shadowRoot!.textContent).toContain(error);
+    expect(chat.shadowRoot!.textContent).not.toContain(error);
+    expect(chat.shadowRoot!.textContent).toContain(finalError);
+    expect(chat.shadowRoot!.querySelector('[data-automatic-error-retry]')).toBeNull();
     chat.remove();
     expect(remove).toHaveBeenCalledOnce();
   } finally {

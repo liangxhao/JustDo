@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   AUTOMATIC_ERROR_RETRY_MAX_CONTINUATIONS,
@@ -10,6 +11,8 @@ import {
 } from '../../../../shared/cowork/automaticErrorRetry';
 import type { NativeRunTerminalReceipt } from '../../gateway/types';
 import { type AutomaticErrorRetryRule, createAutomaticErrorRetryRuleIndex } from './rules';
+
+export const AUTOMATIC_ERROR_RETRY_DELAY_MS = 3_000;
 
 export interface AutomaticErrorRetryBinding {
   sessionId: string;
@@ -43,9 +46,10 @@ export interface AutomaticErrorRetryLaunchRequest {
 export type AutomaticErrorRetryLaunchResult = { status: 'accepted' | 'rejected' | 'unknown' };
 
 /** Exact agent.wait reconciliation has no public native event sequence. */
-export type AutomaticErrorRetryWaitReceipt = Omit<NativeRunTerminalReceipt, 'agentSeq' | 'endedAt'> & {
+export type AutomaticErrorRetryWaitReceipt = Omit<NativeRunTerminalReceipt, 'agentSeq' | 'endedAt' | 'observedFailureCode'> & {
   source: 'agent.wait';
   endedAt?: number;
+  stopReason?: string;
 };
 export type AutomaticErrorRetrySettledReceipt = NativeRunTerminalReceipt | AutomaticErrorRetryWaitReceipt;
 
@@ -59,6 +63,7 @@ export interface AutomaticErrorRetryDependencies {
   onUnclaimedSettled(receipt: AutomaticErrorRetrySettledReceipt): void;
   createRunId?: () => string;
   rules?: readonly AutomaticErrorRetryRule[];
+  retryDelayMs?: number;
 }
 
 type Chain = {
@@ -166,16 +171,8 @@ export class AutomaticErrorRetryCoordinator {
         identity.sessionKey !== chain.binding.sessionKey || identity.nativeSessionId !== chain.binding.nativeSessionId ||
         identity.lifecycleRevision !== chain.binding.lifecycleRevision) return false;
     chain.receipts.set(receipt.runId, receipt);
-    chain.lastSettledRunId = receipt.runId;
     this.confirmAdmission(chain, receipt.runId);
-    for (const [predecessor, successor] of chain.launches) {
-      if (successor === receipt.runId) chain.launches.delete(predecessor);
-    }
-    chain.presentation.phase = receipt.status === 'completed' ? AutomaticErrorRetryPhase.Completed
-      : receipt.status === 'interrupted' ? AutomaticErrorRetryPhase.Cancelled : AutomaticErrorRetryPhase.Failed;
-    this.lastRun(chain).disposition = AutomaticErrorRetryDisposition.Final;
-    this.releaseSettledReservations(chain);
-    this.publish(chain);
+    this.finishRetainedRun(chain, receipt);
     return true;
   }
 
@@ -185,12 +182,16 @@ export class AutomaticErrorRetryCoordinator {
     if (chain.receipts.has(receipt.runId)) return chain.held.has(receipt.runId);
     chain.receipts.set(receipt.runId, receipt);
     const admitted = this.confirmAdmission(chain, receipt.runId);
+    let launchSettled = false;
     for (const [predecessor, successor] of chain.launches) {
-      if (successor === receipt.runId) chain.launches.delete(predecessor);
+      if (successor === receipt.runId) {
+        chain.launches.delete(predecessor);
+        launchSettled = true;
+      }
     }
     if (chain.closed) {
-      this.releaseSettledReservations(chain);
-      if (admitted) this.publish(chain);
+      if (launchSettled) this.finishRetainedRun(chain, receipt);
+      else if (admitted) this.publish(chain);
       return false;
     }
     if (chain.currentRunId !== receipt.runId) return false;
@@ -199,7 +200,8 @@ export class AutomaticErrorRetryCoordinator {
       this.finish(chain, receipt.status === 'completed' ? AutomaticErrorRetryPhase.Completed : AutomaticErrorRetryPhase.Cancelled);
       return false;
     }
-    if (!this.current(chain) || !this.dependencies.reserveSuccessor(chain.binding, receipt.runId)) {
+    if (chain.presentation.attempt >= chain.presentation.maxContinuations ||
+        !this.current(chain) || !this.dependencies.reserveSuccessor(chain.binding, receipt.runId)) {
       this.finish(chain, AutomaticErrorRetryPhase.Failed);
       return false;
     }
@@ -225,6 +227,14 @@ export class AutomaticErrorRetryCoordinator {
     return metadata;
   }
 
+  /** A pre-reply error may arrive before Main has seen any native activity for the admitted input. */
+  getCandidateBinding(sessionId: string, runId: string): AutomaticErrorRetryBinding | null {
+    const chain = this.chains.get(sessionId);
+    if (!chain || chain.currentRunId !== runId || chain.binding.runId !== runId ||
+        this.lastRun(chain).disposition !== AutomaticErrorRetryDisposition.Candidate || !this.current(chain)) return null;
+    return { ...chain.binding };
+  }
+
   getSettledReceipt(runId: string): AutomaticErrorRetrySettledReceipt | null {
     const receipt = this.runs.get(runId)?.receipts.get(runId);
     return receipt ? { ...receipt } : null;
@@ -233,6 +243,14 @@ export class AutomaticErrorRetryCoordinator {
   getPresentation(sessionId: string): AutomaticErrorRetryPresentation | null {
     const chain = this.chains.get(sessionId);
     return chain ? this.snapshot(chain) : null;
+  }
+
+  /** End the policy decision without manufacturing native execution settlement. */
+  expireUnsettledCandidate(sessionId: string, runId: string): void {
+    const chain = this.chains.get(sessionId);
+    if (!chain || chain.closed || chain.currentRunId !== runId || chain.receipts.has(runId) ||
+        this.lastRun(chain).disposition !== AutomaticErrorRetryDisposition.Candidate) return;
+    this.finish(chain, AutomaticErrorRetryPhase.Failed);
   }
 
   cancel(sessionId: string): void {
@@ -256,9 +274,14 @@ export class AutomaticErrorRetryCoordinator {
       const code = await this.dependencies.readFailureCode(chain.binding, receipt, chain.controller.signal);
       if (!this.activeOperation(chain, operation)) return;
       const rule = code ? this.rules.get(code) : undefined;
-      if (!rule || chain.presentation.attempt >= chain.presentation.maxContinuations) {
+      if (!rule) {
         this.decline(chain, receipt);
         return;
+      }
+      const waitMs = this.dependencies.retryDelayMs ?? AUTOMATIC_ERROR_RETRY_DELAY_MS;
+      if (waitMs > 0) {
+        await delay(waitMs, undefined, { signal: chain.controller.signal });
+        if (!this.activeOperation(chain, operation)) return;
       }
       const runId = (this.dependencies.createRunId ?? randomUUID)();
       if (!runId || this.runs.has(runId)) throw new Error('Invalid retry run identity');
@@ -292,11 +315,19 @@ export class AutomaticErrorRetryCoordinator {
         // A transport rejection without an explicit no-send receipt is unknown, never retryable here.
         result = { status: 'unknown' };
       }
-      if (result.status === 'rejected') {
+      if (result.status === 'rejected' && chain.launches.get(receipt.runId) === runId) {
         chain.launches.delete(receipt.runId);
+        if (chain.closed) {
+          this.finish(chain, chain.presentation.phase, true);
+          return;
+        }
         this.releaseSettledReservations(chain);
       }
-      if (!this.activeOperation(chain, operation)) return;
+      if (!this.activeOperation(chain, operation)) {
+        if (result.status === 'accepted' && chain.launches.get(receipt.runId) === runId &&
+            this.confirmAdmission(chain, runId)) this.publish(chain);
+        return;
+      }
       if (result.status === 'rejected') {
         previous.disposition = AutomaticErrorRetryDisposition.Final;
         this.decline(chain, receipt);
@@ -319,13 +350,22 @@ export class AutomaticErrorRetryCoordinator {
     chain.closed = true;
     chain.operation = undefined;
     chain.presentation.phase = phase;
-    for (const run of chain.presentation.runs) {
-      if (run.disposition !== AutomaticErrorRetryDisposition.Superseded)
-        run.disposition = AutomaticErrorRetryDisposition.Final;
-    }
     if (!retainUncertain) chain.launches.clear();
+    if (chain.launches.size === 0) {
+      for (const run of chain.presentation.runs) {
+        if (run.disposition !== AutomaticErrorRetryDisposition.Superseded)
+          run.disposition = AutomaticErrorRetryDisposition.Final;
+      }
+    }
     this.releaseSettledReservations(chain);
     this.publish(chain);
+  }
+
+  private finishRetainedRun(chain: Chain, receipt: AutomaticErrorRetrySettledReceipt): void {
+    chain.lastSettledRunId = receipt.runId;
+    const phase = receipt.status === 'completed' ? AutomaticErrorRetryPhase.Completed
+      : receipt.status === 'interrupted' ? AutomaticErrorRetryPhase.Cancelled : AutomaticErrorRetryPhase.Failed;
+    this.finish(chain, phase);
   }
 
   private releaseSettledReservations(chain: Chain): void {
@@ -357,6 +397,7 @@ export class AutomaticErrorRetryCoordinator {
   private activeOperation(chain: Chain, operation: symbol): boolean {
     if (chain.closed || chain.operation !== operation) return false;
     if (!this.current(chain)) {
+      chain.controller.abort();
       this.finish(chain, AutomaticErrorRetryPhase.Cancelled, true);
       return false;
     }

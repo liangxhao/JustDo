@@ -42,28 +42,30 @@ describe('automatic error retry presentation subscription', () => {
     f.controller.dispose();
   });
 
-  it('holds an exact candidate before classification and reveals on decline or bounded timeout', async () => {
+  it('holds an exact candidate until the Main decision even after the old display timeout', async () => {
     vi.useFakeTimers();
     const candidate = snapshot({ phase: Phase.Eligible });
     candidate.runs[0].disposition = Disposition.Candidate;
     const f = await fixture(candidate);
+    const hidden = f.controller.hiddenRuns(binding, [failure], null);
+    expect(hidden.has('run')).toBe(true);
+    expect(f.controller.progress(binding, hidden)?.phase).toBe(Phase.Eligible);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(f.controller.hiddenRuns(binding, [failure], null).has('run')).toBe(true);
-    expect(f.controller.progress(binding)?.phase).toBe(Phase.Eligible);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(f.controller.hiddenRuns(binding, [failure], null).size).toBe(0);
     f.changed(snapshot({ revision: 2, phase: Phase.Failed, runs: [{ ...candidate.runs[0], disposition: Disposition.Final }] }));
     expect(f.controller.hiddenRuns(binding, [failure], null).size).toBe(0);
     f.controller.dispose();
   });
 
-  it('hydrates historical associations, rejects stale updates and reveals unknown outcomes', async () => {
+  it('hydrates historical associations and keeps a pending unknown outcome hidden', async () => {
     const f = await fixture(snapshot({ phase: Phase.Completed }));
     f.changed(snapshot({ revision: 3, phase: Phase.Running }));
     f.changed(snapshot({ revision: 2, phase: Phase.Unknown }));
     expect(f.controller.hiddenRuns(binding, [failure], null).has('run')).toBe(true);
     f.changed(snapshot({ revision: 4, phase: Phase.Unknown }));
-    expect(f.controller.hiddenRuns(binding, [failure], null).size).toBe(0);
-    expect(f.controller.progress(binding)).toBeUndefined();
+    const hidden = f.controller.hiddenRuns(binding, [failure], null);
+    expect(hidden.has('run')).toBe(true);
+    expect(f.controller.progress(binding, hidden)?.phase).toBe(Phase.Unknown);
     f.controller.dispose();
     expect(f.remove).toHaveBeenCalledOnce();
   });

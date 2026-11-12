@@ -16,7 +16,7 @@ describe('narrow native execution failure observation', () => {
   it('projects only exact identity and native code, without error body or task content', async () => {
     const readEntry = vi.fn(async () => entry);
     const result = await readExecutionFailureObservation(identity, { readEntry, readMessages: async () => [failed] });
-    expect(result).toEqual({ ...identity, errorCode: 'openclaw_repeated_tool_error' });
+    expect(result).toEqual({ ...identity, identityMatched: true, errorCode: 'openclaw_repeated_tool_error' });
     expect(JSON.stringify(result)).not.toContain('secret');
     expect(readEntry).toHaveBeenCalledTimes(2);
   });
@@ -24,10 +24,12 @@ describe('narrow native execution failure observation', () => {
   it('refuses a replaced incarnation before or during the asynchronous read', async () => {
     const readEntry = vi.fn(async () => ({ ...entry, sessionId: 'replacement' }));
     const readMessages = vi.fn(async () => [failed]);
-    expect((await readExecutionFailureObservation(identity, { readEntry, readMessages })).errorCode).toBeNull();
+    expect(await readExecutionFailureObservation(identity, { readEntry, readMessages }))
+      .toEqual({ ...identity, identityMatched: false, errorCode: null });
     expect(readMessages).not.toHaveBeenCalled();
     readEntry.mockResolvedValueOnce(entry).mockResolvedValueOnce({ ...entry, lifecycleRevision: 'replacement' });
-    expect((await readExecutionFailureObservation(identity, { readEntry, readMessages })).errorCode).toBeNull();
+    expect(await readExecutionFailureObservation(identity, { readEntry, readMessages }))
+      .toEqual({ ...identity, identityMatched: false, errorCode: null });
   });
 
   it('does not select an older or foreign error over the final run outcome', async () => {
@@ -55,6 +57,6 @@ describe('narrow native execution failure observation', () => {
     const respond = vi.fn();
     await handler({ params: identity, respond });
     expect(readVisibleSessionTranscriptMessageEntries).toHaveBeenCalledExactlyOnceWith({ sessionKey: identity.sessionKey, sessionId: identity.sessionId });
-    expect(respond).toHaveBeenCalledExactlyOnceWith(true, { ...identity, errorCode: 'openclaw_repeated_tool_error' });
+    expect(respond).toHaveBeenCalledExactlyOnceWith(true, { ...identity, identityMatched: true, errorCode: 'openclaw_repeated_tool_error' });
   });
 });

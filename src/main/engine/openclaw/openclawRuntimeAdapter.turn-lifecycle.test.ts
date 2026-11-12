@@ -20,6 +20,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import { normalizeAgentEvent } from '../../../shared/openclaw/agentEvent';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
+import { AUTOMATIC_ERROR_RETRY_SETTLEMENT_GRACE_MS, type AutomaticErrorRetryLifecycle } from './automaticErrorRetry/lifecycle';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
 const LONG_COMPACTION_DURATION_MS = 2 * 60 * 60 * 1000;
@@ -183,6 +184,38 @@ test('records only a matching whole-run terminal after chat final retires its bi
   expect(adapter.getRunTerminalReceipt(turn.runId)?.agentSeq).toBe(4);
 });
 
+test.each([
+  ['blocked', 'error', 'context_overflow', 'context_overflow'],
+  ['blocked', 'error', undefined, undefined],
+  ['blocked', 'timeout', 'context_overflow', undefined],
+  ['recoverable', 'error', 'context_overflow', undefined],
+] as const)('retains context overflow only from a blocked, settled failure (%s, %s, %s)', (livenessState, stopReason, failoverReason, expected) => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    rememberTerminalTurn: (turn: SessionTurn) => void;
+    handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
+  };
+  const turn = createSessionTurn({ gatewaySessionId: 'native-1', lastAgentSeq: 1 });
+  internals.rememberTerminalTurn(turn);
+  const terminal = {
+    sessionKey: turn.sessionKey, sessionId: 'native-1', runId: turn.runId, stream: 'lifecycle',
+    data: { livenessState, stopReason, error: 'Context overflow: prompt too large for the model.',
+      ...(failoverReason ? { errorObservation: { failoverReason } } : {}) },
+  };
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    ...terminal, seq: 2, data: { ...terminal.data, phase: 'finishing' },
+  } });
+  expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
+
+  internals.handleGatewayEvent({ event: 'agent', payload: {
+    ...terminal, seq: 3, data: { ...terminal.data, phase: 'error', executionSettled: true },
+  } });
+  const receipt = adapter.getRunTerminalReceipt(turn.runId);
+  expect(receipt?.status).toBe('failed');
+  expect(receipt?.observedFailureCode).toBe(expected);
+});
+
 test('does not grant a trailing terminal receipt to a replacement Gateway client generation', () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
@@ -203,6 +236,91 @@ test('does not grant a trailing terminal receipt to a replacement Gateway client
   } });
   expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
 });
+
+test.each(['first-event', 'retired-turn', 'retired-pending', 'changed-revision', 'pending-wait', 'stopped', 'restarted', 'wait-failed'] as const)(
+  'verifies a native chat dispatch failure before offering retry (%s)', async scenario => {
+    if (scenario === 'retired-pending') vi.useFakeTimers();
+    const { store } = createEmptyStore();
+    const turn = createSessionTurn({ gatewaySessionId: 'native-1', lifecycleGeneration: 'epoch-1' });
+    const adapter = new OpenClawRuntimeAdapter({ ...store,
+      getLatestSessionRun: () => ({ clientTurnId: turn.runId }),
+    }, {});
+    const emitError = vi.fn();
+    adapter.on('error', emitError);
+    const internals = adapter as unknown as {
+      gatewayClient: GatewayClientLike;
+      sessionIdBySessionKey: Map<string, string>;
+      preparedNativeSessionIds: Map<string, string>;
+      rememberTerminalTurn(turn: SessionTurn): void;
+      automaticErrorRetryLifecycle: AutomaticErrorRetryLifecycle;
+      handleGatewayEvent(event: { event: string; payload: unknown }): void;
+    };
+    const error = 'SessionWorkStartChangedError: Session reader operation is no longer current';
+    const native = { key: turn.sessionKey, sessionId: 'native-1', lifecycleRevision: 'revision', lastRunId: turn.runId };
+    const request = vi.fn(async (method: string) => {
+      if (method !== 'agent.wait') return { session: { ...native } };
+      if (scenario === 'wait-failed') throw new Error('private request details\nshould never reach recovery log');
+      return { runId: turn.runId, status: 'error', endedAt: 1234, error,
+        providerStarted: false, pendingError: scenario === 'pending-wait' || scenario === 'retired-pending',
+        stopReason: scenario === 'restarted' ? 'restart' : undefined,
+      };
+    });
+    internals.gatewayClient = { request } as unknown as GatewayClientLike;
+    internals.sessionIdBySessionKey.set(turn.sessionKey, turn.sessionId);
+    internals.preparedNativeSessionIds.set(turn.sessionId, 'native-1');
+    await adapter.armAutomaticErrorRetry(turn.sessionId, turn.runId);
+    request.mockClear();
+    if (scenario === 'retired-turn' || scenario === 'retired-pending') internals.rememberTerminalTurn(turn);
+    if (scenario === 'changed-revision') native.lifecycleRevision = 'replacement';
+    const reconcile = vi.spyOn(internals.automaticErrorRetryLifecycle, 'reconcileVerifiedWaitTerminal')
+      .mockResolvedValue(undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      // Native pre-reply dispatch errors can be the first event and carry no SID.
+      internals.handleGatewayEvent({ event: 'chat', payload: {
+        sessionKey: turn.sessionKey, runId: turn.runId, seq: 1, state: 'error', errorMessage: error,
+      } });
+      if (scenario === 'stopped') adapter.cancelAutomaticErrorRetry(turn.sessionId);
+      expect(request).toHaveBeenCalledWith('agent.wait', { runId: turn.runId, timeoutMs: 0 }, expect.any(Object));
+      if (scenario === 'first-event' || scenario === 'retired-turn') {
+        await vi.waitFor(() => expect(reconcile).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ runId: turn.runId, sessionId: 'native-1', phase: 'error', executionSettled: true }),
+          expect.any(Object), 'failed', 1234,
+        ));
+      } else if (scenario === 'retired-pending') {
+        await vi.advanceTimersByTimeAsync(AUTOMATIC_ERROR_RETRY_SETTLEMENT_GRACE_MS - 1);
+        expect(emitError).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(1);
+        expect(reconcile).not.toHaveBeenCalled();
+        expect(adapter.getAutomaticErrorRetry(turn.sessionId)?.phase).toBe('failed');
+        expect(emitError).not.toHaveBeenCalled();
+      } else {
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(reconcile).not.toHaveBeenCalled();
+      }
+      const records = warn.mock.calls.map(([message]) => String(message))
+        .filter(message => message.includes('session_reader_recovery'));
+      expect(records).toHaveLength(1);
+      expect(records[0]).not.toMatch(/private request details|SessionWorkStartChangedError|[\r\n]/u);
+      const outcome = {
+        'first-event': { stage: 'settlement', outcome: 'verified', providerStarted: false },
+        'retired-turn': { stage: 'settlement', outcome: 'verified', providerStarted: false },
+        'retired-pending': { stage: 'agent.wait', outcome: 'terminal_pending' },
+        'changed-revision': { stage: 'sessions.describe', outcome: 'session_changed' },
+        'pending-wait': { stage: 'agent.wait', outcome: 'terminal_pending' },
+        stopped: { stage: 'agent.wait', outcome: 'candidate_changed' },
+        restarted: { stage: 'agent.wait', outcome: 'run_restarted' },
+        'wait-failed': { stage: 'agent.wait', outcome: 'request_failed' },
+      }[scenario];
+      expect(JSON.parse(records[0])).toMatchObject({ ...outcome, sessionId: turn.sessionId, runId: turn.runId });
+    } finally {
+      warn.mockRestore();
+      adapter.cancelAutomaticErrorRetry(turn.sessionId);
+      if (scenario === 'retired-pending') vi.useRealTimers();
+    }
+  },
+);
 
 test.each(['active', 'retired'])(
   'records a %s whole-run receipt from the real public wire shape without private generation',

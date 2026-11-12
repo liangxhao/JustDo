@@ -16,6 +16,8 @@ import {
   type AutomaticErrorRetrySettledReceipt,
 } from './coordinator';
 import { readAutomaticErrorRetryFailureCode } from './failureCode';
+import { SESSION_READER_RETRY_RULE_ID } from './rules';
+import { logSessionReaderRecovery } from './sessionReaderRecoveryLog';
 
 interface HostDependencies {
   store: CoworkStore;
@@ -34,6 +36,7 @@ interface HostDependencies {
   unclaimed: (receipt: AutomaticErrorRetrySettledReceipt) => void;
   isResponseError: (error: unknown) => boolean;
   onPresentation?: (presentation: AutomaticErrorRetryPresentation) => void;
+  retryDelayMs?: number;
 }
 
 const sourceIdentity = (store: CoworkStore, sessionId: string): string => {
@@ -52,6 +55,7 @@ export class AutomaticErrorRetryHost {
 
   constructor(private readonly dependencies: HostDependencies) {
     this.coordinator = new AutomaticErrorRetryCoordinator({
+      retryDelayMs: dependencies.retryDelayMs,
       readFailureCode: (binding, receipt, signal) => {
         const client = dependencies.getClient();
         return client ? readAutomaticErrorRetryFailureCode(client, binding, receipt, signal)
@@ -60,7 +64,17 @@ export class AutomaticErrorRetryHost {
       isCurrent: binding => this.isCurrent(binding),
       reserveSuccessor: (binding, predecessor) => dependencies.successorClaims.claim(predecessor, binding.sessionId),
       releaseSuccessor: (binding, predecessor) => dependencies.successorClaims.release(predecessor, binding.sessionId),
-      launchSuccessor: request => this.launch(request),
+      launchSuccessor: async request => {
+        const result = await this.launch(request);
+        if (request.ruleId === SESSION_READER_RETRY_RULE_ID) {
+          logSessionReaderRecovery({
+            sessionId: request.binding.sessionId,
+            runId: request.predecessorRunId,
+            successorRunId: request.runId,
+          }, { stage: 'continuation', outcome: result.status });
+        }
+        return result;
+      },
       onChanged: presentation => this.publish(presentation),
       onUnclaimedSettled: receipt => dependencies.unclaimed(receipt),
       createRunId: () => randomUUID(),
@@ -178,6 +192,7 @@ export class AutomaticErrorRetryHost {
         native.lifecycleRevision !== binding.lifecycleRevision || native.spawnedBy ||
         native.subagentRole || native.acp || native.inheritedToolAllow ||
         native.inheritedToolDeny || native.toolsAllow ||
+        (request.ruleId === SESSION_READER_RETRY_RULE_ID && native.lastRunId !== predecessorRunId) ||
         !Array.isArray(native.activeRunIds) || native.activeRunIds.length > 0) {
         return { status: 'rejected' as const };
       }

@@ -7,6 +7,7 @@ import {
   normalizeAgentEvent,
   normalizeChatEvent,
   type NormalizedAgentEvent,
+  type NormalizedChatEvent,
 } from '../../../shared/openclaw/agentEvent';
 import { isInternalManagedSubagentHandoffError } from '../../../shared/openclaw/internalRunError';
 import type { MessageDomainAdmission } from '../../../shared/openclaw/messageDomain';
@@ -79,7 +80,8 @@ export interface RuntimeGatewayEventsContext {
   readonly goalContinuationCoordinator: GoalContinuationCoordinator;
   readonly forwardGoalLifecycle?: (event: GoalLifecycleEvent) => void;
   readonly cancelAutomaticErrorRetry?: (sessionId: string) => void;
-  readonly deferRetryError?: (sessionId: string, runId: string, error: string) => boolean;
+  readonly deferRetryError?: (sessionId: string, runId: string, error: string, retiredEvent?: NormalizedChatEvent) => boolean;
+  readonly verifyRetryChatFailure?: (sessionId: string, event: NormalizedChatEvent) => Promise<void>;
   readonly classifyMainAgentEvent: (
     turn: SessionTurn,
     event: NormalizedAgentEvent,
@@ -222,10 +224,17 @@ export function handleChatEvent(
     sessionId = this.resolveSessionIdBySessionKey(sessionKey);
   }
   if (!sessionId) return;
+  if (event.state === 'error') {
+    // Keep normal error delivery when a read-only retry verification fails.
+    void this.verifyRetryChatFailure?.(sessionId, event).catch(() => {});
+  }
   // Gateway reconnects can replay a terminal run. Reject it before creating
   // local lifecycle state; otherwise a late delta/start can strand the
   // session in running even though its final event was already accepted.
-  if (runId && this.isRecentTerminalRun(runId)) return;
+  if (runId && this.isRecentTerminalRun(runId)) {
+    if (event.state === 'error') this.deferRetryError?.(sessionId, runId, event.errorMessage ?? 'chat error', event);
+    return;
+  }
   if (sessionKey && runId && !this.isAnnounceRunId(runId)) {
     this.ensureActiveTurn(sessionId, sessionKey, runId);
   }

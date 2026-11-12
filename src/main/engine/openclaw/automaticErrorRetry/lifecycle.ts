@@ -16,9 +16,13 @@ type SettledGoalEvent = GoalLifecycleEvent & { phase: 'end' | 'error'; execution
 type WaitIdentity = Pick<AutomaticErrorRetryBinding, 'sessionKey' | 'nativeSessionId' | 'lifecycleRevision'>;
 type Connection = { client: GatewayClientLike; generation: number };
 
+// Allow the two bounded native verification reads before ending an unconfirmed candidate.
+export const AUTOMATIC_ERROR_RETRY_SETTLEMENT_GRACE_MS = 10_000;
+
 interface LifecycleDependencies {
   coordinator: Pick<AutomaticErrorRetryCoordinator,
-    'getRunMetadata' | 'getPresentation' | 'holdsTerminal' | 'retireWaitSettled' | 'observeWaitSettled'>;
+    'getRunMetadata' | 'getPresentation' | 'getSettledReceipt' | 'expireUnsettledCandidate' |
+    'holdsTerminal' | 'retireWaitSettled' | 'observeWaitSettled'>;
   resolveSessionId: (sessionKey: string) => string | null;
   isConnectionCurrent: (connection: Connection) => boolean;
   handleGoalLifecycle: (event: GoalLifecycleEvent) => void;
@@ -31,7 +35,7 @@ export class AutomaticErrorRetryLifecycle {
   private readonly goalTerminals = new Map<string, GoalLifecycleEvent>();
   private readonly waitTerminals = new Map<string, { event: SettledGoalEvent; connection: Connection }>();
   private readonly errors = new Map<string, {
-    sessionId: string; error: string; timer: ReturnType<typeof setTimeout>;
+    sessionId: string; error?: string; timer?: ReturnType<typeof setTimeout>;
   }>();
 
   constructor(private readonly dependencies: LifecycleDependencies) {}
@@ -44,24 +48,21 @@ export class AutomaticErrorRetryLifecycle {
     this.dependencies.handleGoalLifecycle(event);
   }
 
-  deferError(sessionId: string, runId: string, error: string): boolean {
+  deferError(sessionId: string, runId: string, error?: string): boolean {
     const { coordinator } = this.dependencies;
-    const metadata = coordinator.getRunMetadata(runId);
     const presentation = coordinator.getPresentation(sessionId);
-    if (!metadata || !presentation || metadata.disposition === AutomaticErrorRetryDisposition.Final ||
-      presentation.phase === AutomaticErrorRetryPhase.Unknown ||
-      presentation.phase === AutomaticErrorRetryPhase.Cancelled) return false;
-    if (metadata.disposition === AutomaticErrorRetryDisposition.Superseded) return true;
-    if (!this.errors.has(runId)) {
-      const timer = setTimeout(() => {
-        const pending = this.errors.get(runId);
-        this.errors.delete(runId);
-        const current = coordinator.getRunMetadata(runId);
-        if (pending && current?.disposition === AutomaticErrorRetryDisposition.Candidate)
-          this.dependencies.emitError(pending.sessionId, pending.error);
-        else if (pending) this.errors.set(runId, pending);
-      }, 5_000);
+    const run = presentation?.runs.find(candidate => candidate.runId === runId);
+    if (!run || run.disposition === AutomaticErrorRetryDisposition.Final) return false;
+    if (run.disposition === AutomaticErrorRetryDisposition.Superseded) return true;
+    const pending = this.errors.get(runId);
+    if (!pending) {
+      const timer = run.disposition === AutomaticErrorRetryDisposition.Candidate
+        ? setTimeout(() => coordinator.expireUnsettledCandidate(sessionId, runId),
+            AUTOMATIC_ERROR_RETRY_SETTLEMENT_GRACE_MS)
+        : undefined;
       this.errors.set(runId, { sessionId, error, timer });
+    } else if (error && !pending.error) {
+      pending.error = error;
     }
     return true;
   }
@@ -75,14 +76,15 @@ export class AutomaticErrorRetryLifecycle {
       }
       const pending = this.errors.get(run.runId);
       if (!pending) continue;
-      const final = run.disposition === AutomaticErrorRetryDisposition.Final ||
-        presentation.phase === AutomaticErrorRetryPhase.Unknown;
-      if (run.disposition === AutomaticErrorRetryDisposition.Pending) clearTimeout(pending.timer);
+      const final = run.disposition === AutomaticErrorRetryDisposition.Final;
+      if (run.disposition !== AutomaticErrorRetryDisposition.Candidate) clearTimeout(pending.timer);
       if (!final && run.disposition !== AutomaticErrorRetryDisposition.Superseded) continue;
-      clearTimeout(pending.timer);
       this.errors.delete(run.runId);
-      if (final && presentation.phase !== AutomaticErrorRetryPhase.Completed)
-        this.dependencies.emitError(pending.sessionId, pending.error);
+      if (final && presentation.phase !== AutomaticErrorRetryPhase.Completed) {
+        const settled = this.dependencies.coordinator.getSettledReceipt(run.runId);
+        const error = (settled?.status === 'failed' && settled.error) || pending.error;
+        if (error) this.dependencies.emitError(pending.sessionId, error);
+      }
     }
   }
 
@@ -119,6 +121,7 @@ export class AutomaticErrorRetryLifecycle {
         sessionId: event.sessionId, lifecycleGeneration: event.lifecycleGeneration ?? null,
         clientGeneration: connection.generation, executionSettled: true, status,
         ...(typeof endedAt === 'number' && Number.isFinite(endedAt) ? { endedAt } : {}),
+        ...(event.stopReason ? { stopReason: event.stopReason } : {}),
         ...(event.error ? { error: event.error } : {}),
       };
       if (verifiedIdentity) coordinator.retireWaitSettled(receipt, verifiedIdentity);

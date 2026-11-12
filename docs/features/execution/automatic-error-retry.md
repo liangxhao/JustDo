@@ -8,13 +8,17 @@
 
 运行参数 `automaticErrorRetry.maxContinuations` 默认 1，范围 0–3；0 关闭。
 旧设置只补缺失的新字段，不重置其他设置。此应用侧设置不投影到 Gateway 配置。
+确认命中规则且还有额度后，每次续跑默认等待 3 秒。默认值由 Main 的
+`AUTOMATIC_ERROR_RETRY_DELAY_MS` 定义，等待结束后才分配后继运行身份并记入次数。
 
 规则只包含 `id`、`errorCodes`、`fixedPrompt`；重复 ID/错误码或空提示被拒绝。
-当前只登记 `openclaw_repeated_tool_error`。其他错误正常展示，不根据英文报错、模型正文
-或工具名猜测规则。固定提示要求检查已有结果，修正参数或换用可用方法继续原任务，
-提醒失败操作可能已有副作用，并在无法继续时说明完成情况和阻塞原因。
+已登记连续相同工具失败 `openclaw_repeated_tool_error`、上下文溢出 `context_overflow`，以及
+会话读取许可失效 `session_reader_not_current`。规则共用同一续跑额度。
+连续工具失败的反馈要求检查已有结果、修正参数或换用可用方法。
+上下文溢出的反馈要求从已保存的进度继续，先核对可能已有副作用的操作，并限制文件读取和
+命令回传的内容。读取许可失效的反馈从原会话中已保存的用户输入继续，先核对已有操作结果。
 
-新增错误只增加规则及行为测试，不改公共调度器或 Goal 业务。
+各规则复用同一个调度器和 Goal 交接。错误识别模块按来源核对原生失败证据。
 
 ## 模块归属
 
@@ -45,7 +49,8 @@ flowchart LR
   Send[桌面发送前登记精确运行] --> Terminal[原生整轮失败结算]
   Terminal --> Claim[认领唯一后继]
   Claim --> Code[核对结构化错误码]
-  Code -->|登记规则且有次数| Check[复核身份 权限 停止与新输入]
+  Code -->|登记规则且有次数| Delay[等待 3 秒]
+  Delay --> Check[复核身份 权限 停止与新输入]
   Code -->|未登记或耗尽| Final[交回实际最终结果]
   Check --> Next[同聊天内部提示的新运行]
   Next --> Terminal
@@ -57,15 +62,31 @@ Main 先登记桌面发送与 key、物理 SID、lifecycle revision、客户端�
 只接受精确原生整轮 `executionSettled:true` 终态；chat final、空闲和 Stop ACK 不替代结算。
 丢失实时事件时，精确 `agent.wait` 结果使用独立证明类型，不制造 agentSeq。
 
-结束事件不携带该错误码。Runtime Services 的只读 `runtimeServices.executionFailure`
+Runtime Services 的只读 `runtimeServices.executionFailure`
 使用公开 Session Store/Transcript API，核对读取前后的 SID/revision，只返回指定 run
-最后一条 assistant 的结构化错误码。不缓存原始报错、聊天正文或参数。读取有界，失败则
-保留普通失败行为。
+最后一条 assistant 的结构化错误码及 `identityMatched`。不缓存原始报错、聊天正文或参数。
+读取有界，失败则保留普通失败行为。
+
+读回确认 `identityMatched:true` 后，已有 transcript 错误码优先。上下文溢出使用同一运行的
+整轮 lifecycle 证据，要求 `phase:error`、`executionSettled:true`、`livenessState:blocked` 和
+`errorObservation.failoverReason:context_overflow`，排除取消和超时。OpenClaw 也可能在
+压缩本身因上下文不足而失败时保留该观测。一般压缩错误、尝试结束和只有 `agent.wait`
+失败状态的结果缺少这一证据。OpenClaw 先完成自己的压缩与恢复，Main 再决定是否派发续跑。
+压缩后若物理会话身份已变，现有身份校验会放弃本次应用侧续跑。
+
+读取许可失效有时只发布 `chat.error`。固定文案可唤起一次 `agent.wait` 查询，随后必须取得
+精确 run 的已结束失败结果、同一原生 SID/revision 和当前 `lastRunId`。当前锁定运行时的
+失败回执未公开细分错误码，Main 通过有界 `chat.history` 读取当前分支：要求已保存用户输入
+有精确的原生输入幂等键，并核对其后的 `run-failed-before-reply` 自定义回执确属同一 run，
+正文精确匹配这一种原生拒绝。发送前再次复核 `lastRunId`，避免旧错误接管较新的运行。
+错误气泡和助手正文均不能单独触发续跑。原始输入无需重新发送。
 
 发送前重新准备当前工作目录和权限，复核原始发送归属、key、SID、revision、客户端代次及
 活动运行。沿用现有 `agent` RPC，传入 `expectedExistingSessionId`、
 `expectedExistingSessionLifecycleRevision`、稳定幂等键、`internal_system` provenance
 和 `suppressPromptPersistence:true`。新运行保留正常可见生命周期；固定反馈不产生用户气泡。
+原生跳过续跑提示词的用户消息持久化。若实时消息更新或历史响应仍带有标记为
+`internal_system` 的用户消息，聊天按原生来源过滤。用户手动发送相同文字时仍正常显示。
 
 次数属于同一业务请求的整条链。run ID 变化、部分工具成功、A 规则切换 B 规则均不重发
 额度。未知 ACK 也消耗次数，保留原始认领和幂等身份，仅核验原运行，不盲目重发。
@@ -84,19 +105,26 @@ owner。Goal 对同一步的业务重试继承已消耗的通用次数；独立�
 
 ## 展示与存储
 
-Renderer 根据 Main 精确关联等待候选错误的规则决议。确认续跑后隐藏对应合成终止文案，
-显示“正在调整方法（1/n）”。有效的部分回复、工具活动、文件和媒体保留；原生历史、
-执行归约和诊断记录保持真实。最终失败、未登记错误及未知发送正常可见。
+Renderer 按 Main 的精确运行关联隐藏待核验和续跑中的报错。续跑过程中显示执行状态，
+发送结果未知时显示执行状态核对，待精确结果确认后收敛。
+额度耗尽、规则不匹配或确认无法发送时，只显示最后一次实际失败。续跑成功时，中间失败
+仍保留在原生历史和诊断，聊天保留有效的部分回复、工具活动、文件和媒体。
 
 已有 `cowork_session_runs` 的可空 `automatic_error_retry` 字段保存无正文关联，只服务呈现，
 不建立 transcript 缓存或执行恢复权威。刷新历史、切回和重连可恢复已确认处理的失败关联；
-重启不恢复 Candidate/Pending 临时隐藏。元数据或候选决议无法取得时，有界放开原生失败显示。
+应用重启后从持久元数据恢复已被取代的失败关联。对仍未取得整轮结算的候选错误，Main
+在 10 秒核验窗口结束后终止该次续跑资格，再显示原失败。已认领续跑的运行及发送结果
+未知的运行由其实际结果决议。Renderer 的计时器仅限制元数据加载等待。
 
 ## 范围与验证边界
 
 当前只接入能证明普通桌面发送归属及准备身份的执行，包括其已准入的 Goal 后继。
-不自动接管 ACP 完成回传、子代理、Agent Team、Swarm、cron、外部客户端或无法保留原始
-委派权限上限的执行；这些来源使用各自 owner 的已有错误处理。
+ACP 完成回传、子代理、Agent Team、Swarm、cron、外部客户端及原生子任务回报触发的
+主会话运行由各自原生 owner 处理。原生主会话回报续跑的公开事件缺少精确前驱关系，且运行
+结束后原生投递仍可能排队重试。仅凭同一会话或空闲状态接管会与原生调度竞争。
+
+续跑已收到接纳回执后，界面依赖原生整轮终态收敛。如果失败仅通过原生 `agent` 的后续 RPC
+响应返回，当前连接可能持续显示续跑状态，直至精确执行结果经事件或读回确认。
 
 测试覆盖规则与共用预算、旧设置、实际 Main 准备与错误延后、内部发送、拒绝/未知 ACK、
 停止与身份竞态、先终态后 ACK、`agent.wait`、Goal 单后继和计数，以及实际聊天组件的

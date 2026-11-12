@@ -315,6 +315,17 @@ stack。提高日志级别、记录宿主接收堆栈或使用日志调用点不
 公开 `run-failed-before-reply` 回执在聊天中使用现有红色错误头像及错误行，
 不再进入未知 `custom` 角色的问号头像兜底。回执不替代整轮 lifecycle 的终态依据。
 
+### 会话读取失效
+
+遇到 `Session reader operation is no longer current` 时，在 Main 日志搜索
+`session_reader_recovery`，或从报错会话的「诊断」导出对应运行。日志按 `runId` 关联，记录
+整轮结果核验、会话身份检查、已保存输入与失败回执是否匹配，以及续跑是否获接纳。
+Gateway 提供 `providerStarted` 时，`false` 表示这轮尚未开始调用模型。`run_restarted`、
+`run_superseded` 来自同一运行的明确结束原因。应用只记录固定阶段、结果和相关标识。
+
+OpenClaw 的公开结果把多种内部读取失效合并为同一个错误。需要进一步定位时，用同一运行
+对照 Gateway 日志中的重启、交接或并发活动。仅时间接近的日志用于提供线索。
+
 ### 既有活动结果与失败回执契约
 
 活动结果与失败回执分别补足以下证据来源：
