@@ -45,6 +45,8 @@ def main(argv: list[str] | None = None) -> int:
             for index, message in enumerate(args.message):
                 try:
                     options = {'cwd': args.cwd} if args.cwd is not None else {}
+                    if models:
+                        options['model'] = models[index]
                     thread_id = client.call('thread/start', options)['thread']['id']
                     print(f'Task {index + 1} thread ID: {thread_id}', file=sys.stderr, flush=True)
                     params = {'threadId': thread_id, 'input': [{'type': 'text', 'text': message}]}

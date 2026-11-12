@@ -81,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     content = _input(args, parser)
     with open_client(args.config, client_name='python-media-example') as client:
         options = {'cwd': args.cwd} if args.cwd is not None else {}
+        if args.model is not None:
+            options['model'] = args.model
         method = 'thread/start'
         if args.thread_id is not None:
             method = 'thread/resume'

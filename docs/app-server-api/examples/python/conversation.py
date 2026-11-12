@@ -34,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
 
     with open_client(args.config, client_name='python-conversation-example') as client:
         options = {'cwd': args.cwd} if args.cwd is not None else {}
+        if models:
+            options['model'] = models[0]
         method = 'thread/start'
         if args.thread_id is not None:
             method = 'thread/resume'

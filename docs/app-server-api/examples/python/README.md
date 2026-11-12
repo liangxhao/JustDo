@@ -93,7 +93,16 @@ python conversation.py --config app-server-connection.json --message "不要使�
 ```
 
 添加 `--thread-id "<thread-id>"` 可继续旧会话，不会重发历史消息。
-传一个 `--model` 时，所有轮次使用同一模型；也可以为每条消息分别传一个 `--model`，按顺序对应。
+传一个 `--model` 时，所有轮次使用同一模型。要在同一会话中切换模型，为每条消息分别传一个
+`--model`，按顺序对应。将下面两个示例值替换为 `--list-models` 返回的两个完整 `data[].id`。
+
+```powershell
+$modelA = "provider-a/model-a"
+$modelB = "provider-b/model-b"
+python conversation.py --config app-server-connection.json --message "设计一个待办事项数据结构。" --model $modelA --message "在刚才的结构上补充截止日期。" --model $modelB
+```
+
+创建或恢复会话时使用第一个指定的模型。旧会话的模型下架后，可用 `--thread-id` 和 `--model` 指定当前可用的模型继续。
 `--timeout` 按每一轮计算，默认 300 秒。某轮失败、取消或结果未知时，脚本停止发送后续消息。
 
 ## 并发对话

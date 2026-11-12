@@ -10,10 +10,11 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import conversation
+from app_server_client import RpcError
 
 
 class ConversationTests(unittest.TestCase):
-    def test_resume_sends_only_explicit_new_messages_with_per_turn_models(self):
+    def test_resume_replaces_unavailable_model_and_sends_only_new_messages_with_per_turn_models(self):
         calls = []
         waits = []
 
@@ -21,6 +22,8 @@ class ConversationTests(unittest.TestCase):
             def call(self, method, params):
                 calls.append((method, params))
                 if method == 'thread/resume':
+                    if params.get('model') != 'provider/first':
+                        raise RpcError(method, {'code': -32000, 'message': 'The selected model is unavailable.'})
                     return {'thread': {'id': 'resumed-thread'}}
                 return {'turn': {'id': f'turn-{len(waits) + 1}'}}
 
@@ -42,7 +45,7 @@ class ConversationTests(unittest.TestCase):
         self.assertEqual(code, 0)
         connect.assert_called_once_with('copied-config.json', client_name='python-conversation-example')
         self.assertEqual(calls, [
-            ('thread/resume', {'threadId': 'resumed-thread', 'excludeTurns': True}),
+            ('thread/resume', {'threadId': 'resumed-thread', 'excludeTurns': True, 'model': 'provider/first'}),
             ('turn/start', {'threadId': 'resumed-thread', 'input': [{'type': 'text', 'text': 'First new input'}], 'model': 'provider/first'}),
             ('turn/start', {'threadId': 'resumed-thread', 'input': [{'type': 'text', 'text': 'Second new input'}], 'model': 'provider/second'}),
         ])
@@ -76,6 +79,7 @@ class ConversationTests(unittest.TestCase):
 
         self.assertEqual(code, 1)
         self.assertEqual([method for method, _ in calls], ['thread/start', 'turn/start'])
+        self.assertEqual(calls[0][1]['model'], 'provider/shared')
         self.assertEqual(calls[1][1]['model'], 'provider/shared')
         output.assert_called_once_with(unknown)
 

@@ -52,6 +52,7 @@ class MediaTests(unittest.TestCase):
             file = Path(directory) / 'pixel.png'
             file.write_bytes(b'\x89PNG\r\n\x1a\nfixture')
             calls = self.run_example(['--image-file', str(file), '--message', 'Inspect', '--model', 'provider/image'])
+        self.assertEqual(calls[0], ('thread/start', {'model': 'provider/image'}))
         params = calls[1][1]
         self.assertEqual(params['model'], 'provider/image')
         self.assertEqual(params['input'][0], {'type': 'text', 'text': 'Inspect'})

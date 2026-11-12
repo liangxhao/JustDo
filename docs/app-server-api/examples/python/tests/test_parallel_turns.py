@@ -59,6 +59,7 @@ class ParallelTurnsTests(unittest.TestCase):
         self.assertEqual(client.calls_when_waiting, 6)
         self.assertEqual(client.waited[0], [('thread-1', 'turn-1'), ('thread-2', 'turn-2'), ('thread-3', 'turn-3')])
         self.assertEqual(client.waited[1]['timeout'], 75)
+        self.assertEqual([params['model'] for method, params in calls if method == 'thread/start'], ['model/one', 'model/two', 'model/three'])
         self.assertEqual([params['model'] for method, params in calls if method == 'turn/start'], ['model/one', 'model/two', 'model/three'])
         self.assertEqual([call.args[0] for call in output.call_args_list], [results[pair] for pair in client.waited[0]])
 
