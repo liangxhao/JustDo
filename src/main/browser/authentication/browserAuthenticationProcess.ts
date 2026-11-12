@@ -117,11 +117,22 @@ async function runAuthenticationChild(
   let failed = false;
   let cookies: BrowserAuthenticationCookie[] | undefined;
   let forceStop: ReturnType<typeof setTimeout> | undefined;
+  const completion = Promise.withResolvers<number | null>();
+  child.once('close', completion.resolve);
+  child.once('exit', code => {
+    // A successful helper can exit before its last IPC message is delivered.
+    // A failed helper needs only confirmed process exit, even if IPC never closes.
+    if (failed || code !== 0) completion.resolve(code);
+  });
   const retire = (): void => {
     if (failed) return;
     failed = true;
-    stopChild(child);
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+      completion.resolve(null);
+      return;
+    }
     forceStop = setTimeout(() => child.kill(), 2_000);
+    stopChild(child);
   };
   const deadline = setTimeout(retire, BROWSER_AUTHENTICATION_TIMEOUT_MS);
   signal.addEventListener('abort', retire, { once: true });
@@ -151,7 +162,7 @@ async function runAuthenticationChild(
   });
   try {
     if (signal.aborted) retire();
-    const code = await new Promise<number | null>(resolve => child.once('close', resolve));
+    const code = await completion.promise;
     signal.throwIfAborted();
     if (failed || code !== 0 || !cookies)
       throw new Error('Browser authentication was not completed.');
@@ -160,6 +171,7 @@ async function runAuthenticationChild(
     clearTimeout(deadline);
     clearTimeout(forceStop);
     signal.removeEventListener('abort', retire);
+    stopChild(child);
   }
 }
 

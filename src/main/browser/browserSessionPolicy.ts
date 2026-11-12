@@ -102,6 +102,9 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
   browserSession.webRequest.onBeforeRedirect?.(details =>
     browserAuthentication?.observeRedirect(browserSession, details),
   );
+  browserSession.webRequest.onResponseStarted?.(details =>
+    browserAuthentication?.observeDocumentResponse(browserSession, details),
+  );
   browserSession.webRequest.onCompleted?.(details =>
     browserAuthentication?.finish(browserSession, details.id),
   );

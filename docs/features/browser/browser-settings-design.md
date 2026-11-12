@@ -361,11 +361,15 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 
 ### 企业自动登录
 
-部署方在 [browserAuthentication.ts](../../../src/config/browserAuthentication.ts) 中填写企业 SPES 登录的完整 HTTPS origin 和辅助程序文件名。两项默认为空，填齐后重新打包以启用。Windows 安装版的侧栏有头和无头页面共用这项配置，无需逐站录入。Main 在同一次 HTTPS 主 frame GET 导航中观察到实际 HTTP 重定向并到达该 origin 后，才启动独立认证进程。辅助进程从该导航最初的业务地址发起认证，片段不参与网络请求。直接打开认证页、脚本直接跳转到登录域、POST、子 frame、消息内嵌网页和外部浏览器均沿用自身导航流程。
+部署方在 [browserAuthentication.ts](../../../src/config/browserAuthentication.ts) 中填写企业 SPES 登录的完整 HTTPS origin 和辅助程序文件名。两项默认为空，填齐后重新打包以启用。Windows 安装版的侧栏有头和无头页面共用这项配置，无需逐站录入。Main 支持同一次 HTTPS 主框架 GET 内的服务端重定向，以及已通过 HTTPS GET 成功加载的业务文档从自身主框架发起、直接到达配置登录源的 GET。辅助进程重新打开已验证的业务地址，生成独立的认证请求。直接打开认证页、POST、子框架发起的跳转、消息内嵌网页和外部浏览器均沿用自身导航流程。
 
 认证进程使用同版本 Windows 二进制、独立临时目录和内存会话。部署配置的 `executableName` 可填写 `electron.exe` 或 `chrome.exe` 等辅助程序文件名。此临时会话只允许配置来源向本机 SPES 接口发出认证 POST 和相应的预检。认证成功、回到业务入口同源页面且辅助进程退出后，Main 复核原导航和目标 Session，将此次认证可用于业务页的 Cookie 交给原会话并继续原导航。接续保留 Cookie 作用域及安全属性，结果只经父子进程私有通道传递。辅助认证超时或需要人工操作时，原导航继续打开登录页。Cookie 写入期间中断时，取消暂停的请求并回收本次写入。用户转到其他网页、关闭页面或退出应用时，已失效的导航不能接收认证结果。数据清理与在途交接共用现有会话写入保护。
 
 使用默认配置的普通消息网页可以在刷新时复用侧栏的持久登录状态。托管网页保留独立会话。内网验证已覆盖独立辅助进程退出后，原名 EXE 的空白内嵌浏览器首次访问和刷新均保持登录。可运行 `node scripts/test/browser/browser-authentication-redirect-smoke.cjs` 验证真实 Electron 重定向保留请求身份及 Strict Cookie。正式安装包需分别验收有头、无头和普通消息网页。
+
+页面发起的跳转在交接成功后由浏览器重新访问业务地址，使其可以发送 Strict Cookie。重放仍跳转时继续普通登录流程，当前文档不会重复启动辅助进程。
+
+Windows 可运行 `node scripts/test/browser/browser-enterprise-authentication-smoke.cjs`，在隔离的 Electron 测试窗口中启动本地业务站、登录站和模拟 SPES 服务。脚本覆盖有头和无头侧栏的 HTTPS 302、业务页 JavaScript 或 Meta Refresh 跳转、Strict Cookie 交接，以及初始 HTTP 升级和重放后再次跳转的回退行为。加 `--with-timeout` 可验证辅助进程超时后的回退及同一会话重试，该用例在临时测试包中使用 6 秒时限。加 `--show` 可在验证结束后保留成功业务页，关闭窗口即退出。部署配置和正式浏览器数据不参与此探针。
 
 ### JavaScript 对话框、弹窗与人工登录
 

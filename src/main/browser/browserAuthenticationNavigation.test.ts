@@ -35,6 +35,29 @@ const createGuest = (session = {} as Electron.Session): Electron.WebContents =>
   }) as unknown as Electron.WebContents;
 const current = () => true;
 
+function createClientRedirect(coordinator: BrowserAuthenticationNavigation) {
+  const frame = { url: entry } as Electron.WebFrameMain;
+  const guest = Object.assign(createGuest(), { mainFrame: frame, loadURL: vi.fn(async () => {}) });
+  const event = (url: string, initiator: Electron.WebFrameMain | null = frame) => ({
+    url,
+    frame,
+    initiator,
+    isMainFrame: true,
+    isSameDocument: false,
+  });
+  coordinator.beforeRequest(guest.session, guest, request(1, entry), current);
+  coordinator.observeDocumentResponse(guest.session, { ...request(1, entry), statusCode: 200 });
+  coordinator.finish(guest.session, 1);
+  guest.emit('did-navigate', {}, 'about:blank', -1);
+  guest.emit('did-navigate', {}, entry, 200);
+  const next = { ...request(2, login), frame };
+  const start = (initiator: Electron.WebFrameMain | null = frame) => {
+    guest.emit('did-start-navigation', event(login, initiator));
+    if (initiator) guest.emit('will-frame-navigate', event(login, initiator));
+  };
+  return { guest, next, event, start };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   helper.authenticateBrowserEntry.mockResolvedValue([{ name: 'fixture' }]);
@@ -135,6 +158,47 @@ it('requires the exact provider origin and next native request for the owning gu
     coordinator.beforeRequest(guest.session, guest, request(2, login), current),
   ).toBeUndefined();
   expect(helper.isBrowserAuthenticationAvailable).not.toHaveBeenCalled();
+});
+
+it.each(['direct', 'subframe', 'post'])('keeps %s client login on the ordinary path', mode => {
+  const coordinator = new BrowserAuthenticationNavigation(() => undefined);
+  const { guest, next, start } = createClientRedirect(coordinator);
+  start(
+    mode === 'direct' ? null : mode === 'subframe' ? ({} as Electron.WebFrameMain) : next.frame,
+  );
+  expect(
+    coordinator.beforeRequest(
+      guest.session,
+      guest,
+      {
+        ...next,
+        method: mode === 'post' ? 'POST' : 'GET',
+      },
+      current,
+    ),
+  ).toBeUndefined();
+  coordinator.finish(guest.session, next.id);
+  expect(helper.authenticateBrowserEntry).not.toHaveBeenCalled();
+});
+
+it('does not replay a client login after a newer navigation without a network request', async () => {
+  let resolveAuthentication!: (cookies: unknown[]) => void;
+  helper.authenticateBrowserEntry.mockReturnValueOnce(
+    new Promise(resolve => {
+      resolveAuthentication = resolve;
+    }),
+  );
+  const coordinator = new BrowserAuthenticationNavigation(() => undefined);
+  const { guest, next, start, event } = createClientRedirect(coordinator);
+  start();
+  const pending = coordinator.beforeRequest(guest.session, guest, next, current)?.();
+  expect(helper.authenticateBrowserEntry).toHaveBeenCalledOnce();
+  guest.emit('did-start-navigation', event('about:blank', null));
+  resolveAuthentication([{ name: 'fixture' }]);
+  expect(await pending).toEqual({ cancel: true });
+  await coordinator.stop();
+  expect(helper.commitBrowserAuthenticationCookies).not.toHaveBeenCalled();
+  expect(guest.loadURL).not.toHaveBeenCalled();
 });
 
 it('drops a delayed result after a different navigation supersedes the original', async () => {

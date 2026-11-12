@@ -18,11 +18,19 @@ import { acquireBackgroundBrowserStorage } from './data/backgroundBrowserStorage
 
 type NavigationRequest = Pick<
   Electron.OnBeforeRequestListenerDetails,
-  'id' | 'url' | 'method' | 'resourceType'
+  'id' | 'url' | 'method' | 'resourceType' | 'frame'
 >;
 type RedirectRequest = NavigationRequest &
   Pick<Electron.OnBeforeRedirectListenerDetails, 'redirectURL' | 'statusCode'>;
+type DocumentResponse = NavigationRequest &
+  Pick<Electron.OnResponseStartedListenerDetails, 'statusCode'>;
 type AuthSettings = Pick<SystemProxySettings, 'browserProxy'>;
+type ClientNavigation = {
+  response?: string;
+  document?: string;
+  intent?: { target: string; entry: string; frame: Electron.WebFrameMain };
+  replay?: string;
+};
 type Attempt = {
   guest: Electron.WebContents;
   session: Electron.Session;
@@ -31,6 +39,7 @@ type Attempt = {
   controller: AbortController;
   redirectedTo: string | null;
   started: boolean;
+  resuming?: boolean;
   release: () => void;
 };
 
@@ -47,10 +56,65 @@ function providerRequestUrl(value: string): string | null {
 export class BrowserAuthenticationNavigation {
   private readonly active = new Map<Electron.Session, Map<number, Attempt>>();
   private readonly byGuest = new WeakMap<Electron.WebContents, Attempt>();
+  private readonly clientNavigations = new WeakMap<Electron.WebContents, ClientNavigation>();
   private readonly operations = new Map<Electron.Session, Promise<Electron.CallbackResponse>>();
   private stopping = false;
 
   constructor(private readonly getSettings: () => AuthSettings | undefined) {}
+
+  private watchClientNavigation(guest: Electron.WebContents): ClientNavigation {
+    const existing = this.clientNavigations.get(guest);
+    if (existing) return existing;
+    const state: ClientNavigation = {};
+    this.clientNavigations.set(guest, state);
+    guest.on('did-start-navigation', event => {
+      if (!event.isMainFrame || event.isSameDocument) return;
+      state.intent = undefined;
+      state.response = undefined;
+      if (event.initiator || state.replay !== normalizeBrowserAuthenticationEntry(event.url))
+        state.replay = undefined;
+      const previous = this.byGuest.get(guest);
+      if (!state.replay && previous?.started) previous.release();
+    });
+    guest.on('did-navigate', (_event, url, status) => {
+      const committed = normalizeBrowserAuthenticationEntry(url);
+      state.document =
+        status >= 200 && status < 300 && state.response === committed ? state.response : undefined;
+      // A newly attached webview may commit its initial blank document after
+      // headers arrive for its first real page. Only consume matching evidence.
+      if (state.response === committed) state.response = undefined;
+      state.intent = undefined;
+    });
+    guest.on('will-frame-navigate', event => {
+      if (!event.isMainFrame || !state.document) return;
+      const frame = guest.mainFrame;
+      const target = providerRequestUrl(event.url);
+      if (
+        target &&
+        event.frame === frame &&
+        event.initiator === frame &&
+        normalizeBrowserAuthenticationEntry(frame.url) === state.document
+      ) {
+        state.intent = { target, entry: state.document, frame };
+      }
+    });
+    return state;
+  }
+
+  observeDocumentResponse(session: Electron.Session, request: DocumentResponse): void {
+    if (request.resourceType !== 'mainFrame') return;
+    const attempt = this.active.get(session)?.get(request.id);
+    if (
+      !attempt?.entry ||
+      attempt.started ||
+      request.method !== 'GET' ||
+      request.statusCode < 200 ||
+      request.statusCode >= 300
+    )
+      return;
+    const state = this.clientNavigations.get(attempt.guest);
+    if (state) state.response = normalizeBrowserAuthenticationEntry(request.url) ?? undefined;
+  }
 
   observeRedirect(session: Electron.Session, request: RedirectRequest): void {
     const attempt = this.active.get(session)?.get(request.id);
@@ -84,6 +148,7 @@ export class BrowserAuthenticationNavigation {
       if (attempt?.guest === guest) attempt.release();
       return;
     }
+    const client = this.watchClientNavigation(guest);
     if (attempt) {
       if (attempt.guest !== guest || attempt.started || !attempt.entry) return;
       const redirectedTo = attempt.redirectedTo;
@@ -102,8 +167,21 @@ export class BrowserAuthenticationNavigation {
 
     // Keep the first native request even when it is ineligible. A POST
     // followed by a 303 to a GET must not become a replayable navigation.
-    const entry =
+    client.response = undefined;
+    const intent = client.intent;
+    client.intent = undefined;
+    const clientEntry =
+      request.method === 'GET' &&
+      intent &&
+      request.frame === intent.frame &&
+      providerRequestUrl(request.url) === intent.target
+        ? intent.entry
+        : null;
+    const requestedEntry =
       request.method === 'GET' ? normalizeBrowserAuthenticationEntry(request.url) : null;
+    const isReplay = Boolean(client.replay && client.replay === requestedEntry);
+    client.replay = undefined;
+    const entry = isReplay ? null : (clientEntry ?? requestedEntry);
     const requests = this.active.get(session) ?? new Map<number, Attempt>();
     this.active.set(session, requests);
     const controller = new AbortController();
@@ -113,7 +191,7 @@ export class BrowserAuthenticationNavigation {
       if (!requests.size) this.active.delete(session);
       if (this.byGuest.get(guest) === candidate) this.byGuest.delete(guest);
       guest.off('destroyed', release);
-      controller.abort();
+      if (!candidate.resuming) controller.abort();
     };
     const candidate: Attempt = {
       guest,
@@ -122,12 +200,16 @@ export class BrowserAuthenticationNavigation {
       entry,
       controller,
       redirectedTo: null,
-      started: false,
+      started: Boolean(clientEntry),
       release,
     };
     requests.set(request.id, candidate);
     this.byGuest.set(guest, candidate);
     guest.once('destroyed', release);
+    if (clientEntry && isBrowserAuthenticationAvailable()) {
+      const settings = this.getSettings();
+      return () => this.complete(candidate, clientEntry, settings, ownsGuest, client);
+    }
   }
 
   private async complete(
@@ -135,6 +217,7 @@ export class BrowserAuthenticationNavigation {
     entry: string,
     settings: AuthSettings | undefined,
     ownsGuest: () => boolean,
+    client?: ClientNavigation,
   ): Promise<Electron.CallbackResponse> {
     const { session, controller } = attempt;
     const signal = AbortSignal.any([
@@ -169,7 +252,36 @@ export class BrowserAuthenticationNavigation {
     let committing = false;
     const operation = this.handoff(session, entry, settings, signal, mayCommit, fallback, () => {
       committing = true;
-    }).finally(() => this.operations.delete(session));
+    })
+      .then(async response => {
+        if (!client || response.redirectURL !== entry) return response;
+        if (!mayCommit()) return fallback();
+        // A renderer-initiated request retains its cross-site cookie context on
+        // redirect. Supersede it with a browser navigation before releasing it.
+        client.replay = entry;
+        attempt.resuming = true;
+        try {
+          const replay = attempt.guest.loadURL(entry);
+          const outcome = await Promise.race([
+            replay.then(
+              () => 'started',
+              () => 'failed',
+            ),
+            new Promise<'started'>(resolve => setImmediate(() => resolve('started'))),
+          ]);
+          if (outcome === 'failed' && client.replay === entry && current()) {
+            client.replay = undefined;
+            attempt.resuming = false;
+            return fallback();
+          }
+        } catch {
+          client.replay = undefined;
+          attempt.resuming = false;
+          return fallback();
+        }
+        return { cancel: true };
+      })
+      .finally(() => this.operations.delete(session));
     this.operations.set(session, operation);
     let onAbort: (() => void) | undefined;
     const deadline = new Promise<Electron.CallbackResponse>(resolve => {
