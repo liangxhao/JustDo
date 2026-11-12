@@ -50,7 +50,7 @@ import {
 const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
-const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、]/;
+const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、（）]/u;
 const CJK_SCRIPT_START_RE =
   /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const BOX_DRAWING_TOP_RE = /^[ \t]*[┌╔].*[┐╗][ \t]*$/u;
@@ -811,9 +811,43 @@ md.inline.ruler.before('emphasis', 'quoted_strong', (state, silent) => {
 
 md.enable('strikethrough');
 md.linkify.set({ fuzzyLink: false });
-const trimCjkUrlTrailingText = (
-  match: NonNullable<ReturnType<typeof md.linkify.matchAtStart>>,
-): void => {
+const defaultLinkifyMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
+type AutolinkMatch = NonNullable<ReturnType<typeof defaultLinkifyMatchAtStart>>;
+
+function extendNestedHttpAutolink(match: AutolinkMatch, source: string): void {
+  if (
+    (match.schema !== 'http:' && match.schema !== 'https:') ||
+    source[match.lastIndex] !== ')' ||
+    !match.raw.includes('(')
+  ) {
+    return;
+  }
+
+  // Linkify-it accepts a parenthesized group only through its first closing
+  // parenthesis. Mask inner pairs at the same offsets and let it find the end.
+  const [candidate] = source.slice(match.index).split(/[\s\p{Cc}<>｜]/u, 1);
+  let depth = 0;
+  const flattened = candidate.replace(/[()]/gu, parenthesis => {
+    if (parenthesis === '(') {
+      depth += 1;
+      return depth > 1 ? '_' : parenthesis;
+    }
+    const nested = depth > 1;
+    depth = Math.max(0, depth - 1);
+    return nested ? '_' : parenthesis;
+  });
+  if (flattened === candidate) return;
+
+  const extended = defaultLinkifyMatchAtStart(flattened);
+  if (!extended || extended.lastIndex <= match.raw.length) return;
+  const raw = candidate.slice(0, extended.lastIndex);
+  match.lastIndex = match.index + raw.length;
+  match.raw = raw;
+  match.text = raw;
+  match.url = raw;
+}
+
+const trimCjkUrlTrailingText = (match: AutolinkMatch): void => {
   const punctuationIndex = match.raw.search(CJK_URL_TRAILING_PUNCTUATION_RE);
   if (punctuationIndex === -1) return;
 
@@ -827,14 +861,21 @@ md.linkify.match = text => {
   const matches = defaultLinkifyMatch(text);
   if (!matches) return null;
 
-  for (const match of matches) trimCjkUrlTrailingText(match);
-
-  return matches;
+  let previousEnd = 0;
+  return matches.filter(match => {
+    if (match.index < previousEnd) return false;
+    extendNestedHttpAutolink(match, text);
+    trimCjkUrlTrailingText(match);
+    previousEnd = match.lastIndex;
+    return true;
+  });
 };
-const defaultLinkifyMatchAtStart = md.linkify.matchAtStart.bind(md.linkify);
 md.linkify.matchAtStart = text => {
   const match = defaultLinkifyMatchAtStart(text);
-  if (match) trimCjkUrlTrailingText(match);
+  if (match) {
+    extendNestedHttpAutolink(match, text);
+    trimCjkUrlTrailingText(match);
+  }
   return match;
 };
 md.validateLink = () => true;

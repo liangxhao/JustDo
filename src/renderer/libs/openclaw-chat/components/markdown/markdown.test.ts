@@ -432,11 +432,30 @@ describe('Markdown autolinks', () => {
     },
   );
 
-  test('does not rewrite an explicit Markdown link containing CJK punctuation', () => {
-    const html = md.render('[示例](https://example.com/search?q=中文，测试)');
+  test.each([
+    ['查看（https://example.com/guide）后续正文', 'https://example.com/guide'],
+    ['https://example.com/guide（推荐）', 'https://example.com/guide'],
+    ['(https://example.com/a(b))', 'https://example.com/a(b)'],
+    [
+      '查看（http://example.com/a(b(c)d)e?q=(x(y))#section）后续正文',
+      'http://example.com/a(b(c)d)e?q=(x(y))#section',
+    ],
+    ['(https://example.com/a(b(c)d)e?q=(x))', 'https://example.com/a(b(c)d)e?q=(x)'],
+  ])('preserves the URL and surrounding parentheses in %s', (source, url) => {
+    const container = document.createElement('div');
+    container.innerHTML = toSanitizedMarkdownHtml(source);
+
+    expect(container.querySelectorAll('a')).toHaveLength(1);
+    expect(container.querySelector('a')?.getAttribute('href')).toBe(url);
+    expect(container.querySelector('a')?.textContent).toBe(url);
+    expect(container.textContent?.trim()).toBe(source);
+  });
+
+  test('preserves parentheses and CJK punctuation in explicit Markdown links', () => {
+    const html = md.render('[示例](https://example.com/a(b(c))?q=中文（测试，示例）)');
 
     expect(html).toContain(
-      '<a href="https://example.com/search?q=%E4%B8%AD%E6%96%87%EF%BC%8C%E6%B5%8B%E8%AF%95">示例</a>',
+      '<a href="https://example.com/a(b(c))?q=%E4%B8%AD%E6%96%87%EF%BC%88%E6%B5%8B%E8%AF%95%EF%BC%8C%E7%A4%BA%E4%BE%8B%EF%BC%89">示例</a>',
     );
   });
 });
