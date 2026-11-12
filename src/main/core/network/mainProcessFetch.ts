@@ -10,8 +10,8 @@ import {
 } from './outboundHeaderPolicyConfig';
 import {
   applyOutboundHeaders,
-  resolveOutboundHeaderNamesForRequest,
   resolveOutboundHeaderProxyConfig,
+  resolveOutboundHeaderValuesForRequest,
   shouldApplyOutboundHeadersForRequest,
 } from './outboundHeaderProxy';
 import { getFixedProxyUrl, isSystemProxyEnabled, resolveSystemProxyUrl } from './systemProxy';
@@ -208,11 +208,7 @@ export const applyMainProcessOutboundHeaderPolicy = (
     return headers;
   }
 
-  const headerNames = resolveOutboundHeaderNamesForRequest(policy, requestUrl);
-  const allValues = getOutboundHeaderUserInfo(undefined, policy.headerNames);
-  const values = Object.fromEntries(
-    Object.entries(allValues).filter(([headerName]) => headerNames.includes(headerName)),
-  );
+  const values = resolveOutboundHeaderValuesForRequest(policy, requestUrl, getOutboundHeaderUserInfo());
   const injectedHeaderCount = applyOutboundHeaders(headers, values, headerName =>
     console.warn(
       `[MainProcessOutboundHeaderPolicy] source=${source} skipped unsafe outbound header value: ${headerName}`,

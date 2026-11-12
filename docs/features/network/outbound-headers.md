@@ -38,7 +38,7 @@ method、允许的模型 endpoint、header 与 body，并重建固定的连接�
 
 ## 2. 策略来源、声明与合并
 
-每个策略组的 `baseUrlWhitelist[]` 只对应本组 `headerNames[]`。同一请求命中多个组时按组顺序合并；Header 名按大小写不敏感语义去重，保留最先出现的名称。
+每个策略组的 `baseUrlWhitelist[]` 对应本组 `headerNames[]`。同一请求命中多个组时按组顺序和组内顺序合并，比较目标 Header 名时忽略大小写。只命中字符串声明时，使用最先匹配的同名字符串。对象声明优先于同名字符串，同名对象之间使用最后一个匹配的声明。
 
 手工 `config.json` 是长期支持入口。旧顶层 `baseUrlWhitelist` / `headerNames` 结构不再接受；`overwrite` 仅兼容解析，不触发启动覆写。Extension 贡献只在内存合并，不写回手工文件。
 
@@ -67,7 +67,11 @@ outbound-header-policy.json
   "groups": [
     {
       "baseUrlWhitelist": ["https://api.example1.com/v1/"],
-      "headerNames": ["X-Example1-Account"]
+      "headerNames": [
+        "X-User-Account",
+        { "name": "X-Service-Token", "from": "X-Access-Token" },
+        { "name": "X-Client-Mode", "value": "desktop" }
+      ]
     }
   ]
 }
@@ -80,8 +84,8 @@ outbound-header-policy.json
 - URL 路径末尾的 `/` 可省略，统一按协议、主机、端口和路径边界精确匹配；
 - 禁止 localhost、loopback、链路本地、未指定地址，以及带用户名密码、query 或 fragment 的 URL（包括空的 `?`、`#` 标记）；
 - 禁止 `Host`、`Connection`、`Content-Length`、`Proxy-Authorization` 等传输层头；
-- 请求头值固定从 `user_info.json` 的同名 key 读取；
-- 声明文件只描述“在哪里添加哪个头”，不保存密钥值。
+- 手工配置和 Extension 支持相同的 `headerNames` 写法。字符串使用 `user_info.json` 中完全同名的顶层属性。`{ "name": "X-Target", "from": "sourceKey" }` 使用 `from` 指定的顶层属性，保留键名大小写，并以 `name` 作为目标 Header。
+- `{ "name": "X-Target", "value": "literal" }` 直接使用配置中的字符串。空字符串合法，固定值必须满足 HTTP 请求头字符约束。Extension 文件中的固定值会随包分发，运行时凭据应使用 `from` 或同名字符串引用。
 
 HTTP 与 HTTPS 不互相授权；主机、端口或相邻路径不同也不会命中。默认端口按 URL 协议规范化，
 例如 HTTP 的 `:80` 和 HTTPS 的 `:443` 可省略，但 HTTP 的 `:443` 与 HTTPS 的 `:80` 必须保留。
@@ -97,8 +101,8 @@ HTTP 与 HTTPS 不互相授权；主机、端口或相邻路径不同也不会�
 1. 代码中的默认策略；
 2. 用户手工 `config.json`（缺失时自动创建空默认配置）；
 3. 当前安装清单；
-4. 每个已启用 Extension 的合法 sidecar；
-5. `user_info.json` 中对应的值。
+4. 按 ID 排序的已启用 Extension 的合法 sidecar；
+5. `user_info.json` 中被字符串或 `from` 引用的属性值。
 
 等价规则为：
 
@@ -111,16 +115,12 @@ effective = manual.enabled
 缺少 `config.json` 时创建空的 `DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG`。无效文件（包括旧版无 `groups`
 的格式）会重写为 `DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG`，其 `groups` 为空。预定义组只存在于
 代码中，不写入文件。旧版本写入的预定义组在合并时去重。
-`config.json` 的全局 `enabled` 仍是总开关。同名头冲突和 URL 匹配继续沿用现有
-代理语义。Extension 规则带 owner id 仅用于诊断，不单独持久化。
+`config.json` 的全局 `enabled` 控制所有注入。内置规则先合并，随后依次合并手工规则和已启用 Extension 规则。Extension 规则带 owner id 仅用于诊断，不单独持久化。
 
 服务生成 canonical digest，用于判断有效策略是否变化以及是否需要刷新运行时。digest 不是
 授权凭据，也不写入数据库。
 
-合并时只去重内容完全相同的整组规则，保留第一组的位置、组内顺序和 Header 原始大小写。
-增加或移除后续重复贡献不改变 digest，避免无效的代理环境重建及由策略差异触发的额外重启；不同或部分重叠的组
-继续按原顺序匹配，不能通过大小写归一化或重新排序改变同名 Header 的取值优先级。
-扩展包变更流程本身要求的 Gateway 停启不受该去重影响。
+完全相同且只含字符串声明的组去重时保留最先出现的位置。含对象声明的组只合并相邻的完全重复项，保留其他组的覆盖顺序。只有命中当前请求的声明参与同名 Header 的选择。扩展包变更流程本身要求的 Gateway 停启独立处理。
 
 ## 3. 两条数据路径与实现入口
 
@@ -171,7 +171,7 @@ Main 再校验 method、模型 endpoint、header 与 body，并重建固定的�
 | Embedding transport | `runtime-services` extension                                       | 让 guarded fetch 使用 eligible env proxy            |
 | Manual reindex      | 原生 forced CLI rebuild intent                                     | 重建语义由原生运行时处理，不再依赖已退役的 009 补丁 |
 | Runtime lifecycle   | `openclawEngineManager.ts` / `main.ts`                             | 先起代理、再 spawn Gateway；退出时反序停止          |
-| 用户值来源          | outbound header user-info 文件/cache                               | 只按允许的 headerNames 读取值                       |
+| 用户值来源          | outbound header user-info 文件/cache                               | 按活动策略引用的源字段缓存用户值                   |
 
 `OutboundHeaderProxy` 使用 `http-mitm-proxy`，并针对库的连接错误和内部行为做有限适配。依赖私有 hook 是维护风险，升级库时必须跑真实 TLS 集成测试。
 

@@ -5,8 +5,7 @@
 - 普通用户或运维人员：临时为指定服务器添加认证请求头；
 - Extension 开发者：让用户安装并启用 Extension 后，自动获得所需的 URL 与请求头映射。
 
-请求头的名称和作用范围可以由手工配置或 Extension 声明，但请求头的实际值始终从用户本机的
-`user_info.json` 读取。Extension 不应包含真实 token、Cookie、密码或其他凭据。
+手工配置和 Extension 均可声明请求头的名称、作用范围和值来源。账号、token、Cookie 和密码等凭据由本机 `user_info.json` 提供。固定字符串保存在原策略文件中，Extension 的固定值会随包分发。
 
 ## 1. 先选择使用方式
 
@@ -14,11 +13,11 @@
 | ------------------------------------------------- | ----------------------------------------------------- |
 | 临时调试、个人环境、快速添加一个服务器            | 修改手工 `config.json`                                |
 | 希望用户安装 Extension 后自动获得 URL/Header 映射 | 在 Extension 根目录放置 `outbound-header-policy.json` |
-| 修改真实 Header 值                                | 修改本机 `user_info.json`                             |
+| 修改用户信息来源的 Header 值                      | 修改本机 `user_info.json`                             |
+| 添加固定 Header 值                                | 在 `headerNames` 中用 `value` 声明                    |
 | 临时关闭所有自动请求头                            | 把手工 `config.json` 的 `enabled` 改为 `false`        |
 
-两种方式可以同时使用。应用按代码预定义规则、手工规则、所有“已安装且已启用”的 Extension
-规则的顺序在内存中合并。预定义规则和 Extension 规则都不会写入手工 `config.json`。
+两种方式可以同时使用。应用按代码预定义规则、手工规则、已安装且启用的 Extension 规则的顺序在内存中合并。Extension 按 ID 排序。预定义规则和 Extension 规则都不会写入手工 `config.json`。
 
 ## 2. 手工配置快速开始
 
@@ -66,7 +65,11 @@ SDK 续期接入使用[账号租约与值刷新接口](../outbound-header-user-i
   "groups": [
     {
       "baseUrlWhitelist": ["http://intranet.example:8080/v1/", "https://api.example.com/v1/"],
-      "headerNames": ["X-User-Account", "X-Access-Token"]
+      "headerNames": [
+        "X-User-Account",
+        { "name": "X-Service-Token", "from": "X-Access-Token" },
+        { "name": "X-Client-Mode", "value": "desktop" }
+      ]
     }
   ]
 }
@@ -75,14 +78,21 @@ SDK 续期接入使用[账号租约与值刷新接口](../outbound-header-user-i
 - `enabled`：全局开关。设为 `false` 时，代码预定义规则、手工规则和 Extension 规则都会停止生效。
 - `groups`：URL 与 Header 名称的映射，可以配置多组。
 - `baseUrlWhitelist`：允许注入请求头的 URL 前缀。
-- `headerNames`：命中该组时需要注入的 Header 名称。
+- `headerNames` 是命中该组后使用的 Header 声明数组，支持以下三种写法。
 
-如果一个请求同时命中多个 group，会合并这些 group 的 Header 名称。同名 Header
-不区分大小写地去重，策略提供的值会替换请求中原有的同名 Header。
+| 声明 | 注入结果 |
+| ---- | -------- |
+| `"X-User-Account"` | 从 `user_info.json` 的 `X-User-Account` 取值，发送为 `X-User-Account`。 |
+| `{ "name": "X-Service-Token", "from": "X-Access-Token" }` | 从 `user_info.json` 的 `X-Access-Token` 取值，发送为 `X-Service-Token`。 |
+| `{ "name": "X-Client-Mode", "value": "desktop" }` | 发送 `X-Client-Mode: desktop`。 |
+
+对象必须提供目标 `name`，并在 `from` 和 `value` 中选一个。`from` 指定 `user_info.json` 的顶层属性名，键名区分大小写。固定 `value` 必须是符合 HTTP 请求头字符约束的字符串，支持空字符串。
+
+如果请求同时命中多组规则，按策略组和组内声明的顺序合并，比较目标 Header 名时忽略大小写。多个同名字符串继续使用最先匹配的一个。对象声明可覆盖同名字符串，多个同名对象使用最后一个匹配的声明。合并后的值会替换请求里已有的同名 Header。
 
 文件不存在时，应用会创建 `{"enabled": true, "groups": []}`。如果 JSON 损坏或结构无效，
 包括旧版没有 `groups` 的格式，也会重写为这个空默认配置。`enabled` 必须为布尔值，`groups`
-必须为数组，每个组的两个字段必须为字符串数组。空手工配置仍会合并代码预定义规则和启用扩展的规则。
+必须为数组，每个组的 `baseUrlWhitelist` 是字符串数组，`headerNames` 是声明数组。空手工配置仍会合并代码预定义规则和启用扩展的规则。
 
 代码中，空默认配置名为 `DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG`，预定义规则名为
 `PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG`，均定义于 `src/config/outboundHeaders.ts`。
@@ -99,8 +109,7 @@ SDK 续期接入使用[账号租约与值刷新接口](../outbound-header-user-i
 }
 ```
 
-属性名必须与 `headerNames` 完全一致，包括大小写。字符串值会去掉首尾空白；数字和布尔值会转换为
-字符串。缺失、`null`、对象、数组或包含控制字符的值不会成为有效凭据，通常会导致服务端认证失败。
+属性名必须与字符串声明或 `from` 完全一致，包括大小写。用户信息中的字符串会去掉首尾空白，数字和布尔值会转换为字符串。缺失、`null`、对象、数组或包含控制字符的值不会成为有效凭据，通常会导致服务端认证失败。即使本机没有 `user_info.json`，固定 `value` 仍按匹配规则生效。
 
 不要把真实 `user_info.json` 放进 Extension、Git 仓库、日志或发给其他用户。
 
@@ -138,14 +147,17 @@ README 或用户说明中写清楚需要配置的 `user_info.json` 属性。`USE
   "groups": [
     {
       "baseUrlWhitelist": ["http://intranet.example:8080/v1/", "https://api.example.com/v1/"],
-      "headerNames": ["X-User-Account", "X-Access-Token"]
+      "headerNames": [
+        "X-User-Account",
+        { "name": "X-Service-Token", "from": "X-Access-Token" },
+        { "name": "X-Client-Mode", "value": "desktop" }
+      ]
     }
   ]
 }
 ```
 
-Extension 只声明 URL 和 Header 名称。Header 值固定从 `user_info.json` 的同名属性读取，用户仍需
-在自己的 `user_info.json` 中提供实际值。
+`headerNames` 使用与手工配置相同的三种写法。用户在本机 `user_info.json` 提供字符串声明和 `from` 引用的字段。固定 `value` 随 Extension 包分发。
 
 ### 3.3 Extension 文件约束
 
@@ -155,7 +167,7 @@ Extension 只声明 URL 和 Header 名称。Header 值固定从 `user_info.json`
 - `groups` 以及每组的 `baseUrlWhitelist`、`headerNames` 必须是数组，不另设条目数量上限。空数组表示没有规则；没有目标或 Header 的空组不参与策略合并。
 - URL 必须是完整的 HTTP 或 HTTPS 地址，支持内网 HTTP 服务；不能包含用户名、密码、query 或 fragment（包括空的 `?`、`#` 标记）。路径末尾的 `/` 可省略；应用会按路径边界匹配。
 - 不允许 localhost、loopback、IPv4/IPv6 link-local 或 unspecified 地址。
-- Header 名称必须是合法 HTTP Header 名称，不另设长度上限。同组重复名称按大小写去重，保留首次出现的拼写。
+- 目标 Header 名称必须是合法 HTTP Header 名称，不另设长度上限。重复声明按第 2.3 节的覆盖规则处理。
 - 禁止声明连接和传输层 Header：`Host`、`Content-Length`、`Connection`、
   `Proxy-Authorization`、`Proxy-Connection`、`Keep-Alive`、`TE`、`Trailer`、
   `Transfer-Encoding`、`Upgrade`。
@@ -260,7 +272,7 @@ Extension 的规则，请禁用或卸载该 Extension，不要关闭全局开关
 2. `enabled` 是否为 `true`；
 3. Extension 是否已安装且已启用；
 4. 请求的 protocol、hostname、port 和 path prefix 是否全部匹配；
-5. `headerNames` 与 `user_info.json` 属性名是否完全一致；
+5. 字符串声明或 `from` 与 `user_info.json` 属性名是否完全一致，固定 `value` 是否正确；
 6. JSON 是否有效，Extension URL 是否为完整的 HTTP 或 HTTPS 地址；
 7. 请求是否属于第 5 节列出的有效场景。
 
@@ -276,9 +288,9 @@ Extension 的规则，请禁用或卸载该 Extension，不要关闭全局开关
 插件提供方修正对应声明。错误不会回显 URL 或凭据；已保存或结果待确认的操作，
 继续按结果弹窗核对状态，不因声明错误重复提交。
 
-### 能否把 token 直接写进 `outbound-header-policy.json`
+### 怎样配置固定值和凭据
 
-不能。sidecar 只声明 URL 和 Header 名称。真实值固定从本机 `user_info.json` 的同名属性读取。
+用 `value` 配置随包分发的固定字符串。token、Cookie 和密码等凭据用 `from` 或同名字符串引用用户本机的 `user_info.json`。
 
 ### 如何处理请求中已有的同名 Header
 
@@ -291,6 +303,6 @@ Extension 的规则，请禁用或卸载该 Extension，不要关闭全局开关
 - Extension 根目录包含合法的 `outbound-header-policy.json`；
 - Extension 的 README 或 `USER_SETUP.md` 已列出用户必须提供的 `user_info.json` 属性；
 - 所有 Extension URL 显式使用 HTTP 或 HTTPS，且不含账号信息、query 或 fragment；
-- `user_info.json` 中的 key 与 Header 名称完全一致；
+- `user_info.json` 中的源字段与字符串声明或 `from` 完全一致；
 - 已在安装、启用、禁用、更新、卸载和应用重启后分别验证；
 - 已验证 Gateway 请求、标题生成、模型测试和 MCP 测试中实际需要的场景。

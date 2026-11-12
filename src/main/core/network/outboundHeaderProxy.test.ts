@@ -20,6 +20,8 @@ import {
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   loadOutboundHeaderPolicyAndUserInfoCache,
+  type OutboundHeaderPolicyGroup,
+  publishOutboundHeaderUserInfoCache,
   updateOutboundHeaderUserInfoCache,
 } from './outboundHeaderPolicyConfig';
 import {
@@ -345,6 +347,11 @@ test('injects only the headers assigned to each matching policy group', () => {
     'X-Group-Two': 'two',
     'X-Shared': 'shared',
   });
+
+  updateOutboundHeaderUserInfoCache(userInfoPath, ['x-shared']);
+  expect(applyMainProcessOutboundHeaderPolicy(
+    'https://shared.example/title', undefined, MainProcessOutboundHeaderSource.SessionTitle,
+  )).toEqual({});
 });
 
 test('identifies Main title requests when skipping unsafe outbound header values', () => {
@@ -1152,7 +1159,7 @@ test('requires coordinated recovery when a live raw CONNECT tunnel newly needs i
   }));
   const previousPolicy = getOutboundHeaderPolicyConfig();
   const covered = { baseUrlWhitelist: [`http://${coveredHost}/`], headerNames: [HEADER_NAMES.USER_ACCOUNT] };
-  const publish = (groups: { baseUrlWhitelist: string[]; headerNames: string[] }[]) =>
+  const publish = (groups: readonly OutboundHeaderPolicyGroup[]) =>
     activateOutboundHeaderPolicyConfig({ enabled: true, groups }, userInfoPath);
   publish([covered]);
   const outboundProxy = new OutboundHeaderProxy(undefined,
@@ -1196,13 +1203,32 @@ test('requires coordinated recovery when a live raw CONNECT tunnel newly needs i
     expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
       authorization)).toBe(200);
     expect(forwardedHeaders.at(-1)?.[HEADER_NAMES.USER_ACCOUNT.toLowerCase()]).toBe('fixture-account');
-    const updated = { ...covered, headerNames: [HEADER_NAMES.COOKIE] };
+    const updated = {
+      baseUrlWhitelist: [`http://${coveredHost}/protected/`],
+      headerNames: [
+        { name: 'X-Mapped-Cookie', from: HEADER_NAMES.COOKIE },
+        { name: 'X-Policy-Literal', value: 'fixed-fixture' },
+      ],
+    };
     publish([updated]);
     expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(true);
     expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
       authorization)).toBe(200);
-    expect(forwardedHeaders.at(-1)?.[HEADER_NAMES.COOKIE.toLowerCase()]).toBe('fixture-cookie');
-    expect(interceptedReuse).toEqual([true, true]);
+    expect(forwardedHeaders.at(-1)).toMatchObject({
+      'x-mapped-cookie': 'fixture-cookie', 'x-policy-literal': 'fixed-fixture',
+    });
+    expect(forwardedHeaders.at(-1)?.[HEADER_NAMES.COOKIE.toLowerCase()]).toBeUndefined();
+    publishOutboundHeaderUserInfoCache({ [HEADER_NAMES.COOKIE]: 'renewed-fixture' });
+    expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
+      authorization)).toBe(200);
+    expect(forwardedHeaders.at(-1)).toMatchObject({
+      'x-mapped-cookie': 'renewed-fixture', 'x-policy-literal': 'fixed-fixture',
+    });
+    expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
+      authorization, '/protected-adjacent')).toBe(200);
+    expect(forwardedHeaders.at(-1)).not.toHaveProperty('x-mapped-cookie');
+    expect(forwardedHeaders.at(-1)).not.toHaveProperty('x-policy-literal');
+    expect(interceptedReuse).toEqual([true, true, true, true]);
     publish([updated, { baseUrlWhitelist: ['http://raw.runtime.invalid:8182/'], headerNames: [HEADER_NAMES.COOKIE] }]);
     expect(outboundProxy.isGatewayEnvironmentReusable(env)).toBe(false);
     expect(raw.destroyed).toBe(false);

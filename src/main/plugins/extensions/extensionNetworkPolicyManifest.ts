@@ -5,6 +5,11 @@ import path from 'path';
 import {
   EXTENSION_OUTBOUND_HEADER_MANIFEST_FILE,
   type ExtensionOutboundHeaderManifestV1,
+  getOutboundHeaderName,
+  HTTP_HEADER_NAME_PATTERN,
+  mergeOutboundHeaderEntries,
+  type OutboundHeaderEntry,
+  parseOutboundHeaderObject,
 } from '../../../shared/plugins/outboundHeaderPolicy';
 import { t } from '../../core/i18n';
 
@@ -16,7 +21,6 @@ const FILE_CHECK = {
   CONTENT: 'networkPolicyFileContent',
 } as const;
 type FileCheck = typeof FILE_CHECK[keyof typeof FILE_CHECK];
-const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const FORBIDDEN_HEADER_NAMES = new Set([
   'connection',
   'content-length',
@@ -97,6 +101,14 @@ const fileSizeReason = (bytes: number): string => t('networkPolicyFileTooLarge')
   .replace('{bytes}', String(bytes))
   .replace('{limit}', String(MAX_MANIFEST_BYTES));
 
+const headerInspectionError = (groupIndex: number, headerIndex: number, reasonKey: string): Error =>
+  new Error(t('networkPolicyHeaderInvalid', {
+    file: EXTENSION_OUTBOUND_HEADER_MANIFEST_FILE,
+    group: groupIndex + 1,
+    header: headerIndex + 1,
+    reason: t(reasonKey),
+  }));
+
 const assertManifestFile = (stat: fs.Stats, check: FileCheck): void => {
   if (stat.isSymbolicLink()) {
     throw fileInspectionError(check, t('networkPolicyFileSymbolicLink'));
@@ -152,7 +164,12 @@ export const inspectExtensionNetworkPolicyManifest = (
     fs.closeSync(fileDescriptor);
   }
 
-  const parsed: unknown = JSON.parse(rawManifest);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawManifest);
+  } catch {
+    throw new Error(t('networkPolicyManifestJsonInvalid', { file: EXTENSION_OUTBOUND_HEADER_MANIFEST_FILE }));
+  }
   if (!isRecord(parsed) || parsed.schemaVersion !== 1 || !Array.isArray(parsed.groups)) {
     throw new Error(t('networkPolicyManifestShapeInvalid'));
   }
@@ -167,19 +184,21 @@ export const inspectExtensionNetworkPolicyManifest = (
     const baseUrlWhitelist = [...new Set(rawGroup.baseUrlWhitelist.map(
       (raw, urlIndex) => normalizeBaseUrl(raw, groupIndex, urlIndex),
     ))].sort();
-    const seenHeaderNames = new Map<string, string>();
-    for (const [headerIndex, rawHeaderName] of rawGroup.headerNames.entries()) {
-      if (typeof rawHeaderName !== 'string' || !HEADER_NAME_PATTERN.test(rawHeaderName)) {
-        throw new Error(`Header ${headerIndex} in network policy group ${groupIndex} has an invalid name.`);
+    const entries: OutboundHeaderEntry[] = [];
+    for (const [headerIndex, rawEntry] of rawGroup.headerNames.entries()) {
+      const entry = typeof rawEntry === 'string' ? rawEntry : parseOutboundHeaderObject(rawEntry);
+      if (entry === null || (typeof entry === 'string' && !HTTP_HEADER_NAME_PATTERN.test(entry))) {
+        throw headerInspectionError(groupIndex, headerIndex, 'networkPolicyHeaderShapeInvalid');
       }
-      const normalizedName = rawHeaderName.toLowerCase();
+      const normalizedName = getOutboundHeaderName(entry).toLowerCase();
       if (FORBIDDEN_HEADER_NAMES.has(normalizedName)) {
-        throw new Error(`Header ${rawHeaderName} is forbidden in Extension network policies.`);
+        throw headerInspectionError(groupIndex, headerIndex, 'networkPolicyHeaderForbidden');
       }
-      if (!seenHeaderNames.has(normalizedName)) seenHeaderNames.set(normalizedName, rawHeaderName);
+      entries.push(entry);
     }
-    const headerNames = [...seenHeaderNames.values()]
-      .sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
+    const headerNames = mergeOutboundHeaderEntries(entries).sort((left, right) =>
+      getOutboundHeaderName(left).toLowerCase().localeCompare(getOutboundHeaderName(right).toLowerCase()),
+    );
     return [{ baseUrlWhitelist, headerNames }];
   });
 

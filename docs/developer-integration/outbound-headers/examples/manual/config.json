@@ -3,7 +3,11 @@
   "groups": [
     {
       "baseUrlWhitelist": ["https://api.example.com/v1/"],
-      "headerNames": ["X-User-Account", "X-Access-Token"]
+      "headerNames": [
+        "X-User-Account",
+        { "name": "X-Service-Token", "from": "X-Access-Token" },
+        { "name": "X-Client-Mode", "value": "desktop" }
+      ]
     }
   ]
 }

@@ -288,8 +288,8 @@ test('keeps the policy digest stable when a duplicate multi-URL Extension contri
   expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(manual);
 });
 
-test('preserves the precedence of overlapping groups with distinct Header casing', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-policy-precedence-'));
+test('preserves first-match precedence for overlapping legacy groups with distinct Header casing', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-policy-legacy-precedence-'));
   tempDirectories.push(directory);
   const configPath = path.join(directory, 'config.json');
   fs.writeFileSync(configPath, JSON.stringify({ enabled: true, groups: [] }));
@@ -324,5 +324,63 @@ test('preserves the precedence of overlapping groups with distinct Header casing
   expect(after.digest).not.toBe(before.digest);
   expect(applyMainProcessOutboundHeaderPolicy(`${url}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
     'x-cookie': 'lower-fixture',
+  });
+});
+
+test('lets the last matching object override earlier objects and legacy strings', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'outbound-policy-precedence-'));
+  tempDirectories.push(directory);
+  const url = 'https://api-one.example.test/v1/';
+  const mappedGroup = {
+    baseUrlWhitelist: [url],
+    headerNames: [{ name: 'X-Account', from: 'account_id' }],
+  };
+  const configPath = path.join(directory, 'config.json');
+  fs.writeFileSync(configPath, JSON.stringify({ enabled: true, groups: [mappedGroup] }));
+  const userInfoPath = path.join(directory, 'user_info.json');
+  fs.writeFileSync(userInfoPath, JSON.stringify({
+    account_id: 'mapped-fixture', 'x-account': 'unused-file-value',
+  }));
+  const entries = [
+    {
+      baseUrlWhitelist: [`${url}models/`],
+      headerNames: [{ name: 'x-account', value: 'fixed-fixture' }],
+    },
+    mappedGroup,
+    { baseUrlWhitelist: [url], headerNames: ['x-account'] },
+  ].map((group, index) => {
+    const id = `extension-${index}`;
+    const installPath = path.join(directory, id);
+    fs.mkdirSync(installPath);
+    fs.writeFileSync(path.join(installPath, 'outbound-header-policy.json'), JSON.stringify({
+      schemaVersion: 1, groups: [group],
+    }));
+    return {
+      id, name: id, description: '', enabled: true, installPath,
+      missingRequirements: [], configurationFields: [],
+    };
+  });
+  let installed = entries;
+  const service = new OutboundHeaderPolicyService({
+    listInstalledExtensions: () => installed, configPath, userInfoPath,
+  });
+  const before = service.reconcile();
+  expect(applyMainProcessOutboundHeaderPolicy(`${url}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+    'X-Account': 'mapped-fixture',
+  });
+  installed = [entries[0], entries[2]];
+  const after = service.reconcile();
+  expect(after.digest).not.toBe(before.digest);
+  expect(applyMainProcessOutboundHeaderPolicy(`${url}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+    'x-account': 'fixed-fixture',
+  });
+  expect(applyMainProcessOutboundHeaderPolicy(`${url}chat`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+    'X-Account': 'mapped-fixture',
+  });
+
+  fs.unlinkSync(userInfoPath);
+  updateOutboundHeaderUserInfoCache(userInfoPath);
+  expect(applyMainProcessOutboundHeaderPolicy(`${url}models`, {}, MainProcessOutboundHeaderSource.ModelProbe)).toEqual({
+    'x-account': 'fixed-fixture',
   });
 });

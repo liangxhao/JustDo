@@ -45,9 +45,9 @@ import { updateOutboundHeaderUserInfoCache } from './core/network/outboundHeader
 updateOutboundHeaderUserInfoCache();
 ```
 
-签名为 `updateOutboundHeaderUserInfoCache(userInfoPath?, headerNames?)`，同步返回
+签名为 `updateOutboundHeaderUserInfoCache(userInfoPath?, sourceKeys?)`，同步返回
 `Readonly<Record<string, string>>`。生产代码使用无参调用；可选参数供测试或明确指定
-文件路径、请求头名称的调用方使用。默认文件是
+文件路径、用户信息源字段的调用方使用。默认文件是
 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`，`productName` 由产品元数据决定，
 目录名与文件名由 `src/config/loginStorage.ts` 分别配置，实际名称以构建配置为准。
 
@@ -75,10 +75,10 @@ updateOutboundHeaderUserInfoCache();
 
 - 只读取 `user_info.json`，不会读取或改写 `outbound-header-proxy/config.json`，也不会读取
   扩展的 `outbound-header-policy.json`。
-- 请求头名称来自当前已激活的策略，包括代码预定义组、手动组和扩展组。刷新值不会修改
-  这些组，也不会触发 `OutboundHeaderPolicyService.reconcile()` 或代理重启。
-- 返回对象只含当前策略声明的请求头名称；缺失、非标量或不安全的值归一为 `''`。
-  `user_info.json` 不存在时也会得到这些名称对应的空值。读取或解析失败会记录警告，
+- 用户信息源字段来自当前已激活策略中的字符串条目和 `from`。策略中的固定 `value` 随策略加载生效。
+  刷新用户信息值不会修改策略组或触发代理重启。
+- 返回对象按源字段键名索引。缺失、非标量或不安全的值归一为 `''`。
+  `user_info.json` 不存在时也会得到这些源字段对应的空值。读取或解析失败会记录警告，
   缓存同样按空值刷新。
 - 函数不负责写入文件、获取或续期 Cookie，也不向 Renderer 暴露接口。调用方不要记录
   返回值或文件内容，以免泄露凭据。

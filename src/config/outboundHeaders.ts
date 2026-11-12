@@ -1,6 +1,8 @@
+import type { OutboundHeaderEntry } from '../shared/plugins/outboundHeaderPolicy';
+
 export type OutboundHeaderPolicyGroup = {
   baseUrlWhitelist: readonly string[];
-  headerNames: readonly string[];
+  headerNames: readonly OutboundHeaderEntry[];
 };
 
 export type OutboundHeaderPolicyConfig = {

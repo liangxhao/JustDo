@@ -7,8 +7,10 @@ import { LOGIN_STORAGE_CONFIG } from '../../../config/loginStorage';
 import {
   DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG,
   type OutboundHeaderPolicyConfig,
+  type OutboundHeaderPolicyGroup,
   PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG,
 } from '../../../config/outboundHeaders';
+import { type OutboundHeaderEntry, parseOutboundHeaderObject } from '../../../shared/plugins/outboundHeaderPolicy';
 import { USER_DATA_DIRECTORY_NAME } from '../../../shared/productMetadata';
 
 export type {
@@ -44,10 +46,14 @@ This file controls outbound header injection.
 - Use a valid HTTP field name. Examples and recommended custom names start with
   \`X-\`, such as \`X-User-Account\` and \`X-Cookie\`, but this prefix is not
   required.
-- A name in a group's \`headerNames\` must exactly match the corresponding property in
+- A string in \`headerNames\` uses the same name for the outgoing Header and the property in
   \`${LOGIN_STORAGE_CONFIG.userInfoFileName}\`.
-- If a request matches multiple groups, the groups' header lists are merged.
-  Header names are deduplicated case-insensitively; the first spelling wins.
+- An object such as \`{"name":"X-Account","from":"account_id"}\` reads that exact property
+  and injects it under the specified name. \`{"name":"X-Client","value":"desktop"}\`
+  uses the configured string directly.
+- Header names are compared without regard to case. The first matching string is
+  used for legacy declarations. A matching object takes precedence over strings;
+  the last matching object wins. Keep secrets in the user info file.
 
 ## baseUrlWhitelist matching
 
@@ -75,7 +81,10 @@ Example:
     },
     {
       "baseUrlWhitelist": ["https://api-two.example.com/v1/"],
-      "headerNames": ["X-Tenant-Id", "X-Access-Token"]
+      "headerNames": [
+        {"name": "X-Tenant-Id", "from": "tenant_id"},
+        {"name": "X-Client", "value": "desktop"}
+      ]
     }
   ]
 }
@@ -102,6 +111,25 @@ const normalizeHeaderValue = (value: unknown): string => {
   }
   return EMPTY_HEADER_VALUE;
 };
+
+export const collectOutboundHeaderSourceKeys = (groups: readonly OutboundHeaderPolicyGroup[]): string[] => {
+  const keys = new Set<string>();
+  for (const group of groups) {
+    for (const entry of group.headerNames) {
+      if (typeof entry === 'string') keys.add(entry);
+      else if ('from' in entry) keys.add(entry.from);
+    }
+  }
+  return [...keys];
+};
+
+export const freezeOutboundHeaderPolicyGroup = (group: OutboundHeaderPolicyGroup): OutboundHeaderPolicyGroup =>
+  Object.freeze({
+    baseUrlWhitelist: Object.freeze([...group.baseUrlWhitelist]),
+    headerNames: Object.freeze(group.headerNames.map(entry =>
+      typeof entry === 'string' ? entry : Object.freeze({ ...entry }),
+    )),
+  });
 
 export const resolveOutboundHeaderUserInfoPath = (): string =>
   path.join(app.getPath('appData'), USER_INFO_RELATIVE_PATH);
@@ -144,42 +172,24 @@ export const readOutboundHeaderPolicyConfig = (configPath: string): OutboundHead
       return replaceInvalidConfig();
     }
 
-    const rawGroups = Array.isArray(config.groups) ? config.groups : null;
-    if (typeof config.enabled === 'boolean' && rawGroups) {
-      const groups = rawGroups
-        .filter(
-          (value): value is Record<string, unknown> =>
-            !!value && typeof value === 'object' && !Array.isArray(value),
-        )
-        .filter(group =>
-          Array.isArray(group.baseUrlWhitelist) &&
-          group.baseUrlWhitelist.every(value => typeof value === 'string') &&
-          Array.isArray(group.headerNames) &&
-          group.headerNames.every(value => typeof value === 'string'),
-        )
-        .map(group =>
-          Object.freeze({
-            baseUrlWhitelist: Object.freeze(
-              (group.baseUrlWhitelist as unknown[]).filter(
-                (value): value is string => typeof value === 'string',
-              ),
-            ),
-            headerNames: Object.freeze(
-              (group.headerNames as unknown[]).filter(
-                (value): value is string => typeof value === 'string',
-              ),
-            ),
-          }),
-        );
-      if (groups.length !== rawGroups.length) {
-        return replaceInvalidConfig();
-      }
-      return Object.freeze({
-        enabled: config.enabled as boolean,
-        groups: Object.freeze(groups),
-      });
+    if (typeof config.enabled !== 'boolean' || !Array.isArray(config.groups)) {
+      return replaceInvalidConfig();
     }
-    return replaceInvalidConfig();
+    const groups: OutboundHeaderPolicyGroup[] = [];
+    for (const group of config.groups) {
+      if (!group || typeof group !== 'object' || Array.isArray(group) ||
+          !Array.isArray(group.baseUrlWhitelist) || !group.baseUrlWhitelist.every((value: unknown) => typeof value === 'string') ||
+          !Array.isArray(group.headerNames)) return replaceInvalidConfig();
+
+      const headerNames: OutboundHeaderEntry[] = [];
+      for (const entry of group.headerNames) {
+        const parsedEntry = typeof entry === 'string' ? entry : parseOutboundHeaderObject(entry);
+        if (parsedEntry === null) return replaceInvalidConfig();
+        headerNames.push(parsedEntry);
+      }
+      groups.push(freezeOutboundHeaderPolicyGroup({ baseUrlWhitelist: group.baseUrlWhitelist, headerNames }));
+    }
+    return Object.freeze({ enabled: config.enabled, groups: Object.freeze(groups) });
   } catch (error) {
     const errorCode = (error as NodeJS.ErrnoException).code;
     if (errorCode === 'ENOENT') {
@@ -211,9 +221,9 @@ export const getOutboundHeaderPolicyConfig = (): OutboundHeaderPolicyConfig =>
  * - Login user info file selected by `LOGIN_STORAGE_CONFIG` under `%APPDATA%/<productName>`.
  *
  * The optional parameters are intended for tests or callers that need to
- * override the default paths or header names.
+ * override the default paths or user-info keys.
  *
- * @returns The refreshed header values keyed by configured header name.
+ * @returns The refreshed values keyed by their user-info fields.
  */
 export const loadOutboundHeaderPolicyAndUserInfoCache = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
@@ -233,8 +243,9 @@ export const loadOutboundHeaderPolicyAndUserInfoCache = (
  */
 export const updateOutboundHeaderUserInfoCache = (
   userInfoPath = resolveOutboundHeaderUserInfoPath(),
-  headerNames?: readonly string[],
+  sourceKeys: readonly string[] = collectOutboundHeaderSourceKeys(cachedOutboundHeaderPolicyConfig.groups),
 ): Readonly<Record<string, string>> => {
+  if (sourceKeys.length === 0) return publishOutboundHeaderUserInfoCache({}, sourceKeys);
   let userInfo: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(userInfoPath, 'utf8'));
@@ -251,21 +262,19 @@ export const updateOutboundHeaderUserInfoCache = (
     }
   }
 
-  return publishOutboundHeaderUserInfoCache(userInfo, headerNames);
+  return publishOutboundHeaderUserInfoCache(userInfo, sourceKeys);
 };
 
 /** Uses the login values already committed by Main, without reopening the file. */
 export const publishOutboundHeaderUserInfoCache = (
   userInfo: Readonly<Record<string, unknown>>,
-  headerNames: readonly string[] = Array.from(
-    new Set(cachedOutboundHeaderPolicyConfig.groups.flatMap(group => group.headerNames)),
-  ),
+  sourceKeys: readonly string[] = collectOutboundHeaderSourceKeys(cachedOutboundHeaderPolicyConfig.groups),
 ): Readonly<Record<string, string>> => {
   cachedOutboundHeaderValues = Object.freeze(
     Object.fromEntries(
-      headerNames.map(headerName => [
-        headerName,
-        normalizeHeaderValue(userInfo[headerName]),
+      sourceKeys.map(key => [
+        key,
+        Object.hasOwn(userInfo, key) ? normalizeHeaderValue(userInfo[key]) : EMPTY_HEADER_VALUE,
       ]),
     ),
   );
@@ -279,27 +288,20 @@ export const activateOutboundHeaderPolicyConfig = (
 ): Readonly<Record<string, string>> => {
   cachedOutboundHeaderPolicyConfig = Object.freeze({
     enabled: policy.enabled,
-    groups: Object.freeze(
-      policy.groups.map(group =>
-        Object.freeze({
-          baseUrlWhitelist: Object.freeze([...group.baseUrlWhitelist]),
-          headerNames: Object.freeze([...group.headerNames]),
-        }),
-      ),
-    ),
+    groups: Object.freeze(policy.groups.map(freezeOutboundHeaderPolicyGroup)),
   });
   return updateOutboundHeaderUserInfoCache(userInfoPath);
 };
 
 export const getOutboundHeaderUserInfo = (
   userInfoPath?: string,
-  headerNames?: readonly string[],
+  sourceKeys?: readonly string[],
 ): Readonly<Record<string, string>> => {
   return (
     cachedOutboundHeaderValues ??
     updateOutboundHeaderUserInfoCache(
       userInfoPath ?? resolveOutboundHeaderUserInfoPath(),
-      headerNames,
+      sourceKeys,
     )
   );
 };

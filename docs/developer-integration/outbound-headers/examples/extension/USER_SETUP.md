@@ -3,12 +3,13 @@
 > 发布方：复制此模板后，填写下方配置路径中的产品目录、子目录和文件名，再随 Extension 分发。
 > 最终用户应获得本发行版的完整路径，不需要访问应用源码；发布前删除本提示。
 
-此 Extension 会自动声明以下请求头映射：
+此 Extension 会自动配置以下请求头。
 
-- `X-User-Account`
-- `X-Access-Token`
+- `X-User-Account` 取本机的同名字段。
+- `X-Service-Token` 取本机的 `X-Access-Token` 字段。
+- `X-Client-Mode` 使用随包提供的固定值 `desktop`。
 
-Extension 不包含这些请求头的真实值。请在本机的 `user_info.json` 中增加：
+请在本机的 `user_info.json` 中配置账号和访问令牌字段。
 
 ```json
 {

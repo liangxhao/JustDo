@@ -183,7 +183,7 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
     expect(manifest.groups[0]).not.toHaveProperty('description');
   });
 
-  it('deduplicates Header names case-insensitively while preserving the first spelling', () => {
+  it('preserves the first spelling of duplicate legacy Header names', () => {
     const extensionRoot = createExtension({
       schemaVersion: 1,
       groups: [{ baseUrlWhitelist: ['https://api.example.test/'], headerNames: ['X-Token', 'x-token', 'X-TOKEN'] }],
@@ -191,6 +191,53 @@ describe('inspectExtensionNetworkPolicyManifest', () => {
 
     expect(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest.groups[0].headerNames)
       .toEqual(['X-Token']);
+  });
+
+  it('accepts both sources and prefers the last explicit declaration over strings', () => {
+    const extensionRoot = createExtension({
+      schemaVersion: 1,
+      groups: [{
+        baseUrlWhitelist: ['https://api.example.test/'],
+        headerNames: [
+          'X-Token',
+          { name: 'X-Account', from: 'account_id' },
+          { name: 'X-Token', value: 'earlier-fixture' },
+          { name: 'x-token', value: 'configured-token' },
+          'X-TOKEN',
+          'X-Region',
+        ],
+      }],
+    });
+
+    expect(inspectExtensionNetworkPolicyManifest(extensionRoot)?.manifest.groups[0].headerNames)
+      .toEqual([
+        { name: 'X-Account', from: 'account_id' },
+        'X-Region',
+        { name: 'x-token', value: 'configured-token' },
+      ]);
+  });
+
+  it.each([
+    { name: 'X-Token', from: 'account_id', value: 'fixture-private-value' },
+    { name: 'X-Token', value: 'fixture-private-value\r\nX-Other: injected' },
+    { name: 'Host', value: 'fixture-private-value' },
+  ])('rejects invalid header declarations without exposing configured values', entry => {
+    const extensionRoot = createExtension({
+      schemaVersion: 1,
+      groups: [{ baseUrlWhitelist: ['https://api.example.test/'], headerNames: [entry] }],
+    });
+
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot)).toThrow(
+      /^outbound-header-policy\.json, group 1, header 1: (?!.*fixture-private-value)/,
+    );
+  });
+
+  it('reports malformed JSON without exposing the input', () => {
+    const extensionRoot = createExtension();
+    fs.writeFileSync(path.join(extensionRoot, 'outbound-header-policy.json'), 'fixture-private-value');
+
+    expect(() => inspectExtensionNetworkPolicyManifest(extensionRoot))
+      .toThrow(/^outbound-header-policy\.json must contain valid JSON\.$/);
   });
 
   it('treats empty declarations as no rules', () => {

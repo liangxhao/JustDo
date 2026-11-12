@@ -9,11 +9,22 @@ import net from 'net';
 import path from 'path';
 import type { Duplex } from 'stream';
 
+import {
+  getOutboundHeaderName,
+  HTTP_HEADER_NAME_PATTERN,
+  HTTP_HEADER_VALUE_PATTERN,
+  mergeOutboundHeaderEntries,
+  type OutboundHeaderEntry,
+  parseOutboundHeaderObject,
+} from '../../../shared/plugins/outboundHeaderPolicy';
 import { buildGatewayNetworkEnvironment } from './gatewayNetworkEnvironment';
 import { prepareOutboundHeaderCertificateStore } from './outboundHeaderCertificateStore';
 import {
+  collectOutboundHeaderSourceKeys,
+  freezeOutboundHeaderPolicyGroup,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
+  type OutboundHeaderPolicyGroup,
   resolveOutboundHeaderUserInfoPath,
 } from './outboundHeaderPolicyConfig';
 import {
@@ -29,8 +40,6 @@ import { buildOutboundHeaderTrustedCaBundle } from './trustedCertificates';
 const LOOPBACK_HOST = '127.0.0.1';
 const CA_DIRECTORY_NAME = 'outbound-header-proxy';
 const CA_CERTIFICATE_PATH = path.join('certs', 'ca.pem');
-const HTTP_HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-const HTTP_HEADER_VALUE_PATTERN = /^[\u0020-\u007e\u0080-\u00ff]*$/;
 const LOCAL_PROXY_USERNAME = 'openclaw';
 
 export type OutboundHeaderProxyConfig = {
@@ -40,10 +49,7 @@ export type OutboundHeaderProxyConfig = {
   headerNames: readonly string[];
 };
 
-export type OutboundHeaderProxyGroup = {
-  baseUrlWhitelist: readonly string[];
-  headerNames: readonly string[];
-};
+export type OutboundHeaderProxyGroup = OutboundHeaderPolicyGroup;
 
 export type OutboundHeaderProxyInfo = {
   proxyUrl: string;
@@ -84,25 +90,17 @@ const normalizeBaseUrl = (value: string): string | null => {
   }
 };
 
-const dedupeHeaderNames = (headerNames: readonly string[]): string[] => {
-  const seen = new Set<string>();
-  return headerNames.filter(headerName => {
-    const normalized = headerName.toLowerCase();
-    if (seen.has(normalized)) return false;
-    seen.add(normalized);
-    return true;
-  });
+const normalizeHeaderEntry = (entry: OutboundHeaderEntry): OutboundHeaderEntry | null => {
+  if (typeof entry !== 'string') return parseOutboundHeaderObject(entry);
+  const name = entry.trim();
+  return HTTP_HEADER_NAME_PATTERN.test(name) ? name : null;
 };
 
 export const resolveOutboundHeaderProxyConfig = (
   policy: Pick<OutboundHeaderProxyConfig, 'enabled' | 'groups'> = getOutboundHeaderPolicyConfig(),
 ): OutboundHeaderProxyConfig => {
   const groups = policy.groups.map(group => ({
-    headerNames: dedupeHeaderNames(
-      group.headerNames
-        .map(name => name.trim())
-        .filter(name => HTTP_HEADER_NAME_PATTERN.test(name)),
-    ),
+    headerNames: mergeOutboundHeaderEntries(group.headerNames.map(normalizeHeaderEntry).filter(entry => entry !== null)),
     baseUrlWhitelist: group.baseUrlWhitelist
       .map(normalizeBaseUrl)
       .filter((value): value is string => value !== null),
@@ -110,7 +108,7 @@ export const resolveOutboundHeaderProxyConfig = (
   return {
     enabled: policy.enabled,
     groups,
-    headerNames: dedupeHeaderNames(groups.flatMap(group => group.headerNames)),
+    headerNames: mergeOutboundHeaderEntries(groups.flatMap(group => group.headerNames)).map(getOutboundHeaderName),
     baseUrlWhitelist: Array.from(new Set(groups.flatMap(group => group.baseUrlWhitelist))),
   };
 };
@@ -152,16 +150,38 @@ export const shouldApplyOutboundHeadersForRequest = (
   requestUrl: string,
 ): boolean => config.enabled && shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist);
 
+const resolveOutboundHeaderEntriesForRequest = (
+  config: OutboundHeaderProxyConfig,
+  requestUrl: string,
+): readonly OutboundHeaderEntry[] => {
+  if (!config.enabled) return [];
+  return mergeOutboundHeaderEntries(config.groups.flatMap(group =>
+    shouldInjectOutboundHeaders(requestUrl, group.baseUrlWhitelist) ? group.headerNames : [],
+  ));
+};
+
 export const resolveOutboundHeaderNamesForRequest = (
   config: OutboundHeaderProxyConfig,
   requestUrl: string,
-): readonly string[] => {
-  if (!config.enabled) return [];
-  return dedupeHeaderNames(
-    config.groups.flatMap(group =>
-      shouldInjectOutboundHeaders(requestUrl, group.baseUrlWhitelist) ? group.headerNames : [],
-    ),
-  );
+): readonly string[] => resolveOutboundHeaderEntriesForRequest(config, requestUrl).map(getOutboundHeaderName);
+
+export const resolveOutboundHeaderValuesForRequest = (
+  config: OutboundHeaderProxyConfig,
+  requestUrl: string,
+  userInfo: Readonly<Record<string, string>>,
+): Record<string, string> => {
+  const values: [name: string, value: string][] = [];
+  for (const entry of resolveOutboundHeaderEntriesForRequest(config, requestUrl)) {
+    if (typeof entry !== 'string' && 'value' in entry) {
+      values.push([entry.name, entry.value]);
+      continue;
+    }
+    const sourceKey = typeof entry === 'string' ? entry : entry.from;
+    if (Object.hasOwn(userInfo, sourceKey)) {
+      values.push([getOutboundHeaderName(entry), userInfo[sourceKey]]);
+    }
+  }
+  return Object.fromEntries(values);
 };
 
 export const isOutboundHeaderProxyActive = (config: OutboundHeaderProxyConfig): boolean =>
@@ -182,7 +202,7 @@ export const applyOutboundHeaders = (
     const existingKey =
       Object.keys(headers).find(key => key.toLowerCase() === headerName.toLowerCase()) ||
       headerName;
-    headers[existingKey] = value;
+    Object.defineProperty(headers, existingKey, { value, enumerable: true, configurable: true, writable: true });
     injectedHeaderCount += 1;
   }
   return injectedHeaderCount;
@@ -691,14 +711,10 @@ export class OutboundHeaderProxy {
     policy: OutboundHeaderProxyConfig,
     requestUrl: string,
   ): Readonly<Record<string, string>> {
-    const headerNames = resolveOutboundHeaderNamesForRequest(policy, requestUrl);
     const values = this.configuredPolicy
       ? this.activeHeaderValues
-      : getOutboundHeaderUserInfo(this.userInfoPath, headerNames);
-    const exactHeaderNames = new Set(headerNames);
-    return Object.fromEntries(
-      Object.entries(values).filter(([headerName]) => exactHeaderNames.has(headerName)),
-    );
+      : getOutboundHeaderUserInfo(this.userInfoPath);
+    return resolveOutboundHeaderValuesForRequest(policy, requestUrl, values);
   }
 
   private async resolveGatewayUpstreamProxy(targetUrl: string): Promise<string | null> {
@@ -737,21 +753,14 @@ export class OutboundHeaderProxy {
 
     this.activePolicy = Object.freeze({
       ...config,
-      groups: Object.freeze(
-        config.groups.map(group =>
-          Object.freeze({
-            baseUrlWhitelist: Object.freeze([...group.baseUrlWhitelist]),
-            headerNames: Object.freeze([...group.headerNames]),
-          }),
-        ),
-      ),
+      groups: Object.freeze(config.groups.map(freezeOutboundHeaderPolicyGroup)),
       baseUrlWhitelist: Object.freeze([...config.baseUrlWhitelist]),
       headerNames: Object.freeze([...config.headerNames]),
     });
     this.activeHeaderValues = Object.freeze({
       ...getOutboundHeaderUserInfo(
         this.userInfoPath,
-        config.groups.flatMap(group => group.headerNames),
+        collectOutboundHeaderSourceKeys(config.groups),
       ),
     });
     this.capability = crypto.randomBytes(32).toString('base64url');

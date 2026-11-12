@@ -8,7 +8,9 @@ import {
 } from '../../plugins/extensions/extensionNetworkPolicyManifest';
 import {
   activateOutboundHeaderPolicyConfig,
+  freezeOutboundHeaderPolicyGroup,
   type OutboundHeaderPolicyConfig,
+  type OutboundHeaderPolicyGroup,
   readOutboundHeaderPolicyConfig,
   resolveOutboundHeaderPolicyConfigPath,
 } from './outboundHeaderPolicyConfig';
@@ -37,16 +39,8 @@ export class OutboundHeaderPolicyService {
     const manual = readOutboundHeaderPolicyConfig(
       this.deps.configPath ?? resolveOutboundHeaderPolicyConfigPath(),
     );
-    const defaultGroups = PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups;
-    // Existing installations may have the former generated default in config.json.
-    const manualGroups = manual.groups.filter(group =>
-      !defaultGroups.some(builtIn => JSON.stringify(builtIn) === JSON.stringify(group)),
-    );
     const groups = manual.enabled
-      ? [...defaultGroups, ...manualGroups].map(group => ({
-          baseUrlWhitelist: [...group.baseUrlWhitelist],
-          headerNames: [...group.headerNames],
-        }))
+      ? [...PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups, ...manual.groups]
       : [];
 
     let installedExtensions: InstalledOpenClawExtension[] = [];
@@ -77,21 +71,23 @@ export class OutboundHeaderPolicyService {
       if (!manual.enabled || !extension.enabled) {
         continue;
       }
-      for (const group of inspection.manifest.groups) {
-        groups.push({
-          baseUrlWhitelist: [...group.baseUrlWhitelist],
-          headerNames: [...group.headerNames],
-        });
-      }
+      groups.push(...inspection.manifest.groups);
     }
 
-    const seenGroups = new Set<string>();
-    const uniqueGroups = groups.filter(group => {
+    const seenLegacyGroups = new Set<string>();
+    const uniqueGroups: OutboundHeaderPolicyGroup[] = [];
+    let previousSignature: string | undefined;
+    for (const group of groups) {
       const signature = JSON.stringify(group);
-      if (seenGroups.has(signature)) return false;
-      seenGroups.add(signature);
-      return true;
-    });
+      if (group.headerNames.every(entry => typeof entry === 'string')) {
+        if (seenLegacyGroups.has(signature)) continue;
+        seenLegacyGroups.add(signature);
+      }
+      // An intervening group can change which explicit declaration wins.
+      if (signature === previousSignature) continue;
+      uniqueGroups.push(group);
+      previousSignature = signature;
+    }
     const normalized = {
       enabled: uniqueGroups.length > 0,
       groups: uniqueGroups,
@@ -99,14 +95,7 @@ export class OutboundHeaderPolicyService {
     const digest = digestPolicy(normalized);
     const snapshot: EffectiveOutboundHeaderPolicySnapshot = Object.freeze({
       enabled: normalized.enabled,
-      groups: Object.freeze(
-        normalized.groups.map(group =>
-          Object.freeze({
-            baseUrlWhitelist: Object.freeze([...group.baseUrlWhitelist]),
-            headerNames: Object.freeze([...group.headerNames]),
-          }),
-        ),
-      ),
+      groups: Object.freeze(normalized.groups.map(freezeOutboundHeaderPolicyGroup)),
       digest,
     });
     activateOutboundHeaderPolicyConfig(snapshot, this.deps.userInfoPath);

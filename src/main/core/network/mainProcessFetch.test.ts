@@ -11,8 +11,8 @@ vi.mock('./outboundHeaderPolicyConfig', () => ({
 }));
 vi.mock('./outboundHeaderProxy', () => ({
   applyOutboundHeaders: vi.fn(),
-  resolveOutboundHeaderNamesForRequest: vi.fn(),
   resolveOutboundHeaderProxyConfig: vi.fn(),
+  resolveOutboundHeaderValuesForRequest: vi.fn(),
   shouldApplyOutboundHeadersForRequest: vi.fn(),
 }));
 
