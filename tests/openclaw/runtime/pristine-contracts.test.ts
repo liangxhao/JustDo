@@ -94,6 +94,7 @@ const EXPECTED_PATCH_FILES = [
   '033-windows-plugin-directory-publication.cjs',
   '034-commentary-block-ownership.cjs',
   '036-acp-completion-lineage.cjs',
+  '037-project-skill-precedence.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

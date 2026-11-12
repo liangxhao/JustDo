@@ -343,6 +343,14 @@
       "targets": [
         "dist/spawn-thread-binding-CKE2AseF.mjs"
       ]
+    },
+    {
+      "file": "037-project-skill-precedence.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/workspace-skill-loader-sfXVTUiF.mjs"
+      ]
     }
   ],
   "targets": [
@@ -649,6 +657,10 @@
     {
       "file": "dist/terminal-DsZscJNQ.mjs",
       "sha256": "1d6aba61f9039f02241024de7601e4f66ec31608db7ab5e7c296b5671e930f1e"
+    },
+    {
+      "file": "dist/workspace-skill-loader-sfXVTUiF.mjs",
+      "sha256": "dbc6961767cbd366437bf3d54995a802ec6be810f7206edf8e85a186b8ae3646"
     },
     {
       "file": "node_modules/@openclaw/ai/dist/openai-completions-transport-BRjxCG1C.mjs",

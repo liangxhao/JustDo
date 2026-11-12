@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034) and ordinary ACP completion lineage (036). Capability 005 has since been removed: ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 34 patches and preserves the remaining numbers. All current verifiers reject the pristine target, and all transformations apply and verify on their actual source owners. No historical-shape migration is introduced. [pristine-targets.json](pristine-targets.json) records the 80 exact pristine patch target hashes; the source lock binds these to the npm archive. Matching names or old anchors alone do not establish this disposition.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036) and project skill precedence (037). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 35 patches and preserves the remaining numbers. All current verifiers reject the pristine target, and all transformations apply and verify on their actual source owners. [pristine-targets.json](pristine-targets.json) records 81 exact pristine patch target hashes bound to the locked npm archive.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -29,7 +29,7 @@ The parent, native-contract and provider/plugin agents independently cross-revie
 
 ## Capability gaps and removal conditions
 
-The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage; 005 is retired and its number is not reused. 034 and 036 are later independently removable fixes.
+The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage. The number 005 identifies the retired capability. 034, 036 and 037 are later independently removable fixes.
 
 | Patch                                                                                            | Old ID | Retained capability / target gap                                                                                                                                      | Remove when                                                                                                                                    |
 | ------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -67,6 +67,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [033-windows-plugin-directory-publication.cjs](033-windows-plugin-directory-publication.cjs)     | 034    | preserve retained installed-tree hardlinks through plugin backup/restore, and recover refused local Windows publication within the same guarded transaction.             | native plugin installs support retained-tree backup/restore and equivalent receipt-bound, bounded Windows publication recovery.                 |
 | [034-commentary-block-ownership.cjs](034-commentary-block-ownership.cjs)                       | —      | declare whole-message commentary snapshot ownership for scoped generic delivery, preserving complete native text filtering.                                         | native delivery exposes an equivalent explicit cumulative commentary range across updates, mixed phases and terminal publication.              |
 | [036-acp-completion-lineage.cjs](036-acp-completion-lineage.cjs) | — | persist the structural spawn envelope for ordinary top-level ACP children before dispatch, so exact completion handoffs retain requester tools. | native ACP creation persists the same envelope independently of optional nested admission checks. |
+| [037-project-skill-precedence.cjs](037-project-skill-precedence.cjs) | — | select the admitted execution project's file skill when it shares a name with an assistant skill. | native skill resolution supports execution project precedence while preserving separate assistant and execution roots. |
 
 ## Locked target source owners
 
@@ -108,6 +109,7 @@ The following paths were returned by a clean application on the pristine target.
 | 033 | `node_modules/@openclaw/fs-safe/dist/move-path.js`<br>`node_modules/@openclaw/fs-safe/dist/guarded-mutation.js`<br>`dist/install-package-dir-D5h3GpAL.mjs`<br>`dist/npm-managed-root-C6KnxuJp.mjs` |
 | 034 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
 | 036 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
+| 037 | `dist/workspace-skill-loader-sfXVTUiF.mjs` |
 
 ## Test ownership
 
@@ -151,6 +153,7 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 033 | `plugin-directory-publication.test.ts` |
 | 034 | `commentary-block-ownership.test.ts`, `reasoning-completions-semantic.test.ts`, Renderer `justdo-chat.streaming.test.ts` |
 | 036 | `acp-completion-lineage.test.ts` |
+| 037 | `project-skill-precedence.test.ts`, `tests/openclaw/runtime/project-skill-precedence-contract.test.ts` |
 
 ### 033: plugin directory publication and retained installed files
 
@@ -290,6 +293,40 @@ blocked by the absent prepared public SDK. The wider run passed 28 tests but hit
 029 line-budget mismatch (821 lines against a limit below 800); the manifest suite could not
 load the missing `@electron/asar` dependency. These blockers do not establish full artifact
 acceptance and are not repaired by this capability.
+
+### Project skill precedence (037)
+
+With a separate assistant role workspace and an admitted session `cwd`, the locked
+pristine loader finds both a plugin skill and a same-name `cwd/skills` entry. Its
+final `mergeSkillTiers` appends only new execution names, so the plugin path wins.
+Session creation accepts the execution directory but exposes no source precedence
+control. `skills.load.extraDirs` belongs to the shared assistant catalog, skill
+toggles apply after name resolution, and prompt hooks cannot change the native
+search or read identity. Workspace providers report discovered files under the
+approved source plan and use the same final merge.
+
+The patch reverses the final cross-tier priority. Project entries retain the native
+order within their roots and take precedence in the model's limited catalog. The
+assistant catalog fills unoccupied names in its existing order. Each winner carries
+its native source path, file host, metadata and eligibility checks. Snapshot matching
+and explicit Library selections retain their original identity handling. Existing
+source watchers refresh the selection, and a normal Gateway restart refreshes older
+persisted snapshots. Two agents independently reviewed the merge boundary and the
+alternatives before implementation.
+
+Remove 037 when native configuration can select project precedence per execution
+workspace and supplies that winner to snapshots, the installed skill catalog and
+sandbox materialization.
+
+On 2026-11-11 the isolated Windows x64 build accepted the locked archive, applied
+and verified all 35 patches, and returned HTTP 200 from the rebuilt Gateway's
+loopback health endpoint. All four focused tests passed. The native probe reproduced
+the plugin winner on the old runtime and verified project precedence, concurrent
+projects, the prompt limit, disabled winners and deletion fallback on the rebuilt
+runtime. It advances the native snapshot revision explicitly and checks that the
+sandbox preparation copies the winning instructions and support file. The broader
+patch checks passed 170 of 171 tests. The existing 029 line-budget assertion failed
+with 821 lines against a limit below 800.
 
 ## Validation boundary
 
