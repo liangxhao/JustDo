@@ -1,25 +1,26 @@
 # Chrome 扩展侧栏对话
 
-侧栏对话已接入产品会话、工作目录、模型/权限选择、附件、页面上下文、结构化问答和停止。本文说明产品会话接入与权限边界。逐字段规范见[Chrome 接口](protocol/README.md)。
+在 Chrome 工具栏点击扩展图标，即可打开侧栏聊天。你可以新建对话，或继续从扩展发起的会话。网页也能用按钮在侧栏准备一份独立草稿。
 
 ## 1. 用户入口与范围
 
-工具栏按钮打开 Side Panel，对话区可新建或继续扩展创建的会话。输入区提供文字、附件、权限、模型和发送/停止；设置入口打开扩展 options，那里继续管理 OpenClaw relay 配对与 Tab 授权。侧栏不列出或接管由桌面、CLI 等其他入口创建的会话。
+| 你想做什么     | 从哪里开始                                                                                                                                               |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 开始普通聊天   | 点击 Chrome 工具栏里的扩展图标。在侧栏顶部选择「新对话」或扩展已有的会话，在底部输入消息并发送。                                                         |
+| 处理网页请求   | 点击业务网页上的对话按钮。首次使用该网站时，在侧栏输入框上方核对来源并点「允许连接」，然后核对草稿和发送方式。见[网页入口](website-launch.md#用户流程)。 |
+| 管理已连接网站 | 点击侧栏右上角的「连接设置」，在英文设置页的 **Connected websites** 区域调整发送、分享权限，或撤销网站连接。                                             |
 
-已授权业务网页也可用本地 SDK 的真实按钮点击打开侧栏，准备独立草稿或经授权发送，并可选择分享精确首轮最终文本。站点设置、独立输入和取消/停止边界见[网页入口](website-launch.md)。
+侧栏的会话列表只显示扩展创建的会话。在桌面应用中，这些会话位于「Chrome」分组，也可在桌面继续。工具栏的[模型、权限与附件](#5-模型权限与附件)适用于普通聊天。需要附带当前网页内容时，查看[页面上下文](#4-页面上下文的明确授权)。
 
-扩展图标复用应用图标。设置页独立于上游 relay 基线，固定使用英文，分为 Automatic connection、Manual connection、Tab Access 和 Background color；界面品牌由产品元数据注入。颜色选择自动保存并同步到设置页和已打开的侧栏。
+「连接设置」也管理自动化的 Automatic connection、Manual connection 和 Tab Access。自动化配对与侧栏聊天是两条独立连接。聊天连不上桌面应用时，先检查应用是否已经启动。Background color 的选择会自动保存，设置页和已打开的侧栏都会应用该颜色。
 
-两条连接独立：自动化 relay 控制已授权网页，聊天 app-server 管理产品会话。自动发现聊天服务不等于已配对自动化；重新配对 relay 也不能修复 Native host 发现失败。
-
-聊天与 CLI、通用本机 WebSocket app-server 共用 `main/clients/appServer/protocol/AppServerConnection` 的请求解析、握手、方法路由、错误与通知出口。Chrome 与通用入口也复用 `AppServerWebSocketServer` 传输实现，保留独立的凭据和能力 binding；Chrome 仍用自动发现及固定扩展 Origin，通用原生客户端使用设置页复制的 Bearer 配置。浏览器服务只拥有鉴权和生命周期；历史投影、订阅共享与运行校准由浏览器能力 binding 提供。客户端请求不能改变绑定的能力或会话范围。客户端依赖及执行围栏见[宿主接入要求](protocol-contract.md)。
-
-浏览器专属方法／通知常量和网页关联错误映射归 `main/chrome/extension/chromeAppServerProtocol.ts`，
-由浏览器 binding 使用固定白名单注册通用 extensions；公共 app-server 目录不引用浏览器模块。
-
-Automatic connection 通过同一个产品 Native host 发现 app-server，再经独立的 `chrome/extension/pair` 方法取得锁定运行时生成的本地 Gateway 配对信息。它复用发现与鉴权，不调用聊天 Controller，也不新建线程或发送消息。配对仍由上游原生状态机应用，Disconnect 可撤销迟到结果，手动配对不能被自动结果覆盖。
+维护者可查阅下文的[建连和生命周期](#2-建连和生命周期)及[Chrome 接口](protocol/README.md)。
 
 ## 2. 建连和生命周期
+
+### 发现已启动的桌面应用
+
+侧栏经扩展后台发现桌面端的 app-server，然后直接与 app-server 建立聊天连接。
 
 ```mermaid
 sequenceDiagram
@@ -49,6 +50,8 @@ Native helper 只负责 framing 和实例发现，Electron GUI 不直接承担 C
 WebSocket，不保留 helper 作为后台常驻进程；再次发现由 Chrome 按需启动。
 helper 文件名为 `<productName>-chrome-extension-native-host.exe`，保留产品名但不含协议版本号。
 
+### 连接恢复与自动化配对
+
 开发版和安装版统一仅连接用户已经启动的实例；实例未运行或收到扩展重启请求时返回提示，
 不会启动应用、重启 app-server 或删除已有发现信息。连续连接失败只重新发现和连接，
 不会升级为重启请求。开发态运行日志保留在启动终端，安装版日志写入应用日志目录。
@@ -61,7 +64,15 @@ helper 文件名为 `<productName>-chrome-extension-native-host.exe`，保留产
 扩展声明必需的 `http://127.0.0.1/*` 本机访问权限；网页上下文的广域权限仍按用户操作单独申请。
 固定 extension Origin 和随机 capability 继续是 app-server 的准入条件，端口可达不代表授权。
 
+自动化 relay 负责控制已授权网页。Automatic connection 通过同一个产品 Native host 发现 app-server，再经独立的 `chrome/extension/pair` 方法取得锁定运行时生成的本地 Gateway 配对信息。它复用发现与鉴权，不调用聊天 Controller，也不新建线程或发送消息。配对仍由上游原生状态机应用，Disconnect 可撤销迟到结果，手动配对不能被自动结果覆盖。重新配对 relay 不会修复 Native host 发现失败。
+
+扩展设置页独立于上游 relay 基线，固定使用英文。界面品牌从产品元数据注入，扩展图标复用应用图标。
+
 ## 3. 当前协议子集
+
+侧栏聊天与 CLI、通用本机 WebSocket app-server 共用 `main/clients/appServer/protocol/AppServerConnection` 的请求解析、握手、方法路由、错误与通知出口。Chrome 与通用入口也复用 `AppServerWebSocketServer` 传输实现。两类入口各自保有凭据和能力 binding。Chrome 使用自动发现和固定扩展 Origin，通用原生客户端使用设置页复制的 Bearer 配置。
+
+浏览器服务负责鉴权和生命周期。浏览器能力 binding 负责历史投影、订阅共享和运行校准，客户端请求不能改变绑定的能力或会话范围。浏览器专属方法、通知常量及网页关联错误映射定义于 `src/main/chrome/chromeAppServerProtocol.ts`，由浏览器 binding 使用固定白名单注册到通用 `extensions`。公共 app-server 目录不引用浏览器模块。客户端依赖及执行围栏见[宿主接入要求](protocol-contract.md)。
 
 初始化、model/list、thread/start/resume/list/read/loaded/list/name/set、历史 Turn/Item 分页、退订、turn/start/interrupt 与标准 Item 通知均使用共享协议。浏览器特有输入位于 params.chrome，当前选项和授权图片分别使用 chrome/composer/options、chrome/thread/image；富历史与原生增强流另由 chrome/thread/updated、chrome/thread/stream 提供。不宣称实现官方的全部能力。
 
@@ -86,20 +97,21 @@ Main 复用 Cowork 身份、权限、模型和原生历史。流直接转发原�
 
 ## 4. 页面上下文的明确授权
 
-用户显式勾选并授权读取时，在发送时采集当前页标题、URL、选中文字及有界可见正文。页面正文及最终不可信上下文分别限制 24,000 个 UTF-16 code units，不是模型稍后按需读取整页的工具通道。
+需要让助手参考当前网页时，勾选输入框下方的「包含页面上下文」。授予读取权限后，扩展会在发送时采集当前页标题、URL、选中文字及一段可见正文。关闭开关后，发送时不采集网页。页面导航后，原快照只代表采集时的页面。
 
-Main 将上下文放入仅限认证本地客户端的 justdoUntrustedContext，原生只加入本轮 Agent 输入；持久用户消息保留原始文字，不需 Renderer 用正则隐藏注入前缀。网页可含 prompt injection，不能将其当用户命令。
+页面正文及最终不可信上下文分别限制 24,000 个 UTF-16 code units。这是发送时的快照，模型无法通过它在稍后按需读取整页。
 
-关闭开关就不采集。切换会话清除未发送附件，防止跨任务误发；页面自身导航后旧快照不能被当作当前页面实时事实。
+Main 将上下文放入仅限认证本地客户端的 `justdoUntrustedContext`，原生只加入本轮 Agent 输入。持久用户消息保留原始文字，无需 Renderer 隐藏注入前缀。网页可能包含 prompt injection，其中的指令属于不可信数据。
 
 ## 5. 模型、权限与附件
 
-chrome/composer/options 完成宿主准备并返回当前模型和权限；随后标准 model/list 分页读取真实可用模型目录，不将已保存会话／助手引用当作可用目录兜底。选项未就绪时禁用操作，准备完成只恢复原草稿，不自动发送；提升 Full access 使用产品确认。
+在输入框下方选择模型和权限。启用「完全访问」需要额外确认。选项加载时暂时无法发送，加载完成后可以继续编辑原草稿。
 
-附件和文本有大小/数量限制，当前附件最多 5 个、原始总量 4 MiB，入站 WS 最大 8 MiB。Main 再次验证，不能只依靠浏览器表单。发送成功是原生接收，完成另由运行事件确认。
+通过「+」菜单添加附件，最多 5 个，原始总大小上限 4 MiB。可只发送图片或文档。图片需要当前模型支持视觉输入；切换会话会清除未发送附件，避免夹带到另一场对话。
 
-图片通过标准 image/data URL 输入，文档保留 chrome.attachments，支持纯图片或纯文档而不造文字。
-模型目录仅声明原生真实提供的输入模态；缺少视觉能力的模型不会被统一标成支持图片。
+`chrome/composer/options` 完成宿主准备并返回当前模型和权限，再由标准 `model/list` 分页读取可用模型。模型目录以原生实际能力为准，已保存的会话和助手引用不能补充缺失模型。加载完成只恢复草稿，用户仍需确认发送。
+
+图片通过标准 image/data URL 输入，文档保留 `chrome.attachments`。只发送附件时保留空文本。入站 WebSocket 上限 8 MiB，Main 再次校验输入。发送成功表示原生接收，运行结束另由运行事件确认。
 
 ### 侧栏审批
 
@@ -146,6 +158,8 @@ Main 系统选择器或服务端近期目录校验签发绑定当前连接及草
 问答草稿不写普通输入框、本地存储或日志；历史继续使用只读问答展示。
 
 ## 6. 展示和中止
+
+输入框上方的活动条显示当前运行阶段和已用时间。要停止本次运行，使用输入框右下角的「停止」按钮。收到停止请求后，侧栏继续等待执行结束确认。连接中断时可在恢复后查看原请求状态，避免重复发送。
 
 ### 发送接纳与未知结果
 
@@ -298,6 +312,8 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 
 ## 8. 维护、测试和未交付范围
 
+### 源码与构建
+
 本包的 `openclaw/` 保留锁定上游 relay，`conversation-overlay/` 提供侧栏与客户端模块，`scripts/` 和 `tests/` 保存本包组装及验证入口。桌面运行时、Native Host 及共享聊天构建适配由集成宿主提供；本包迁仓不表示这些宿主依赖已经实现独立构建。
 
 宿主浏览器适配集中在 `src/renderer/chrome/`：`chat/` 复用聊天库提供流、活动、
@@ -305,11 +321,16 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 宿主 `scripts/chrome/` 保留构建与 Native Host 准备入口，将适配器构建为本包的离线模块；
 本包不直接导入应用 `src`。桌面扩展管理页面和文案仍归桌面功能，不属于侧栏客户端。
 
-`chrome-extension:prepare` 从该包生成 `build/chrome-extension/chrome-extension/`，安装包继续交付到 `resources/chrome-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[源码包说明](overview.md)。
+`chrome-extension:prepare` 从该包生成 `build/chrome-extension/chrome-extension/`，安装包继续交付到 `resources/chrome-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[构建与发布](integration.md#构建与发布)。
 
 产品组装保留锁定上游的 `manifest.version`，不将应用发布版本注入扩展 `version_name`。桌面“扩展版本”仅读取实际组装产物的 `manifest.version`，用户可在 Chrome 扩展管理页 → 详情 → 版本查看已安装版本并核对。应用版本与扩展版本分别维护；版本号不参与协议兼容判定，版本相同也不能代替连接验证，桌面不据此推断已安装扩展版本。
 
 日常 UI 修改在 conversation-overlay，relay 基线由锁定 OpenClaw 版本更新，构建接缝单独审查。回归包括 Native host 未安装、实例未运行、禁止启动与重启、旧 rendezvous、非法 Origin/token、初始化前调用、流与历史重合、停止、超限附件和页面上下文分离。
+
+共享聊天解析或 stream reducer 变化时，先运行 `chrome-extension:build-markdown` 与 `chrome-extension:build-stream`，提交对应生成物，再执行 `chrome-extension:prepare`。后者只组装已有模块，不替代前两项生成；侧栏 DOM 回归直接加载提交的模块，必须验证参数流不会提前显示 Tool 卡片。
+
+### 验证路径
+
 标准图片、审批面板和失效选择也纳入回归；单元／隔离浏览器夹具与真实原生链路的验证范围统一见
 [兼容性与测试](protocol/compatibility.md)，不以表单测试代替 Native 权限生效或模型视觉验收。
 
@@ -317,7 +338,7 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 WebSocket/侧栏流程；中文和空格路径、无公网依赖、冷连接失败后恢复也必须覆盖。
 fixture 和本开发机通过不代表已复现用户安装现场；真正安装器、Chrome 安装与内部模型的整链验收仍需使用最终发布包执行。
 
-共享聊天解析或 stream reducer 变化时，先运行 `chrome-extension:build-markdown` 与 `chrome-extension:build-stream`，提交对应生成物，再执行 `chrome-extension:prepare`。后者只组装已有模块，不替代前两项生成；侧栏 DOM 回归直接加载提交的模块，必须验证参数流不会提前显示 Tool 卡片。
+### 当前能力边界
 
 当前不能将手动 Chrome 加载验证扩展为所有 Chromium 浏览器/商店发布承诺。右键提问、YouTube transcript、tab mention 等未接通能力不列作现有功能；新增时需同步[兼容规范](protocol/compatibility.md)。
 
@@ -329,6 +350,6 @@ fixture 和本开发机通过不代表已复现用户安装现场；真正安装
 
 ## 上游来源与验证范围
 
-relay 的来源提交、完整校验和及 overlay 接缝由[源码包说明](overview.md)与组装脚本维护。升级须核对锁定运行时的完整 pristine 基线；本地组装一致不代表安装版 Chrome Native Messaging/relay 已通过。
+relay 的来源提交、校验和及覆盖位置由扩展组装脚本维护。升级须核对锁定运行时的完整原始基线，并在安装版中验证 Native Messaging 与 relay。组装脚本位置见[宿主集成](integration.md#源码入口)。
 
 历史来源记录不作为当前产物的端到端通过证据；本包的已验证与未验证范围见[兼容性说明](protocol/compatibility.md)。

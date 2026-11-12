@@ -55,24 +55,22 @@ sequenceDiagram
   A-->>P: final thread history
 ```
 
-Server 每 500 ms 从 JustDo/OpenClaw 权威状态刷新活动 turn，并以 Gateway runtime 状态而非
-可能短暂滞后的持久化 session 状态判断本轮是否仍在运行。实时文本、Thinking 和工具
-来自独立 `chrome/thread/stream` 订阅；轮询负责历史校准及兼容层完成通知，不能代替消息流。
-活动阶段复用原生增量游标，每 20 次轮询读取完整快照，终态期间强制完整读取。
-这些频率是实现细节，不是客户端协议保证；异步读取耗时也计入实际间隔。
+- **实时流。** 独立的 `chrome/thread/stream` 订阅提供文本、Thinking 和工具消息。
+- **状态轮询。** Server 每 500 ms 刷新活动 turn。持久化 session 状态可能短暂滞后，是否仍在运行由 Gateway runtime 状态判断。轮询用于历史校准和兼容层完成通知。
+- **历史读取。** 活动阶段复用原生增量游标，每 20 次轮询读取完整快照，终态期间强制完整读取。
+  频率是实现细节，实际间隔还包含异步读取耗时。
 
 ## 审批归属与撤回
 
-审批 owner 在发送前按精确物理会话准备；若请求早于 ACK，只暂扣，不从审批的 runId 推断归属。
-ACK 确认 actual run 后才呈现匹配请求。只有实际发起连接可以回答，恢复订阅的观察者不接管审批。
-命令会话授权须成功协商实验能力且服务端明确提供；它只在同连接、同物理会话和相同命令环境内
-逐次回传原生 allow-once。原生明确提供的 App 持久 action 单独显示，不能与会话命令授权混用。
-
-侧栏表单没有默认选择，回答只回到原请求 ID；重复点击不产生第二个回复。
-`serverRequest/resolved`、停止、切换聊天及断线撤回对应表单，旧 socket 或旧按钮不得迟到允许。
-Secret 字段不向普通草稿回填，发送响应回来时也不会将焦点从审批输入框夺走。
-关闭或普通拒绝只撤回交互；显式 Cancel 先拒绝，再异步请求停止本连接拥有的精确运行，
-不等待 Stop ACK 才拒绝。原生 owner 在未结算期间仍隔离后续审批，不能回退到另一个界面自动批准。
+- **归属。** 审批 owner 在发送前按精确物理会话准备。早于 ACK 的请求先暂扣，待 ACK 确认 actual run 后才呈现匹配请求。
+  只有实际发起连接可回答，审批的 `runId` 和恢复订阅均不授予审批归属。
+- **授权范围。** 命令会话授权须成功协商实验能力且由服务端明确提供，只在同连接、同物理会话和相同命令环境内逐次回传原生 allow-once。
+  原生明确提供的 App 持久 action 单独显示，和会话命令授权独立。
+- **回答。** 表单没有默认选择，每个回答只回到原请求 ID，重复点击不产生第二个回复。
+  Secret 字段不回填普通草稿，发送响应到达后保留审批输入框焦点。
+- **撤回。** `serverRequest/resolved`、停止、切换聊天及断线撤回对应表单，旧 socket 和旧按钮随即失效。
+  关闭或普通拒绝只撤回交互。显式 Cancel 立即拒绝审批，再异步请求停止本连接拥有的精确运行。
+  原生 owner 在未结算期间继续隔离后续审批，其他界面不能自动接管并批准。
 
 ## 停止生成
 
@@ -84,28 +82,33 @@ Side Panel 在当前所选线程收到 `turn/started` 后把 Send 按钮切换�
 
 ## 完成判定
 
-标准 `turn/completed` 只在 Main 已验证 `executionSettled:true` 后发送，不另添加该字段；
-增强 `chrome.activeTurn` 仍携带显式证据。运行结果须来自精确 whole-run
-终态证据；chat final、单次尝试、yield、idle 和 Stop ACK 均不能结算执行。
-Runtime 保留有界运行元数据：原生 key、物理 sessionId、runId、客户端连接代次、
-序号、状态、结束时间与错误。私有 `lifecycleGeneration` 可缺省；有显式值时拒绝冲突，
-缺省时仍严格核对物理身份、run、连接代次和序号，不按后缀或当前 owner 猜测身份。
+运行结果来自精确 whole-run 终态证据。Main 验证 `executionSettled:true` 后才发送标准 `turn/completed`，该标准通知不另带此字段。
+增强 `chrome.activeTurn` 仍携带显式证据。chat final、单次尝试、yield、idle 和 Stop ACK 均不能结算执行。
 
-实时路径只接受已准入的 `lifecycle end/error` 且 `executionSettled:true`。
-聊天 final 可先退役本地显示 owner；其有界原生绑定允许同一身份和更高序号的真正末端
-补齐回执。退役后 canonical agent 帧仍推进序号高水位，旧终态不能越过已观察的新帧。
+### 实时终态与身份
 
-缺少实时终态时，只能使用发送前已捕获的精确绑定进行 `agent.wait(timeoutMs:0)` 核对，
-并在前后复核 `sessions.describe`、连接代次和生命周期版本。必须匹配原生 run，
-返回有限 `endedAt`、可确认的结果且非 yield；普通等待超时不算终态。
-已核实结果只进入最多 100 项的元数据缓存，后续读取仍复核身份，不缓存正文或伪造事件序号。
-timeout 证据优先于随之产生的机械 aborted 标记，不能误报用户停止。
-具体身份准入与回执补偿规则见[扩展侧聊](../side-panel.md)。
+Runtime 有界保留原生 key、物理 `sessionId`、`runId`、客户端连接代次、序号、状态、结束时间和错误。
+私有 `lifecycleGeneration` 可缺省。显式值冲突时拒绝，缺省时仍核对物理身份、run、连接代次和序号。
+身份须由上述字段确认，不能根据后缀或当前 owner 推断。
+
+实时路径只接受已准入且 `executionSettled:true` 的 `lifecycle end/error`。
+聊天 final 可先退役本地显示 owner，有界原生绑定允许同一身份、更高序号的真正末端补齐回执。
+退役后 canonical agent 帧继续推进序号高水位，迟到旧终态不能越过已观察的新帧。
+
+### 缺少实时终态时的补查
+
+1. 使用发送前已捕获的精确绑定调用 `agent.wait(timeoutMs:0)`，前后复核 `sessions.describe`、连接代次和生命周期版本。
+2. 只接受匹配原生 run、有有限 `endedAt`、可确认且非 yield 的结果。普通等待超时不算终态。
+3. 已核实结果进入最多 100 项的元数据缓存，后续读取仍复核身份。缓存只保留元数据，事件序号来自原生证据。
+
+timeout 证据优先于随之产生的机械 aborted 标记，避免将超时报告为用户停止。具体身份准入与回执补偿规则见[扩展侧聊](../side-panel.md)。
 
 Controller 核对后才投影 `completed`、`failed` 或 `interrupted`。后继运行、旧 incarnation、
 旧代次和迟到序号不能结算当前输入。已有内部 managed handoff 错误过滤保持一致。
 
-精确终态后至少保留 3 次稳定历史校准；缺少最终历史最多再校准 20 次。
+### 结算后的历史校准与状态查询
+
+精确终态后至少保留 3 次稳定历史校准，缺少最终历史时最多再校准 20 次。
 这些次数只决定历史刷新何时收敛，不产生执行结果。读取失败保留已有消息；连续异常
 降低刷新频率，不伪造失败。找不到线程仅释放其轮询，不宣称该执行失败。
 
@@ -141,11 +144,9 @@ Controller 核对后才投影 `completed`、`failed` 或 `interrupted`。后继�
 | app-server 单次请求  |   60 秒 |
 | 侧栏审批本地等待上限 | 10 分钟 |
 
-普通 RPC 超时仅拒绝客户端 Promise，不保证服务端工作已经取消。业务 turn 必须使用 `turn/interrupt`。
-审批则采用原生期限和撤回信号；侧栏本地等待到期只拒绝该审批，不自动发送 Stop。
-原生可以更早撤回请求，10 分钟上限不能延长许可，也不是执行期限。
-发现、WebSocket 和初始化分别有期限；握手只收到 close、没有 error 时也立即拒绝。
-面板关闭会取消当前握手，迟到的发现响应不能再创建连接；旧 socket 的消息不能更新新连接。
+- **普通 RPC。** 超时只拒绝客户端 Promise。停止业务 turn 须使用 `turn/interrupt`。
+- **审批。** 原生期限和撤回信号优先。侧栏本地等待到期只拒绝该审批，10 分钟上限不延长许可或执行期限，也不会自动发送 Stop。
+- **握手。** 发现、WebSocket 和初始化分别计时。握手仅收到 close 时也立即拒绝。面板关闭会取消当前握手，使迟到的发现响应和旧 socket 消息失效。
 
 协议连接最多保留 64 个待答服务端请求，侧栏表单队列最多 16 项；超出表单容量直接拒绝。
 客户端在同一 socket 记录最多 1024 个服务端请求 ID，到限时关闭连接重新发现，不淘汰旧 ID 后重新准入。
@@ -163,10 +164,13 @@ Controller 核对后才投影 `completed`、`failed` 或 `interrupted`。后继�
 | `SOCKET_TIMEOUT` / `SOCKET_ERROR` / `SOCKET_CLOSED` | 本机 WebSocket 握手未完成或已断开                          |
 | `INITIALIZE_TIMEOUT`                                | app-server 初始化未在期限内完成                            |
 
-调用错误的 `requestSent:false` 只表示该次 RPC 明确未发出，或服务端明确证明原生准入前已拒绝。
+### 发送失败与未知提交
+
+调用错误中的 `requestSent:false` 表示该次 RPC 明确未发出，或服务端明确证明原生准入前已拒绝。
 原生发送 owner 关闭而未调用 `chat.send` 时，通过 `onNativeSendAbandoned` 提供该证明；
 准备失败或取消释放本次输入，入口处停止等待／前序未知的本地拒绝也明确标记未发送，
 但不释放前序运行的停止或未知保护。
+
 消息发出后断线、超时，以及缺少准入证据的业务错误均按可能已发送处理。
 wire 的 `requestSent` 可缺省；客户端保守投影为 true 并不补充原生证据。
 保留原输入身份并核对，不能自动补发。

@@ -1,11 +1,15 @@
 # Chrome Assistant
 
-- [概览与运行前提](overview.md)
-- [集成约束](integration.md)
-- [协议集成要求](protocol-contract.md)
-- [侧栏对话](side-panel.md)
-- [网页发起对话与结果分享](website-launch.md)
-- [网页 SDK 接入](website-sdk.md)
-- [协议、数据模型与生命周期](protocol/README.md)
+Chrome Assistant 随桌面应用交付，提供 Chrome 侧栏对话、网页上下文和已授权标签页的自动化。
+
+| 想做什么                             | 读哪篇                                      |
+| ------------------------------------ | ------------------------------------------- |
+| 安装、更新扩展或找到应用附带的文件   | [概览与安装](overview.md#安装或更新扩展)    |
+| 把业务网页按钮接入侧栏，或先运行示例 | [网页 SDK 接入](website-sdk.md)             |
+| 使用侧栏对话、附件、网页上下文和审批 | [侧栏对话](side-panel.md)                   |
+| 了解网站连接、发送、撤销和结果分享   | [网页发起对话与结果分享](website-launch.md) |
+| 在本仓库构建、打包或排查宿主接入     | [宿主集成](integration.md)                  |
+| 实现兼容宿主                         | [宿主接入要求](protocol-contract.md)        |
+| 查询握手、方法、数据模型和错误字段   | [协议参考](protocol/README.md)              |
 
 [返回浏览器扩展索引](../README.md) · [全部插件文档](../../README.md)

@@ -17,11 +17,13 @@ type ChromeThreadFields = {
 // StandardThread & { chrome: ChromeThreadFields }
 ```
 
-`thread.turns` 是标准历史；`thread.chrome.display` 是按需请求的浏览器富视图。
-标准 Thread／Turn 的 `createdAt`、`startedAt`、`completedAt` 等时间戳为 Unix 秒；
-Item 的 `startedAtMs`／`completedAtMs`、`durationMs`，以及原生增强事件和
-`chrome.activeTurn` 的时间保持毫秒。
-产品持久来源保持 `chrome-extension`；标准 Thread.source 映射为合法的 `appServer`，不改写成 CLI 来源。
+`thread.turns` 提供标准历史，`thread.chrome.display` 提供按需请求的浏览器富视图。
+产品持久来源为 `chrome-extension`，标准 `Thread.source` 映射为 `appServer`。
+
+| 字段所在位置                                                                                    | 时间单位 |
+| ----------------------------------------------------------------------------------------------- | -------- |
+| 标准 Thread／Turn 的 `createdAt`、`startedAt`、`completedAt` 等时间戳                           | Unix 秒  |
+| Item 的 `startedAtMs`、`completedAtMs`、`durationMs`，原生增强事件及 `chrome.activeTurn` 的时间 | 毫秒     |
 
 ### 状态映射
 
@@ -52,25 +54,28 @@ type ChromeActiveTurn = {
 标准 Turn 的必需字段、时间和 `itemsView` 与通用入口一致，不再把显示分组标为 completed。
 缺少精确原生结算证据的历史以 `EXECUTION_UNKNOWN:` 保留未知，产品计时行不能单独证明完成。
 
-`thread.chrome.activeTurn` 以及 `turn/start.result.chrome.activeTurn` 保留精确状态。
-`unknown` 表示这次提交的接收或执行结算尚未核实，不能据此重发；富显示分组不替代此状态。
-`id` 是提交的 `clientTurnId`，用于查询和停止；`nativeRunId` 来自已记录的原生 root run 绑定，
-仅用于原生流准入。两者可能不同，客户端不得根据字符串形状猜映射，缺少原生绑定时不得自行替代。
+`thread.chrome.activeTurn` 和 `turn/start.result.chrome.activeTurn` 保留精确状态。
+`unknown` 表示提交的接收或执行结算尚未核实。此时保留原输入身份，不能重发或用富显示分组推定状态。
+
+- `id` 是提交的 `clientTurnId`，用于查询和停止。
+- `nativeRunId` 来自已记录的原生 root run 绑定，仅用于原生流准入。
+
+两者可能不同，映射须由原生绑定确认。缺少绑定时不能按字符串形状猜测或替代。
 
 ## ChromeDisplayItem
 
-以下 item 只属于 `chrome.display`，不是对标准 ThreadItem 的扩充或替代。
-Side Panel 复用桌面历史收拢规则，将最后正文前的已结束思考、
-工具、中间正文、压缩标记和进度回执放入“展开处理过程”区域，最终正文保留在外。
-内部连续 reasoning/toolCall 形成摘要，默认单开，批量展开后允许多个摘要和逐项例外；
-Thinking 正文随摘要直接可见，原始工具输入输出保持独立。活动过程、未知工具状态、
-原生错误、媒体和交互边界继续可见。折叠不表示执行已结算，历史 `phase:'final_answer'`
-也不证明哪个正文是原生最终回复。
-展开状态属于当前客户端的显示状态；
-实时到历史的接管需使用可靠的消息/工具身份，不能将按顺序生成的历史 item ID 当作
-永久原生身份。刷新保持可核对的展开选择与阅读位置，不跨会话沿用旧分组。
+以下 item 只属于 `chrome.display`，标准 ThreadItem 仍使用独立的通用模型。
 
-用户消息：
+### 处理过程折叠
+
+- Side Panel 复用桌面历史收拢规则。最后正文前的已结束思考、工具、中间正文、压缩标记和进度回执进入“展开处理过程”，最终正文保留在外。
+- 连续 `reasoning`／`toolCall` 形成摘要，默认单开。批量展开后允许多个摘要和逐项例外。Thinking 正文随摘要可见，原始工具输入输出保持独立。
+- 活动过程、未知工具状态、原生错误、媒体和交互边界继续可见。折叠仅表示显示选择，历史 `phase:'final_answer'` 也无法证明哪条正文是原生最终回复。
+- 展开状态由当前客户端管理。实时到历史接管使用可靠的消息或工具身份，按顺序生成的历史 item ID 只用于当前投影。刷新保留可核对的展开选择和阅读位置，每个会话管理自己的分组。
+
+### 常见 Item 示例
+
+**用户消息**
 
 ```json
 {
@@ -80,7 +85,7 @@ Thinking 正文随摘要直接可见，原始工具输入输出保持独立。�
 }
 ```
 
-智能体最终消息：
+**智能体最终消息**
 
 ```json
 {
@@ -91,7 +96,7 @@ Thinking 正文随摘要直接可见，原始工具输入输出保持独立。�
 }
 ```
 
-Thinking：
+**Thinking**
 
 ```json
 {
@@ -102,7 +107,9 @@ Thinking：
 }
 ```
 
-工具调用和结果会按 `toolUseId` 合并为同一个 item：
+**工具调用与结果**
+
+调用和结果按 `toolUseId` 合并为同一个 item。
 
 ```json
 {
@@ -121,20 +128,19 @@ Thinking：
 `status: "failed"` 和 `isError: true`。如果历史只有孤立结果，适配层仍会创建一个完整
 `toolCall` item。
 
-System 消息：
+**System 消息**
 
 ```json
 { "id": "<threadId>-item-4", "type": "systemMessage", "text": "Notice" }
 ```
 
-一个新的 `userMessage` 会开启新的显示分组；后续 Thinking、工具活动及非用户消息归入该
-分组。若历史以非用户消息开头，也形成独立分组。分组 ID 只用于当前展示，不可用于执行控制。
-上述 item 是 `thread.chrome.display`／`chrome/thread/updated` 的完整显示投影；
-实时 Thinking、正文与工具增强流通过 `chrome/thread/stream` 通知。标准 `item/*` 通知也已实现，
-侧栏只采用增强显示一路更新正文，避免重复追加。命令执行和文件变更如果由
-OpenClaw 表示为普通工具调用，会以 `toolCall` 展示；工具卡片本身不授予执行权限。
-本轮实际发送连接另通过标准服务端请求呈现已支持的命令／插件审批，观察连接不取得审批权。
-独立文件变更审批和复杂原生问答尚未适配，不能从 `toolCall` 的名称推导其交互能力。
+### 显示分组、实时更新与权限
+
+- **分组。** 新 `userMessage` 开启分组，后续 Thinking、工具活动及非用户消息归入该分组。历史若以非用户消息开头，也形成独立分组。分组 ID 只用于当前展示。
+- **更新。** `thread.chrome.display`／`chrome/thread/updated` 提供完整显示投影，`chrome/thread/stream` 提供实时 Thinking、正文与工具增强流。标准 `item/*` 也会发送，侧栏仅通过增强显示一路更新正文，避免重复追加。
+- **权限。** OpenClaw 若将命令执行和文件变更表示为普通工具调用，侧栏显示 `toolCall`，执行权限由宿主单独核验。已支持的命令／插件审批通过独立的标准服务端请求交给实际发送连接，观察连接没有审批权。独立文件变更审批和复杂原生问答尚未适配，`toolCall` 的名称不决定交互能力。
+
+### 原生展示字段
 
 用户/助手 item 可带 `rawMessage`，仅供共享展示解析器读取原生 content/媒体；
 压缩 `systemMessage` 也可携带经过白名单筛选的 `rawMessage.__openclaw`，包括
@@ -142,7 +148,7 @@ OpenClaw 表示为普通工具调用，会以 `toolCall` 展示；工具卡片�
 明确的原生 reset 另外输出空文字 `phaseBoundary` item，只隔开显示过程，不是控制方法。
 工具参数和任意路径不授予图片读取权限。
 
-显示项可附以下只读 `display`；这些信息来自认证历史，不替代原生执行状态：
+显示项可附下列只读 `display`。字段来自认证历史，执行状态仍依据原生结算证据。
 
 ```ts
 type MessageDisplay = {
@@ -164,18 +170,13 @@ type MessageDisplay = {
 };
 ```
 
-`timestampMs` 与 `modelName` 仅来自该条原生助手消息。前者将合法毫秒时间或带时区的完整 ISO
-时间统一为毫秒，表示消息记录时间；后者保留实际模型身份，限 500 字符并过滤
-`gateway-injected`。缺失字段不以当前时间、会话默认模型或输入框选择填补，
-也不由这两项推断完成状态、结束时间或整轮耗时。
+- **时间与模型。** `timestampMs` 和 `modelName` 仅来自该条原生助手消息。合法毫秒时间或带时区的完整 ISO 时间统一为毫秒，表示消息记录时间。`modelName` 保留实际模型身份，限 500 字符并过滤 `gateway-injected`。缺失字段保持缺失。这两项不用于推断完成状态、结束时间或整轮耗时。
+- **可见性。** `keepVisible` 为媒体或被过滤的交互内容保留可见边界，工具结果与匹配调用合并时也保留该字段。工具错误不转成 `nativeFailure`。纯未支持内容只返回安全占位种类，由客户端显示本地化桌面查看提示。未知 HTML 和伪造 Widget 均不会获准展示。
+- **显示身份。** `sourceId` 和 `sourceSegmentId` 保留原生值，`sourceIndex` 区分同一来源消息中的显示块。未知重复形状仍分别显示。这些字段和客户端短期 `displayKey` 仅供显示使用，不能用于发送、停止或推断原生物理会话身份。
 
-`keepVisible` 为媒体或被过滤的交互内容保留可见边界；工具结果与匹配的调用合并时也保留该字段，
-不把工具错误变成 `nativeFailure`。纯未支持内容只返回安全占位种类，客户端显示本地化桌面查看提示，
-不返回未知 HTML 或伪造 Widget 准入。`sourceId` 与 `sourceSegmentId` 保留原生值，
-`sourceIndex` 只区分同一来源消息中的显示块；未知重复形状仍分别显示。
-它们和客户端短期 `displayKey` 均不能用于发送、停止或推断原生物理会话身份。
+### 待处理输入
 
-用户 item 还可带：
+用户 item 可带以下字段。
 
 ```ts
 type PendingInput = {
@@ -192,15 +193,13 @@ type PendingInput = {
 
 ## 实时流通知
 
-`chrome/thread/stream.params` 是 `{threadId,kind,event,turnId?,startedAt?}`，kind 为 `agent` 或 `chat`，
-event 使用宿主已准入的原生 Agent／Chat 事件投影。客户端只采用当前会话、运行、连接代次和递增序号匹配的事件，不从缺失字段猜身份。
-显示控制器校验会话/run/序号，历史接管不会再次追加已显示的消息；重连重新读取
-权威历史，不重放不确定输入。外形见[浏览器方法与通知](app-server.md#浏览器方法与通知)。
+`chrome/thread/stream.params` 为 `{threadId,kind,event,turnId?,startedAt?}`。
+`kind` 是 `agent` 或 `chat`，`event` 是宿主已准入的原生 Agent／Chat 事件投影。
 
-浏览器构建适配器在已准入的流上增加本地 `activity` 投影，复用桌面聊天的阶段与进度纯函数。
-它包括 runId、stage、观察起点、最近活动时间，以及原生提供的工具/模型字符数、工具说明或重试计数。
-这是临时显示对象，不是新的 app-server 通知、执行权威或持久数据。
-实时工具 item 另外携带 `progressText`、`startedAt` 和 `updatedAt`，最终结果接管后清除临时工具进度。
+- **事件准入。** 客户端核对当前会话、运行、连接代次和递增序号，缺失字段不能用于猜测身份。
+- **历史接管。** 显示控制器用会话、run 和序号避免重复追加。重连时重新读取权威历史，不重放不确定输入。通知见[浏览器方法与通知](app-server.md#浏览器方法与通知)。
+- **本地进度。** 浏览器构建适配器在已准入的流上增加临时 `activity` 投影，复用桌面聊天阶段与进度纯函数。包含 `runId`、`stage`、观察起点、最近活动时间，以及原生提供的工具／模型字符数、工具说明或重试计数。它仅用于临时显示，独立于 app-server 通知、执行权威和持久数据。
+- **工具进度。** 实时工具 item 另携带 `progressText`、`startedAt` 和 `updatedAt`，最终结果接管后清除临时进度。
 
 ## PageContext
 

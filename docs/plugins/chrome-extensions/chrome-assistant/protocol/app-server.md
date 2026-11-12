@@ -16,24 +16,20 @@ Chrome 使用与 CLI／本机 WebSocket 相同的基础 app-server 方法、参�
 ws://127.0.0.1:<dynamic-port>/app-server?token=<64 hex chars>
 ```
 
-HTTP Upgrade 同时校验 loopback、固定 `/app-server` 路径、当前进程 capability 和
-`Origin: chrome-extension://jboajogplelmaahjbomgflnfngpolgcb`。
-通用原生入口则校验 Bearer 并拒绝 Origin。两种凭据不互换，客户端名称与能力声明不改变来源范围。
-
-入站每条 JSON 文本消息最多 8 MiB；Chrome 出站最多 32 MiB，待发缓冲最多 64 MiB。
-较大的出站额度服务于已有 20 MiB 图片读取和 Base64 开销，不扩大工具、文件或会话权限。
-侧栏附件仍限制最多 5 个、原始文件合计最多 4 MiB，Main 另校验编码后总量。
-
-本轮基础字段与私有命名空间调整将 Chrome app-server 发现版本提升为 4；
-Native Messaging framing／握手版本仍为 2。应用与扩展须使用匹配产物，旧版不会静默降级。
-更新后重启应用并重新加载扩展；安装版最终验收见[兼容性与测试](compatibility.md)。
+- **鉴权。** HTTP Upgrade 同时校验 loopback、固定 `/app-server` 路径、当前进程 capability 和
+  `Origin: chrome-extension://jboajogplelmaahjbomgflnfngpolgcb`。通用原生入口使用独立的 Bearer 凭据并拒绝 Origin。
+  客户端名称与能力声明不改变来源范围。
+- **传输限额。** 每条入站 JSON 文本消息最多 8 MiB，Chrome 出站最多 32 MiB，待发缓冲最多 64 MiB。
+  出站额度包含已有 20 MiB 图片读取的 Base64 开销。工具、文件和会话分别按自身权限校验。
+- **附件限额。** 侧栏最多接收 5 个附件，原始文件合计最多 4 MiB。Main 另校验编码后总量。
+- **版本。** Chrome app-server 发现版本为 4，Native Messaging framing／握手版本为 2。
+  应用与扩展须使用匹配产物，旧版不会静默降级。更新后重启应用并重新加载扩展。安装版验收见[兼容性与测试](compatibility.md)。
 
 ## 统一基础协议
 
-消息省略 `jsonrpc`。请求使用字符串或安全整数 ID，响应按 ID 匹配；批量请求不支持。
-成功 `initialize` 后发送 `initialized` 通知，再调用业务方法。
-参数不是对象、非法 ID、错误初始化、重复初始化和未知方法的处理与通用入口一致。
-无 ID 的业务通知不执行任务。
+- **消息。** 省略 `jsonrpc`。请求使用字符串或安全整数 ID，响应按 ID 匹配。每个请求或通知单独占一条 WebSocket 文本消息，批量请求不支持。
+- **初始化。** 成功 `initialize` 后发送 `initialized` 通知，再调用业务方法。参数、ID、初始化顺序、重复初始化和未知方法的处理与通用入口一致。
+- **执行。** 业务方法须有请求 ID。无 ID 的业务通知不执行任务。
 
 以下每行分别发送为一条 WebSocket 文本消息，不将整个示例或 JSON 数组放入同一帧。
 这里与当前 Side Panel 一样显式协商实验能力，用于服务端实际提供的命令会话授权和插件确认；
@@ -71,7 +67,9 @@ Native Messaging framing／握手版本仍为 2。应用与扩展须使用匹配
 
 ## 浏览器输入与富展示
 
-标准方法中的额外输入放在 `params.chrome`，不覆盖标准字段：
+### `turn/start` 的附加输入
+
+标准方法将 Chrome 专属输入放在 `params.chrome`，标准字段仍用于通用输入。
 
 ```json
 {
@@ -104,8 +102,10 @@ Native Messaging framing／握手版本仍为 2。应用与扩展须使用匹配
 图片还须通过当前真实模型目录的视觉能力校验；未知或仅文本的模型会在发送前明确拒绝，
 异步准备期间模型发生变化也不能沿用旧视觉许可。侧栏不会为此自动切换模型或重新发送。
 
-读取／恢复时，`chrome.includeDisplay: true` 单独选择富视图；
-`chrome.turnId` 可查询侧栏已知的精确发送身份。响应附加：
+### `thread/read` 与 `thread/resume` 的富视图
+
+读取／恢复时，`chrome.includeDisplay: true` 选择富视图，`chrome.turnId` 查询侧栏已知的精确发送身份。
+响应可附加以下字段。
 
 ```ts
 thread.chrome = {
@@ -138,15 +138,16 @@ thread.chrome = {
 标准 Item 只接收 Main 精确关联的原生进度，缺少身份的原始包不能补造核心 Item。
 原生稀疏工具补页不回退正文水位；终态仍只由精确整轮结算建立。
 
-每个连接最多加载 32 个线程；hub 最多保留 256 个精确 thread/turn 准入或观察槽，
-需要新增槽的发送、恢复和停止在超限时明确返回 `-32602`，不静默丢掉完成通知。
-同线程前一轮仍在校准历史时，新轮次使用独立观察身份，旧轮次可以正常发送完成通知，
-但不能用它的 idle 覆盖新的执行。标准线程状态是当前运行观察，不代表执行结算。
-发送响应仍在等待时，增强流、核对和停止照常；标准 Turn／Item 的收尾等待该次发送响应准入，
-不能因为另一个观察者先恢复就把 completed 发在 started 之前。
-最后一个观察者退订且全局没有待准入或运行观察时，只向实际退订连接发送
-`notLoaded` 状态及 `thread/closed`；其他观察者和后台运行不受影响。
-如果退订时仍有后台工作，稍后观测结束不向旧观察者补发 closed；不保存旧观察者名单。
+### 观察容量与通知顺序
+
+- **容量。** 每个连接最多加载 32 个线程，hub 最多保留 256 个精确 thread/turn 准入或观察槽。
+  需要新增槽的发送、恢复和停止在超限时返回 `-32602`，已准入的完成通知仍会发送。
+- **轮次隔离。** 同线程前一轮仍在校准历史时，新轮次使用独立观察身份。
+  旧轮次可以发送自己的完成通知，但旧 `idle` 不能覆盖新执行。标准线程状态表示当前运行观察，执行结算须核对精确终态。
+- **发送准入。** 发送响应尚未返回时，增强流、核对和停止照常。标准 Turn／Item 的收尾等待该次发送响应准入，
+  即使另一个观察者先恢复，`completed` 也要等 `started`。
+- **退订。** 最后一个观察者退订且全局没有待准入或运行观察时，服务端只向实际退订连接发送 `notLoaded` 和 `thread/closed`。
+  退订时若仍有后台工作，服务端不保留旧观察者名单，观测结束后也不补发 `closed`。其他观察者和后台运行不受退订影响。
 
 富侧栏的正文继续由原生增强 reducer／富快照合并，标准 Item 不再被第二次追加。
 该 reducer 保留组件、待处理输入、压缩、正文撤回和阅读位置规则；增强信息不是另一份持久正文权威。
@@ -158,41 +159,44 @@ thread.chrome = {
 `turn/start.error.data.requestSent` 仅在宿主提供明确 boolean 时返回；无值仍表示发送可能未知。
 网页关联的业务错误数据仍按其专属契约处理。
 
-实际发起该轮次的侧栏连接通过 Main 的 trusted hooks 取得本轮审批展示权，观察者不取得审批权。
-Main 在发送前先保存精确原生会话绑定；审批可能早于发送 ACK，先暂扣，只有原生 ACK 明确确认
-actual run 后才展示匹配的审批，不能根据待审批请求的 runId 反向认领执行。
-命令审批通过标准 `item/commandExecution/requestApproval` 展示命令、目录、原因，
-可仅本次允许、拒绝或取消执行。成功协商 `experimentalApi` 且服务端在 `availableDecisions`
-明确提供 `acceptForSession` 时，还可允许当前连接中同会话的相同命令；
-该选择每次仍使用原生 allow-once，不是永久命令规则。
-实验插件确认同样要求该实验标志，使用 `item/tool/requestUserInput`；只有原生 bundle-mcp 明确提供持久 App action 时
-才出现“始终允许此 App”，回传原生真实持久选择，不与命令会话授权混用。
+### 审批归属与决策
 
-侧栏不默认选择首项；问答按真实选项提交，密码输入不进入草稿或日志。
-`serverRequest/resolved`、超时、切换会话、停止及断线撤回对应交互；旧按钮／旧 socket 不能迟到授权。
-显式 Cancel 先拒绝审批再请求精确停止；普通拒绝、关闭、退订不自动停止原生执行。
-未安装交互 handler 时仍默认拒绝；未知服务端方法返回 method-not-found。
-原生独立文件变更审批仍未实现；结构化问答使用下面的独立能力，不能用普通插件确认伪造。
+Main 在发送前保存精确原生会话绑定。审批若早于发送 ACK，先暂扣，等原生 ACK 明确确认 actual run 后才展示匹配请求。
+只有实际发起该轮次的侧栏连接通过 Main 的 trusted hooks 获得审批展示权。审批请求中的 `runId` 不能反向认领执行。
+
+| 请求                                    | 可用决策与授权范围                                                                                                                                                                                   |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `item/commandExecution/requestApproval` | 展示命令、目录和原因，可仅本次允许、拒绝或取消执行。成功协商 `experimentalApi` 且 `availableDecisions` 明确提供 `acceptForSession` 时，可允许当前连接中同会话的相同命令，每次仍使用原生 allow-once。 |
+| `item/tool/requestUserInput`            | 实验插件确认同样要求 `experimentalApi`。仅当原生 bundle-mcp 明确提供持久 App action 时，侧栏才显示“始终允许此 App”并回传原生持久选择。该选择与命令会话授权独立。                                     |
+
+- **提交。** 侧栏不默认选择首项，按真实选项提交。密码输入不进入草稿或日志。
+- **撤回。** `serverRequest/resolved`、超时、切换会话、停止或断线撤回对应交互，旧按钮／旧 socket 随即失效。
+  显式 Cancel 先拒绝审批再请求精确停止。普通拒绝、关闭和退订仅影响交互或观察。
+- **未接入能力。** 未安装交互 handler 时默认拒绝，未知服务端方法返回 method-not-found。
+  原生独立文件变更审批仍未实现。结构化问答通过下节的专属接口，普通插件确认不承担该功能。
 
 ## 工作目录与结构化问答
 
 以下能力仅注册到 Chrome binding，不为通用 app-server 或网页 SDK 开放。
 
-| 方法／通知 | 参数与结果 |
-| --- | --- |
-| `chrome/composer/options` | 额外返回 `cwd`、`recentCwds`（默认与 Chrome 会话近期目录，最多八项） |
-| `chrome/workspace/select` | `{draftId}` 或 `{threadId,expectedCwd}`，可选 `recentCwd` 必须属于服务端近期列表；省略则打开 Main 系统选择器。返回 `{cancelled:true}` 或 `{cwd,selectionToken}` |
-| `chrome/thread/workspace/set` | `{threadId,expectedCwd,selectionToken}`；返回 `{success:true,cwd}` 或 `{success:false,reason}`，原因与桌面目录修改合同一致 |
-| `chrome/thread/workspace/changed` | `{threadId,cwd}`，目录保存后通知当前订阅者刷新元数据 |
-| `chrome/questions/list` | `{threadId}` → `{questions:[{requestId,questions,waitPolicy,expiresAt?,createdAt?}]}` |
-| `chrome/questions/respond` | `{threadId,requestId,behavior:'submit',answers}` 或 `{threadId,requestId,behavior:'cancel'}` → `{}` |
-| `chrome/questions/changed` | `{threadId}`，只作快照失效信号，重新 list 后才能恢复交互 |
+| 方法／通知                        | 参数与结果                                                                                                                                                      |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chrome/composer/options`         | 额外返回 `cwd`、`recentCwds`（默认与 Chrome 会话近期目录，最多八项）                                                                                            |
+| `chrome/workspace/select`         | `{draftId}` 或 `{threadId,expectedCwd}`，可选 `recentCwd` 必须属于服务端近期列表；省略则打开 Main 系统选择器。返回 `{cancelled:true}` 或 `{cwd,selectionToken}` |
+| `chrome/thread/workspace/set`     | `{threadId,expectedCwd,selectionToken}`；返回 `{success:true,cwd}` 或 `{success:false,reason}`，原因与桌面目录修改合同一致                                      |
+| `chrome/thread/workspace/changed` | `{threadId,cwd}`，目录保存后通知当前订阅者刷新元数据                                                                                                            |
+| `chrome/questions/list`           | `{threadId}` → `{questions:[{requestId,questions,waitPolicy,expiresAt?,createdAt?}]}`                                                                           |
+| `chrome/questions/respond`        | `{threadId,requestId,behavior:'submit',answers}` 或 `{threadId,requestId,behavior:'cancel'}` → `{}`                                                             |
+| `chrome/questions/changed`        | `{threadId}`，只作快照失效信号，重新 list 后才能恢复交互                                                                                                        |
 
-新会话选目录后，`thread/start` 携带 `cwd` 以及
-`chrome:{draftId,workspaceSelectionToken}`；凭据绑定本连接与草稿，短期、单次使用。
-省略选择沿用全局默认目录；无凭据的 cwd 只能与默认目录一致。
-已有会话的选择和保存要求当前显式订阅，凭据另绑定 subscription 与 expectedCwd。
-目录取消无副作用，保存复用桌面的空闲、后代、未知准备、计划和身份比较检查。
+### 目录选择凭据
+
+- **新会话。** 选目录后，`thread/start` 携带 `cwd` 和 `chrome:{draftId,workspaceSelectionToken}`。
+  凭据绑定本连接和草稿，短期、单次使用。省略选择时沿用全局默认目录，无凭据的 `cwd` 只能与默认目录一致。
+- **已有会话。** 选择和保存要求当前显式订阅，凭据另绑定 subscription 与 `expectedCwd`。
+  取消选择无副作用。保存复用桌面对空闲、后代、未知准备、计划和身份比较的检查。
+
+### 问答身份与恢复
 
 问答要求显式订阅并核实普通 Chrome 会话来源、原生 key／物理 SID／revision、
 run／toolCall 来源和当前 Gateway 代次；插件托管和子执行请求不透传。
