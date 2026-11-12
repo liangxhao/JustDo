@@ -589,6 +589,26 @@ describe('BrowserPanel embedded webview', () => {
     expect(unregisterAgentTab).toHaveBeenCalledTimes(unregisterCount);
   });
 
+  it('keeps browser event subscriptions while hidden and releases them on unmount', () => {
+    const browserSubscriptions = () => [
+      panelOpenTabListener,
+      panelPdfDetectedListener,
+      panelFaviconUpdatedListener,
+      panelHttpAuthListener,
+      panelHttpAuthDismissedListener,
+      agentInteractionListener,
+    ];
+    const view = render(<BrowserPanelHarness />);
+    const subscriptions = browserSubscriptions();
+    for (const subscription of subscriptions) expect(subscription).toBeTypeOf('function');
+
+    view.rerender(<BrowserPanelHarness isOpen={false} />);
+    expect(browserSubscriptions()).toEqual(subscriptions);
+
+    view.unmount();
+    for (const subscription of browserSubscriptions()) expect(subscription).toBeNull();
+  });
+
   it('preserves the live page through home, temporary and canonical conversation layouts', async () => {
     const homeKey = `layout-home-${++nextId}`;
     const tempKey = `temp-layout-${++nextId}`;

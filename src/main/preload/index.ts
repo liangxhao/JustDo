@@ -81,12 +81,7 @@ import {
   type BrowserMode,
   type BrowserModeSwitchAvailabilityResult,
   type BrowserModeUpdateResult,
-  type BrowserPanelFaviconUpdatedEvent,
-  type BrowserPanelHttpAuthDismissed,
-  type BrowserPanelHttpAuthRequest,
   type BrowserPanelHttpAuthResponse,
-  type BrowserPanelOpenTabEvent,
-  type BrowserPanelPdfDetectedEvent,
   type BrowserPanelShortcutAction,
   type BrowserPanelShortcutSettings,
   type BrowserStatusResult,
@@ -314,6 +309,7 @@ import { StorageDirectoryIpc } from '../../shared/storage/storageDirectory';
 import { StorageRelocationIpc } from '../../shared/storage/storageRelocation';
 import { createAutomaticErrorRetryApi } from './automaticErrorRetry';
 import { createExtensionChangedSubscription } from './extensions';
+import { createIpcSubscription } from './ipcSubscription';
 import { createMcpAppPreloadApi } from './mcpApps';
 import { createPluginOperationSubscription } from './pluginOperations';
 import { createWebpageEmbedApi } from './webpageEmbed';
@@ -480,48 +476,25 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(BrowserIpc.SetMode, mode),
     testConnection: (): Promise<BrowserConnectionTestResult> =>
       ipcRenderer.invoke(BrowserIpc.TestConnection),
-    onPanelOpenTab: (callback: (event: BrowserPanelOpenTabEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
-        const normalized = normalizeBrowserPanelOpenTabEvent(data);
-        if (normalized) callback(normalized);
-      };
-      ipcRenderer.on(BrowserIpc.PanelOpenTab, handler);
-      return () => ipcRenderer.removeListener(BrowserIpc.PanelOpenTab, handler);
-    },
-    onPanelHttpAuthRequest: (callback: (request: BrowserPanelHttpAuthRequest) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
-        const normalized = normalizeBrowserPanelHttpAuthRequest(data);
-        if (normalized) callback(normalized);
-      };
-      ipcRenderer.on(BrowserIpc.PanelHttpAuthRequest, handler);
-      return () => ipcRenderer.removeListener(BrowserIpc.PanelHttpAuthRequest, handler);
-    },
+    onPanelOpenTab: createIpcSubscription(BrowserIpc.PanelOpenTab, normalizeBrowserPanelOpenTabEvent),
+    onPanelHttpAuthRequest: createIpcSubscription(
+      BrowserIpc.PanelHttpAuthRequest,
+      normalizeBrowserPanelHttpAuthRequest,
+    ),
     respondToPanelHttpAuth: (response: BrowserPanelHttpAuthResponse) =>
       ipcRenderer.send(BrowserIpc.PanelHttpAuthResponse, response),
-    onPanelHttpAuthDismissed: (callback: (event: BrowserPanelHttpAuthDismissed) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
-        const normalized = normalizeBrowserPanelHttpAuthResponse(data);
-        if (normalized) callback({ id: normalized.id, guestId: normalized.guestId });
-      };
-      ipcRenderer.on(BrowserIpc.PanelHttpAuthDismissed, handler);
-      return () => ipcRenderer.removeListener(BrowserIpc.PanelHttpAuthDismissed, handler);
-    },
-    onPanelPdfDetected: (callback: (event: BrowserPanelPdfDetectedEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
-        const normalized = normalizeBrowserPanelPdfDetectedEvent(data);
-        if (normalized) callback(normalized);
-      };
-      ipcRenderer.on(BrowserIpc.PanelPdfDetected, handler);
-      return () => ipcRenderer.removeListener(BrowserIpc.PanelPdfDetected, handler);
-    },
-    onPanelFaviconUpdated: (callback: (event: BrowserPanelFaviconUpdatedEvent) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: unknown) => {
-        const normalized = normalizeBrowserPanelFaviconUpdatedEvent(data);
-        if (normalized) callback(normalized);
-      };
-      ipcRenderer.on(BrowserIpc.PanelFaviconUpdated, handler);
-      return () => ipcRenderer.removeListener(BrowserIpc.PanelFaviconUpdated, handler);
-    },
+    onPanelHttpAuthDismissed: createIpcSubscription(BrowserIpc.PanelHttpAuthDismissed, data => {
+      const event = normalizeBrowserPanelHttpAuthResponse(data);
+      return event && { id: event.id, guestId: event.guestId };
+    }),
+    onPanelPdfDetected: createIpcSubscription(
+      BrowserIpc.PanelPdfDetected,
+      normalizeBrowserPanelPdfDetectedEvent,
+    ),
+    onPanelFaviconUpdated: createIpcSubscription(
+      BrowserIpc.PanelFaviconUpdated,
+      normalizeBrowserPanelFaviconUpdatedEvent,
+    ),
     setPanelShortcuts: (shortcuts: BrowserPanelShortcutSettings) =>
       ipcRenderer.send(BrowserIpc.PanelSetShortcuts, shortcuts),
     onPanelShortcutAction: (callback: (action: BrowserPanelShortcutAction) => void) => {
@@ -563,12 +536,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on(BrowserIpc.AgentCloseTab, handler);
       return () => ipcRenderer.removeListener(BrowserIpc.AgentCloseTab, handler);
     },
-    onAgentInteractionState: (callback: (event: BrowserAgentInteractionState) => void) => {
-      const handler = (_event: Electron.IpcRendererEvent, data: BrowserAgentInteractionState) =>
-        callback(data);
-      ipcRenderer.on(BrowserIpc.AgentInteractionState, handler);
-      return () => ipcRenderer.removeListener(BrowserIpc.AgentInteractionState, handler);
-    },
+    onAgentInteractionState: createIpcSubscription(
+      BrowserIpc.AgentInteractionState,
+      (event: BrowserAgentInteractionState) => event,
+    ),
     listImportSources: (): Promise<BrowserImportSourcesResult> =>
       ipcRenderer.invoke(BrowserIpc.ListImportSources),
     importData: (request: BrowserImportRequest): Promise<BrowserImportResult> =>
