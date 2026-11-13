@@ -5,11 +5,11 @@ import {
   isAllowedBrowserPanelNavigationUrl,
   isBlockedBrowserMetadataHost,
 } from '../core/window/browserPanelSecurity';
+import { registerBrowserTransportSession } from './authentication/browserTransportRequests';
 import {
   captureBackgroundBrowserRequest,
   isBackgroundBrowserGuest,
 } from './backgroundBrowserGuestRegistry';
-import type { BrowserAuthenticationNavigation } from './browserAuthenticationNavigation';
 import { browserSessionStorageKey, isSameBrowserSession } from './browserSessionIdentity';
 import { getBrowserUserAgent } from './browserSessionUserAgent';
 import { claimBrowserAgentDownload } from './downloads/browserAgentDownloadCoordinator';
@@ -58,11 +58,6 @@ type SessionPolicy = {
 const policies = new WeakMap<Electron.Session, SessionPolicy>();
 const persistentPolicies = new Map<string, SessionPolicy>();
 const knownPolicyGuests = new WeakSet<Electron.WebContents>();
-let browserAuthentication: BrowserAuthenticationNavigation | undefined;
-
-export const configureBrowserAuthenticationNavigation = (owner?: BrowserAuthenticationNavigation): void => {
-  browserAuthentication = owner;
-};
 
 /** Read-only identity check; released pages never become browser tool targets. */
 export const isBrowserSessionPolicyGuest = (guest: Electron.WebContents): boolean =>
@@ -99,18 +94,17 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
   policies.set(browserSession, state);
   if (storageKey) persistentPolicies.set(storageKey, state);
 
-  browserSession.webRequest.onBeforeRedirect?.(details =>
-    browserAuthentication?.observeRedirect(browserSession, details),
-  );
-  browserSession.webRequest.onResponseStarted?.(details =>
-    browserAuthentication?.observeDocumentResponse(browserSession, details),
-  );
-  browserSession.webRequest.onCompleted?.(details =>
-    browserAuthentication?.finish(browserSession, details.id),
-  );
-  browserSession.webRequest.onErrorOccurred?.(details =>
-    browserAuthentication?.finish(browserSession, details.id),
-  );
+  registerBrowserTransportSession(browserSession, details => {
+    const guestId = details.webContentsId ?? details.webContents?.id;
+    if (guestId === undefined || guestId <= 0) return false;
+    const guest = details.webContents ?? webContents.fromId(guestId);
+    if (!guest || guest.id !== guestId || guest.isDestroyed() ||
+        !isSameBrowserSession(guest.session, browserSession)) return false;
+    const background = captureBackgroundBrowserRequest(browserSession, details);
+    if (background) return background();
+    if (isPolicyGuest(state, guest, guestId)) return false;
+    return state.ui?.handlers.ownsGuest?.(guest, guestId) === true;
+  });
 
   browserSession.webRequest.onBeforeRequest((details, callback) => {
     const guestId = details.webContentsId ?? details.webContents?.id;
@@ -183,20 +177,6 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
       return;
     }
     const mainFrame = details.resourceType === 'mainFrame';
-    let authenticate: (() => Promise<Electron.CallbackResponse>) | undefined;
-    if (mainFrame && browserAuthentication && guestId !== undefined) {
-      try {
-        const guest = details.webContents ?? webContents.fromId(guestId);
-        if (guest && guest.id === guestId) {
-          const ownsGuest = () =>
-            !guest.isDestroyed() && isSameBrowserSession(guest.session, browserSession) &&
-            (isCurrentPage?.() ?? state.ui?.handlers.ownsGuest?.(guest, guestId) ?? false);
-          authenticate = browserAuthentication.beforeRequest(browserSession, guest, details, ownsGuest);
-        }
-      } catch {
-        // A failed optional preparation leaves the existing browser policy in control.
-      }
-    }
     if (mainFrame && !isAllowedBrowserPanelNavigationUrl(details.url)) {
       callback({ cancel: true });
       return;
@@ -221,7 +201,7 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
     void Promise.resolve()
       .then(() => registerBrowserProxySession(browserSession))
       .then(() => browserSession.resolveHost(url.hostname))
-      .then(async result => {
+      .then(result => {
         if (
           (isCurrentPage && !isCurrentPage()) ||
           !result.endpoints.length ||
@@ -230,7 +210,7 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
           callback({ cancel: true });
           return;
         }
-        callback(authenticate ? await authenticate() : { cancel: false });
+        callback({ cancel: false });
       })
       .catch(() => callback({ cancel: true }));
   });

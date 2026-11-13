@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   recoverInitialBinding: vi.fn(),
   assertCanonical: vi.fn(),
   parseBridge: vi.fn(),
+  prepareBrowserAuthenticationTransport: vi.fn(),
   bridgeProfile: vi.fn(),
   setContext: vi.fn(),
   maintenance: vi.fn(),
@@ -54,6 +55,9 @@ vi.mock('../clients/cli/transport/agentBridgeProtocol', () => ({
   resolveAgentBridgeProfile: mocks.bridgeProfile,
 }));
 vi.mock('./storageMaintenance', () => ({ runStorageMaintenance: mocks.maintenance }));
+vi.mock('../browser/authentication/browserAuthenticationTransport', () => ({
+  prepareBrowserAuthenticationTransport: mocks.prepareBrowserAuthenticationTransport,
+}));
 vi.mock('../application', () => {
   mocks.application();
   return {};
@@ -108,6 +112,7 @@ test('re-reads migration intent after obtaining the fixed lock and never opens a
     dataPath: bootstrap,
   });
   expect(mocks.application).not.toHaveBeenCalled();
+  expect(mocks.prepareBrowserAuthenticationTransport).not.toHaveBeenCalled();
   expect(mocks.app.setPath).toHaveBeenCalledWith(
     'sessionData',
     path.join(bootstrap, 'storage-relocation', 'maintenance-profile'),
@@ -139,6 +144,7 @@ test.each([true, false])('re-reads the active root after a locator commits durin
   expect(mocks.maintenance).not.toHaveBeenCalled();
   expect(mocks.app.setPath).toHaveBeenCalledWith('userData', target);
   expect(mocks.app.setPath).toHaveBeenCalledWith('sessionData', target);
+  expect(mocks.prepareBrowserAuthenticationTransport).toHaveBeenCalledBefore(mocks.application);
   expect(mocks.application).toHaveBeenCalledOnce();
 });
 
@@ -148,6 +154,7 @@ test('does not open either profile if another process retains the bootstrap lock
   await runStorageBootstrap();
 
   expect(mocks.app.exit).toHaveBeenCalledWith(0);
+  expect(mocks.prepareBrowserAuthenticationTransport).not.toHaveBeenCalled();
   expect(mocks.application).not.toHaveBeenCalled();
   expect(mocks.maintenance).not.toHaveBeenCalled();
 });

@@ -134,6 +134,10 @@
     "requestedExecutionLevel": "asInvoker",
     "extraResources": [
       {
+        "from": "src/main/browser/authentication/browserTransportRelay.cjs",
+        "to": "browser-transport/relay.cjs"
+      },
+      {
         "from": "build/chrome-extension/native-host",
         "to": "chrome-extension/native-host",
         "filter": ["${productName}-chrome-extension-native-host.exe"]

@@ -1489,7 +1489,7 @@ function verifyWindowsInstallerArchiveListing(listing, productFilename) {
   const requiredPaths = [
     mainExecutable,
     ...(BROWSER_AUTHENTICATION_EXECUTABLE && mainExecutable.toLowerCase() !== BROWSER_AUTHENTICATION_EXECUTABLE
-      ? [BROWSER_AUTHENTICATION_EXECUTABLE]
+      ? [BROWSER_AUTHENTICATION_EXECUTABLE, 'resources/browser-transport/relay.cjs']
       : []),
     'chrome_100_percent.pak',
     'icudtl.dat',

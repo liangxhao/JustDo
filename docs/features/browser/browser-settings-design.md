@@ -361,15 +361,13 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 
 ### 企业自动登录
 
-部署方在 [browserAuthentication.ts](../../../src/config/browserAuthentication.ts) 中填写企业 SPES 登录的完整 HTTPS origin 和辅助程序文件名。两项默认为空，填齐后重新打包以启用。Windows 安装版的侧栏有头和无头页面共用这项配置，无需逐站录入。Main 支持同一次 HTTPS 主框架 GET 内的服务端重定向，以及已通过 HTTPS GET 成功加载的业务文档从自身主框架发起、直接到达配置登录源的 GET。辅助进程重新打开已验证的业务地址，生成独立的认证请求。直接打开认证页、POST、子框架发起的跳转、消息内嵌网页和外部浏览器均沿用自身导航流程。
+部署方在 [browserAuthentication.ts](../../../src/config/browserAuthentication.ts) 中填写 `executableName`，例如 `electron.exe` 或 `chrome.exe`，然后重新打包 Windows 安装程序。文件名默认留空。另有 `localEndpoint`，默认为 `https://localhost:18080/getSpesInfo`。本机认证服务调整端口或接口路径时，填写网页实际使用的完整地址。Chromium 按主机和端口转发，因此该回环端口应由认证服务专用。用户照常启动应用和打开原始业务地址。侧栏和无头浏览器继续使用原有 Chromium 标签、Cookie、代理和数据管理。页面自己完成整页或 iframe 登录，业务地址和登录域名无需登记。
 
-认证进程使用同版本 Windows 二进制、独立临时目录和内存会话。部署配置的 `executableName` 可填写 `electron.exe` 或 `chrome.exe` 等辅助程序文件名。此临时会话只允许配置来源向本机 SPES 接口发出认证 POST 和相应的预检。认证成功、回到业务入口同源页面且辅助进程退出后，Main 复核原导航和目标 Session，将此次认证可用于业务页的 Cookie 交给原会话并继续原导航。接续保留 Cookie 作用域及安全属性，结果只经父子进程私有通道传递。辅助认证超时或需要人工操作时，原导航继续打开登录页。Cookie 写入期间中断时，取消暂停的请求并回收本次写入。用户转到其他网页、关闭页面或退出应用时，已失效的导航不能接收认证结果。数据清理与在途交接共用现有会话写入保护。
+Main 在正常启动取得单实例锁后绑定一个进程私有回环端口，映射本次 Chromium 运行的 `localEndpoint` 主机和端口。TCP 连接必须来自当前应用拥有的 Chromium Network Service，Main 核验其 PID 和创建时间后，将套接字交给同版本别名 EXE。该进程只连接配置的回环端口，保留浏览器原有 TLS、请求头、请求体和响应。会话请求策略允许当前受管页面从 HTTPS 来源向配置的完整接口地址发出 POST 或相应预检，并保留 SPES 服务自身的来源和跨域策略。私有中转端口由本轮运行保留。转发进程失效后只在后续新连接时尝试重启；页面仍可使用原有人工登录。
 
-使用默认配置的普通消息网页可以在刷新时复用侧栏的持久登录状态。托管网页保留独立会话。内网验证已覆盖独立辅助进程退出后，原名 EXE 的空白内嵌浏览器首次访问和刷新均保持登录。可运行 `node scripts/test/browser/browser-authentication-redirect-smoke.cjs` 验证真实 Electron 重定向保留请求身份及 Strict Cookie。正式安装包需分别验收有头、无头和普通消息网页。
+别名进程只接收 SNI 为 `localhost` 且声明支持 `h2` 的初始 TLS 握手，以区分当前 Chromium 的普通 HTTPS 与新建 WebSocket 连接。TLS 协议最终仍由浏览器和 SPES 协商。Chromium 的服务工作线程和共享工作线程的 WebSocket 可绕过 Electron 请求钩子。如果 SPES 以后支持在已有 HTTP/2 会话上建立 WebSocket，或浏览器政策关闭 HTTP/2 协议声明，需要重新验证该认证通道。
 
-页面发起的跳转在交接成功后由浏览器重新访问业务地址，使其可以发送 Strict Cookie。重放仍跳转时继续普通登录流程，当前文档不会重复启动辅助进程。
-
-Windows 可运行 `node scripts/test/browser/browser-enterprise-authentication-smoke.cjs`，在隔离的 Electron 测试窗口中启动本地业务站、登录站和模拟 SPES 服务。脚本覆盖有头和无头侧栏的 HTTPS 302、业务页 JavaScript 或 Meta Refresh 跳转、Strict Cookie 交接，以及初始 HTTP 升级和重放后再次跳转的回退行为。加 `--with-timeout` 可验证辅助进程超时后的回退及同一会话重试，该用例在临时测试包中使用 6 秒时限。加 `--show` 可在验证结束后保留成功业务页，关闭窗口即退出。部署配置和正式浏览器数据不参与此探针。
+Windows 原生回归测试使用打包 Electron 和合成站点，核对整页与跨源 iframe 的预检、HTTPS POST、Cookie 和实际连接进程。真实内网验收从原始业务地址开始，分别验证 HTTP 整页与 iframe 浮层。
 
 ### JavaScript 对话框、弹窗与人工登录
 

@@ -11,10 +11,8 @@ vi.mock('./downloads/browserAgentDownloadCoordinator', () => ({
 }));
 
 import { registerBackgroundBrowserGuest } from './backgroundBrowserGuestRegistry';
-import type { BrowserAuthenticationNavigation } from './browserAuthenticationNavigation';
 import {
   type BrowserSessionUiPolicy,
-  configureBrowserAuthenticationNavigation,
   configureBrowserSessionUi,
   ensureBrowserSessionPolicy,
   registerBrowserSessionGuestPolicy,
@@ -112,39 +110,6 @@ const fixture = () => {
 const item = () => Object.assign(new EventEmitter(), { cancel: vi.fn(), setSavePath: vi.fn() });
 
 describe('shared browser session policy ownership', () => {
-  test('uses enterprise authentication for owned browser navigation and leaves embeds with their own policy', async () => {
-    const f = fixture();
-    const entry = 'https://enterprise.example/protected';
-    const hook = vi.fn<BrowserAuthenticationNavigation['beforeRequest']>(
-      (_session, _guest, _request, ownsGuest) =>
-        ownsGuest() ? async () => ({ redirectURL: entry }) : undefined,
-    );
-    configureBrowserAuthenticationNavigation({ beforeRequest: hook } as unknown as BrowserAuthenticationNavigation);
-    const embed = f.guest();
-    const releaseEmbed = registerBrowserSessionGuestPolicy(embed, {
-      isCurrent: () => true,
-      beforeRequest: (_details, reply) => reply({ cancel: false }),
-    });
-    try {
-      for (const source of [f.foreground, f.background]) {
-        const reply = f.inspectDetails({
-          id: source.id, method: 'GET', url: entry, resourceType: 'mainFrame',
-          webContents: source, webContentsId: source.id,
-        });
-        await vi.waitFor(() => expect(reply).toHaveBeenCalledExactlyOnceWith({ redirectURL: entry }));
-      }
-      const reply = f.inspectDetails({
-        id: embed.id, method: 'GET', url: entry, resourceType: 'mainFrame',
-        webContents: embed, webContentsId: embed.id,
-      });
-      expect(reply).toHaveBeenCalledExactlyOnceWith({ cancel: false });
-      expect(hook).toHaveBeenCalledTimes(2);
-    } finally {
-      releaseEmbed();
-      configureBrowserAuthenticationNavigation();
-    }
-  });
-
   test('admits bundled DevTools only for live native remote contents in this profile', () => {
     const f = fixture();
     const url = 'devtools://devtools/bundled/devtools_app.html';

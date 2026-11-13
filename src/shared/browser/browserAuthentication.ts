@@ -1,6 +1,4 @@
-export const BROWSER_AUTHENTICATION_SWITCH = '--browser-authentication-helper';
-
-export function normalizeBrowserAuthenticationExecutable(value: unknown): string {
+function normalizeBrowserAuthenticationExecutable(value: unknown): string {
   const executable = typeof value === 'string' ? value.trim() : null;
   if (executable === '') return '';
   if (
@@ -16,14 +14,16 @@ export function normalizeBrowserAuthenticationExecutable(value: unknown): string
 }
 
 export function resolveBrowserAuthenticationConfig(config: {
-  providerOrigin: string;
   executableName: string;
+  localEndpoint: string;
 }) {
-  const provider = URL.parse(config.providerOrigin);
-  const providerOrigin =
-    provider?.protocol === 'https:' && provider.href === `${provider.origin}/`
-      ? provider.origin
-      : null;
   const executableName = normalizeBrowserAuthenticationExecutable(config.executableName);
-  return { providerOrigin, executableName: providerOrigin ? executableName : '' };
+  const localEndpoint = URL.parse(config.localEndpoint);
+  if (
+    localEndpoint?.protocol !== 'https:' ||
+    localEndpoint.hostname !== 'localhost' ||
+    localEndpoint.href !== localEndpoint.origin + localEndpoint.pathname ||
+    localEndpoint.port === '0'
+  ) throw new Error('Browser authentication localEndpoint must be an HTTPS localhost URL without credentials, query, or fragment.');
+  return { executableName, localEndpoint };
 }

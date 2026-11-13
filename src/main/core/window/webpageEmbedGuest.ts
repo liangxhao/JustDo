@@ -9,6 +9,7 @@ import {
   type WebpageEmbedInitialization,
   WebpageEmbedIpc,
 } from '../../../shared/browser/webpageEmbed';
+import { isBrowserTransportRequestBlocked } from '../../browser/authentication/browserTransportRequests';
 import {
   BrowserProxyStatus,
   getBrowserProxyCredentials,
@@ -342,7 +343,10 @@ export function createWebpageEmbedGuests(options: GuestOptions) {
       Object.keys(mount.hostedRequestHeaders ?? {}).map(name => name.toLowerCase()),
     );
     mount.session.webRequest.onBeforeSendHeaders((details, callback) => {
-      if (!ready(mount) && !shellRequest(details)) {
+      if (
+        isBrowserTransportRequestBlocked(mount.session, details) ||
+        (!ready(mount) && !shellRequest(details))
+      ) {
         callback({ cancel: true });
         return;
       }

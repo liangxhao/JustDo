@@ -471,6 +471,13 @@ are not replaced. This fixture does not mount the entire application or installe
 
 The other `test/browser/` commands cover embedded-browser recording, intervention, PDF/sidebar display, background lifetimes, retries and cron. `test/workspace-window-probe.cjs` exercises workspace windows and uses the fixtures under `tests/workspace-window/`. Their names refer to the embedded browser; Chrome extension verification belongs to its plugin.
 
+The production smoke test
+`node scripts/test/browser/browser-auth-transport-smoke.cjs` uses isolated packaged
+Electron fixtures, including a temporary service bound to local port 18080.
+It checks both alias names and a direct control, top-level and cross-origin iframe
+authentication, native CORS preflight, same-profile cookies, and rejection of
+unrelated local processes.
+
 ### Plugin host and management
 
 `node scripts/test/plugin-host/verify-plugin-host-assumptions.mjs` checks app

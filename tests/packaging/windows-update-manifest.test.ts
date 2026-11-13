@@ -3,8 +3,9 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, describe, expect, test } from 'vitest';
 
+import { BROWSER_AUTHENTICATION_CONFIG } from '../../src/config/browserAuthentication';
 import { BROWSER_AUTHENTICATION_EXECUTABLE } from '../../src/main/browser/authentication/browserAuthenticationConfig';
-import { normalizeBrowserAuthenticationExecutable, resolveBrowserAuthenticationConfig } from '../../src/shared/browser/browserAuthentication';
+import { resolveBrowserAuthenticationConfig } from '../../src/shared/browser/browserAuthentication';
 
 const hooksPath = require.resolve('../../scripts/packaging/electron-builder-hooks.cjs');
 
@@ -264,18 +265,35 @@ describe('Windows Generic update manifest', () => {
 
 describe('Windows signed application payload', () => {
   test.each(['', 'electron.exe', 'Chrome.EXE'])('normalizes the configured filename %s', executable => {
-    expect(normalizeBrowserAuthenticationExecutable(executable)).toBe(executable.toLowerCase());
+    expect(resolveBrowserAuthenticationConfig({
+      ...BROWSER_AUTHENTICATION_CONFIG, executableName: executable,
+    }).executableName).toBe(executable.toLowerCase());
   });
 
   test.each(['..\\chrome.exe', 'AUX.exe', 'chrome$R0.exe'])('rejects the unsafe configured filename %s', executable => {
-    expect(() => normalizeBrowserAuthenticationExecutable(executable)).toThrow('executableName');
+    expect(() => resolveBrowserAuthenticationConfig({
+      ...BROWSER_AUTHENTICATION_CONFIG, executableName: executable,
+    })).toThrow('executableName');
+  });
+
+  test('accepts a different local authentication port and path', () => {
+    const config = resolveBrowserAuthenticationConfig({
+      executableName: 'electron.exe',
+      localEndpoint: 'https://localhost:18081/auth/info',
+    });
+    expect(config.localEndpoint.href).toBe('https://localhost:18081/auth/info');
   });
 
   test.each([
-    { providerOrigin: '', executableName: 'chrome.exe' },
-    { providerOrigin: 'https://sign-in.example.test', executableName: '' },
-  ])('does not configure a helper with an incomplete deployment', config => {
-    expect(resolveBrowserAuthenticationConfig(config).executableName).toBe('');
+    'http://localhost:18080/getSpesInfo',
+    'https://example.test:18080/getSpesInfo',
+    'https://user@localhost:18080/getSpesInfo',
+    'https://localhost:18080/getSpesInfo?token=test',
+    'https://localhost:18080/getSpesInfo#fragment',
+    'https://localhost:0/getSpesInfo',
+  ])('rejects invalid local authentication endpoint %s', localEndpoint => {
+    expect(() => resolveBrowserAuthenticationConfig({ executableName: 'electron.exe', localEndpoint }))
+      .toThrow('localEndpoint');
   });
 
   test('skips staging a helper when authentication is disabled', async () => {
@@ -337,7 +355,10 @@ Path = resources/win-resources-metadata.json
 Method = LZMA2:20
 `;
   const authenticationEntry = (name: string) => name ? `Path = ${name}\nMethod = BCJ LZMA2:20\n` : '';
-  const deployedAuthenticationEntry = authenticationEntry(BROWSER_AUTHENTICATION_EXECUTABLE);
+  const relayEntry = 'Path = resources/browser-transport/relay.cjs\nMethod = LZMA2:20\n';
+  const deployedAuthenticationEntry = BROWSER_AUTHENTICATION_EXECUTABLE
+    ? authenticationEntry(BROWSER_AUTHENTICATION_EXECUTABLE) + relayEntry
+    : '';
 
   test('accepts single-stream BCJ application archives', () => {
     const listing = `Type = 7z\nMethod = LZMA2:20 BCJ\n${deployedAuthenticationEntry}${requiredEntries}`;
@@ -365,10 +386,14 @@ Method = LZMA2:20
   test('requires the authentication executable unless the main executable already has that name', () => {
     const { verifyWindowsInstallerArchiveListing: verifyEnabled } = hooksWithAuthenticationExecutable(fixtureAuthenticationExecutable);
     const listing = `Type = 7z\nMethod = LZMA2:20 BCJ\n${requiredEntries}`;
-    expect(() => verifyEnabled(listing, 'JustDo')).toThrow(
+    expect(() => verifyEnabled(listing + relayEntry, 'JustDo')).toThrow(
       `application archive is missing: ${fixtureAuthenticationExecutable}`,
     );
-    expect(() => verifyEnabled(listing + authenticationEntry(fixtureAuthenticationExecutable), 'JustDo')).not.toThrow();
+    const withExecutable = listing + authenticationEntry(fixtureAuthenticationExecutable);
+    expect(() => verifyEnabled(withExecutable, 'JustDo')).toThrow(
+      'application archive is missing: resources/browser-transport/relay.cjs',
+    );
+    expect(() => verifyEnabled(withExecutable + relayEntry, 'JustDo')).not.toThrow();
     expect(() => verifyEnabled(listing.replace('JustDo.exe', 'CHROME.exe'), 'CHROME')).not.toThrow();
   });
 

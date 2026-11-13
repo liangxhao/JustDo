@@ -22,7 +22,7 @@ Main 可在公共类型之上保留自己的存储字段，不能借此扩大公
 | ----------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | 主 Renderer                   | React/Lit UI、浏览器 API、显式 preload 能力 | 不能直接访问 Node/Electron/SQLite                                                            |
 | Browser guest                 | 外部网页及对应 profile partition            | 内置浏览器专用 preload；普通 URL embed 无 preload，均不获得 window.electron 或 Gateway token |
-| 企业认证辅助进程（Windows）    | 独立的临时浏览器会话                         | 由 Main 按原导航到统一登录来源的重定向启动，仅经父子进程私有 IPC 交接目标会话 Cookie             |
+| 企业认证辅助进程（Windows）    | 固定 SPES 回环连接                           | Main 核验 Chromium TCP 所有者，经父子进程私有 IPC 交接套接字                                  |
 | 图片预览窗口                  | 同 origin 的独立图片展示                    | 独立最小 preload、沙箱窗口与受限参数                                                         |
 | Preload                       | contextBridge 与 Electron IPC               | 固定方法和可取消订阅                                                                         |
 | Main                          | 文件、数据库、网络、子进程、窗口            | 校验来自所有客户端的输入                                                                     |
@@ -99,7 +99,7 @@ flowchart LR
 存储或提供业务下载 IPC。非联网 pinned HTML 的当前身份与 ticket 由 Renderer 的认证
 loader 核对，完整页面使用独立网页承载。具体边界见[交互式回答](../features/chat/interactive-answers.md)。
 
-Windows 企业认证辅助进程在应用存储启动之前选择独立入口。它使用浏览器代理设置和隔离会话，认证完成后退出。Main 按原 WebContents、导航请求和目标 Session 核对交接权限，Cookie 仅在进程间内存传递。功能与验收边界见[企业自动登录](../features/browser/browser-settings-design.md#企业自动登录)。
+Windows 企业认证启用后，品牌主进程继续持有原有 WebContents、Session 和 Chromium 代理。Main 在正常启动取得单实例锁后为 SPES 回环连接建立监听，核验 TCP 连接属于当前 Chromium Network Service，再经私有父子进程 IPC 交给配置文件名的同版本 EXE。辅助进程只连接固定回环目标并透传字节。功能与验收边界见[企业自动登录](../features/browser/browser-settings-design.md#企业自动登录)。
 
 ## 2. 四类通道不能混用
 

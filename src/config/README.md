@@ -11,7 +11,7 @@
 | -------------------------------------------- | ------------------------------------------------------------ |
 | [appUpdate.ts](appUpdate.ts)                 | 应用更新地址、语音模型路径与版本历史限制                     |
 | [builtinModels.ts](builtinModels.ts)         | 内置模型开关 `enabled`、LiteLLM API 地址 `baseUrl`           |
-| [browserAuthentication.ts](browserAuthentication.ts) | 企业 SPES 登录来源 `providerOrigin` 和 Windows 认证辅助程序文件名 `executableName` |
+| [browserAuthentication.ts](browserAuthentication.ts) | Windows SPES 连接的可执行文件名 `executableName` 和本机接口 `localEndpoint` |
 | [activityReporting.ts](activityReporting.ts) | 活动信息上报开关 `enabled`，默认开启                         |
 | [builtinModelAuth.ts](builtinModelAuth.ts)   | Jalor 换证地址、JWT 生命周期上限、开发认证模式与临时 API Key |
 | [loginStorage.ts](loginStorage.ts)           | 登录存储目录 `directoryName`、用户信息文件 `userInfoFileName` |
@@ -19,9 +19,11 @@
 
 ## 企业浏览器认证
 
-`providerOrigin` 和 `executableName` 默认为空。启用时填写统一登录服务的 HTTPS origin，
-以及辅助程序文件名，例如 `electron.exe` 或 `chrome.exe`。文件名由 1–64 个英文字母和 `.exe`
-组成，打包时统一为小写。填写两项后重新打包 Windows 安装程序。
+`executableName` 默认为空。启用时填写 `electron.exe` 或 `chrome.exe` 等文件名，
+然后重新打包 Windows 安装程序。文件名由 1–64 个英文字母和 `.exe` 组成，
+打包时统一为小写。用户照常打开业务网页，由网页发起登录。
+
+`localEndpoint` 默认是 `https://localhost:18080/getSpesInfo`。本机 SPES 服务调整端口或接口路径时才修改。地址必须使用 `https://localhost`，并且不包含用户名、密码、查询参数或片段。网页实际请求的地址须与此配置一致。
 
 ## 登录信息目录
 

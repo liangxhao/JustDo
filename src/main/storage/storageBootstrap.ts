@@ -4,6 +4,7 @@ import path from 'node:path';
 import { app } from 'electron';
 
 import { USER_DATA_DIRECTORY_NAME } from '../../shared/productMetadata';
+import { prepareBrowserAuthenticationTransport } from '../browser/authentication/browserAuthenticationTransport';
 import {
   parseAgentBridgeArgv,
   resolveAgentBridgeProfile,
@@ -161,6 +162,7 @@ export async function runStorageBootstrap(): Promise<void> {
   }
   if (legacy) {
     // No context: later normal startup must retain its original alias/path behavior.
+    await prepareBrowserAuthenticationTransport();
     await import('../application');
     return;
   }
@@ -193,5 +195,6 @@ export async function runStorageBootstrap(): Promise<void> {
     app.setPath('userData', activeRoot);
     app.setPath('sessionData', activeRoot);
   });
+  await prepareBrowserAuthenticationTransport();
   await import('../application');
 }
