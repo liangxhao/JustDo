@@ -22,7 +22,7 @@ import { classifyDiagnostics } from './classifier';
 import { projectDiagnosticEnvironment } from './environment';
 import { DiagnosticExportLogs } from './exportLogs';
 import { collectDiagnosticHistory } from './historyCollector';
-import { collectDiagnosticLogs } from './logCollector';
+import { collectDiagnosticLogs, type NativeDiagnosticLogs } from './logCollector';
 import { discoverNativeDiagnosticLogs } from './logScanner';
 
 export interface DiagnosticRuntime {
@@ -437,17 +437,26 @@ export class SessionDiagnosticsService {
         }
       };
       const logsTask = (async () => {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        let native:
-          | {
-              lines: string[];
-              truncated?: boolean;
-              files?: string[];
-              discoveryFailure?: 'unsafe_file' | 'unreadable' | 'read_timeout' | 'canceled';
-            }
-          | undefined;
-        if (client) {
+        let native: NativeDiagnosticLogs | undefined;
+        if (options.signal?.aborted) {
+          native = { failure: 'canceled' };
+        } else if (client) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const controller = new AbortController();
+          let failure: 'read_timeout' | 'canceled' | undefined;
+          let cancel: (() => void) | undefined;
           try {
+            const deadline = new Promise<never>((_, reject) => {
+              const stop = (reason: 'read_timeout' | 'canceled') => {
+                failure = reason;
+                const error = new Error(reason);
+                controller.abort(error);
+                reject(error);
+              };
+              cancel = () => stop('canceled');
+              options.signal?.addEventListener('abort', cancel, { once: true });
+              timer = setTimeout(() => stop('read_timeout'), 3000);
+            });
             const response = await Promise.race([
               client.request<{ lines?: unknown; truncated?: unknown; file?: unknown }>(
                 'logs.tail',
@@ -455,16 +464,18 @@ export class SessionDiagnosticsService {
                   limit: 1000,
                   maxBytes: 524288,
                 },
+                { signal: controller.signal },
               ),
-              new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new Error('timeout')), 3000);
-              }),
+              deadline,
             ]);
-            if (
-              runtime === this.deps.getRuntime() &&
-              client === runtime.getGatewayClient() &&
-              Array.isArray(response?.lines)
-            ) {
+            clearTimeout(timer);
+            if (options.signal?.aborted) {
+              native = { failure: 'canceled' };
+            } else if (!connectionCurrent()) {
+              native = { failure: 'source_changed' };
+            } else if (!Array.isArray(response?.lines)) {
+              native = { failure: 'unreadable' };
+            } else {
               let bytes = 0;
               const lines: string[] = [];
               let truncated = response.truncated !== false;
@@ -494,19 +505,23 @@ export class SessionDiagnosticsService {
                 if (files.length) native.files = files;
               } catch (error) {
                 // Keep the partial native tail and record why full source discovery failed.
-                native.truncated = true;
                 const message = error instanceof Error ? error.message : '';
-                native.discoveryFailure =
+                native.failure =
                   message === 'unsafe_file' || message === 'read_timeout' || message === 'canceled'
                     ? message
                     : 'unreadable';
               }
             }
           } catch {
-            /* Native collection is optional and never starts an offline runtime. */
+            native = {
+              failure: failure ?? (connectionCurrent() ? 'unreadable' : 'source_changed'),
+            };
           } finally {
             clearTimeout(timer);
+            if (cancel) options.signal?.removeEventListener('abort', cancel);
           }
+          if (options.signal?.aborted) native = { failure: 'canceled' };
+          else if (!connectionCurrent()) native = { failure: 'source_changed' };
         }
         const sources = { main: [] as string[], cowork: [] as string[], gateway: [] as string[] };
         const failedSources = new Set<string>();

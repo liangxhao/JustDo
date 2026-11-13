@@ -268,6 +268,7 @@ export async function collectDiagnosticHistory(
         await request({ limit: 200, offset, maxChars: 8000 }),
       );
       signal?.throwIfAborted();
+      if (page.windowReset) throw new Error('history_changed');
       if (pageNumber === 0) {
         total = page.totalMessages;
         cursor = page.deltaCursor;

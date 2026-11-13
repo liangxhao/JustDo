@@ -1,4 +1,4 @@
-import { appendFileSync, truncateSync } from 'node:fs';
+import { appendFileSync, renameSync, truncateSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -86,31 +86,76 @@ describe('complete retained-log scanning', () => {
     expect(new Set(logs.records.map(record => record.id)).size).toBe(logs.records.length);
   });
 
-  it('discovers native daily files only from the authoritative file family and scans old native faults', async () => {
+  it('finds a native fault retained only in a numbered rotation of the authorized daily family', async () => {
     const dir = await directory();
     const old = path.join(dir, 'openclaw-2026-09-27.log');
     const current = path.join(dir, 'openclaw-2026-09-28.log');
+    const rotated = path.join(dir, 'openclaw-2026-09-28.1.log');
     await fs.writeFile(
-      old,
+      rotated,
       JSON.stringify({
         time: new Date(time).toISOString(),
         level: 'error',
         errorCategory: 'timeout',
       }) + '\n',
     );
+    await fs.writeFile(old, '');
     await fs.writeFile(current, '');
     await fs.writeFile(path.join(dir, 'credentials.json'), 'do not read');
     const files = await discoverNativeDiagnosticLogs(current);
-    expect(files).toEqual([old, current]);
+    expect(files).toEqual([old, rotated, current]);
     const logs = await collectDiagnosticLogs(
       report(),
       empty(),
       { lines: [], files },
       { fullScan: true },
     );
-    expect(logs.sources[3]).toMatchObject({ scanComplete: true, filesCompleted: 2 });
-    expect(logs.records[0].signal).toBe('timeout');
+    expect(logs.sources[3]).toMatchObject({ scanComplete: true, filesCompleted: 3 });
+    expect(logs.records).toMatchObject([{ source: 'native', signal: 'timeout' }]);
   });
+
+  it('finds only the matching native profile or custom rotations if the active path is absent', async () => {
+    const dir = await directory();
+    const profile = 'openclaw-work-2026-09-28';
+    const custom = 'custom.output';
+    const matchingProfile = [`${profile}.1.log`, 'openclaw-work-2026-09-27.5.log'];
+    const matchingCustom = [`${custom}.1.log`, `${custom}.5.log`];
+    for (const name of [
+      ...matchingProfile,
+      ...matchingCustom,
+      `${profile}.6.log`,
+      'openclaw-2026-09-28.1.log',
+      'openclaw-work-other-2026-09-28.1.log',
+      `${custom}.0.log`,
+      `${custom}.6.log`,
+      `${custom}-other.1.log`,
+    ]) {
+      await fs.writeFile(path.join(dir, name), '');
+    }
+
+    await expect(discoverNativeDiagnosticLogs(path.join(dir, `${profile}.log`))).resolves.toEqual(
+      matchingProfile.map(name => path.join(dir, name)).sort(),
+    );
+    await expect(discoverNativeDiagnosticLogs(path.join(dir, `${custom}.log`))).resolves.toEqual(
+      [...matchingCustom].reverse().map(name => path.join(dir, name)),
+    );
+  });
+
+  it('rejects an unsafe active path even when a matching rotation exists', async () => {
+    const dir = await directory();
+    const active = path.join(dir, 'custom.log');
+    await fs.mkdir(active);
+    await fs.writeFile(path.join(dir, 'custom.1.log'), '');
+
+    await expect(discoverNativeDiagnosticLogs(active)).rejects.toThrow('unsafe_file');
+  });
+
+  it.each(['//server.log', '/\\server/share/native.log', '\\/server/share/native.log'])(
+    'rejects the network path %s before resolving its directory',
+    async file => {
+      await expect(discoverNativeDiagnosticLogs(file)).rejects.toThrow('unsafe_file');
+    },
+  );
 
   it('cancels between chunks and never labels the partially scanned source complete', async () => {
     const file = path.join(await directory(), 'main.log');
@@ -130,9 +175,10 @@ describe('complete retained-log scanning', () => {
 
   it('handles chunk boundaries, oversized records and UTF-8 without leaking fragments', async () => {
     const file = path.join(await directory(), 'main.log');
+    const atLimit = errorLine.trimEnd().padEnd(64 * 1024, ' ');
     await fs.writeFile(
       file,
-      '[2026-09-28T10:00:00Z] [info] ' + '中'.repeat(120000) + '\n' + errorLine,
+      '[2026-09-28T10:00:00Z] [info] ' + '中'.repeat(120000) + '\n' + atLimit + '\n' + errorLine,
     );
     const records: string[] = [];
     let oversized = 0;
@@ -144,7 +190,7 @@ describe('complete retained-log scanning', () => {
       progress: () => {},
     });
     expect(oversized).toBe(1);
-    expect(records).toEqual([errorLine.trim()]);
+    expect(records).toEqual([atLimit, errorLine.trim()]);
   });
 
   it('marks files removed during scanning as a coverage gap', async () => {
@@ -180,6 +226,37 @@ describe('complete retained-log scanning', () => {
       },
     });
     expect(records).toEqual([errorLine.trim()]);
+  });
+
+  it('reports a native rotation between files even when each file individually scanned successfully', async () => {
+    const dir = await directory();
+    const backup = path.join(dir, 'runtime.1.log');
+    const active = path.join(dir, 'runtime.log');
+    const failure = JSON.stringify({ time: new Date(time).toISOString(), level: 'error' });
+    await fs.writeFile(backup, `${failure}\n`);
+    await fs.writeFile(active, `${failure}\n`);
+    const files = await discoverNativeDiagnosticLogs(active);
+    let rotated = false;
+    const logs = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      { lines: [], files },
+      {
+        fullScan: true,
+        onProgress: progress => {
+          if (!rotated && progress.filesCompleted === 1) {
+            rotated = true;
+            renameSync(backup, path.join(dir, 'runtime.2.log'));
+          }
+        },
+      },
+    );
+    expect(logs.sources[3]).toMatchObject({
+      filesCompleted: 2,
+      scanComplete: false,
+      status: 'partial',
+    });
+    expect(logs.sources[3].reasons).toContain('source_changed');
   });
 
   it('reports concurrent truncation instead of declaring the file fully scanned', async () => {

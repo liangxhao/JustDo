@@ -69,14 +69,20 @@ describe('session diagnostics', () => {
     });
     bridge.list.mockResolvedValue({ success: true, runs: [historical.run] });
     bridge.read.mockResolvedValue({ success: true, report: historical });
-    render(<CoworkSessionDiagnosticsModal
-      sessionId="target" sessionTitle="External conversation" externalActivity="ended" onClose={vi.fn()}
-    />);
+    render(
+      <CoworkSessionDiagnosticsModal
+        sessionId="target"
+        sessionTitle="External conversation"
+        externalActivity="ended"
+        onClose={vi.fn()}
+      />,
+    );
 
     expect(screen.getByText(i18nService.t('coworkStatusEnded'))).toBeTruthy();
     await screen.findByText(i18nService.t('diagnosticsState_running'));
-    expect(screen.getByRole('option', { name: /1970/ }).textContent)
-      .not.toContain(i18nService.t('diagnosticsState_running'));
+    expect(screen.getByRole('option', { name: /1970/ }).textContent).not.toContain(
+      i18nService.t('diagnosticsState_running'),
+    );
   });
 
   it('shows the public replay observation only on failed lifecycle and chat timeline events', () => {
@@ -107,7 +113,7 @@ describe('session diagnostics', () => {
   });
 
   it.each(['completed', 'unknown', 'failed'] as const)(
-    'keeps generic %s explanations collapsed while retaining concrete failure excerpts',
+    'omits generic %s explanations while showing concrete failure excerpts',
     async reason => {
       bridge.read.mockResolvedValue({
         success: true,
@@ -130,54 +136,54 @@ describe('session diagnostics', () => {
         }),
       });
       open();
-      const disclosure = await screen.findByText(i18nService.t('diagnosticsAnswerExpand'));
-      expect(disclosure.closest('details')?.open).toBe(false);
       expect(
-        screen
-          .getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') })
-          .closest('details'),
-      ).toBe(disclosure.closest('details'));
-      expect(screen.getByText('ECONNREFUSED synthetic service')).toBeTruthy();
-      fireEvent.click(disclosure);
-      expect(disclosure.closest('details')?.open).toBe(true);
-      expect(
-        screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') }),
-      ).toBeTruthy();
+        (await screen.findByText('ECONNREFUSED synthetic service')).closest('details'),
+      ).toBeNull();
+      expect(screen.queryByText(i18nService.t(`diagnosticsStopAdvice_${reason}`))).toBeNull();
+      expect(screen.queryByText(i18nService.t('diagnosticsAnswer_unknown'))).toBeNull();
+      if (reason === 'unknown') {
+        expect(
+          screen.queryByRole('region', { name: i18nService.t('diagnosticsStopTitle') }),
+        ).toBeNull();
+      }
     },
   );
 
-  it.each(['provider', 'tool_execution'] as const)('keeps the %s timeout explanation expanded', async timeoutPhase => {
-    bridge.read.mockResolvedValue({
-      success: true,
-      report: report({
-        conclusion: {
-          reason: 'timeout',
-          confidence: 'confirmed',
-          evidenceIds: ['end'],
-          toolFailures: 0,
-        },
-        events: [
-          {
-            id: 'end',
-            runId: 'run-1',
-            epoch: 'epoch',
-            observedAt: 10,
-            kind: 'lifecycle',
-            phase: 'error',
-            executionSettled: true,
-            stopReason: 'timeout',
-            timeoutPhase,
+  it.each(['provider', 'tool_execution'] as const)(
+    'shows the %s timeout phase and advice directly',
+    async timeoutPhase => {
+      bridge.read.mockResolvedValue({
+        success: true,
+        report: report({
+          conclusion: {
+            reason: 'timeout',
+            confidence: 'confirmed',
+            evidenceIds: ['end'],
+            toolFailures: 0,
           },
-        ],
-      }),
-    });
-    open();
-    await screen.findByText(i18nService.t(`diagnosticsTimeout_${timeoutPhase}`));
-    expect(screen.queryByText(i18nService.t('diagnosticsAnswerExpand'))).toBeNull();
-    expect(
-      screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') }),
-    ).toBeTruthy();
-  });
+          events: [
+            {
+              id: 'end',
+              runId: 'run-1',
+              epoch: 'epoch',
+              observedAt: 10,
+              kind: 'lifecycle',
+              phase: 'error',
+              executionSettled: true,
+              stopReason: 'timeout',
+              timeoutPhase,
+            },
+          ],
+        }),
+      });
+      open();
+      const phase = await screen.findByText(i18nService.t(`diagnosticsTimeout_${timeoutPhase}`));
+      expect(phase.closest('details')).toBeNull();
+      expect(
+        screen.getByText(i18nService.t('diagnosticsStopAdvice_timeout')).closest('details'),
+      ).toBeNull();
+    },
+  );
 
   it('reports actual export gaps and explains a bundle without log text', async () => {
     bridge.export.mockResolvedValue({
@@ -371,10 +377,20 @@ describe('session diagnostics', () => {
     });
     open();
     expect(await screen.findByText(i18nService.t('diagnosticsModelReplyEnded'))).toBeTruthy();
-    expect(screen.getByText(i18nService.t('diagnosticsModelReplyEndedEvidence'))).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('diagnosticsModelReplyEndedEvidence'))).toBeNull();
+    expect(
+      screen.getByText(i18nService.t('diagnosticsModelReplyEndedAdvice')).closest('details'),
+    ).toBeNull();
+    expect(
+      screen.queryByRole('heading', { name: i18nService.t('diagnosticsReportTitle') }),
+    ).toBeNull();
+    const collection = screen.getByText(i18nService.t('diagnosticsSupporting'));
+    expect(collection.closest('details')?.open).toBe(false);
+    fireEvent.click(collection);
+    expect(collection.closest('details')?.open).toBe(true);
     expect(screen.queryByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeNull();
   });
-  it('asks for more evidence when native settlement has no final reply observation', async () => {
+  it('shows a recorded end without repeating that the reason is unknown', async () => {
     bridge.read.mockResolvedValue({
       success: true,
       report: report({
@@ -399,8 +415,8 @@ describe('session diagnostics', () => {
       }),
     });
     open();
-    expect(await screen.findByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeTruthy();
-    expect(screen.getByText(i18nService.t('diagnosticsAnswer_unknown'))).toBeTruthy();
+    expect(await screen.findByText(i18nService.t('diagnosticsTurnEnded'))).toBeTruthy();
+    expect(screen.queryByText(i18nService.t('diagnosticsStopBasis_completed'))).toBeNull();
     expect(screen.queryByText(i18nService.t('diagnosticsModelReplyEnded'))).toBeNull();
   });
   it('explains thinking-only stops and output limits without showing reasoning text', async () => {
@@ -435,16 +451,8 @@ describe('session diagnostics', () => {
     expect(screen.queryByText(i18nService.t('diagnosticsReason_completed'))).toBeNull();
     expect(screen.getByText(i18nService.t('diagnosticsAnswer_observed'))).toBeTruthy();
     expect(
-      screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerEvidence') }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole('heading', { name: i18nService.t('diagnosticsAnswerAction') }),
-    ).toBeTruthy();
-    expect(screen.getByText(i18nService.t('diagnosticsAnswerIncomplete'))).toBeTruthy();
-    const detail = screen.getByText(i18nService.t('diagnosticsOverview')).closest('details')!;
-    expect(detail.open).toBe(false);
-    expect(detail.contains(screen.getByText('Matching diagnostic records'))).toBe(true);
-    expect(screen.queryByText(i18nService.t('diagnosticsNotLocated'))).toBeNull();
+      screen.getByText(i18nService.t('diagnosticsStopAdvice_reasoning_only')).closest('details'),
+    ).toBeNull();
   });
   it('shows native blocked evidence, concrete advice and incomplete scan reasons', async () => {
     bridge.read.mockResolvedValue({
@@ -475,7 +483,6 @@ describe('session diagnostics', () => {
     expect(screen.getByText(i18nService.t('diagnosticsHistoryBasis_activity'))).toBeTruthy();
     expect(screen.getByText(i18nService.t('diagnosticsAdvice_permission'))).toBeTruthy();
     expect(screen.getByText(i18nService.t('diagnosticsHistoryReason_page_limit'))).toBeTruthy();
-    expect(screen.queryByText(i18nService.t('diagnosticsNotLocated'))).toBeNull();
   });
   it('shows the stored tool error instead of repeating the missing-cause fallback', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -546,17 +553,17 @@ describe('session diagnostics', () => {
       }),
     });
     open();
-    const heading = await screen.findByText('Findings for this run');
+    const heading = await screen.findByText(i18nService.t('diagnosticsReportTitle'));
     expect(screen.getByText('Observed in this run')).toBeTruthy();
     expect(screen.getByText('A tool step failed; the cause was not recorded')).toBeTruthy();
     expect(screen.getByText(/Open the failed step near these times/)).toBeTruthy();
     expect(screen.queryByText('The runtime marked a tool result as failed.')).toBeNull();
     expect(screen.queryByText(/Supporting records/)).toBeNull();
     expect(
-      heading.compareDocumentPosition(screen.getByText('Matching diagnostic records')) &
+      heading.compareDocumentPosition(screen.getByText(i18nService.t('diagnosticsSupporting'))) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(screen.getByText(i18nService.t('diagnosticsOverview')).closest('details')?.open).toBe(
+    expect(screen.getByText(i18nService.t('diagnosticsSupporting')).closest('details')?.open).toBe(
       false,
     );
   });
@@ -624,7 +631,7 @@ describe('session diagnostics', () => {
     open();
     await screen.findByText(/An HTTP error status was recorded.*Status code: 401/);
     expect(screen.getByText(/2 records have the same time and description/)).toBeTruthy();
-    expect(screen.getByText(/They cannot establish a problem in this run/)).toBeTruthy();
+    expect(screen.getByText('Nearby in time; may be unrelated')).toBeTruthy();
   });
   it('shows historical application state and blocks export until automatic collection completes', async () => {
     const historical = report({
@@ -641,7 +648,7 @@ describe('session diagnostics', () => {
     );
     open();
     await screen.findByText('Collecting application and runtime log evidence…');
-    expect(screen.getByText('Application run record (does not establish the cause)')).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsRecordedState'))).toBeTruthy();
     expect(screen.getByText('Failed')).toBeTruthy();
     const exportButton = screen.getByRole('button', { name: 'Export diagnostic bundle' });
     expect((exportButton as HTMLButtonElement).disabled).toBe(true);
@@ -924,7 +931,7 @@ describe('session diagnostics', () => {
 
   it('loads local evidence without querying online context and exports the displayed snapshot while offline', async () => {
     open();
-    await screen.findByText('This turn ended, but the specific reason is not recorded.');
+    await screen.findByText(i18nService.t('diagnosticsTurnEnded'));
     expect(bridge.read).toHaveBeenCalledWith({ sessionId: 'target' });
     expect(bridge.refresh).not.toHaveBeenCalled();
     expect(
@@ -981,7 +988,7 @@ describe('session diagnostics', () => {
           async () => bridge.read.mock.results[bridge.read.mock.results.length - 1]?.value,
         );
       open();
-      await screen.findByText('This turn ended, but the specific reason is not recorded.');
+      await screen.findByText(i18nService.t('diagnosticsTurnEnded'));
       await waitFor(() =>
         expect(
           (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
@@ -1002,9 +1009,7 @@ describe('session diagnostics', () => {
       await screen.findByText('Execution failed.');
       resolve({ success: true, report: report({ snapshotId: 'stale' }) });
       await waitFor(() =>
-        expect(
-          screen.queryByText('This turn ended, but the specific reason is not recorded.'),
-        ).toBeNull(),
+        expect(screen.queryByText(i18nService.t('diagnosticsTurnEnded'))).toBeNull(),
       );
       await waitFor(() =>
         expect(
@@ -1026,7 +1031,7 @@ describe('session diagnostics', () => {
   it('removes a deleted session snapshot and disables further exports', async () => {
     bridge.export.mockResolvedValue({ success: false, reason: 'missing' });
     open();
-    await screen.findByText('This turn ended, but the specific reason is not recorded.');
+    await screen.findByText(i18nService.t('diagnosticsTurnEnded'));
     await waitFor(() =>
       expect(
         (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
@@ -1035,9 +1040,7 @@ describe('session diagnostics', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Export diagnostic bundle' }));
     await screen.findByRole('alert');
-    expect(
-      screen.queryByText('This turn ended, but the specific reason is not recorded.'),
-    ).toBeNull();
+    expect(screen.queryByText(i18nService.t('diagnosticsTurnEnded'))).toBeNull();
     expect(
       (screen.getByRole('button', { name: 'Export diagnostic bundle' }) as HTMLButtonElement)
         .disabled,
@@ -1054,7 +1057,7 @@ describe('session diagnostics', () => {
     });
     bridge.refresh.mockRejectedValue(new Error('sensitive provider response'));
     open();
-    await screen.findByText('This turn ended, but the specific reason is not recorded.');
+    await screen.findByText(i18nService.t('diagnosticsTurnEnded'));
     await waitFor(() =>
       expect(
         (screen.getByRole('button', { name: 'Collect online context' }) as HTMLButtonElement)
@@ -1065,9 +1068,7 @@ describe('session diagnostics', () => {
     await screen.findByText(
       'Diagnostics are temporarily unavailable. Try refreshing local evidence.',
     );
-    expect(
-      screen.getByText('This turn ended, but the specific reason is not recorded.'),
-    ).toBeTruthy();
+    expect(screen.getByText(i18nService.t('diagnosticsTurnEnded'))).toBeTruthy();
     expect(
       screen.getByText(
         'Global environment context; these counts do not establish the cause of this run.',

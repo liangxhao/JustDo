@@ -171,6 +171,7 @@ export type OpenClawChatHistoryResultV2026_10_6 = {
   nextOffset?: number;
   totalMessages?: number;
   deltaCursor?: string;
+  windowReset?: boolean;
 };
 
 const parseChatHistoryActivity = (value: unknown): unknown[] | undefined => {
@@ -199,6 +200,9 @@ export const parseChatHistoryResultV2026_10_6 = (
   if (value.hasMore !== undefined && typeof value.hasMore !== 'boolean') {
     throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history hasMore must be a boolean`);
   }
+  if (value.windowReset !== undefined && typeof value.windowReset !== 'boolean') {
+    throw new Error(`${OPENCLAW_WIRE_VERSION} chat.history windowReset must be a boolean`);
+  }
   const hasMore = value.hasMore === true;
   const activity = parseChatHistoryActivity(value.activity);
   const nextOffset = optionalNonNegativeInteger(value.nextOffset, 'chat.history nextOffset');
@@ -217,6 +221,7 @@ export const parseChatHistoryResultV2026_10_6 = (
     ...(nextOffset !== undefined ? { nextOffset } : {}),
     ...(totalMessages !== undefined ? { totalMessages } : {}),
     ...(deltaCursor !== undefined ? { deltaCursor } : {}),
+    ...(typeof value.windowReset === 'boolean' ? { windowReset: value.windowReset } : {}),
   };
 };
 

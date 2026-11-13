@@ -1,9 +1,5 @@
 import { assessDiagnosticCoverage } from '../../../shared/cowork/diagnostics/diagnosticEvidenceCoverage';
 import { buildDiagnosticFindings } from '../../../shared/cowork/diagnostics/diagnosticFindings';
-import {
-  diagnosticErrorCodes,
-  isDiagnosticMetricValue,
-} from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
 import { DiagnosticRuntimeFailure } from '../../../shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import {
   projectDiagnosticGatewayInfo,
@@ -16,7 +12,11 @@ import {
   diagnosticResponseIssues,
   diagnosticTimeoutPhases,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
-import { type DiagnosticExportLogBundle, redactDiagnosticLog } from './exportLogs';
+import {
+  DIAGNOSTIC_ERRORS_FILE,
+  type DiagnosticExportLogBundle,
+  redactDiagnosticLog,
+} from './exportLogs';
 import { exportSummaryTranslations } from './exportSummaryTranslations';
 
 const SOURCES = ['main', 'cowork', 'gateway', 'native'] as const;
@@ -43,13 +43,14 @@ const excerptBlock = (value: string) => {
   return `${fence}text\n${safe}\n${fence}`;
 };
 
-/** The report, readable overview and timeline share the same deterministic assessments and aliases. */
-export function buildDiagnosticReadableFiles(
+/** The report and summary share the same deterministic assessments and aliases. */
+export function buildDiagnosticSummary(
   report: DiagnosticReport,
   language: 'zh' | 'en',
   alias: (value: unknown) => string | undefined,
   bundle?: DiagnosticExportLogBundle,
-): Record<string, string> {
+  errorRecords = 0,
+): string {
   const strings = exportSummaryTranslations[language];
   const time = (value: unknown) => {
     const valid = safeTime(value);
@@ -73,20 +74,6 @@ export function buildDiagnosticReadableFiles(
       : strings.unknown;
   const references = [...stop.eventIds, ...stop.logIds].map(alias).filter(Boolean);
   const rawCoverage = new Map(bundle?.coverage.map(source => [source.source, source]));
-  const retainedIndex = SOURCES.flatMap(source =>
-    (bundle?.index ?? [])
-      .filter(
-        record =>
-          record.source === source &&
-          new RegExp(`^log-${source}-\\d+$`).test(record.id) &&
-          Number.isSafeInteger(record.line) &&
-          record.line > 0 &&
-          Number.isSafeInteger(record.endLine) &&
-          record.endLine >= record.line,
-      )
-      .slice(0, 2048),
-  );
-  const index = new Map(retainedIndex.map(record => [record.id, record]));
   const failures = (report.history?.failures ?? []).slice(0, 40);
   const findings = buildDiagnosticFindings(report);
   const gaps: string[] = [];
@@ -114,8 +101,10 @@ export function buildDiagnosticReadableFiles(
         `${member(source.source, SOURCES)}: ${strings.rawOmitted}: ${amount(source.omitted)}`,
       );
   }
-  const hasLogText = bundle && Object.values(bundle.entries).some(value => value.trim().length > 0);
-  const summary =
+  const hasErrorText = Boolean(bundle?.entries[DIAGNOSTIC_ERRORS_FILE]?.trim());
+  const hasContext = SOURCES.some(source => bundle?.entries[`logs/${source}.log`]?.trim());
+  const hasLogText = hasErrorText || hasContext;
+  return (
     [
       `# ${strings.title}`,
       `## ${strings.reason}`,
@@ -135,9 +124,7 @@ export function buildDiagnosticReadableFiles(
         ? [strings.replayAdmission]
         : []),
       ...(references.length
-        ? [
-            `${strings.evidence}: ${references.map(id => `\`${id}\``).join(', ')} — report.json${stop.logIds.length ? ' / logs/index.json' : ''}`,
-          ]
+        ? [`${strings.evidence}: ${references.map(id => `\`${id}\``).join(', ')} · report.json`]
         : []),
       `## ${strings.gaps}`,
       ...(bundle && !hasLogText ? [strings.noLogs] : []),
@@ -168,7 +155,7 @@ export function buildDiagnosticReadableFiles(
             .map((failure, position) =>
               [
                 `### ${time(failure.timestamp)} · ${member(failure.kind, ['tool', 'model', 'runtime'])}${failure.tool ? ` · ${escape(redactDiagnosticLog(failure.tool).slice(0, 100))}` : ''}`,
-                `${strings.association}: ${member(failure.association, ['run', 'run_window'])}; session-evidence.json → failures[${Math.max(0, failures.length - 8) + position}]${failure.clipped ? ' (clipped)' : ''}`,
+                `${strings.association}: ${member(failure.association, ['run', 'run_window'])}; report.json → history.failures[${Math.max(0, failures.length - 8) + position}]${failure.clipped ? ' (clipped)' : ''}`,
                 excerptBlock(failure.excerpt),
                 ...(failure.kind === 'runtime' &&
                 failure.basis === 'failure_receipt' &&
@@ -180,6 +167,7 @@ export function buildDiagnosticReadableFiles(
             .join('\n\n')
         : strings.noFailures,
       `## ${strings.findings}`,
+      ...(errorRecords ? [strings.errorsFileGuide.replace('{count}', String(errorRecords))] : []),
       findings.length
         ? findings
             .map(
@@ -213,127 +201,10 @@ export function buildDiagnosticReadableFiles(
       `## ${strings.next}`,
       strings.nextText,
       `## ${strings.files}`,
-      bundle ? strings.filesGuide : strings.metadataFilesGuide,
-      ...(bundle ? [strings.retention] : []),
+      strings.filesGuide,
+      ...(hasLogText ? [strings.logFilesGuide] : []),
+      ...(hasLogText ? [strings.retention] : []),
       strings.privacy,
-    ].join('\n\n') + '\n';
-
-  const rows: Array<{ at?: number; order: number; cells: string[] }> = [];
-  for (const event of report.events.slice(0, 232)) {
-    const details = [
-      `${member(event.kind, ['lifecycle', 'chat', 'tool', 'command', 'connection', 'cancel'])}.${member(event.phase, ['start', 'finishing', 'end', 'error', 'final', 'aborted', 'connected', 'disconnected', 'requested', 'acknowledged', 'failed'])}`,
-      ...(event.executionSettled === true ? ['executionSettled=true'] : []),
-      ...(event.stopReason
-        ? [
-            `stopReason=${member(event.stopReason, ['stop', 'end_turn', 'completed', 'length', 'max_tokens', 'aborted', 'timeout', 'restart', 'superseded', 'error'])}`,
-          ]
-        : []),
-      ...(event.errorCategory
-        ? [
-            `category=${member(event.errorCategory, ['auth', 'rate_limit', 'billing', 'timeout', 'network', 'context', 'provider'])}`,
-          ]
-        : []),
-      ...(event.errorCode ? [`code=${member(event.errorCode, diagnosticErrorCodes)}`] : []),
-      ...(event.runtimeFailure === DiagnosticRuntimeFailure.ReplayAdmissionRejected
-        ? [`runtimeFailure=${event.runtimeFailure}`]
-        : []),
-      ...(isDiagnosticMetricValue('exitCode', event.exitCode)
-        ? [`exitCode=${event.exitCode}`]
-        : []),
-    ];
-    rows.push({
-      at: safeTime(event.occurredAt ?? event.observedAt),
-      order: rows.length,
-      cells: [
-        time(event.occurredAt ?? event.observedAt),
-        alias(event.id) ?? '',
-        details.join('; '),
-        'report.json',
-      ],
-    });
-  }
-  for (const record of (report.logs?.records ?? []).slice(0, 400)) {
-    const raw = index.get(record.id);
-    const details = [
-      member(record.source, SOURCES),
-      member(record.level, ['error', 'warn', 'info', 'debug', 'unknown']),
-      member(record.signal, [
-        'auth',
-        'rate_limit',
-        'billing',
-        'context',
-        'timeout',
-        'network',
-        'tls',
-        'provider',
-        'tool',
-        'retry',
-        'disconnect',
-        'reconnect',
-        'process_exit',
-        'queue',
-        'storage',
-        'permission',
-        'unknown',
-      ]),
-      `association=${member(record.association, ['run', 'session', 'time_window'])}`,
-      ...Object.entries(record.metrics)
-        .filter(([key, value]) => isDiagnosticMetricValue(key, value))
-        .map(([key, value]) => `${key}=${value}`),
-    ];
-    rows.push({
-      at: safeTime(record.timestamp),
-      order: rows.length,
-      cells: [
-        time(record.timestamp),
-        alias(record.id) ?? '',
-        details.join('; '),
-        raw
-          ? `logs/${raw.source}.log:${raw.line}–${raw.endLine} (${raw.id})`
-          : `logs.json (${bundle ? strings.rawNotRetained : strings.rawNotIncluded})`,
-      ],
-    });
-  }
-  failures.forEach((failure, index) =>
-    rows.push({
-      at: safeTime(failure.timestamp),
-      order: rows.length,
-      cells: [
-        time(failure.timestamp),
-        `history-${index + 1}`,
-        `${member(failure.kind, ['tool', 'model', 'runtime'])}; association=${member(failure.association, ['run', 'run_window'])}`,
-        `session-evidence.json → failures[${index}]`,
-      ],
-    }),
+    ].join('\n\n') + '\n'
   );
-  rows.sort(
-    (left, right) =>
-      Number(left.at === undefined) - Number(right.at === undefined) ||
-      (left.at !== undefined && right.at !== undefined ? left.at - right.at : 0) ||
-      left.order - right.order,
-  );
-  const entries: Record<string, string> = {
-    'summary.md': summary,
-    'evidence-timeline.md': `# ${strings.timeline}\n\n${strings.timelineScope}\n\n| ${strings.time} | ${strings.record} | ${strings.observation} | ${strings.location} |\n| --- | --- | --- | --- |\n${rows.map(row => `| ${row.cells.map(escape).join(' | ')} |`).join('\n')}\n`,
-  };
-  if (bundle)
-    entries['logs/index.json'] = JSON.stringify({
-      version: 1,
-      selection: 'evidence_priority_with_recent_context',
-      sources: SOURCES.map(source => ({
-        file: `logs/${source}.log`,
-        records: retainedIndex
-          .filter(record => record.source === source)
-          .map(record => ({
-            id: alias(record.id),
-            marker: record.id,
-            line: record.line,
-            endLine: record.endLine,
-            at: safeTime(record.timestamp),
-            association: member(record.association, ['run', 'session', 'time_window']),
-            level: member(record.level, ['error', 'warn', 'info', 'debug', 'unknown']),
-          })),
-      })),
-    });
-  return entries;
 }

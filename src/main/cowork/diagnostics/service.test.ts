@@ -409,7 +409,7 @@ describe('SessionDiagnosticsService', () => {
     const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
     expect(result.logs.entries['logs/native.log']).toContain('export-only-context');
     expect(result.logs.entries['logs/native.log']).not.toContain('SECRET');
-    expect(result.logs.entries['logs/native.log']).not.toContain('OTHER_SESSION');
+    expect(result.logs.entries['errors.log']).toBeUndefined();
     expect(JSON.stringify(result.report)).not.toContain('export-only-context');
     expect(
       JSON.stringify(service.snapshot({ sessionId: 's', snapshotId: result.report.snapshotId }, 1)),
@@ -478,7 +478,7 @@ describe('SessionDiagnosticsService', () => {
     expect(result.report.collectedAt).toBe(currentTime);
     expect(result.report.conclusion.reason).toBe('failed');
     expect(result.report.events).toMatchObject([{ id: 'late-terminal', executionSettled: true }]);
-    expect(result.logs.entries['logs/native.log']).toContain('late failure context');
+    expect(result.logs.entries['errors.log']).toContain('late failure context');
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({ snapshotId: previous.snapshotId }),
     );
@@ -512,7 +512,7 @@ describe('SessionDiagnosticsService', () => {
     expect(result.report.run).toBeUndefined();
     expect(result.report.events).toEqual([]);
     expect(result.report.history?.reason).toBe('no_run');
-    expect(result.logs.entries['logs/native.log']).not.toContain('later run context');
+    expect(result.logs.entries['errors.log']).toBeUndefined();
   });
 
   it('preserves an incomplete terminal snapshot time anchor rather than expanding its historical window', async () => {
@@ -545,7 +545,7 @@ describe('SessionDiagnosticsService', () => {
     expect(result.report.run?.endedAt).toBeUndefined();
     expect(result.report.collectedAt).toBe(previous.collectedAt);
     expect(result.report.logs?.window.to).toBe(previous.collectedAt + 120_000);
-    expect(result.logs.entries['logs/native.log']).not.toContain('later temporal context');
+    expect(result.logs.entries['errors.log']).toBeUndefined();
   });
 
   it.each(['binding', 'receipt', 'connection'] as const)(
@@ -769,9 +769,10 @@ describe('SessionDiagnosticsService', () => {
     expect(result.logs?.sources.map(source => source.source)).toEqual(
       expect.arrayContaining(['main', 'cowork', 'gateway', 'native']),
     );
-    expect(result.logs?.sources.find(source => source.source === 'native')?.status).toBe(
-      'unavailable',
-    );
+    expect(result.logs?.sources.find(source => source.source === 'native')).toMatchObject({
+      status: 'unavailable',
+      reasons: ['native_unavailable'],
+    });
     expect(result.conclusion).toEqual(original.conclusion);
     expect(service.snapshot(query, 1).logs).toBeUndefined();
     expect(request).not.toHaveBeenCalled();
@@ -793,7 +794,11 @@ describe('SessionDiagnosticsService', () => {
     });
     const original = service.read({ sessionId: 's' }, 1);
     const result = await service.collect({ sessionId: 's', snapshotId: original.snapshotId }, 1);
-    expect(request).toHaveBeenCalledWith('logs.tail', { limit: 1000, maxBytes: 524288 });
+    expect(request).toHaveBeenCalledWith(
+      'logs.tail',
+      { limit: 1000, maxBytes: 524288 },
+      { signal: expect.any(AbortSignal) },
+    );
     expect(JSON.stringify(result)).not.toContain('SECRET');
     expect(result.logs?.sources.find(source => source.source === 'native')?.status).not.toBe(
       'unavailable',
@@ -803,18 +808,69 @@ describe('SessionDiagnosticsService', () => {
 
   it('times out native collection and releases its busy guard', async () => {
     connected = true;
-    request.mockReturnValue(new Promise(() => {}));
+    request.mockImplementation(method =>
+      method === 'logs.tail' ? new Promise(() => {}) : Promise.resolve({ messages: [] }),
+    );
     const original = service.read({ sessionId: 's' }, 1);
     const query = { sessionId: 's', snapshotId: original.snapshotId };
     const pending = service.collect(query, 1);
     await expect(service.collect(query, 1)).rejects.toMatchObject({ reason: 'busy' });
-    await vi.advanceTimersByTimeAsync(8001);
+    await vi.advanceTimersByTimeAsync(3000);
     const result = await pending;
-    expect(result.logs?.sources.find(source => source.source === 'native')?.status).toBe(
-      'unavailable',
+    expect(result.logs?.sources.find(source => source.source === 'native')).toMatchObject({
+      status: 'unavailable',
+      reasons: ['read_timeout'],
+    });
+    expect(request.mock.calls.find(([method]) => method === 'logs.tail')?.[2].signal.aborted).toBe(
+      true,
     );
     connected = false;
     await expect(service.collect(query, 1)).resolves.toHaveProperty('logs');
+  });
+
+  it('releases a canceled native log read immediately and ignores its late result', async () => {
+    connected = true;
+    let resolveTail: (value: unknown) => void = () => {};
+    request.mockImplementation(method =>
+      method === 'logs.tail'
+        ? new Promise(resolve => {
+            resolveTail = resolve;
+          })
+        : Promise.resolve({ messages: [] }),
+    );
+    const original = service.read({ sessionId: 's' }, 1);
+    const query = { sessionId: 's', snapshotId: original.snapshotId };
+    const controller = new AbortController();
+    const pending = service.collect(query, 1, { signal: controller.signal });
+    controller.abort();
+    const result = await pending;
+    expect(result.logs?.sources[3]).toMatchObject({
+      status: 'unavailable',
+      reasons: ['canceled'],
+    });
+    expect(request.mock.calls.find(([method]) => method === 'logs.tail')?.[2].signal.aborted).toBe(
+      true,
+    );
+    resolveTail({ lines: [JSON.stringify({ runId: 'native', level: 'error' })] });
+    connected = false;
+    const next = await service.collect(query, 1);
+    expect(next.logs?.records).toEqual([]);
+  });
+
+  it('reports a failed native log request without exposing the response text', async () => {
+    connected = true;
+    request.mockImplementation(method =>
+      method === 'logs.tail'
+        ? Promise.reject(new Error('PRIVATE_PATH'))
+        : Promise.resolve({ messages: [] }),
+    );
+    const original = service.read({ sessionId: 's' }, 1);
+    const result = await service.collect({ sessionId: 's', snapshotId: original.snapshotId }, 1);
+    expect(result.logs?.sources[3]).toMatchObject({
+      status: 'unavailable',
+      reasons: ['unreadable'],
+    });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_PATH');
   });
 
   it('isolates source discovery failures and marks them unreadable instead of missing', async () => {

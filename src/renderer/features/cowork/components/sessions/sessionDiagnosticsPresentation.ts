@@ -40,32 +40,34 @@ export function presentDiagnosticStop(report: DiagnosticReport) {
       : assessment.basis === 'terminal'
         ? 'confirmed'
         : 'observed';
-  const incomplete = assessDiagnosticCoverage(report).hasGaps;
   const title = assessment.modelReplyEnded
     ? t('diagnosticsModelReplyEnded')
-    : ['reasoning_only', 'empty_response', 'incomplete_response'].includes(assessment.reason)
-      ? t(`diagnosticsStop_${assessment.reason}`)
-      : t(`diagnosticsReason_${assessment.reason}`);
+    : assessment.basis === 'log' && assessment.outputIssue
+      ? t(`diagnosticsResponseEvidence_${assessment.outputIssue}`)
+      : ['reasoning_only', 'empty_response', 'incomplete_response'].includes(assessment.reason)
+        ? t(`diagnosticsStop_${assessment.reason}`)
+        : t(`diagnosticsReason_${assessment.reason}`);
+  const specifics = [
+    ...(assessment.timeoutPhase ? [t(`diagnosticsTimeout_${assessment.timeoutPhase}`)] : []),
+    ...(assessment.outputIssue && assessment.outputIssue !== assessment.reason
+      ? [t(`diagnosticsStop_${assessment.outputIssue}`)]
+      : []),
+    ...(assessment.outputLimited ? [t('diagnosticsStopOutputLimit')] : []),
+    ...(assessment.recoveryExhausted
+      ? [
+          t(
+            assessment.basis === 'log'
+              ? 'diagnosticsResponseRecovery_exhausted'
+              : 'diagnosticsStopRetriesExhausted',
+          ),
+        ]
+      : []),
+  ];
   return {
     ...assessment,
     certainty,
-    incomplete,
     title,
-    details: [
-      t(
-        assessment.modelReplyEnded
-          ? 'diagnosticsModelReplyEndedEvidence'
-          : assessment.reason === 'completed'
-            ? 'diagnosticsStopBasis_completed'
-            : `diagnosticsStopBasis_${assessment.basis}`,
-      ),
-      ...(assessment.timeoutPhase ? [t(`diagnosticsTimeout_${assessment.timeoutPhase}`)] : []),
-      ...(assessment.outputIssue && assessment.outputIssue !== assessment.reason
-        ? [t(`diagnosticsStop_${assessment.outputIssue}`)]
-        : []),
-      ...(assessment.outputLimited ? [t('diagnosticsStopOutputLimit')] : []),
-      ...(assessment.recoveryExhausted ? [t('diagnosticsStopRetriesExhausted')] : []),
-    ],
+    specifics,
     advice: t(
       assessment.modelReplyEnded
         ? 'diagnosticsModelReplyEndedAdvice'
@@ -80,8 +82,14 @@ export function summarizeDiagnosticStop(report: DiagnosticReport) {
     t('diagnosticsStopTitle'),
     stop.title,
     t(`diagnosticsAnswer_${stop.certainty}`),
-    ...(stop.incomplete ? [t('diagnosticsAnswerIncomplete')] : []),
-    ...stop.details,
+    t(
+      stop.modelReplyEnded
+        ? 'diagnosticsModelReplyEndedEvidence'
+        : stop.reason === 'completed'
+          ? 'diagnosticsStopBasis_completed'
+          : `diagnosticsStopBasis_${stop.basis}`,
+    ),
+    ...stop.specifics,
     stop.advice,
   ].join('\n');
 }
@@ -386,7 +394,8 @@ export function presentDiagnosticCoverage(report: DiagnosticReport) {
   const notes = [
     ...(coverage.eventLosses ? [`${t('diagnosticsDropped')}: ${coverage.eventLosses}`] : []),
     ...(coverage.storageFailed ? [t('diagnosticsStorageFailed')] : []),
-    ...(coverage.history.status
+    ...(coverage.history.status &&
+    (!coverage.history.reason || coverage.history.status === 'partial')
       ? [
           t(`diagnosticsHistory_${coverage.history.status}`).replace(
             '{count}',

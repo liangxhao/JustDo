@@ -26,9 +26,11 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 
 import {
+  DiagnosticCollectionSummary,
   DiagnosticEnvironment,
   DiagnosticEvidence,
   DiagnosticOverview,
+  DiagnosticRunDetails,
   DiagnosticTimeline,
 } from './SessionDiagnosticsEvidence';
 import {
@@ -161,8 +163,8 @@ export default function CoworkSessionDiagnosticsModal({
           ) ?? [],
         );
         const visibleNodes = nodes.filter(node => {
-          const closed = node.closest('details:not([open])');
-          return !closed || (node.tagName === 'SUMMARY' && node.parentElement === closed);
+          const content = node.tagName === 'SUMMARY' ? node.parentElement?.parentElement : node;
+          return !content?.closest('details:not([open])');
         });
         const first = visibleNodes[0];
         const last = visibleNodes[visibleNodes.length - 1];
@@ -385,10 +387,6 @@ export default function CoworkSessionDiagnosticsModal({
             <div className="diagnostics-heading">
               <div className="diagnostics-title-line">
                 <h2 id={titleId}>{t('diagnosticsTitle')}</h2>
-                <span className="diagnostics-local-badge">
-                  <ShieldCheckIcon aria-hidden="true" />
-                  {t('diagnosticsLocalBadge')}
-                </span>
                 {(externalActivity === 'ended' || externalActivity === 'running') && (
                   <span className="diagnostics-muted">
                     {t(externalActivity === 'ended' ? 'coworkStatusEnded' : 'coworkStatusRunning')}
@@ -448,10 +446,6 @@ export default function CoworkSessionDiagnosticsModal({
                 {t('diagnosticsMore')}
               </button>
             )}
-            <span className="diagnostics-toolbar-note">
-              <ShieldCheckIcon aria-hidden="true" />
-              {t('diagnosticsPrivacyNote')}
-            </span>
           </div>
 
           {(loading || scanning || working === 'export') && (
@@ -465,9 +459,11 @@ export default function CoworkSessionDiagnosticsModal({
                     {t(
                       working === 'export'
                         ? 'diagnosticsExportCollecting'
-                        : report
-                          ? 'diagnosticsCollecting'
-                          : 'diagnosticsLoading',
+                        : scanning && report?.history?.status === 'scanned'
+                          ? 'diagnosticsHistoryReadyLogsPending'
+                          : report
+                            ? 'diagnosticsCollecting'
+                            : 'diagnosticsLoading',
                     )}
                   </p>
                   {progress && (
@@ -507,11 +503,6 @@ export default function CoworkSessionDiagnosticsModal({
               </div>
             </section>
           )}
-          {working === 'export' && (
-            <p role="status" className="diagnostics-section-description">
-              {t('diagnosticsExportingLogs')}
-            </p>
-          )}
           {error && (
             <p role="alert" className="diagnostics-message diagnostics-message-error">
               {error}
@@ -526,17 +517,14 @@ export default function CoworkSessionDiagnosticsModal({
 
           {report && (
             <>
-              {scanning && report.history && (
-                <p role="status" className="diagnostics-section-description">
-                  {t('diagnosticsHistoryReadyLogsPending')}
-                </p>
-              )}
               <DiagnosticOverview report={report} />
+              <DiagnosticCollectionSummary report={report} />
+              <details className="diagnostics-technical diagnostics-run-details">
+                <summary>{t('diagnosticsRunDetails')}</summary>
+                <DiagnosticRunDetails report={report} />
+              </details>
               <details className="diagnostics-technical diagnostics-supporting">
-                <summary>
-                  <span>{t('diagnosticsSupporting')}</span>
-                  <span className="diagnostics-muted">{t('diagnosticsSupportingHint')}</span>
-                </summary>
+                <summary>{t('diagnosticsSupporting')}</summary>
                 <DiagnosticEvidence report={report} />
                 <div className="diagnostics-bottom-grid">
                   <DiagnosticTimeline report={report} />
@@ -546,7 +534,6 @@ export default function CoworkSessionDiagnosticsModal({
               <details className="diagnostics-technical">
                 <summary>
                   <span>{t('diagnosticsTechnical')}</span>
-                  <span className="diagnostics-muted">{t('diagnosticsTechnicalHint')}</span>
                 </summary>
                 <pre>
                   {JSON.stringify(

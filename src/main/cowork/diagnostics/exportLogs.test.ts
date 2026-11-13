@@ -53,8 +53,9 @@ describe('local diagnostic log text export', () => {
       level: 'error',
     });
     const result = capture.finish();
-    expect(result.entries['logs/main.log']).toContain('native failure\n  at worker.js:12');
-    expect(result.entries['logs/main.log']).not.toContain('PRIVATE');
+    expect(result.entries['errors.log']).toContain('native failure\n  at worker.js:12');
+    expect(result.entries['errors.log']).not.toContain('PRIVATE');
+    expect(result.entries['logs/main.log']).not.toContain('native failure');
     expect(result.entries['logs/main.log']).toContain('context 80');
     expect(result.coverage[0]).toMatchObject({
       seenRecords: 81,
@@ -62,6 +63,30 @@ describe('local diagnostic log text export', () => {
     });
     expect(result.coverage[0].omitted).toBeGreaterThan(0);
     expect(result.coverage[0].omittedBytes).toBeGreaterThan(0);
+  });
+
+  it('retains a run recovery exhaustion even when later same-run errors fill the source', () => {
+    const capture = new DiagnosticExportLogs();
+    capture.append('native', 'exhausted response recovery', 'run', {
+      id: 'log-native-1',
+      timestamp: 1,
+      level: 'info',
+      isError: true,
+      recoveryExhausted: true,
+    });
+    for (let index = 2; index <= 2050; index++) {
+      capture.append('native', `routine error ${index}`, 'run', {
+        id: `log-native-${index}`,
+        timestamp: index,
+        level: 'error',
+      });
+    }
+    const result = capture.finish();
+    expect(result.entries['errors.log']).toContain('exhausted response recovery');
+    expect(result.coverage.find(source => source.source === 'native')).toMatchObject({
+      records: 2048,
+      omitted: 2,
+    });
   });
 
   it('preserves exact-run context ahead of unrelated errors and keeps sources isolated', () => {
@@ -89,8 +114,10 @@ describe('local diagnostic log text export', () => {
     });
     const result = capture.finish();
     expect(result.entries['logs/gateway.log']).toContain('exact run preparation');
-    expect(result.entries['logs/gateway.log']).toContain('exact run failure');
-    expect(result.entries['logs/native.log']).toContain('independent native evidence');
+    expect(result.entries['errors.log']).toContain(
+      'independent native evidence\nexact run failure',
+    );
+    expect(result.entries['logs/native.log']).toBe('');
     expect(result.coverage.find(source => source.source === 'native')?.omitted).toBe(0);
   });
 
@@ -111,14 +138,13 @@ describe('local diagnostic log text export', () => {
       'log-main-2',
       'log-main-4',
     ]);
-    const lines = result.entries['logs/main.log'].split('\n');
-    for (const record of result.index ?? []) {
-      expect(lines[record.line - 1]).toContain(`record=${record.id}`);
-      expect(lines[record.endLine - 1]).not.toBe('');
-    }
+    expect(result.entries['errors.log']).toBe(
+      'early\nlate\nstack\nunknown first\nunknown second\n',
+    );
     expect(result.index?.find(record => record.id === 'log-main-1')).toMatchObject({
-      line: 4,
-      endLine: 6,
+      file: 'errors.log',
+      line: 2,
+      endLine: 3,
     });
   });
 
@@ -139,6 +165,6 @@ describe('local diagnostic log text export', () => {
       seenRecords: 2050,
     });
     expect(result.index?.[0].id).toBe('log-main-3');
-    expect(result.entries['logs/main.log']).not.toContain('unknown');
+    expect(result.entries['errors.log']).not.toContain('unknown');
   });
 });

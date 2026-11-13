@@ -8,6 +8,7 @@ import yauzl from 'yauzl';
 import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { buildDiagnosticArchive, writeDiagnosticArchive } from './exporter';
 import { DiagnosticExportLogs } from './exportLogs';
+import { collectDiagnosticLogs } from './logCollector';
 
 const report = (): DiagnosticReport => ({
   version: 1,
@@ -38,22 +39,31 @@ const report = (): DiagnosticReport => ({
   ],
 });
 
-it.each(['en', 'zh'] as const)('exports the tool timeout phase and caution in %s without creating retry authorization', language => {
-  const input = report();
-  Object.assign(input.run!, { state: 'failed', endedAt: 3 });
-  Object.assign(input.conclusion, { reason: 'timeout', confidence: 'confirmed' });
-  Object.assign(input.events[0], { phase: 'error', executionSettled: true,
-    stopReason: 'timeout', timeoutPhase: 'tool_execution' });
-  const entries = buildDiagnosticArchive(input, '1.0.0', language);
-  expect(JSON.parse(entries['report.json']).events[0].timeoutPhase).toBe('tool_execution');
-  expect(entries['summary.md']).toContain(language === 'en'
-    ? 'executing tools; verify their state before repeating them'
-    : '工具执行；重复操作前请核对实际状态');
-  Object.assign(input.events[0], { timeoutPhase: 'PRIVATE_UNKNOWN_PHASE' });
-  const unknown = buildDiagnosticArchive(input, '1.0.0', language);
-  expect(JSON.parse(unknown['report.json']).events[0].timeoutPhase).toBe('unknown');
-  expect(JSON.stringify(unknown)).not.toContain('PRIVATE_UNKNOWN_PHASE');
-});
+it.each(['en', 'zh'] as const)(
+  'exports the tool timeout phase and caution in %s without creating retry authorization',
+  language => {
+    const input = report();
+    Object.assign(input.run!, { state: 'failed', endedAt: 3 });
+    Object.assign(input.conclusion, { reason: 'timeout', confidence: 'confirmed' });
+    Object.assign(input.events[0], {
+      phase: 'error',
+      executionSettled: true,
+      stopReason: 'timeout',
+      timeoutPhase: 'tool_execution',
+    });
+    const entries = buildDiagnosticArchive(input, '1.0.0', language);
+    expect(JSON.parse(entries['report.json']).events[0].timeoutPhase).toBe('tool_execution');
+    expect(entries['summary.md']).toContain(
+      language === 'en'
+        ? 'executing tools; verify their state before repeating them'
+        : '工具执行；重复操作前请核对实际状态',
+    );
+    Object.assign(input.events[0], { timeoutPhase: 'PRIVATE_UNKNOWN_PHASE' });
+    const unknown = buildDiagnosticArchive(input, '1.0.0', language);
+    expect(JSON.parse(unknown['report.json']).events[0].timeoutPhase).toBe('unknown');
+    expect(JSON.stringify(unknown)).not.toContain('PRIVATE_UNKNOWN_PHASE');
+  },
+);
 
 it('exports a bounded replay rejection observation without changing settlement or inventing a site', () => {
   const input = report();
@@ -80,7 +90,7 @@ it('exports a bounded replay rejection observation without changing settlement o
   expect(data.events[0].runtimeFailure).toBe('replay_admission_rejected');
   expect(data.events[0].executionSettled).toBeUndefined();
   expect(data.events[0]).not.toHaveProperty('site');
-  expect(JSON.parse(entries['session-evidence.json']).failures[0]).toMatchObject({
+  expect(data.history.failures[0]).toMatchObject({
     cause: 'replay_admission_rejected',
     association: 'run_window',
   });
@@ -105,19 +115,17 @@ it('exports current runtime identity and artifact fingerprints without claiming 
   Object.assign(input.runtimeInfo.gateway, { token: 'PRIVATE' });
   Object.assign(input.runtimeInfo.installedArtifact!, { path: 'PRIVATE' });
   const archive = buildDiagnosticArchive(input, '2026.8.27', 'en');
-  const manifest = JSON.parse(archive['manifest.json']);
-  expect(manifest.nativeRuntimeVersion).toBe('2026.10.4');
-  expect(manifest.runtimeInfo).toMatchObject({
+  const data = JSON.parse(archive['report.json']);
+  expect(data.runtimeInfo.gateway.version).toBe('2026.10.4');
+  expect(data.runtimeInfo).toMatchObject({
     scope: 'collection_environment',
     installedArtifact: { version: 'v2026.10.5', patchSetSha256: 'a'.repeat(64) },
   });
-  expect(JSON.parse(archive['report.json']).runtimeInfo).toEqual(manifest.runtimeInfo);
   expect(JSON.stringify(archive)).not.toContain('PRIVATE');
   input.runtimeInfo.gateway = { status: 'offline', version: '2026.10.4' };
   expect(
-    JSON.parse(buildDiagnosticArchive(input, '2026.8.27', 'en')['manifest.json'])
-      .nativeRuntimeVersion,
-  ).toBe('not_collected');
+    JSON.parse(buildDiagnosticArchive(input, '2026.8.27', 'en')['report.json']).runtimeInfo.gateway,
+  ).toEqual({ status: 'offline' });
   input.runtimeInfo.gateway = { status: 'connected', version: 'PRIVATE', buildId: 'PRIVATE' };
   input.runtimeInfo.installedArtifact = { patchSetSha256: 'PRIVATE' };
   expect(JSON.stringify(buildDiagnosticArchive(input, '2026.8.27', 'en'))).not.toContain('PRIVATE');
@@ -149,7 +157,7 @@ it('exports only response shape and aliased stop evidence, never model text', ()
     basis: 'history',
     outputLimited: true,
   });
-  expect(JSON.parse(archive['session-evidence.json']).lastResponse).toMatchObject({
+  expect(JSON.parse(archive['report.json']).history.lastResponse).toMatchObject({
     thinking: true,
     text: false,
   });
@@ -200,17 +208,15 @@ it('exports native conversation failure excerpts with coverage and credential ma
     ],
   };
   const archive = buildDiagnosticArchive(input, '2026.9.1', 'zh');
-  expect(archive['session-evidence.json']).toContain('ENOENT');
-  expect(archive['session-evidence.json']).not.toContain('private-value');
-  expect(JSON.parse(archive['session-evidence.json'])).toMatchObject({
+  const data = JSON.parse(archive['report.json']);
+  expect(data.history.failures[0].excerpt).toContain('ENOENT');
+  expect(archive['report.json']).not.toContain('private-value');
+  expect(data.history).toMatchObject({
     reason: 'page_limit',
     failures: [{ basis: 'activity', outcome: 'blocked' }],
   });
-  expect(JSON.parse(archive['manifest.json'])).toMatchObject({
-    conversationFailureExcerptsIncluded: true,
-    files: expect.arrayContaining(['session-evidence.json']),
-  });
-  expect(archive['summary.md']).toContain('session-evidence.json');
+  expect(data.archive.conversationFailureExcerptsIncluded).toBe(true);
+  expect(archive['summary.md']).toContain('report.json → history.failures[0]');
 });
 
 async function readZip(file: string): Promise<Record<string, string>> {
@@ -245,45 +251,107 @@ async function readZip(file: string): Promise<Record<string, string>> {
 }
 
 describe('diagnostic archive', () => {
-  it('maps structured evidence aliases to exact retained log markers and lines', () => {
+  it('maps structured evidence aliases to the exported log text without inserted headers', async () => {
     const input = report();
-    input.logs = {
-      collectedAt: 10,
-      window: { from: 0, to: 10 },
-      localTimezoneOffsetMinutes: 0,
-      partial: true,
-      sources: [],
-      records: [
-        {
-          id: 'log-main-1',
-          source: 'main',
-          timestamp: 5,
-          level: 'error',
-          association: 'run',
-          signal: 'network',
-          inferred: true,
-          metrics: {},
-        },
-      ],
-    };
-    const capture = new DiagnosticExportLogs();
-    capture.append('main', 'Error: ECONNRESET\n  at worker.js:12', 'run', {
-      id: 'log-main-1',
-      timestamp: 5,
-      level: 'error',
+    const directory = await temporary();
+    const main = path.join(directory, 'main.log');
+    const gateway = path.join(directory, 'gateway.log');
+    const ready = '[1970-01-01T00:00:00.003Z] [stderr] [gateway] ready';
+    const fatal =
+      '[1970-01-01T00:00:00.004Z] [stderr] 00:00:00.004 [gateway/server] startup failed';
+    const gatewayFrame = '[1970-01-01T00:00:00.004Z] [stderr]     at run (gateway.js:1:2)';
+    const warning = '[1970-01-01T00:00:00.005Z] [warn] A warning for context';
+    const exhausted =
+      '[1970-01-01T00:00:00.005Z] [warn] empty response retries exhausted: retry limit';
+    const error = '[1970-01-01T00:00:00.007Z] [error] Error: ECONNRESET\n  at worker.js:12';
+    const native = JSON.stringify({
+      time: '1970-01-01T00:00:00.006Z',
+      runId: input.run!.id,
+      level: 'info',
+      type: 'model.call.error',
     });
-    const archive = buildDiagnosticArchive(input, '1.0.0', 'en', capture.finish());
-    const log = JSON.parse(archive['logs.json']).records[0];
-    const record = JSON.parse(archive['logs/index.json']).sources[0].records[0];
-    expect(record).toMatchObject({ id: log.id, marker: 'log-main-1', line: 1, endLine: 3 });
-    expect(archive['evidence-timeline.md']).toContain(log.id.replace('-', '\\-'));
-    expect(archive['logs/main.log'].split('\n')[record.line - 1]).toContain(record.marker);
-    expect(JSON.parse(archive['manifest.json']).files).toEqual(
-      expect.arrayContaining(['logs/index.json', 'evidence-timeline.md']),
+    await fs.writeFile(
+      main,
+      `${warning}\n${exhausted}\n${error}\npassword=PRIVATE_TEST_PASSWORD\n`,
     );
+    await fs.writeFile(gateway, `${ready}\n${fatal}\n${gatewayFrame}\n`);
+    const capture = new DiagnosticExportLogs();
+    input.logs = await collectDiagnosticLogs(
+      input,
+      { main: [main], cowork: [], gateway: [gateway] },
+      { lines: [native] },
+      {
+        fullScan: true,
+        onExportRecord: (source, text, association, details) =>
+          capture.append(source, text, association, details),
+      },
+    );
+    const destination = path.join(directory, 'log-lines.zip');
+    await writeDiagnosticArchive(
+      destination,
+      buildDiagnosticArchive(input, '1.0.0', 'en', capture.finish()),
+      () => {},
+    );
+    const archive = await readZip(destination);
+    const data = JSON.parse(archive['report.json']);
+    expect(Object.keys(archive).sort()).toEqual([
+      'errors.log',
+      'logs/gateway.log',
+      'logs/main.log',
+      'report.json',
+      'summary.md',
+    ]);
+    expect(archive['logs/main.log']).toBe(`${warning}\n`);
+    expect(archive['logs/gateway.log']).toBe(`${ready}\n`);
+    expect(archive['errors.log'].split('\n').slice(0, 6).join('\n')).toBe(
+      `${fatal}\n${gatewayFrame}\n${exhausted}\n${native}\n${error}`,
+    );
+    expect(archive['errors.log']).not.toContain('PRIVATE_TEST_PASSWORD');
+    expect(data.archive.errorLog).toEqual({
+      file: 'errors.log',
+      records: 5,
+      ranges: [
+        { source: 'gateway', association: 'time_window', line: 1, endLine: 2 },
+        { source: 'main', association: 'time_window', line: 3, endLine: 3 },
+        { source: 'native', association: 'run', line: 4, endLine: 4 },
+        { source: 'main', association: 'time_window', line: 5, endLine: 7 },
+      ],
+    });
+    expect(archive['summary.md']).toContain(
+      '## Issues and log clues\n\nerrors.log contains 5 retained error log records.',
+    );
+    expect(data.logs.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'gateway',
+          association: 'time_window',
+          location: { file: 'errors.log', line: 1, endLine: 1 },
+        }),
+        expect.objectContaining({
+          source: 'main',
+          level: 'warn',
+          location: { file: 'logs/main.log', line: 1, endLine: 1 },
+        }),
+        expect.objectContaining({
+          source: 'native',
+          level: 'info',
+          association: 'run',
+          location: { file: 'errors.log', line: 4, endLine: 4 },
+        }),
+        expect.objectContaining({
+          source: 'main',
+          level: 'error',
+          association: 'time_window',
+          location: { file: 'errors.log', line: 5, endLine: 7 },
+        }),
+      ]),
+    );
+    const noText = JSON.parse(buildDiagnosticArchive(input, '1.0.0', 'en')['report.json']);
+    expect(noText.logs.records[0]).not.toHaveProperty('location');
+    expect(noText.archive).not.toHaveProperty('errorLog');
   });
 
-  it('keeps four full source budgets and their maximum record indexes inside the archive budget', () => {
+  it('keeps four full source budgets and structured evidence inside the archive budget', () => {
     const input = report();
     input.events = Array.from({ length: 232 }, (_, index) => ({
       ...input.events[0],
@@ -331,13 +399,13 @@ describe('diagnostic archive', () => {
       })),
     };
     const capture = new DiagnosticExportLogs();
-    for (const source of ['main', 'cowork', 'gateway', 'native'] as const) {
+    const sources = ['main', 'cowork', 'gateway', 'native'] as const;
+    for (const [sourceOrder, source] of sources.entries()) {
       for (let index = 1; index <= 2048; index++) {
         const id = `log-${source}-${10000000 + index}`;
-        const header = `[record=${id} association=run]\n`;
-        capture.append(source, 'x'.repeat(1024 - Buffer.byteLength(header) - 2), 'run', {
+        capture.append(source, 'x'.repeat(1023), 'run', {
           id,
-          timestamp: Date.parse('2026-10-22T04:00:00Z') + index,
+          timestamp: Date.parse('2026-10-22T04:00:00Z') + index * sources.length + sourceOrder,
           level: 'error',
         });
       }
@@ -347,8 +415,55 @@ describe('diagnostic archive', () => {
       bundle.coverage.every(source => source.bytes === 2 * 1024 * 1024 && source.records === 2048),
     ).toBe(true);
     const archive = buildDiagnosticArchive(input, '2026.10.22', 'en', bundle);
+    expect(Buffer.byteLength(archive['errors.log'])).toBe(8 * 1024 * 1024);
+    const data = JSON.parse(archive['report.json']);
+    expect(data.archive.errorLog.records).toBe(8192);
+    expect(data.archive.errorLog.ranges).toHaveLength(8192);
+    expect(data.archive.errorLog.ranges.at(-1)).toEqual({
+      source: 'native',
+      association: 'run',
+      line: 8192,
+      endLine: 8192,
+    });
+    expect(data.logs.records.some((record: { location?: unknown }) => record.location)).toBe(false);
     const bytes = Object.values(archive).reduce((sum, value) => sum + Buffer.byteLength(value), 0);
     expect(bytes).toBeLessThan(10 * 1024 * 1024);
+  });
+
+  it('attributes error text omitted from the bounded structured projection', async () => {
+    const input = report();
+    const directory = await temporary();
+    const main = path.join(directory, 'main.log');
+    const first = '[1970-01-01T00:00:00.001Z] [error] Earliest error';
+    const later = Array.from(
+      { length: 100 },
+      (_, index) => `[1970-01-01T00:00:00.002Z] [error] Later error ${index + 1}`,
+    );
+    await fs.writeFile(main, [first, ...later].join('\n'));
+    const capture = new DiagnosticExportLogs();
+    input.logs = await collectDiagnosticLogs(
+      input,
+      { main: [main], cowork: [], gateway: [] },
+      undefined,
+      {
+        fullScan: true,
+        onExportRecord: (source, body, association, details) =>
+          capture.append(source, body, association, details),
+      },
+    );
+    const entries = buildDiagnosticArchive(input, '1.0.0', 'zh', capture.finish());
+    const data = JSON.parse(entries['report.json']);
+    expect(data.logs.records).toHaveLength(100);
+    expect(data.logs.records).not.toContainEqual(
+      expect.objectContaining({ location: { file: 'errors.log', line: 1, endLine: 1 } }),
+    );
+    expect(entries['errors.log']).toContain(`${first}\n`);
+    expect(data.archive.errorLog).toEqual({
+      file: 'errors.log',
+      records: 101,
+      ranges: [{ source: 'main', association: 'time_window', line: 1, endLine: 101 }],
+    });
+    expect(entries['summary.md']).toContain('errors.log 保留了 101 条错误日志');
   });
 
   it('exports problem findings with references to the same aliased evidence', () => {
@@ -426,22 +541,45 @@ describe('diagnostic archive', () => {
     const files = await readZip(destination);
     expect(files['logs/main.log']).toContain('required file missing');
     expect(files['logs/main.log']).toContain('worker.js:12');
-    const manifest = JSON.parse(files['manifest.json']);
-    expect(manifest.rawLogsIncluded).toBe(true);
-    expect(manifest.identifiersAliased).toBe(false);
-    expect(manifest.files).toContain('logs/main.log');
+    const { archive } = JSON.parse(files['report.json']);
+    expect(archive.rawLogsIncluded).toBe(true);
+    expect(archive.identifiersAliased).toBe(false);
+    expect(Object.keys(files).sort()).toEqual(['logs/main.log', 'report.json', 'summary.md']);
+    expect([...archive.files].sort()).toEqual(Object.keys(files).sort());
     expect(files['summary.md']).toContain('review task content before sharing');
   });
 
-  it('writes a real ZIP whose extracted files match the safe projection', async () => {
+  it('writes only the summary and report when no log text was retained', async () => {
     const destination = path.join(await temporary(), '中文 diagnostics.zip');
-    const entries = buildDiagnosticArchive(report(), '2026.8.27', 'zh');
+    const input = report();
+    input.history = {
+      status: 'unavailable',
+      reason: 'offline',
+      messagesScanned: 0,
+      omitted: 0,
+      failures: [],
+    };
+    const entries = buildDiagnosticArchive(
+      input,
+      '2026.8.27',
+      'zh',
+      new DiagnosticExportLogs().finish(),
+    );
     await writeDiagnosticArchive(destination, entries, () => {});
-    expect(await readZip(destination)).toEqual(entries);
+    const files = await readZip(destination);
+    expect(Object.keys(files).sort()).toEqual(['report.json', 'summary.md']);
+    const data = JSON.parse(files['report.json']);
+    expect(data.history.status).toBe('unavailable');
+    expect(data.archive).toMatchObject({
+      formatVersion: 3,
+      rawLogsIncluded: false,
+      conversationFailureExcerptsIncluded: false,
+      exportedLogCoverage: Array.from({ length: 4 }, () => expect.objectContaining({ records: 0 })),
+    });
     expect(await fs.readdir(path.dirname(destination))).toEqual(['中文 diagnostics.zip']);
   });
 
-  it('exports reviewed log evidence with coverage and an AI guide, rejecting injected free text', async () => {
+  it('exports reviewed log evidence with coverage and rejects injected free text', async () => {
     const input = report();
     input.logs = {
       collectedAt: 10,
@@ -480,8 +618,8 @@ describe('diagnostic archive', () => {
     Object.assign(input.logs.records[0].metrics, { credential: 'SECRET-key' });
     const entries = buildDiagnosticArchive(input, '2026.8.27', 'zh');
     expect(JSON.stringify(entries)).not.toContain('SECRET');
-    expect(JSON.parse(entries['logs.json']).records[0].metrics).toEqual({ statusCode: 429 });
-    expect(JSON.parse(entries['logs.json']).records[0].basis).toBe('http_status');
+    expect(JSON.parse(entries['report.json']).logs.records[0].metrics).toEqual({ statusCode: 429 });
+    expect(JSON.parse(entries['report.json']).logs.records[0].basis).toBe('http_status');
     const invalidMetrics = structuredClone(input);
     Object.assign(invalidMetrics.logs!.records[0].metrics, {
       statusCode: 401.5,
@@ -489,8 +627,8 @@ describe('diagnostic archive', () => {
       durationMs: -1,
     });
     expect(
-      JSON.parse(buildDiagnosticArchive(invalidMetrics, '2026.8.27', 'zh')['logs.json']).records[0]
-        .metrics,
+      JSON.parse(buildDiagnosticArchive(invalidMetrics, '2026.8.27', 'zh')['report.json']).logs
+        .records[0].metrics,
     ).toEqual({});
     const forged = structuredClone(input);
     Object.assign(forged.logs!.records[0], {
@@ -502,8 +640,7 @@ describe('diagnostic archive', () => {
     expect(JSON.stringify(buildDiagnosticArchive(forged, '2026.8.27', 'zh'))).not.toContain(
       'SECRET',
     );
-    expect(JSON.parse(entries['manifest.json']).logCoverage[0].truncated).toBe(true);
-    expect(entries['ai-analysis.md']).toContain('executionSettled=true');
+    expect(JSON.parse(entries['report.json']).logs.sources[0].truncated).toBe(true);
     const destination = path.join(await temporary(), 'evidence.zip');
     await writeDiagnosticArchive(destination, entries, () => {});
     expect(await readZip(destination)).toEqual(entries);

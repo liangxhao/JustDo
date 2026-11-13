@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { DiagnosticExportLogs } from './exportLogs';
-import { buildDiagnosticReadableFiles } from './exportSummary';
+import { buildDiagnosticSummary } from './exportSummary';
 
 const at = Date.parse('2026-10-22T04:00:00Z');
 const report = (): DiagnosticReport => ({
@@ -50,15 +50,14 @@ describe('readable diagnostic archive overview', () => {
       const input = report();
       input.events[0].runtimeFailure = 'replay_admission_rejected';
       input.events[0].executionSettled = undefined;
-      const files = buildDiagnosticReadableFiles(input, language, aliaser());
-      expect(files['summary.md']).toContain('replay_admission_rejected');
-      expect(files['summary.md']).toContain(
+      const summary = buildDiagnosticSummary(input, language, aliaser());
+      expect(summary).toContain('replay_admission_rejected');
+      expect(summary).toContain(
         language === 'en'
           ? 'does not distinguish the three internal checks'
           : '不能区分三个内部校验位置',
       );
-      expect(files['evidence-timeline.md']).toContain('runtimeFailure=replay');
-      expect(files['summary.md']).not.toContain('private-');
+      expect(summary).not.toContain('private-');
     },
   );
 
@@ -80,7 +79,7 @@ describe('readable diagnostic archive overview', () => {
         },
       ],
     };
-    const summary = buildDiagnosticReadableFiles(input, 'en', aliaser())['summary.md'];
+    const summary = buildDiagnosticSummary(input, 'en', aliaser());
     expect(summary).toContain('run_window');
     expect(summary.indexOf('Observed error: replay_admission_rejected')).toBeGreaterThan(
       summary.indexOf('## Failure excerpts from conversation history'),
@@ -111,13 +110,12 @@ describe('readable diagnostic archive overview', () => {
         },
       ],
     };
-    const files = buildDiagnosticReadableFiles(
+    const summary = buildDiagnosticSummary(
       input,
       'en',
       aliaser(),
       new DiagnosticExportLogs().finish(),
     );
-    const summary = files['summary.md'];
     expect(summary).toContain('No log text was obtained');
     expect(summary.indexOf('native_unavailable')).toBeLessThan(summary.indexOf('## Selected run'));
     expect(summary).toContain('2026-10-22T04:00:00.000Z');
@@ -141,12 +139,12 @@ describe('readable diagnostic archive overview', () => {
         },
       ],
     };
-    const files = buildDiagnosticReadableFiles(input, 'zh', aliaser());
-    expect(files['summary.md']).toContain('Persisted turn changed');
-    expect(files['summary.md']).not.toContain('PRIVATE');
-    expect(files['summary.md']).toContain('run_window');
-    expect(files['summary.md']).toContain('被省略的失败节选: 3');
-    expect(files['evidence-timeline.md']).toContain('session\\-evidence');
+    const summary = buildDiagnosticSummary(input, 'zh', aliaser());
+    expect(summary).toContain('Persisted turn changed');
+    expect(summary).not.toContain('PRIVATE');
+    expect(summary).toContain('run_window');
+    expect(summary).toContain('被省略的失败节选: 3');
+    expect(summary).toContain('report.json → history.failures[0]');
   });
 
   it('does not mistake a bounded safe preview for a failed log scan', () => {
@@ -178,12 +176,10 @@ describe('readable diagnostic archive overview', () => {
         },
       ],
     };
-    const files = buildDiagnosticReadableFiles(input, 'en', aliaser());
-    expect(files['summary.md']).toContain(
-      'No additional read failures or log-text omissions were reported',
-    );
-    expect(files['summary.md']).toContain('100 / 400');
-    expect(files['summary.md']).not.toContain('complete source scan not confirmed');
+    const summary = buildDiagnosticSummary(input, 'en', aliaser());
+    expect(summary).toContain('No additional read failures or log-text omissions were reported');
+    expect(summary).toContain('100 / 400');
+    expect(summary).not.toContain('complete source scan not confirmed');
   });
 
   it('keeps runtime versions explicitly scoped to the current collection environment', () => {
@@ -195,7 +191,7 @@ describe('readable diagnostic archive overview', () => {
       gateway: { status: 'connected', version: '2026.10.4' },
       installedArtifact: { version: '2026.10.5' },
     };
-    const summary = buildDiagnosticReadableFiles(input, 'en', aliaser())['summary.md'];
+    const summary = buildDiagnosticSummary(input, 'en', aliaser());
     expect(summary).toContain('Current Gateway: 2026.10.4');
     expect(summary).toContain('Currently installed artifact: 2026.10.5');
     expect(summary).toContain('not the selected historical run');
@@ -206,12 +202,12 @@ describe('readable diagnostic archive overview', () => {
     input.conclusion.reason = 'completed';
     input.events[0].phase = 'end';
     input.events[0].stopReason = 'stop';
-    const summary = buildDiagnosticReadableFiles(input, 'en', aliaser())['summary.md'];
+    const summary = buildDiagnosticSummary(input, 'en', aliaser());
     expect(summary).toContain('Evidence strength: more evidence needed');
     expect(summary).toContain('does not prove task completion');
   });
 
-  it('includes the native timeout stage and flags log text unavailable in the timeline', () => {
+  it('includes the native timeout stage when log text is unavailable', () => {
     const input = report();
     input.conclusion.reason = 'timeout';
     input.events[0].stopReason = 'timeout';
@@ -235,13 +231,12 @@ describe('readable diagnostic archive overview', () => {
         },
       ],
     };
-    const files = buildDiagnosticReadableFiles(
+    const summary = buildDiagnosticSummary(
       input,
       'en',
       aliaser(),
       new DiagnosticExportLogs().finish(),
     );
-    expect(files['summary.md']).toContain('Timeout stage: waiting on the model provider');
-    expect(files['evidence-timeline.md']).toContain('log text unavailable or omitted by retention');
+    expect(summary).toContain('Timeout stage: waiting on the model provider');
   });
 });

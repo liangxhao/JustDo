@@ -1,5 +1,6 @@
 import { diagnosticResponseIssue } from './diagnosticResponse';
 import type {
+  DiagnosticLogRecord,
   DiagnosticReason,
   DiagnosticReport,
   DiagnosticResponseIssue,
@@ -111,6 +112,7 @@ export function assessDiagnosticStop(report: DiagnosticReport): DiagnosticStopAs
   }
   // Never turn a recovered retry into the reason a completed run stopped.
   if (
+    !nativeFailure &&
     !['completed', 'running', 'reply_ended'].includes(conclusion.reason) &&
     !(
       response &&
@@ -118,16 +120,20 @@ export function assessDiagnosticStop(report: DiagnosticReport): DiagnosticStopAs
       (response.text || response.toolCall || response.other)
     )
   ) {
-    const log = report.logs?.records.find(
-      record =>
-        record.association === 'run' &&
-        record.responseIssue &&
-        record.responseRecovery === 'exhausted',
-    );
+    const log = report.logs?.records.reduce<DiagnosticLogRecord | undefined>((latest, record) => {
+      if (
+        record.association !== 'run' ||
+        !record.responseIssue ||
+        record.responseRecovery !== 'exhausted'
+      )
+        return latest;
+      return latest && (latest.timestamp ?? -1) >= (record.timestamp ?? -1) ? latest : record;
+    }, undefined);
     if (log)
       return {
         ...result,
         reason: log.responseIssue!,
+        outputIssue: log.responseIssue,
         basis: 'log',
         confidence: 'observed',
         logIds: [log.id],

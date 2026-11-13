@@ -56,6 +56,29 @@ const collectionReport = (overrides: Partial<DiagnosticReport> = {}): Diagnostic
 });
 
 describe('diagnostic collection presentation', () => {
+  it('describes a log-only exhaustion as an observed attempt', () => {
+    i18nService.setLanguage('en', { persist: false });
+    const report = collectionReport({ history: undefined });
+    report.conclusion.reason = 'failed';
+    report.logs!.records.push({
+      id: 'exhausted',
+      source: 'native',
+      level: 'warn',
+      association: 'run',
+      inferred: true,
+      signal: 'provider',
+      metrics: {},
+      responseIssue: 'empty_response',
+      responseRecovery: 'exhausted',
+    });
+    const stop = presentDiagnosticStop(report);
+    expect(stop).toMatchObject({
+      basis: 'log',
+      title: i18nService.t('diagnosticsResponseEvidence_empty_response'),
+      specifics: [i18nService.t('diagnosticsResponseRecovery_exhausted')],
+    });
+  });
+
   it('separates complete reads from bounded preview and failure-excerpt sampling', () => {
     i18nService.setLanguage('en', { persist: false });
     const report = collectionReport();
@@ -63,7 +86,7 @@ describe('diagnostic collection presentation', () => {
     report.logs!.sources[0].reasons = ['output_limit'];
     report.history!.omitted = 3;
     const value = presentDiagnosticCoverage(report);
-    expect(presentDiagnosticStop(report).incomplete).toBe(false);
+    expect(value.hasGaps).toBe(false);
     expect(value.title).toBe('Collection finished for the discovered sources');
     expect(value.sourceLines.join('\n')).toContain('5 previews omitted');
     expect(value.notes.join('\n')).toContain('3 additional failure excerpts omitted');
@@ -75,8 +98,23 @@ describe('diagnostic collection presentation', () => {
     report.logs!.sources[0].parseFailures = 2;
     const value = presentDiagnosticCoverage(report);
     expect(value.hasGaps).toBe(true);
-    expect(presentDiagnosticStop(report).incomplete).toBe(true);
     expect(value.sourceLines.join('\n')).toContain('2 records could not be parsed');
+  });
+
+  it('gives the specific reason when no history binding exists', () => {
+    i18nService.setLanguage('en', { persist: false });
+    const report = collectionReport({
+      history: {
+        status: 'unavailable',
+        reason: 'no_binding',
+        messagesScanned: 0,
+        omitted: 0,
+        failures: [],
+      },
+    });
+    expect(presentDiagnosticCoverage(report).notes).toEqual([
+      i18nService.t('diagnosticsHistoryReason_no_binding'),
+    ]);
   });
 
   it('copies source gaps and ownership limits without technical identities', () => {

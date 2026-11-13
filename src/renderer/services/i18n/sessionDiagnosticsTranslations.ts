@@ -1,6 +1,6 @@
 export const sessionDiagnosticsTranslations = {
   en: {
-    diagnosticsCollectionTitle: 'Evidence available for investigation',
+    diagnosticsCollectionTitle: 'Collection overview',
     diagnosticsCollectionReady: 'Collection finished for the discovered sources',
     diagnosticsCollectionGaps: 'Collection has gaps; review the sources below',
     diagnosticsCollectionPending: 'Log collection has not finished',
@@ -26,21 +26,15 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsAnswer_confirmed: 'Confirmed by records',
     diagnosticsAnswer_observed: 'Based on available evidence',
     diagnosticsAnswer_unknown: 'More evidence needed',
-    diagnosticsAnswerEvidence: 'What the records show',
-    diagnosticsAnswerAction: 'What to do next',
-    diagnosticsAnswerExpand: 'View the end assessment and advice',
-    diagnosticsAnswerIncomplete:
-      'Some records are missing. This result uses only the available evidence.',
-    diagnosticsRunDetailsHint: 'Run times, saved status and scan statistics',
-    diagnosticsNoOtherErrors: 'No additional step errors found',
-    diagnosticsNoOtherErrorsHint:
-      'This does not change the conclusion above or prove that every task step succeeded.',
+    diagnosticsTurnEnded: 'This turn ended.',
+    diagnosticsRunDetails: 'Run details',
+    diagnosticsToolFailureCount: 'Tool failures recorded: {count}',
     diagnosticsModelReplyEnded:
       'The model marked its reply finished without requesting a tool call.',
     diagnosticsModelReplyEndedEvidence:
       'The last reply stored for this run contains answer text, a normal end marker and no tool call or request to continue generating.',
     diagnosticsModelReplyEndedAdvice:
-      'If work remains, ask the model to execute the remaining steps. If it repeatedly answers without taking action, check its tool-call support. Saying “I will continue” in the reply does not execute a tool.',
+      'If the model repeatedly replies without acting, check whether it supports tool calls.',
     diagnosticsStopBasis_completed:
       'The records do not show whether the model finished its answer, returned no usable output, or stopped for another reason.',
     diagnosticsStop_reasoning_only:
@@ -171,7 +165,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsHistoryClipped:
       'Error excerpt shortened; see the original step in the conversation for the full result.',
     diagnosticsHistoryOmitted: '{count} additional failure excerpts omitted.',
-    diagnosticsExportingLogs: 'Preparing the report and log files…',
     diagnosticsOperationCauseMissing: '{operation} failed; the cause was not recorded',
     diagnosticsToolCauseMissing: 'A tool step failed; the cause was not recorded',
     diagnosticsLocateToolFailure:
@@ -234,12 +227,8 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsRemedy_service_network:
       'Identify the destination of the failed request and check its connectivity and proxy settings.',
     diagnosticsSupporting: 'Collection details and timeline',
-    diagnosticsSupportingHint: 'Log sources, scan coverage and execution events',
-    diagnosticsReportTitle: 'Findings for this run',
+    diagnosticsReportTitle: 'Failures found',
     diagnosticsNextStep: 'Next step:',
-    diagnosticsNotLocated: 'No specific failure located',
-    diagnosticsNotLocatedDetail:
-      'The collected records do not identify a failure in this run. Task quality is not assessed. Open the failed step in the conversation, or reproduce the issue and collect again.',
     diagnosticsOtherClues: 'Other log clues · not attributed to this run',
     diagnosticsStage_model: 'Model request',
     diagnosticsStage_tool: 'Tool execution',
@@ -299,8 +288,6 @@ export const sessionDiagnosticsTranslations = {
       '{count} records have the same time and description; grouped for display, not counted as separate failures.',
     diagnosticsEvidenceMore: 'Show {count} more evidence groups',
     diagnosticsFindings: 'Problems and clues',
-    diagnosticsFindingsPending:
-      'Log evidence has not been collected yet. Any recorded execution problems will appear here.',
     diagnosticsFindingAssociation_event: 'Observed in this run',
     diagnosticsFindingAssociation_run: 'Log clue matched to this run',
     diagnosticsFindingAssociation_session: 'Session log clue; may belong to another run',
@@ -336,22 +323,12 @@ export const sessionDiagnosticsTranslations = {
       'Inspect nearby model and tool errors to understand why retries occurred. Repeated log entries are not necessarily separate retries.',
     diagnosticsAdvice_unknown:
       'An error or warning was recorded, but its category is unknown. Inspect the corresponding step in the conversation or export the diagnostic evidence for further investigation.',
-    diagnosticsLocalBadge: 'Local diagnostics',
-    diagnosticsPrivacyNote: 'Evidence stays on this device',
-    diagnosticsOverview: 'Diagnostic overview',
-    diagnosticsEventHint: 'Recorded execution events',
-    diagnosticsMatchHint: 'Matches may repeat across sources',
     diagnosticsDataScanned: 'Data scanned',
-    diagnosticsDataHint: 'Bytes read from available sources',
-    diagnosticsSourcesScanned: 'Sources scanned',
-    diagnosticsSourcesHint: 'File scans complete / discovered sources',
     diagnosticsScanDoneShort: 'File scan complete',
     diagnosticsScanGapShort: 'Coverage incomplete',
     diagnosticsCoverageDetails: 'Coverage details',
-    diagnosticsTechnicalHint: 'Structured evidence for deeper inspection',
     diagnosticsScanTitle: 'Evidence collection',
-    diagnosticsHistoryReadyLogsPending:
-      'Conversation history has been checked. Log collection is still in progress; export will be available when it finishes.',
+    diagnosticsHistoryReadyLogsPending: 'History checked. Collecting logs…',
     diagnosticsCurrentFile: 'Current file progress',
     diagnosticsFilterLabel: 'Filter log records',
     diagnosticsFilterAll: 'All records',
@@ -372,10 +349,10 @@ export const sessionDiagnosticsTranslations = {
       'Preview capacity reached; scanning and category counts continued.',
     diagnosticsLogReason_source_changed:
       'A source changed or rotated during scanning; retry required.',
-    diagnosticsLogReason_read_timeout: 'A file operation timed out; the scan is incomplete.',
+    diagnosticsLogReason_read_timeout: 'A log read timed out. The scan is incomplete.',
     diagnosticsLogReason_canceled: 'Scan canceled; only evidence collected so far is available.',
     diagnosticsCollecting: 'Collecting application and runtime log evidence…',
-    diagnosticsRecordedState: 'Application run record (does not establish the cause)',
+    diagnosticsRecordedState: 'Recorded status',
     diagnosticsState_running: 'No end recorded',
     diagnosticsState_completed: 'Completed',
     diagnosticsState_failed: 'Failed',
@@ -458,12 +435,9 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsRefresh: 'Collect online context',
     diagnosticsCopy: 'Copy summary',
     diagnosticsExport: 'Export diagnostic bundle',
-    diagnosticsExportScope:
-      'Includes the summary, timeline, collection gaps, matching log text and stored failure excerpts. Logs are collected again when exporting. Common credentials are masked; task content may remain. Review before sharing. No automatic upload.',
+    diagnosticsExportScope: 'Export is local. Review the bundle for task content before sharing.',
     diagnosticsLoading: 'Loading diagnostics…',
     diagnosticsCollected: 'Collected at',
-    diagnosticsPartial:
-      'Partial evidence: only selected events are recorded. Missing events do not prove that nothing happened.',
     diagnosticsDropped: 'Older evidence discarded',
     diagnosticsCollectorDropped:
       'Global collector losses (unassociated events; not proven missing evidence for this conversation)',
@@ -485,7 +459,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsObserved: 'Received',
     diagnosticsOccurred: 'Occurred',
     diagnosticsTechnical: 'Technical details',
-    diagnosticsToolFailures: 'Tool failures observed',
     diagnosticsEnvironment:
       'Global environment context; these counts do not establish the cause of this run.',
     diagnosticsEnvironmentCount: 'Global stability records',
@@ -541,7 +514,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsPhase_failed: 'Failed',
   },
   zh: {
-    diagnosticsCollectionTitle: '可用于排查的证据',
+    diagnosticsCollectionTitle: '采集概况',
     diagnosticsCollectionReady: '已完成本次发现来源的采集',
     diagnosticsCollectionGaps: '采集存在缺口，请查看下方来源说明',
     diagnosticsCollectionPending: '日志采集尚未完成',
@@ -564,18 +537,13 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsAnswer_confirmed: '记录已确认',
     diagnosticsAnswer_observed: '根据现有记录判断',
     diagnosticsAnswer_unknown: '还需补充记录',
-    diagnosticsAnswerEvidence: '判断依据',
-    diagnosticsAnswerAction: '建议下一步',
-    diagnosticsAnswerExpand: '查看结束判断和建议',
-    diagnosticsAnswerIncomplete: '部分记录缺失，当前结论仅依据已收集的信息。',
-    diagnosticsRunDetailsHint: '运行时间、保存的状态和扫描统计',
-    diagnosticsNoOtherErrors: '没有查到其他步骤错误',
-    diagnosticsNoOtherErrorsHint: '这不影响上方的结束原因，也不表示所有任务步骤都已成功。',
+    diagnosticsTurnEnded: '本轮已结束。',
+    diagnosticsRunDetails: '运行详情',
+    diagnosticsToolFailureCount: '已记录 {count} 次工具失败',
     diagnosticsModelReplyEnded: '模型主动结束了回复，没有请求调用工具。',
     diagnosticsModelReplyEndedEvidence:
       '本轮保存的最后一条模型回复有正文，带有正常结束标记，没有工具调用，也没有要求继续生成。',
-    diagnosticsModelReplyEndedAdvice:
-      '如果任务未完成，请明确要求继续执行剩余步骤。如果反复只回复、不操作，请检查该模型是否支持工具调用。正文说“接下来继续”不等于实际执行工具。',
+    diagnosticsModelReplyEndedAdvice: '如果模型反复只回复、不执行，请检查它是否支持工具调用。',
     diagnosticsStopBasis_completed:
       '现有记录没有说明：是模型回答完了、没有生成有效回复，还是其他原因。不能据此判断任务已经完成。',
     diagnosticsStop_reasoning_only: '最后一次模型回复只有 thinking，没有正文或工具调用。',
@@ -684,7 +652,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsHistoryNoText: '存储的结果标记了失败，但没有错误正文。',
     diagnosticsHistoryClipped: '错误原文较长，此处仅展示节选；完整结果可在会话对应步骤中查看。',
     diagnosticsHistoryOmitted: '另有 {count} 条失败记录未展示。',
-    diagnosticsExportingLogs: '正在准备报告和日志文件…',
     diagnosticsOperationCauseMissing: '{operation}失败，具体原因未记录',
     diagnosticsToolCauseMissing: '工具步骤失败，具体原因未记录',
     diagnosticsLocateToolFailure:
@@ -731,12 +698,8 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsRemedy_service_provider: '确认失败步骤使用的服务，并检查该服务是否可用。',
     diagnosticsRemedy_service_network: '确认失败请求的目标服务，检查其网络连通性和代理设置。',
     diagnosticsSupporting: '采集详情与运行时间线',
-    diagnosticsSupportingHint: '日志来源、扫描覆盖和执行事件',
-    diagnosticsReportTitle: '本轮诊断结果',
+    diagnosticsReportTitle: '发现的问题',
     diagnosticsNextStep: '下一步：',
-    diagnosticsNotLocated: '尚未定位到具体故障',
-    diagnosticsNotLocatedDetail:
-      '已采集记录未能指出本轮的失败位置，也不评估任务完成质量。请查看会话中的失败步骤，或复现问题后重新采集。',
     diagnosticsOtherClues: '其他日志线索 · 未归属到本轮',
     diagnosticsStage_model: '模型请求阶段',
     diagnosticsStage_tool: '工具执行阶段',
@@ -792,7 +755,6 @@ export const sessionDiagnosticsTranslations = {
       '{count} 条记录的时间和描述相同，已合并展示；不代表发生了同样次数的故障。',
     diagnosticsEvidenceMore: '展开其余 {count} 组依据',
     diagnosticsFindings: '问题与线索',
-    diagnosticsFindingsPending: '尚未采集日志证据，已记录的执行问题会显示在这里。',
     diagnosticsFindingAssociation_event: '本轮事件已记录',
     diagnosticsFindingAssociation_run: '日志匹配本轮，待核实',
     diagnosticsFindingAssociation_session: '同会话日志，可能属于其他轮次',
@@ -818,22 +780,12 @@ export const sessionDiagnosticsTranslations = {
       '结合相邻的模型或工具错误排查重试原因；重复日志不一定代表多次独立重试。',
     diagnosticsAdvice_unknown:
       '已记录错误或警告，但暂不能确定类别。查看会话中的对应步骤，或导出诊断证据进一步排查。',
-    diagnosticsLocalBadge: '本地诊断',
-    diagnosticsPrivacyNote: '证据留在本机',
-    diagnosticsOverview: '诊断概览',
-    diagnosticsEventHint: '已记录的执行事件',
-    diagnosticsMatchHint: '不同来源可能重复记录',
     diagnosticsDataScanned: '已扫描数据',
-    diagnosticsDataHint: '来自可读取的日志来源',
-    diagnosticsSourcesScanned: '已扫描来源',
-    diagnosticsSourcesHint: '文件扫描完成 / 已发现来源',
     diagnosticsScanDoneShort: '文件扫描完成',
     diagnosticsScanGapShort: '采集存在缺口',
     diagnosticsCoverageDetails: '查看覆盖详情',
-    diagnosticsTechnicalHint: '查看结构化证据',
     diagnosticsScanTitle: '证据采集',
-    diagnosticsHistoryReadyLogsPending:
-      '会话历史检查已完成，日志仍在采集中；完成后可导出完整结果。',
+    diagnosticsHistoryReadyLogsPending: '历史检查完成，正在采集日志…',
     diagnosticsCurrentFile: '当前文件进度',
     diagnosticsFilterLabel: '筛选日志记录',
     diagnosticsFilterAll: '全部记录',
@@ -850,10 +802,10 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsOutputOmitted: '未放入预览（仍计入分类统计）',
     diagnosticsLogReason_output_limit: '预览容量已满，仍继续扫描并统计各类线索。',
     diagnosticsLogReason_source_changed: '扫描期间日志发生替换、缩短或轮转，请重试。',
-    diagnosticsLogReason_read_timeout: '文件操作超时，扫描未完成。',
+    diagnosticsLogReason_read_timeout: '日志读取超时，扫描未完成。',
     diagnosticsLogReason_canceled: '扫描已取消，仅保留此前采集的证据。',
     diagnosticsCollecting: '正在采集本软件与运行服务的日志证据…',
-    diagnosticsRecordedState: '应用运行记录（不代表已确认原因）',
+    diagnosticsRecordedState: '记录状态',
     diagnosticsState_running: '尚无结束记录',
     diagnosticsState_completed: '已完成',
     diagnosticsState_failed: '失败',
@@ -934,11 +886,9 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsRefresh: '采集在线环境',
     diagnosticsCopy: '复制摘要',
     diagnosticsExport: '导出诊断包',
-    diagnosticsExportScope:
-      '包含摘要、时间线、采集缺口、相关日志正文和会话失败节选。导出时会重新采集日志；常见凭据会脱敏，可能含任务内容，分享前请检查，不会自动上传。',
+    diagnosticsExportScope: '诊断包保存在本机，分享前请检查其中的任务内容。',
     diagnosticsLoading: '正在加载诊断…',
     diagnosticsCollected: '采集时间',
-    diagnosticsPartial: '证据不完整：仅记录部分关键事件。缺少记录不代表事件未发生。',
     diagnosticsDropped: '已丢弃的较早证据',
     diagnosticsCollectorDropped: '全局采集丢失（未关联事件，不能认定为此会话的证据缺失）',
     diagnosticsStorageFailed: '部分证据保存失败，诊断结论可能不完整。',
@@ -958,7 +908,6 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsObserved: '接收时间',
     diagnosticsOccurred: '发生时间',
     diagnosticsTechnical: '技术详情',
-    diagnosticsToolFailures: '观测到的工具失败',
     diagnosticsEnvironment: '全局环境背景：这些计数不能作为本轮运行原因的依据。',
     diagnosticsEnvironmentCount: '全局稳定性记录数',
     diagnosticsEnvironmentDropped: '已丢弃的全局记录',

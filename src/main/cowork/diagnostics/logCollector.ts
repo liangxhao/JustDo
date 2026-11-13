@@ -6,6 +6,7 @@ import {
   diagnosticErrorCodes,
   isDiagnosticMetricValue,
 } from '../../../shared/cowork/diagnostics/diagnosticLogDetails';
+import { DiagnosticRuntimeFailure } from '../../../shared/cowork/diagnostics/diagnosticRuntimeFailure';
 import type {
   DiagnosticLogCollection,
   DiagnosticLogCoverage,
@@ -15,7 +16,7 @@ import type {
   DiagnosticReport,
   DiagnosticScanProgress,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
-import { scanDiagnosticLog } from './logScanner';
+import { scanDiagnosticLog, verifyDiagnosticLogFile } from './logScanner';
 import { projectResponseLog } from './responseLog';
 
 const FILE_BYTES = 512 * 1024;
@@ -124,6 +125,15 @@ export interface DiagnosticLogExportMetadata {
   id: string;
   timestamp?: number;
   level: DiagnosticLogRecord['level'];
+  isError?: boolean;
+  recoveryExhausted?: true;
+}
+
+export interface NativeDiagnosticLogs {
+  lines?: string[];
+  truncated?: boolean;
+  files?: string[];
+  failure?: 'unsafe_file' | 'unreadable' | 'read_timeout' | 'canceled' | 'source_changed';
 }
 
 const reason = (
@@ -131,6 +141,51 @@ const reason = (
   value: DiagnosticLogCoverage['reasons'][number],
 ) => {
   if (!coverage.reasons.includes(value)) coverage.reasons.push(value);
+};
+
+const hasStructuredFailure = (record: Pick<DiagnosticLogRecord, 'basis' | 'metrics' | 'signal'>) =>
+  record.basis !== 'routine' &&
+  ((record.metrics.statusCode ?? 0) >= 400 ||
+    [
+      'tool_error',
+      'tool_blocked',
+      'model_error',
+      'command_exit',
+      'command_timeout',
+      'command_error',
+    ].includes(record.basis ?? '') ||
+    (record.basis === 'error_category' &&
+      !['unknown', 'queue', 'retry', 'reconnect'].includes(record.signal)));
+
+const previewPriority = (record: DiagnosticLogRecord): number =>
+  (record.association === 'run' && record.responseRecovery === 'exhausted' ? 400 : 0) +
+  (record.association === 'run' && hasStructuredFailure(record) ? 60 : 0) +
+  (record.level === 'error' ? 100 : record.level === 'warn' ? 50 : 0) +
+  (record.association === 'run' ? 200 : record.association === 'session' ? 120 : 0) +
+  (!['unknown', 'queue', 'retry'].includes(record.signal) ? 5 : 0);
+
+const comparePreviewEvidence = (left: DiagnosticLogRecord, right: DiagnosticLogRecord) =>
+  previewPriority(left) - previewPriority(right) ||
+  (left.timestamp ?? -1) - (right.timestamp ?? -1);
+
+const modelFailureStatus = (fields: Record<string, unknown>) => {
+  const event = own(fields, 'event');
+  const decision = own(fields, 'decision');
+  if (
+    (event === 'model_fallback_decision' && decision === 'candidate_failed') ||
+    (event === 'embedded_run_failover_decision' &&
+      ['surface_error', 'fallback_model', 'retry_same_model'].includes(String(decision)))
+  ) {
+    const status = own(fields, 'status');
+    if (isDiagnosticMetricValue('statusCode', status) && status >= 400) return status;
+  }
+};
+
+const logLevel = (value: unknown): DiagnosticLogRecord['level'] | undefined => {
+  if (typeof value !== 'string') return;
+  const level = value.toLowerCase();
+  if (level === 'fatal') return 'error';
+  if (level === 'error' || level === 'warn' || level === 'info' || level === 'debug') return level;
 };
 
 function parseRecord(text: string, source: DiagnosticLogSource) {
@@ -141,8 +196,7 @@ function parseRecord(text: string, source: DiagnosticLogSource) {
   if (prefix) {
     const parsed = Date.parse(prefix[1].replace(/^(\d{4}-\d\d-\d\d) /, '$1T'));
     if (Number.isFinite(parsed)) timestamp = parsed;
-    const candidate = prefix[2].toLowerCase();
-    if (['error', 'warn', 'info', 'debug'].includes(candidate)) level = candidate as typeof level;
+    level = logLevel(prefix[2]) ?? level;
     body = text.slice(prefix[0].length);
   }
   const fields: Record<string, unknown>[] = [];
@@ -180,23 +234,19 @@ function parseRecord(text: string, source: DiagnosticLogSource) {
         const time = own(root, 'time') ?? (meta && own(meta, 'date'));
         if (typeof time === 'string' && Number.isFinite(Date.parse(time)))
           timestamp = Date.parse(time);
-        const nativeLevel = own(root, 'level') ?? (meta && own(meta, 'logLevelName'));
-        if (
-          typeof nativeLevel === 'string' &&
-          ['error', 'warn', 'info', 'debug'].includes(nativeLevel.toLowerCase())
-        )
-          level = nativeLevel.toLowerCase() as typeof level;
+        level = logLevel(own(root, 'level') ?? (meta && own(meta, 'logLevelName'))) ?? level;
       } else malformed = true;
     } catch {
       malformed = true;
     }
   } else if (source === 'native') malformed = true;
   // Plain-text content never establishes keyed identity, including forged "runId=" strings.
-  return { timestamp, level, fields, malformed, hintText };
+  const gatewayStderr = source === 'gateway' && prefix?.[2].toLowerCase() === 'stderr';
+  return { timestamp, level, fields, malformed, hintText, gatewayStderr };
 }
 
 async function readTail(file: string, maxBytes: number, deadline: number) {
-  if (/^(?:\\\\|\/\/)/.test(file)) throw new Error('unsafe_file');
+  if (/^[\\/]{2}/.test(file)) throw new Error('unsafe_file');
   const resolved = path.resolve(file);
   // Reject symlink parents as well as the final entry, including Windows junctions.
   let current = resolved;
@@ -260,12 +310,7 @@ async function readTailBeforeDeadline(file: string, maxBytes: number, deadline: 
 export async function collectDiagnosticLogs(
   report: DiagnosticReport,
   sources: { main: string[]; cowork: string[]; gateway: string[] },
-  native?: {
-    lines: string[];
-    truncated?: boolean;
-    files?: string[];
-    discoveryFailure?: 'unsafe_file' | 'unreadable' | 'read_timeout' | 'canceled';
-  },
+  native?: NativeDiagnosticLogs,
   options: {
     fullScan?: boolean;
     /** Exact product receipt identities and binding, supplied only by Main. */
@@ -313,6 +358,7 @@ export async function collectDiagnosticLogs(
   let totalBytes = 0;
   let fileCount = 0;
   const consume = (text: string, coverage: DiagnosticLogCoverage) => {
+    let admitted = false;
     const lines = text.split(/\r?\n/);
     const records: string[] = [];
     for (const line of lines) {
@@ -408,13 +454,8 @@ export async function collectDiagnosticLogs(
         reason(coverage, 'outside_window');
         continue;
       }
-      // Explicit local export only: before category filtering and preview sampling.
       const id = `log-${coverage.source}-${coverage.recordsRead}`;
-      options.onExportRecord?.(coverage.source, textRecord, association, {
-        id,
-        timestamp: parsed.timestamp,
-        level: parsed.level,
-      });
+      admitted = true;
       const metrics: DiagnosticLogRecord['metrics'] = {};
       let signal: DiagnosticLogSignal = 'unknown';
       let basis: DiagnosticLogRecord['basis'];
@@ -428,7 +469,10 @@ export async function collectDiagnosticLogs(
                 : key === 'responseStreamBytes'
                   ? 'responseBytes'
                   : key;
-          const value = own(fields, key) ?? own(fields, alias);
+          const value =
+            own(fields, key) ??
+            own(fields, alias) ??
+            (key === 'statusCode' ? modelFailureStatus(fields) : undefined);
           if (isDiagnosticMetricValue(key, value)) metrics[key] = value;
         }
         for (const key of ['errorCategory', 'failureKind', 'signal', 'failoverReason', 'reason']) {
@@ -571,8 +615,42 @@ export async function collectDiagnosticLogs(
         basis = response.basis;
         stage = 'model';
       }
+      const consoleText = parsed.gatewayStderr
+        ? parsed.hintText
+            .replace(
+              /^(?:\d{4}-\d\d-\d\d[T ])?\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:?\d\d)?\s+/,
+              '',
+            )
+            .replace(/^(?:\[[\w./-]+\]\s*)+/, '')
+        : '';
+      const consoleError =
+        /^(?:(?:caused by|cause):\s*)?(?:fatal(?: error)?|[a-z]*error)(?:\s+(?:\[[\w-]+\]|\([^\r\n)]*\)))?:/i.test(
+          consoleText,
+        ) || /^(?:startup|start(?:ing)?|listen(?:ing)?|launch(?:ing)?) failed\b/i.test(consoleText);
+      if (options.onExportRecord) {
+        // Classify export errors before preview filtering and sampling. Stderr also carries startup messages.
+        const stackFrame = /^at\s+.+:\d+(?::\d+)?\)?\s*$/.test(consoleText);
+        const isError =
+          !routineNativeEvent &&
+          (consoleError ||
+            stackFrame ||
+            response?.responseRecovery === 'exhausted' ||
+            hasStructuredFailure({ basis, metrics, signal }) ||
+            parsed.fields.some(
+              fields =>
+                own(fields, 'runtimeFailure') === DiagnosticRuntimeFailure.ReplayAdmissionRejected,
+            ));
+        options.onExportRecord(coverage.source, textRecord, association, {
+          id,
+          timestamp: parsed.timestamp,
+          level: parsed.level,
+          ...(isError ? { isError: true } : {}),
+          ...(response?.responseRecovery === 'exhausted' ? { recoveryExhausted: true } : {}),
+        });
+      }
       if (
         signal === 'unknown' &&
+        !consoleError &&
         !hint &&
         !Object.keys(metrics).length &&
         !['error', 'warn'].includes(parsed.level)
@@ -581,39 +659,7 @@ export async function collectDiagnosticLogs(
         reason(coverage, 'no_safe_fields');
         continue;
       }
-      if (options.fullScan) {
-        coverage.matched = (coverage.matched ?? 0) + 1;
-        coverage.signalCounts ??= {};
-        coverage.signalCounts[signal] = (coverage.signalCounts[signal] ?? 0) + 1;
-        // Scan every record even after preview capacity is exhausted. Keep stronger evidence.
-        if (coverage.emitted >= SOURCE_RECORDS) {
-          const rank = (level: string, association: string, category: string) =>
-            (level === 'error' ? 100 : level === 'warn' ? 50 : 0) +
-            (association === 'run' ? 200 : association === 'session' ? 120 : 0) +
-            (!['unknown', 'queue', 'retry'].includes(category) ? 5 : 0);
-          const candidates = collection.records
-            .map((record, index) => ({ record, index }))
-            .filter(item => item.record.source === coverage.source)
-            .sort(
-              (a, b) =>
-                rank(a.record.level, a.record.association, a.record.signal) -
-                  rank(b.record.level, b.record.association, b.record.signal) ||
-                (a.record.timestamp ?? 0) - (b.record.timestamp ?? 0),
-            );
-          coverage.outputOmitted = (coverage.outputOmitted ?? 0) + 1;
-          reason(coverage, 'output_limit');
-          const weakest = candidates[0];
-          if (
-            !weakest ||
-            rank(parsed.level, association, signal) <
-              rank(weakest.record.level, weakest.record.association, weakest.record.signal)
-          )
-            continue;
-          collection.records.splice(weakest.index, 1);
-          coverage.emitted--;
-        }
-      }
-      collection.records.push({
+      const record: DiagnosticLogRecord = {
         id,
         source: coverage.source,
         timestamp: parsed.timestamp,
@@ -626,9 +672,57 @@ export async function collectDiagnosticLogs(
         ...(stage ? { stage } : {}),
         ...(!routineNativeEvent && errorCode ? { errorCode } : {}),
         metrics,
-      });
+      };
+      if (options.fullScan) {
+        coverage.matched = (coverage.matched ?? 0) + 1;
+        coverage.signalCounts ??= {};
+        coverage.signalCounts[signal] = (coverage.signalCounts[signal] ?? 0) + 1;
+        // Scan every record even after preview capacity is exhausted. Keep stronger evidence.
+        if (coverage.emitted >= SOURCE_RECORDS) {
+          let weakest = -1;
+          for (let index = 0; index < collection.records.length; index++) {
+            const candidate = collection.records[index];
+            if (
+              candidate.source === record.source &&
+              (weakest < 0 || comparePreviewEvidence(candidate, collection.records[weakest]) < 0)
+            )
+              weakest = index;
+          }
+          coverage.outputOmitted = (coverage.outputOmitted ?? 0) + 1;
+          reason(coverage, 'output_limit');
+          if (weakest < 0 || comparePreviewEvidence(record, collection.records[weakest]) < 0)
+            continue;
+          collection.records[weakest] = record;
+          continue;
+        }
+      }
+      collection.records.push(record);
       coverage.emitted++;
     }
+    return admitted;
+  };
+  const consumeNativeTail = (lines: string[], coverage: DiagnosticLogCoverage) => {
+    const accepted: string[] = [];
+    let tailBytes = 0;
+    for (let index = lines.length - 1; index >= 0; index--) {
+      const line = lines[index];
+      const bytes = Buffer.byteLength(line) + 1;
+      if (
+        Date.now() >= deadline ||
+        tailBytes + bytes > FILE_BYTES ||
+        (!options.fullScan && totalBytes + bytes > totalBudget)
+      ) {
+        coverage.truncated = true;
+        break;
+      }
+      accepted.push(line);
+      tailBytes += bytes;
+      totalBytes += bytes;
+    }
+    coverage.bytesRead += tailBytes;
+    coverage.truncated ||= native?.truncated === true;
+    if (coverage.truncated) reason(coverage, 'limit');
+    consume(accepted.reverse().join('\n'), coverage);
   };
   for (const source of ['main', 'cowork', 'gateway', 'native'] as const) {
     const coverage: DiagnosticLogCoverage = {
@@ -654,14 +748,18 @@ export async function collectDiagnosticLogs(
       coverage.outputOmitted = 0;
       coverage.signalCounts = {};
       if (!files.length) reason(coverage, 'missing');
+      let admittedFromDisk = false;
+      const capturedNativeFiles = new Map<string, Awaited<ReturnType<typeof scanDiagnosticLog>>>();
       for (const file of files) {
         let previousBytes = 0;
         try {
-          await scanDiagnosticLog(
+          const captured = await scanDiagnosticLog(
             file,
             source === 'native',
             {
-              record: text => consume(text, coverage),
+              record: text => {
+                if (consume(text, coverage)) admittedFromDisk = true;
+              },
               oversized: () => {
                 coverage.recordsRead++;
                 coverage.parseFailures++;
@@ -685,6 +783,7 @@ export async function collectDiagnosticLogs(
             },
             options.signal,
           );
+          if (source === 'native') capturedNativeFiles.set(file, captured);
           coverage.filesRead++;
           coverage.filesCompleted++;
         } catch (error) {
@@ -700,34 +799,46 @@ export async function collectDiagnosticLogs(
           if (options.signal?.aborted) break;
         }
       }
-    } else if (source === 'native') {
-      if (options.fullScan) coverage.scanComplete = false;
-      if (native?.discoveryFailure) reason(coverage, native.discoveryFailure);
-      if (!native) {
-        reason(coverage, 'native_unavailable');
-        continue;
-      }
-      const accepted: string[] = [];
-      for (let index = native.lines.length - 1; index >= 0; index--) {
-        const line = native.lines[index];
-        const bytes = Buffer.byteLength(line) + 1;
-        if (
-          Date.now() >= deadline ||
-          coverage.bytesRead + bytes > FILE_BYTES ||
-          totalBytes + bytes > totalBudget
-        ) {
-          coverage.truncated = true;
-          reason(coverage, 'limit');
+      for (const [file, captured] of capturedNativeFiles) {
+        if (options.signal?.aborted) {
+          coverage.scanComplete = false;
+          reason(coverage, 'canceled');
           break;
         }
-        accepted.push(line);
-        coverage.bytesRead += bytes;
-        totalBytes += bytes;
+        try {
+          await verifyDiagnosticLogFile(file, captured, options.signal);
+        } catch (error) {
+          coverage.scanComplete = false;
+          const code = error instanceof Error ? error.message : '';
+          reason(
+            coverage,
+            code === 'read_timeout' || code === 'canceled' || code === 'source_changed'
+              ? code
+              : 'unreadable',
+          );
+          break;
+        }
+      }
+      if (
+        source === 'native' &&
+        native?.lines?.length &&
+        !coverage.scanComplete &&
+        !admittedFromDisk &&
+        !options.signal?.aborted
+      ) {
+        // Use the already bounded RPC tail only when disk scans yielded no usable records.
+        // Once a disk scan provided data, replaying the tail could export the same record twice.
+        consumeNativeTail(native.lines, coverage);
+      }
+    } else if (source === 'native') {
+      if (options.fullScan) coverage.scanComplete = false;
+      if (native?.failure) reason(coverage, native.failure);
+      if (!native?.lines) {
+        if (!native?.failure) reason(coverage, 'native_unavailable');
+        continue;
       }
       coverage.filesRead = 1;
-      coverage.truncated ||= native.truncated === true;
-      if (coverage.truncated) reason(coverage, 'limit');
-      consume(accepted.reverse().join('\n'), coverage);
+      consumeNativeTail(native.lines, coverage);
     } else {
       const files = [...new Set(sources[source])];
       if (!files.length) reason(coverage, 'missing');

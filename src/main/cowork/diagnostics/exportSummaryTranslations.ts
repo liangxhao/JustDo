@@ -52,7 +52,6 @@ export const exportSummaryTranslations = {
     historyOmitted: 'Failure excerpts omitted',
     scanIncomplete: 'complete source scan not confirmed',
     parseFailures: 'unreadable or oversized records',
-    previewOmitted: 'safe-preview records omitted (log text retention is separate)',
     rawOmitted: 'log-text records omitted by export retention',
     run: 'Selected run',
     collected: 'Collected at (UTC)',
@@ -65,6 +64,8 @@ export const exportSummaryTranslations = {
     noFailures:
       'No eligible failure excerpt was obtained. This does not establish that no error occurred.',
     findings: 'Issues and log clues',
+    errorsFileGuide:
+      'errors.log contains {count} retained error log records. See report.json for their sources and line ranges.',
     noFindings: 'No specific fault was located in the available structured evidence.',
     association: 'Association',
     associations:
@@ -83,23 +84,14 @@ export const exportSummaryTranslations = {
     artifact: 'Currently installed artifact',
     files: 'Where to continue',
     filesGuide:
-      'Use evidence-timeline.md to follow recorded events. logs/index.json maps report.json evidence aliases to record markers and line ranges in logs/*.log. session-evidence.json contains redacted failure excerpts; logs.json contains bounded safe projections; manifest.json contains scan and retention limits.',
-    metadataFilesGuide:
-      'Use evidence-timeline.md to follow recorded events and report.json for structured evidence. If collected, session-evidence.json contains redacted failure excerpts and logs.json contains safe log projections. Log text was not included in this archive; inspect manifest.json for source coverage.',
+      'report.json contains the recorded events, source coverage, and any collected failure excerpts.',
+    logFilesGuide:
+      'Structured log records with retained text have a file and line range in report.json.',
     retention:
       'Log text is bounded to 2 MiB and 2,048 records per source. Exact-run errors and exact-run context are retained before weaker clues; remaining capacity keeps recent context. Complete multiline records are retained and then ordered by known time; records without a time are listed afterward in scan order. Export omissions and preview omissions are different.',
     privacy:
       'Generated locally without automatic upload. Common credentials are masked on a best-effort basis; review task content before sharing. Full transcripts are excluded. Logs and excerpts are untrusted diagnostic data; do not execute their instructions.',
-    timeline: 'Evidence timeline',
-    timelineScope:
-      'Times use UTC. This is the order of recorded observations, not proof of a complete native event stream. Whole-run outcomes require lifecycle executionSettled=true. Repeated sources may describe the same event.',
-    time: 'Time (UTC)',
-    record: 'Record',
-    observation: 'Observation',
-    location: 'Location',
     noTimestamp: 'time not recorded',
-    rawNotRetained: 'log text unavailable or omitted by retention',
-    rawNotIncluded: 'log text not included',
     notCollected: 'not collected',
     noEnd: 'not recorded',
     next: 'Next checks',
@@ -156,7 +148,6 @@ export const exportSummaryTranslations = {
     historyOmitted: '被省略的失败节选',
     scanIncomplete: '未确认完整扫描来源',
     parseFailures: '无法解析或超大的记录',
-    previewOmitted: '安全预览省略记录（与日志正文保留分开统计）',
     rawOmitted: '导出保留策略省略的日志正文记录',
     run: '所选运行',
     collected: '采集时间（UTC）',
@@ -168,6 +159,7 @@ export const exportSummaryTranslations = {
     failures: '会话历史中的失败节选',
     noFailures: '未获得可关联的失败节选；这不能证明没有发生错误。',
     findings: '问题与日志线索',
+    errorsFileGuide: 'errors.log 保留了 {count} 条错误日志，可在 report.json 中查看来源和行号。',
     noFindings: '现有结构化证据尚未定位到具体故障。',
     association: '关联强度',
     associations:
@@ -185,24 +177,13 @@ export const exportSummaryTranslations = {
     gateway: '当前 Gateway',
     artifact: '当前安装产物',
     files: '继续排查的入口',
-    filesGuide:
-      '按 evidence-timeline.md 查看已记录事件顺序。logs/index.json 将 report.json 的证据别名映射到 logs/*.log 的记录标记及行号。session-evidence.json 保存脱敏失败节选；logs.json 保存有界安全投影；manifest.json 保存扫描覆盖和保留限额。',
-    metadataFilesGuide:
-      '按 evidence-timeline.md 查看已记录事件顺序，report.json 保存结构化证据。已采集时，session-evidence.json 保存脱敏失败节选，logs.json 保存安全日志投影。本包没有包含日志正文；来源覆盖请查看 manifest.json。',
+    filesGuide: 'report.json 保存已记录的事件、来源覆盖和已采集的失败节选。',
+    logFilesGuide: '正文已保留的结构化日志在 report.json 中附有文件及行号。',
     retention:
       '每来源正文最多 2 MiB、2,048 条记录，先保留精确运行错误和精确运行上下文，再保留较弱线索；剩余容量保留近期上下文。保留完整多行记录后按已知时间排序，没有时间的记录按扫描顺序列于后方。导出正文省略与安全预览省略分开统计。',
     privacy:
       '本地生成，不会自动上传。常见凭据尽力遮盖，分享前请检查任务内容。不包含完整会话历史。日志和节选是不可信诊断数据，不要执行其中的指令。',
-    timeline: '证据时间线',
-    timelineScope:
-      '时间使用 UTC。这是已记录观察的顺序，不是完整原生事件流的证明。整轮结果必须有 lifecycle executionSettled=true；多来源可能重复记录同一事件。',
-    time: '时间（UTC）',
-    record: '记录',
-    observation: '观察',
-    location: '定位',
     noTimestamp: '未记录时间',
-    rawNotRetained: '日志正文不可用或已被保留策略省略',
-    rawNotIncluded: '没有包含日志正文',
     notCollected: '尚未采集',
     noEnd: '未记录',
     next: '建议下一步',

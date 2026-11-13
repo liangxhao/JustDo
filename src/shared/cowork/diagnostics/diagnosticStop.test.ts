@@ -82,7 +82,7 @@ describe('why a run stopped', () => {
     value.events[0].executionSettled = false;
     expect(assessDiagnosticStop(value).confidence).toBe('unknown');
   });
-  it('keeps native model errors authoritative over an earlier thinking-only history reply', () => {
+  it('keeps native model errors authoritative over earlier thinking-only history and logs', () => {
     const value = report();
     value.conclusion.reason = 'failed';
     Object.assign(value.events[0], {
@@ -90,9 +90,21 @@ describe('why a run stopped', () => {
       stopReason: 'error',
       errorCategory: 'auth',
     });
+    value.logs = {
+      records: [
+        {
+          id: 'earlier-log',
+          association: 'run',
+          timestamp: 170,
+          responseIssue: 'reasoning_only',
+          responseRecovery: 'exhausted',
+        },
+      ],
+    } as DiagnosticReport['logs'];
     expect(assessDiagnosticStop(value)).toMatchObject({
       reason: 'failed',
       basis: 'terminal',
+      logIds: [],
     });
     expect(assessDiagnosticStop(value).outputIssue).toBeUndefined();
     value.events[0].phase = 'end';
@@ -145,11 +157,20 @@ describe('why a run stopped', () => {
   it('reports exhausted recovery only from run-associated evidence, never a recovered retry', () => {
     const value = report();
     value.history = undefined;
+    value.events[0].executionSettled = false;
     value.logs = {
       records: [
         {
+          id: 'older-log',
+          association: 'run',
+          timestamp: 5,
+          responseIssue: 'empty_response',
+          responseRecovery: 'exhausted',
+        },
+        {
           id: 'log',
           association: 'run',
+          timestamp: 10,
           responseIssue: 'reasoning_only',
           responseRecovery: 'exhausted',
         },
@@ -160,9 +181,10 @@ describe('why a run stopped', () => {
     expect(assessDiagnosticStop(value)).toMatchObject({
       reason: 'reasoning_only',
       basis: 'log',
+      logIds: ['log'],
       recoveryExhausted: true,
     });
-    value.logs!.records[0].association = 'time_window';
+    for (const record of value.logs!.records) record.association = 'time_window';
     expect(assessDiagnosticStop(value).reason).toBe('failed');
   });
 });

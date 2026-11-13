@@ -89,9 +89,9 @@ describe('payload-free bounded diagnostic log collection', () => {
     expect(exported.index).toHaveLength(2);
     expect(exported.index?.every(item => item.association === 'run')).toBe(true);
     expect(exported.entries['logs/native.log']).toContain('before_prompt_build');
-    expect(exported.entries['logs/native.log']).toContain('replay_admission_rejected');
-    expect(exported.entries['logs/native.log']).toContain('"site":"not_exposed"');
-    expect(exported.entries['logs/native.log']).not.toContain('foreign-run');
+    expect(exported.entries['errors.log']).toContain('replay_admission_rejected');
+    expect(exported.entries['errors.log']).toContain('"site":"not_exposed"');
+    expect(exported.entries['errors.log']).not.toContain('foreign-run');
   });
 
   it('preserves exact run association and metadata for the replay observer Main JSON log format', async () => {
@@ -135,10 +135,10 @@ describe('payload-free bounded diagnostic log collection', () => {
     expect(result.records).toHaveLength(1);
     const exported = capture.finish();
     expect(exported.index.map(item => item.association)).toEqual(['run']);
-    expect(exported.entries['logs/main.log']).toContain('replay_admission_rejected');
-    expect(exported.entries['logs/main.log']).toContain('"site":"not_exposed"');
-    expect(exported.entries['logs/main.log']).not.toContain('foreign-');
-    expect(exported.entries['logs/main.log']).not.toContain('expectedVersion');
+    expect(exported.entries['errors.log']).toContain('replay_admission_rejected');
+    expect(exported.entries['errors.log']).toContain('"site":"not_exposed"');
+    expect(exported.entries['errors.log']).not.toContain('foreign-');
+    expect(exported.entries['errors.log']).not.toContain('expectedVersion');
   });
 
   it('collects native exhausted reasoning-only recovery as closed model evidence', async () => {
@@ -300,13 +300,14 @@ describe('payload-free bounded diagnostic log collection', () => {
     expect(JSON.stringify(result)).not.toContain('SECRET');
   });
 
-  it('retains exact-run machine failures when unrelated error logs exhaust preview capacity', async () => {
+  it('retains exact-run machine failures when routine warnings and unrelated errors fill the preview', async () => {
     const result = await collectDiagnosticLogs(
       report(),
       empty(),
       {
         lines: [
-          ...Array.from({ length: 110 }, () => line({ runId: undefined, errorCategory: 'auth' })),
+          ...Array.from({ length: 101 }, () => line({ errorCategory: undefined, level: 'warn' })),
+          ...Array.from({ length: 9 }, () => line({ runId: undefined, errorCategory: 'auth' })),
           line({
             errorCategory: undefined,
             level: 'info',
@@ -322,6 +323,47 @@ describe('payload-free bounded diagnostic log collection', () => {
       expect.objectContaining({ association: 'run', basis: 'command_exit' }),
     );
     expect(result.sources.find(source => source.source === 'native')?.matched).toBe(111);
+  });
+
+  it('keeps the exact-run recovery decision and its native HTTP status under noisy preview sampling', async () => {
+    const target = await file(
+      [
+        line({
+          event: 'model_fallback_decision',
+          decision: 'candidate_failed',
+          code: 'empty_result',
+          fallbackStepFinalOutcome: 'chain_exhausted',
+          errorCategory: undefined,
+          status: 503,
+          level: 'info',
+        }),
+        ...Array.from({ length: 105 }, (_, index) =>
+          line({
+            time: new Date(time + index + 1).toISOString(),
+            errorCategory: 'auth',
+          }),
+        ),
+        line({ time: new Date(time - 1).toISOString(), errorCategory: 'auth' }),
+        line({ event: 'other', status: 503, level: 'info', errorCategory: undefined }),
+      ].join('\n'),
+    );
+    const result = await collectDiagnosticLogs(
+      report(),
+      { ...empty(), main: [target] },
+      undefined,
+      {
+        fullScan: true,
+      },
+    );
+    expect(result.records).toHaveLength(100);
+    expect(result.records[0]).toMatchObject({
+      association: 'run',
+      responseIssue: 'empty_response',
+      responseRecovery: 'exhausted',
+      metrics: { statusCode: 503 },
+    });
+    expect(result.records.some(record => record.timestamp === time - 1)).toBe(false);
+    expect(result.sources[0].matched).toBe(107);
   });
 
   it('does not classify routine authentication and context window announcements as failures', async () => {
@@ -829,6 +871,62 @@ describe('payload-free bounded diagnostic log collection', () => {
       ['native_unavailable'],
     ]);
     expect(JSON.stringify(result)).not.toContain(path.dirname(target));
+  });
+
+  it('uses the native tail after disk failure and avoids replay after a successful disk read', async () => {
+    const failure = line();
+    const target = await file(failure);
+    const foreign = await file(line({ runId: 'different-run' }));
+    const missing = `${target}.rotated`;
+    const exported = vi.fn();
+    const options = { fullScan: true, onExportRecord: exported };
+    const fallback = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      { files: [missing, foreign], lines: [failure] },
+      options,
+    );
+    expect(fallback.sources[3]).toMatchObject({
+      status: 'partial',
+      scanComplete: false,
+      filesCompleted: 1,
+      reasons: ['missing', 'outside_window'],
+    });
+    expect(fallback.records).toMatchObject([{ source: 'native', signal: 'timeout' }]);
+    expect(exported).toHaveBeenCalledTimes(1);
+
+    exported.mockClear();
+    const disk = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      { files: [missing, target], lines: [failure] },
+      options,
+    );
+    expect(disk.sources[3]).toMatchObject({ scanComplete: false, filesCompleted: 1 });
+    expect(disk.records).toMatchObject([{ source: 'native', signal: 'timeout' }]);
+    expect(exported).toHaveBeenCalledTimes(1);
+  });
+
+  it('collects a native fatal record even without a known error category', async () => {
+    const capture = new DiagnosticExportLogs();
+    const result = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      {
+        lines: [
+          JSON.stringify({
+            _meta: { date: new Date(time).toISOString(), logLevelName: 'FATAL' },
+            0: 'uncategorized fatal record',
+          }),
+        ],
+      },
+      {
+        onExportRecord: (source, content, association, metadata) =>
+          capture.append(source, content, association, metadata),
+      },
+    );
+    expect(result.records).toMatchObject([{ level: 'error', signal: 'unknown' }]);
+    expect(capture.finish().entries['errors.log']).toContain('uncategorized fatal record');
   });
 
   it('discards malformed JSON, invalid encoding and oversized records with explicit losses', async () => {

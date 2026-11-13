@@ -11,10 +11,12 @@ const SOURCE_LIMIT = 2 * 1024 * 1024;
 const SOURCE_RECORD_LIMIT = 2048;
 const SOURCES: DiagnosticLogSource[] = ['main', 'cowork', 'gateway', 'native'];
 const SELECTION = 'evidence_priority_with_recent_context';
+export const DIAGNOSTIC_ERRORS_FILE = 'errors.log';
 
 export interface DiagnosticExportLogIndex extends DiagnosticLogExportMetadata {
   source: DiagnosticLogSource;
   association: DiagnosticLogRecord['association'];
+  file: string;
   line: number;
   endLine: number;
 }
@@ -36,17 +38,15 @@ export interface DiagnosticExportLogBundle {
   index?: DiagnosticExportLogIndex[];
 }
 interface RetainedRecord extends DiagnosticLogExportMetadata {
+  source: DiagnosticLogSource;
   association: DiagnosticLogRecord['association'];
+  isError: boolean;
   content: string;
   bytes: number;
   order: number;
   priority: number;
 }
-const priority = (
-  association: DiagnosticLogRecord['association'],
-  level: DiagnosticLogRecord['level'],
-) => {
-  const issue = level === 'warn' || level === 'error';
+const priority = (association: DiagnosticLogRecord['association'], issue: boolean) => {
   return association === 'run'
     ? issue
       ? 5
@@ -59,6 +59,10 @@ const priority = (
         ? 2
         : 0;
 };
+const compareTime = (left: RetainedRecord, right: RetainedRecord) =>
+  Number(left.timestamp === undefined) - Number(right.timestamp === undefined) ||
+  (left.timestamp ?? 0) - (right.timestamp ?? 0);
+
 /** Lowest-value, oldest evidence is evicted first; unknown times stay unknown. */
 const compareRetention = (left: RetainedRecord, right: RetainedRecord) =>
   left.priority - right.priority ||
@@ -129,12 +133,13 @@ export class DiagnosticExportLogs {
         ? metadata.id
         : `log-${source}-${order}`;
     const level = metadata?.level ?? 'unknown';
+    const isError = level === 'error' || metadata?.isError === true;
     const timestamp =
       typeof metadata?.timestamp === 'number' && Number.isFinite(metadata.timestamp)
         ? metadata.timestamp
         : undefined;
     // Mask complete records before retention so clipping cannot introduce a partial credential.
-    const content = `[record=${id} association=${association}]\n${redactDiagnosticLog(text)}\n\n`;
+    const content = `${redactDiagnosticLog(text)}\n`;
     const bytes = Buffer.byteLength(content);
     if (bytes > SOURCE_LIMIT) {
       target.omittedBytes += bytes;
@@ -142,13 +147,18 @@ export class DiagnosticExportLogs {
     }
     push(target.records, {
       id,
+      source,
       timestamp,
       level,
       association,
+      isError,
       content,
       bytes,
       order,
-      priority: priority(association, level),
+      priority:
+        association === 'run' && metadata?.recoveryExhausted
+          ? 6
+          : priority(association, isError || level === 'warn'),
     });
     target.bytes += bytes;
     while (target.bytes > SOURCE_LIMIT || target.records.length > SOURCE_RECORD_LIMIT) {
@@ -162,34 +172,38 @@ export class DiagnosticExportLogs {
     const entries: Record<string, string> = {};
     const index: DiagnosticExportLogIndex[] = [];
     const coverage: DiagnosticExportLogBundle['coverage'] = [];
-    for (const [source, value] of this.sources) {
-      const records = [...value.records].sort(
-        (left, right) =>
-          Number(left.timestamp === undefined) - Number(right.timestamp === undefined) ||
-          (left.timestamp !== undefined && right.timestamp !== undefined
-            ? left.timestamp - right.timestamp
-            : 0) ||
-          left.order - right.order,
-      );
+    const errors: RetainedRecord[] = [];
+    const write = (file: string, records: RetainedRecord[]) => {
       let line = 1;
-      const associations: NonNullable<
-        DiagnosticExportLogBundle['coverage'][number]['retainedAssociations']
-      > = {};
       for (const record of records) {
         const lines = record.content.split('\n').length - 1;
         index.push({
           id: record.id,
-          source,
+          source: record.source,
           association: record.association,
           level: record.level,
           timestamp: record.timestamp,
+          file,
           line,
-          endLine: line + lines - 2,
+          endLine: line + lines - 1,
         });
         line += lines;
+      }
+      entries[file] = records.map(record => record.content).join('');
+    };
+    for (const [source, value] of this.sources) {
+      const records = [...value.records].sort(
+        (left, right) => compareTime(left, right) || left.order - right.order,
+      );
+      const context: RetainedRecord[] = [];
+      const associations: NonNullable<
+        DiagnosticExportLogBundle['coverage'][number]['retainedAssociations']
+      > = {};
+      for (const record of records) {
+        (record.isError ? errors : context).push(record);
         associations[record.association] = (associations[record.association] ?? 0) + 1;
       }
-      entries[`logs/${source}.log`] = records.map(record => record.content).join('');
+      write(`logs/${source}.log`, context);
       coverage.push({
         source,
         bytes: value.bytes,
@@ -204,6 +218,7 @@ export class DiagnosticExportLogs {
         seenAssociations: { ...value.seenAssociations },
       });
     }
+    if (errors.length) write(DIAGNOSTIC_ERRORS_FILE, errors.sort(compareTime));
     return { entries, index, coverage };
   }
 }

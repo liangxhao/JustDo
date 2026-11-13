@@ -617,6 +617,25 @@ describe('native conversation diagnostic scan', () => {
     });
   });
 
+  it('discards same-size offset history after a native window reset without a delta cursor', async () => {
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        messages: [failedTool],
+        hasMore: true,
+        nextOffset: 1,
+        totalMessages: 2,
+      })
+      .mockResolvedValueOnce({ messages: [failedTool], totalMessages: 2, windowReset: true });
+    const result = await collectDiagnosticHistory(report, clientWith(request), 'native');
+    expect(result).toMatchObject({
+      status: 'changed',
+      reason: 'history_changed',
+      messagesScanned: 1,
+      failures: [],
+    });
+  });
+
   it('retains native projected model failures after the Gateway removes errorMessage', async () => {
     // Native chat.history sanitizes provider errors into content text while retaining stopReason.
     const request = vi.fn().mockResolvedValue({
