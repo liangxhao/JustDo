@@ -1,7 +1,12 @@
-import { ipcMain, type IpcMainInvokeEvent, session, type WebContents } from 'electron';
+import { type BrowserWindow, ipcMain, type IpcMainInvokeEvent, session, type WebContents } from 'electron';
 
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../../config/builtinModels';
-import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network/network';
+import {
+  type ApiFetchOptions,
+  NetworkFetchPurpose,
+  NetworkIpc,
+  type OutboundHeaderPolicyView,
+} from '../../../shared/network/network';
 import {
   MODEL_PROVIDER_HEADER_LIMITS,
   normalizeModelProviderHeaders,
@@ -11,6 +16,7 @@ import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,
 } from '../../core/network/mainProcessFetch';
+import { getOutboundHeaderPolicyView } from '../../core/network/outboundHeaderProxy';
 import { getBuiltinModelRequestHeaders } from '../../providers/builtinModelCredential';
 
 interface PendingFetch {
@@ -133,10 +139,27 @@ const validateModelProbe = (options: ApiFetchOptions): { body?: string } => {
   }
 };
 
-export const registerNetworkHandlers = (): void => {
+export const registerNetworkHandlers = ({ getMainWindow }: {
+  getMainWindow: () => BrowserWindow | null;
+}): void => {
   ipcMain.removeAllListeners('network:status-change');
   ipcMain.on('network:status-change', (_event, status: 'online' | 'offline') => {
     console.log(`[Main] Network status changed: ${status}`);
+  });
+
+  ipcMain.handle(NetworkIpc.GetOutboundHeaderPolicy, (event): OutboundHeaderPolicyView => {
+    const window = getMainWindow();
+    if (
+      !window ||
+      window.isDestroyed() ||
+      event.sender.isDestroyed() ||
+      event.sender !== window.webContents ||
+      event.senderFrame !== window.webContents.mainFrame
+    ) {
+      throw new Error('Outbound header policy requires the main application frame.');
+    }
+
+    return getOutboundHeaderPolicyView();
   });
 
   ipcMain.handle(NetworkIpc.CancelFetch, (event, requestId: string) => {

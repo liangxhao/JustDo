@@ -1620,7 +1620,7 @@ if (agentBridgeArgv) {
     },
   });
 
-  registerNetworkHandlers();
+  registerNetworkHandlers({ getMainWindow: () => mainWindow });
   registerLogHandlers();
   const isStorageMaintenanceReady = () => {
     if (!startupHistoryAdmissionReady || appShutdown.isQuitting() || isStorageExecutionFrozen())

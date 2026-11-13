@@ -9,6 +9,7 @@ import net from 'net';
 import path from 'path';
 import type { Duplex } from 'stream';
 
+import type { OutboundHeaderPolicyView } from '../../../shared/network/network';
 import {
   getOutboundHeaderName,
   HTTP_HEADER_NAME_PATTERN,
@@ -22,6 +23,7 @@ import { prepareOutboundHeaderCertificateStore } from './outboundHeaderCertifica
 import {
   collectOutboundHeaderSourceKeys,
   freezeOutboundHeaderPolicyGroup,
+  getCachedOutboundHeaderUserInfo,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
   type OutboundHeaderPolicyGroup,
@@ -169,15 +171,28 @@ export const resolveOutboundHeaderValuesForRequest = (
   config: OutboundHeaderProxyConfig,
   requestUrl: string,
   userInfo: Readonly<Record<string, string>>,
+): Record<string, string> => resolveOutboundHeaderEntryValues(
+  resolveOutboundHeaderEntriesForRequest(config, requestUrl),
+  userInfo,
+);
+
+const getOutboundHeaderSourceField = (entry: OutboundHeaderEntry): string | null => {
+  if (typeof entry === 'string') return entry;
+  return 'from' in entry ? entry.from : null;
+};
+
+const resolveOutboundHeaderEntryValues = (
+  entries: readonly OutboundHeaderEntry[],
+  userInfo: Readonly<Record<string, string>>,
 ): Record<string, string> => {
   const values: [name: string, value: string][] = [];
-  for (const entry of resolveOutboundHeaderEntriesForRequest(config, requestUrl)) {
+  for (const entry of entries) {
     if (typeof entry !== 'string' && 'value' in entry) {
       values.push([entry.name, entry.value]);
       continue;
     }
-    const sourceKey = typeof entry === 'string' ? entry : entry.from;
-    if (Object.hasOwn(userInfo, sourceKey)) {
+    const sourceKey = getOutboundHeaderSourceField(entry);
+    if (sourceKey !== null && Object.hasOwn(userInfo, sourceKey)) {
       values.push([getOutboundHeaderName(entry), userInfo[sourceKey]]);
     }
   }
@@ -206,6 +221,39 @@ export const applyOutboundHeaders = (
     injectedHeaderCount += 1;
   }
   return injectedHeaderCount;
+};
+
+export const getOutboundHeaderPolicyView = (): OutboundHeaderPolicyView => {
+  const policy = resolveOutboundHeaderProxyConfig();
+  if (!policy.enabled) return { enabled: false, targets: [] };
+
+  const userInfo = getCachedOutboundHeaderUserInfo() ?? {};
+  const targets = new Set(policy.groups.filter(group => group.headerNames.length > 0)
+    .flatMap(group => group.baseUrlWhitelist)
+    .map(target => {
+      const url = new URL(target);
+      return `${url.origin}${url.pathname}`;
+    }));
+
+  return {
+    enabled: true,
+    targets: Array.from(targets, url => {
+      const entries = resolveOutboundHeaderEntriesForRequest(policy, url);
+      const headers: Record<string, string> = {};
+      applyOutboundHeaders(headers, resolveOutboundHeaderEntryValues(entries, userInfo), () => {});
+      return {
+        url,
+        headers: entries.map(entry => {
+          const name = getOutboundHeaderName(entry);
+          return {
+            name,
+            sourceField: getOutboundHeaderSourceField(entry),
+            value: Object.hasOwn(headers, name) ? headers[name] : null,
+          };
+        }),
+      };
+    }),
+  };
 };
 
 export const isIgnorableProxyClientError = (error: unknown): boolean => {

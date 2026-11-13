@@ -1,7 +1,16 @@
 export const NetworkIpc = {
   Fetch: 'api:fetch',
   CancelFetch: 'api:cancelFetch',
+  GetOutboundHeaderPolicy: 'network:getOutboundHeaderPolicy',
 } as const;
+
+export interface OutboundHeaderPolicyView {
+  enabled: boolean;
+  targets: {
+    url: string;
+    headers: { name: string; sourceField: string | null; value: string | null }[];
+  }[];
+}
 
 export const NetworkFetchPurpose = {
   ModelDiscovery: 'model-discovery',

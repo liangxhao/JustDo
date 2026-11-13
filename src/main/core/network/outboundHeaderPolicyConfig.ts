@@ -305,3 +305,7 @@ export const getOutboundHeaderUserInfo = (
     )
   );
 };
+
+/** Reads the published runtime values without initializing the cache from disk. */
+export const getCachedOutboundHeaderUserInfo = (): Readonly<Record<string, string>> | null =>
+  cachedOutboundHeaderValues;
