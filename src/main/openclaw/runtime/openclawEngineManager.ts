@@ -15,7 +15,7 @@ import {
 import OPENCLAW_CLI_ROOT_FILES from '../../../shared/openclaw/cliRuntimeFiles.json';
 import { DEFAULT_OPENCLAW_GATEWAY_PORT } from '../../../shared/openclaw/constants';
 import type { EngineFailureContext } from '../../../shared/openclaw/engineDiagnostics';
-import { EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
+import { EngineFailureReason, EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import {
   GatewayPortSetErrorCode,
   validateGatewayPortNumber,
@@ -39,6 +39,12 @@ import {
 } from './launch/electronNodeRuntime';
 import { buildGatewayLaunchArgs, buildGatewayLaunchEnvironment } from './launch/gatewayLaunchArgs';
 import { GatewayStdoutLogFilter } from './launch/gatewayLogFilter';
+import {
+  createGatewayMemoryLogger,
+  GatewayMemoryEvent,
+  type GatewayMemoryLogger,
+  isGatewayOutOfMemory,
+} from './launch/gatewayMemoryDiagnostics';
 import { ensureGatewayStartupPriority } from './launch/gatewayProcessPriority';
 import { GatewayProcessShutdown } from './launch/gatewayProcessShutdown';
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from './launch/loopbackPort';
@@ -1211,31 +1217,46 @@ export class OpenClawEngineManager extends EventEmitter {
     // Use the supported bundled Node on every platform. Electron's embedded
     // Node release can lag the native SQLite correctness floor.
     const lifecycleBeforeStart = this.gatewayConfigReloadMonitor.getGatewayLifecycleGeneration();
-    const child: GatewayProcess = spawn(
-      getElectronNodeRuntimePath(),
-      ['--require', ensureGatewayShutdownPreload(this.baseDir), openclawEntry, ...forkArgs],
-      {
+    const executable = getElectronNodeRuntimePath();
+    const launchArgs = ['--require', ensureGatewayShutdownPreload(this.baseDir), openclawEntry, ...forkArgs];
+    const sampleMemory = createGatewayMemoryLogger(runtime.root);
+    let child: ChildProcess;
+    try {
+      child = spawn(executable, launchArgs, {
         cwd: runtime.root,
         env: gatewayEnv,
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         windowsHide: true,
-      },
-    );
+      });
+    } catch (error) {
+      sampleMemory?.(GatewayMemoryEvent.SpawnError, { pid: null, processGeneration: null });
+      if (!(error instanceof Error) || (error as NodeJS.ErrnoException).code !== 'ENOMEM') throw error;
+      this.setStatus({
+        phase: EnginePhase.Error,
+        version: runtime.version,
+        message: `OpenClaw gateway process error: ${error.message}`,
+        canRetry: true,
+        failureReason: EngineFailureReason.MemoryAllocation,
+      });
+      return this.getStatus();
+    }
     console.log(
       `[OpenClaw] startGateway: gateway process created (${elapsed()}), platform=${process.platform}`,
     );
 
     this.gatewayProcess = child;
     this.gatewayNetworkEnvironments.set(child, Object.freeze({ ...gatewayEnv }));
-    this.gatewayProcessGeneration += 1;
-    const processGeneration = this.gatewayProcessGeneration;
+    const processGeneration = ++this.gatewayProcessGeneration;
     this.coldStartingGateway = { child, processGeneration };
     this.launchedGatewayEnvironmentGeneration = launchEnvironmentGeneration;
-    this.attachGatewayProcessLogs(child);
-    this.attachGatewayExitHandlers(child);
+    const logMemory: GatewayMemoryLogger = (event, exit) =>
+      sampleMemory?.(event, { pid: child.pid ?? null, processGeneration }, exit);
+    const observeStderr = this.attachGatewayExitHandlers(child, logMemory);
+    this.attachGatewayProcessLogs(child, observeStderr);
 
     // Wait for the spawn event to confirm the process started (pid becomes available).
     child.once('spawn', () => {
+      logMemory?.(GatewayMemoryEvent.Spawn);
       const usesStartupPriority = ensureGatewayStartupPriority(child.pid);
       console.log(
         `[OpenClaw] gateway process spawned (${elapsed()}), pid=${child.pid}, startupPriority=normal, applied=${usesStartupPriority}`,
@@ -2209,7 +2230,7 @@ export class OpenClawEngineManager extends EventEmitter {
     });
   }
 
-  private attachGatewayProcessLogs(child: GatewayProcess): void {
+  private attachGatewayProcessLogs(child: GatewayProcess, observeStderr?: (line: string) => void): void {
     ensureDir(path.dirname(this.gatewayLogPath));
     const stdoutLogFilter = new GatewayStdoutLogFilter();
     let stderrPartialLine = '';
@@ -2225,6 +2246,7 @@ export class OpenClawEngineManager extends EventEmitter {
     const emitLines = (text: string, stream: 'stdout' | 'stderr') => {
       for (const line of text.split(/\r?\n/)) {
         if (!line) continue;
+        if (stream === 'stderr') observeStderr?.(line);
         this.observeGatewayProcessLine(child, line);
         appendLog(`${line}\n`, stream);
         const renderedLine = OpenClawEngineManager.rewriteUtcTimestamps(line);
@@ -2273,7 +2295,10 @@ export class OpenClawEngineManager extends EventEmitter {
     });
   }
 
-  private attachGatewayExitHandlers(child: GatewayProcess): void {
+  private attachGatewayExitHandlers(child: GatewayProcess, logMemory?: GatewayMemoryLogger) {
+    const processGeneration = this.gatewayProcessGeneration;
+    let failureReason: EngineFailureReason | undefined;
+    let publishedExitStatus: OpenClawEngineStatus | undefined;
     this.gatewayShutdownOwner().observe(child);
     child.once('error', (...args: unknown[]) => {
       // UtilityProcess error: (type: string, location: string)
@@ -2281,17 +2306,23 @@ export class OpenClawEngineManager extends EventEmitter {
       const errorMsg =
         args[0] instanceof Error ? args[0].message : `${args[0]}${args[1] ? ` (${args[1]})` : ''}`;
       console.error(`[OpenClaw] gateway process error event: ${errorMsg}`);
-      // Don't delete from expectedGatewayExits here — the 'exit' event always
-      // follows and handles cleanup. Deleting here would cause 'exit' to miss
-      // the expected-exit guard, triggering a spurious restart.
+      // Let the exit handler consume the expected-exit marker if this child exits.
+      // Consuming it here would let a later exit trigger a spurious restart.
       if (this.expectedGatewayExits.has(child)) return;
       if (this.gatewayProcess !== child) return;
       if (this.shutdownRequested) return;
+      if (child.pid === undefined) {
+        logMemory?.(GatewayMemoryEvent.SpawnError);
+        if (args[0] instanceof Error && (args[0] as NodeJS.ErrnoException).code === 'ENOMEM') {
+          failureReason = EngineFailureReason.MemoryAllocation;
+        }
+      }
       this.setStatus({
         phase: 'error',
         version: this.status.version,
         message: `OpenClaw gateway process error: ${errorMsg}`,
         canRetry: true,
+        ...(failureReason ? { failureReason } : {}),
       });
     });
 
@@ -2313,15 +2344,34 @@ export class OpenClawEngineManager extends EventEmitter {
       if (!isCurrentProcess) return;
       if (this.shutdownRequested) return;
 
+      logMemory?.(GatewayMemoryEvent.UnexpectedExit, { code, signal });
       this.setStatus({
         phase: 'error',
         version: this.status.version,
         message: `OpenClaw gateway exited unexpectedly (code=${code ?? 'null'}).`,
         canRetry: true,
+        ...(failureReason ? { failureReason } : {}),
       });
       this.scheduleGatewayRestart();
+      publishedExitStatus = this.status;
     };
     (child as ChildProcess).once('exit', onExit);
+
+    return (line: string): void => {
+      if (failureReason || !isGatewayOutOfMemory(line) || this.shutdownRequested ||
+          processGeneration !== this.gatewayProcessGeneration) return;
+      if (this.gatewayProcess === child && !this.expectedGatewayExits.has(child)) {
+        failureReason = EngineFailureReason.MemoryAllocation;
+        logMemory?.(GatewayMemoryEvent.FatalStderr);
+        return;
+      }
+      // Node may deliver the final stderr line after exit. Enrich only the status
+      // published for this exit, without resetting its diagnostic window or retry.
+      if (!publishedExitStatus || this.status !== publishedExitStatus) return;
+      failureReason = EngineFailureReason.MemoryAllocation;
+      this.status = { ...this.status, failureReason };
+      this.emit('status', this.getStatus());
+    };
   }
 
   private observeGatewayProcessLine(child: GatewayProcess, line: string): void {
@@ -2355,6 +2405,7 @@ export class OpenClawEngineManager extends EventEmitter {
     if (this.gatewayShutdown?.failure) return;
     if (this.shutdownRequested) return;
     if (this.gatewayRestartTimer) return;
+    const { failureReason } = this.status;
 
     if (this.gatewayRestartAttempt >= GATEWAY_MAX_RESTART_ATTEMPTS) {
       console.error(
@@ -2363,8 +2414,9 @@ export class OpenClawEngineManager extends EventEmitter {
       this.setStatus({
         phase: 'error',
         version: this.status.version,
-        message: `OpenClaw gateway failed to start after ${GATEWAY_MAX_RESTART_ATTEMPTS} attempts. Check model configuration or restart manually.`,
+        message: `OpenClaw gateway failed to start after ${GATEWAY_MAX_RESTART_ATTEMPTS} attempts. Restart manually to try again.`,
         canRetry: true,
+        ...(failureReason ? { failureReason } : {}),
       });
       return;
     }
@@ -2380,6 +2432,7 @@ export class OpenClawEngineManager extends EventEmitter {
       message: 'Waiting to restart OpenClaw gateway...',
       canRetry: false,
       restarting: true,
+      ...(failureReason ? { failureReason } : {}),
     });
     console.log(
       `[OpenClaw] scheduling gateway restart attempt ${this.gatewayRestartAttempt}/${GATEWAY_MAX_RESTART_ATTEMPTS} in ${delay}ms`,
@@ -2388,13 +2441,23 @@ export class OpenClawEngineManager extends EventEmitter {
     this.gatewayRestartTimer = setTimeout(() => {
       this.gatewayRestartTimer = null;
       if (this.shutdownRequested) return;
+      const processGeneration = this.gatewayProcessGeneration;
       void this.startGateway().catch(error => {
         console.error('[OpenClaw] Gateway automatic restart failed:', error);
+        if (this.shutdownRequested || this.gatewayProcessGeneration !== processGeneration ||
+            this.status.phase !== EnginePhase.Starting || !this.status.failureReason) return;
+        this.setStatus({
+          phase: EnginePhase.Error,
+          version: this.status.version,
+          message: error instanceof Error ? error.message : String(error),
+          canRetry: !this.gatewayShutdown?.failure,
+        });
       });
     }, delay);
   }
 
   private setStatus(next: OpenClawEngineStatus): void {
+    const { failureReason: nextFailureReason, ...nextStatus } = next;
     const previousPhase = this.status?.phase;
     if (next.phase === 'error') {
       console.error('[OpenClaw] Engine error:', next);
@@ -2404,6 +2467,12 @@ export class OpenClawEngineManager extends EventEmitter {
     const phase = this.gatewayRestartInProgress && next.phase === EnginePhase.Ready
       ? EnginePhase.Starting
       : next.phase;
+    const failureReason = phase === EnginePhase.Error
+      ? nextFailureReason
+      : next.phase === EnginePhase.Starting
+        ? nextFailureReason ?? (previousPhase === EnginePhase.Starting && this.status.restarting
+          ? this.status.failureReason : undefined)
+        : undefined;
     if (phase === EnginePhase.Starting && this.status?.phase !== EnginePhase.Starting) {
       this.diagnosticStartedAt = Date.now();
       this.diagnosticId = crypto.randomUUID();
@@ -2411,8 +2480,9 @@ export class OpenClawEngineManager extends EventEmitter {
     }
     if (phase === EnginePhase.Error) this.diagnosticId = crypto.randomUUID();
     this.status = {
-      ...next,
+      ...nextStatus,
       phase,
+      ...(failureReason ? { failureReason } : {}),
       ...(phase === EnginePhase.Starting && (restarting || next.restarting)
         ? { restarting: true }
         : {}),

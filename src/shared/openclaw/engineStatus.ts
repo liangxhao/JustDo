@@ -7,6 +7,12 @@ export const EnginePhase = {
 
 export type OpenClawEnginePhase = (typeof EnginePhase)[keyof typeof EnginePhase];
 
+export const EngineFailureReason = {
+  MemoryAllocation: 'memory-allocation',
+} as const;
+
+export type EngineFailureReason = (typeof EngineFailureReason)[keyof typeof EngineFailureReason];
+
 export interface OpenClawEngineStatus {
   phase: OpenClawEnginePhase;
   version: string | null;
@@ -14,6 +20,8 @@ export interface OpenClawEngineStatus {
   canRetry: boolean;
   /** Main-owned lifecycle evidence; only meaningful while starting. */
   restarting?: boolean;
+  /** Confirmed failure of this attempt or the previous attempt during automatic recovery. */
+  failureReason?: EngineFailureReason;
   /** Identifies the Main-owned failure snapshot for on-demand diagnostics. */
   diagnosticId?: string;
 }

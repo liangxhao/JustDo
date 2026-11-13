@@ -10,7 +10,7 @@ import {
 import { StartupRoute } from '@shared/app/startup/routing';
 import { captureStartupFailure, StartupFailureSource } from '@shared/app/startupFailure';
 import type { EngineDiagnosticReport } from '@shared/openclaw/engineDiagnostics';
-import type { OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
+import { EngineFailureReason, EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React, { useEffect, useState } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -488,6 +488,27 @@ function engineBridge() {
     emit: (next: OpenClawEngineStatus) => act(() => listener(next)),
   };
 }
+
+test('first launch shows Windows memory advice during automatic Gateway recovery', async () => {
+  bridge(true, Promise.resolve(snapshot(true)));
+  const { emit, status } = engineBridge();
+  render(<AppInitializationGate><div>workspace</div></AppInitializationGate>);
+  await screen.findByRole('button', { name: 'startupDiagnosticsView' });
+
+  emit({
+    phase: EnginePhase.Starting,
+    version: status.version,
+    restarting: true,
+    canRetry: false,
+    failureReason: EngineFailureReason.MemoryAllocation,
+  });
+  expect(screen.getByText('engineMemoryAllocationRestarting')).toBeTruthy();
+  expect(screen.getByText('engineMemoryAllocationWindowsAdvice')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'startupDiagnosticsView' })).toBeNull();
+
+  emit({ phase: EnginePhase.Running, version: status.version, canRetry: false });
+  expect(screen.queryByText('engineMemoryAllocationWindowsAdvice')).toBeNull();
+});
 
 test('connects actual engine and renderer readiness to the normal startup steps', async () => {
   const read = deferred<AppInitializationState>();

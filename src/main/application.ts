@@ -43,7 +43,7 @@ import {
   type WorkspaceWindowBounds,
 } from '../shared/cowork/workspaceWindow';
 import type { ProxySettings } from '../shared/network/proxy';
-import { EnginePhase } from '../shared/openclaw/engineStatus';
+import { EngineFailureReason, EnginePhase } from '../shared/openclaw/engineStatus';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import { OpenClawExtensionId } from '../shared/plugins/nativeIds';
 import { HOME_WORKSPACE_SESSION_ID } from '../shared/preview/filePreview';
@@ -2596,6 +2596,7 @@ if (agentBridgeArgv) {
   let startupEnginePreparation: Promise<void> | undefined;
   let startupIntegrationPreparation: Promise<void> | undefined;
   let startupExecutionGeneration: number | undefined;
+  let startupEngineFailureReason: EngineFailureReason | undefined;
   const completeEnginePreparation = () => {
     if (
       appShutdown.isQuitting() ||
@@ -2603,18 +2604,20 @@ if (agentBridgeArgv) {
     )
       return;
     const manager = getOpenClawEngineManager();
-    const phase = manager.getStatus().phase;
+    const { phase, failureReason } = manager.getStatus();
     if (
       phase !== EnginePhase.Error &&
       (startupExecutionGeneration === undefined ||
         startupExecutionGeneration !== manager.getGatewayProcessGeneration() ||
         phase !== EnginePhase.Running)
-    )
-      throw new Error(t('runtimeNodeUnavailable'), {
+    ) {
+      const memoryFailure = (failureReason ?? startupEngineFailureReason) === EngineFailureReason.MemoryAllocation;
+      throw new Error(t(memoryFailure ? 'startupEngineMemoryAllocationFailed' : 'runtimeNodeUnavailable'), {
         cause: new Error(
           'Startup execution readiness was not confirmed for the current Gateway process.',
         ),
       });
+    }
     initialization.setEnginePreparationPending(false);
   };
   const initApp = async () => {
@@ -2962,6 +2965,7 @@ if (agentBridgeArgv) {
       const startEngine = initialization.runOptionalTask('start assistant engine', async () => {
         const status = await ensureOpenClawRunningForCowork();
         if (status.phase !== 'running') {
+          startupEngineFailureReason = status.failureReason;
           console.error(
             '[OpenClaw] Startup engine unavailable; settings remain accessible:',
             status,

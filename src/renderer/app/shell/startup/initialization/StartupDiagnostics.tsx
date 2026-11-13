@@ -1,9 +1,10 @@
 import { captureStartupFailure, StartupFailureSource } from '@shared/app/startupFailure';
-import { EnginePhase } from '@shared/openclaw/engineStatus';
+import { EngineFailureReason, EnginePhase } from '@shared/openclaw/engineStatus';
 import { lazy, Suspense } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
+import { engineMemoryAdvice } from '../../engineMemoryAdvice';
 import StartupLogButton from './StartupLogButton';
 import type { useStartupEngine } from './useStartupEngine';
 
@@ -28,16 +29,23 @@ type Props = { engine: ReturnType<typeof useStartupEngine> };
 export function StartupEngineNotice({ engine }: Props) {
   if (!engine.status) return null;
   const failed = engine.status.phase === EnginePhase.Error || Boolean(engine.commandError);
+  const memoryFailure = engine.status.failureReason === EngineFailureReason.MemoryAllocation;
+  if (!failed && !memoryFailure) return null;
+  const heading = i18nService.t(memoryFailure
+    ? engine.status.phase === EnginePhase.Starting
+      ? 'engineMemoryAllocationRestarting'
+      : 'engineMemoryAllocationFailed'
+    : 'startupEngineFailure');
   return (
-    <>
+    <aside className="startup-engine-error" aria-label={heading}>
+      <p role="status">{heading}</p>
+      <p>
+        {memoryFailure
+          ? engineMemoryAdvice()
+          : engine.commandError || engine.status.message || i18nService.t('engineReasonUnavailable')}
+      </p>
       {failed && (
-        <aside className="startup-engine-error" aria-label={i18nService.t('startupEngineFailure')}>
-          <p>{i18nService.t('startupEngineFailure')}</p>
-          <p>
-            {engine.commandError ||
-              engine.status.message ||
-              i18nService.t('engineReasonUnavailable')}
-          </p>
+        <>
           <button
             className="startup-action"
             type="button"
@@ -45,7 +53,6 @@ export function StartupEngineNotice({ engine }: Props) {
           >
             {i18nService.t('startupDiagnosticsView')}
           </button>
-          <StartupLogButton />
           {engine.status.canRetry && (
             <button
               className="startup-action"
@@ -56,9 +63,10 @@ export function StartupEngineNotice({ engine }: Props) {
               {i18nService.t('engineStart')}
             </button>
           )}
-        </aside>
+        </>
       )}
-    </>
+      <StartupLogButton />
+    </aside>
   );
 }
 

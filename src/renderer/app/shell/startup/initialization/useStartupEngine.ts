@@ -1,5 +1,5 @@
 import { redactLogText } from '@shared/diagnostics/redaction';
-import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
+import { EngineFailureReason, EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 function engineStatus(value: unknown): OpenClawEngineStatus | undefined {
@@ -9,6 +9,7 @@ function engineStatus(value: unknown): OpenClawEngineStatus | undefined {
     !Object.values(EnginePhase).includes(status.phase as OpenClawEngineStatus['phase']) ||
     typeof status.canRetry !== 'boolean' ||
     !(status.version === null || typeof status.version === 'string') ||
+    !(status.failureReason === undefined || status.failureReason === EngineFailureReason.MemoryAllocation) ||
     !(status.diagnosticId === undefined || typeof status.diagnosticId === 'string') ||
     !(status.message === undefined || typeof status.message === 'string')
   )

@@ -5,6 +5,7 @@ import { expect, test, vi } from 'vitest';
 
 import { AppInitializationActivity, AppInitializationPhase, AppInitializationStep, AppInitializationTask, AppInitializationTaskStatus } from '../../../shared/app/initialization';
 import { StartupRoute } from '../../../shared/app/startup/routing';
+import { EngineFailureReason, EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 
 // Execute Main's real launch/ingress composition without starting Electron or a Gateway.
 const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../application.ts', import.meta.url), 'utf8'),
@@ -29,10 +30,14 @@ test('releases inherited profile cwd after path selection and before logging or 
 
 let statements: readonly ts.Statement[] = [];
 let prepareNetworkGeneration: ts.Expression | undefined;
+let completeEnginePreparation: ts.Expression | undefined;
 const visit = (node: ts.Node) => {
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
       node.name.text === 'prepareOutboundHeaderNetworkGeneration')
     prepareNetworkGeneration = node.initializer;
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) &&
+      node.name.text === 'completeEnginePreparation')
+    completeEnginePreparation = node.initializer;
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'initApp' &&
       node.initializer && ts.isArrowFunction(node.initializer) && ts.isBlock(node.initializer.body))
     statements = node.initializer.body.statements;
@@ -109,13 +114,14 @@ test('product Store and network policy, certificates and proxy activation follow
 
 function fixture(route: StartupRoute, configReady = true, delayServices = false) {
   const calls: string[] = [];
-  let finish!: (status: { phase: string }) => void;
-  const engine = new Promise<{ phase: string }>(resolve => { finish = resolve; });
+  let finish!: (status: Pick<OpenClawEngineStatus, 'phase' | 'failureReason'>) => void;
+  const engine = new Promise<Pick<OpenClawEngineStatus, 'phase' | 'failureReason'>>(resolve => { finish = resolve; });
+  let currentStatus: Pick<OpenClawEngineStatus, 'phase' | 'failureReason'> = { phase: EnginePhase.Starting };
   const pending = vi.fn();
   let finishServices!: (ready: boolean) => void;
   const ingress = new Promise<boolean>(resolve => { finishServices = resolve; });
   const context = {
-    AppInitializationActivity, AppInitializationPhase, AppInitializationStep, AppInitializationTask, AppInitializationTaskStatus, StartupRoute,
+    AppInitializationActivity, AppInitializationPhase, AppInitializationStep, AppInitializationTask, AppInitializationTaskStatus, StartupRoute, EngineFailureReason, EnginePhase,
     initialization: {
       advance: vi.fn(), reportActivity: vi.fn(), setEnginePreparationPending: pending, setTaskStatus: vi.fn(),
       failEnginePreparation: vi.fn(),
@@ -126,7 +132,7 @@ function fixture(route: StartupRoute, configReady = true, delayServices = false)
     startupCoordinator: { route, verifyNativeReady: async () => true },
     startupSync: { success: configReady }, appShutdown: { isQuitting: () => false },
     ensureOpenClawRunningForCowork: () => { calls.push('gateway'); return engine; },
-    getOpenClawEngineManager: () => ({ getGatewayProcessGeneration: () => 7 }),
+    getOpenClawEngineManager: () => ({ getGatewayProcessGeneration: () => 7, getStatus: () => currentStatus }),
     getCronJobService: () => ({ startPolling: () => { calls.push('poll'); } }),
     startChromeExtensionIngress: async () => { calls.push('browser'); return delayServices ? ingress : true; },
     getAgentCliIntegrationService: () => ({ prepare: () => { calls.push('cli'); } }),
@@ -136,16 +142,23 @@ function fixture(route: StartupRoute, configReady = true, delayServices = false)
     appServerIntegrationService: undefined, agentBridgeServer: undefined,
     t: (key: string) => key,
   };
+  if (!completeEnginePreparation) throw new Error('Main startup finalization unavailable');
+  const finalize = ts.transpileModule(`const finalize = ${completeEnginePreparation.getText(source)};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
   const execute = new Function(...Object.keys(context), `return (async () => {
     let startupHistoryAdmissionReady = false;
     let startupEnginePreparation;
     let startupExecutionGeneration;
+    let startupEngineFailureReason;
     let startupIntegrationPreparation;
     ${javascript}
+    ${finalize}
     return { engine: startupEnginePreparation, integrations: startupIntegrationPreparation,
-      generation: () => startupExecutionGeneration };
+      generation: () => startupExecutionGeneration, finalize };
   })();`);
-  return { calls, finish, finishServices, pending, context, run: () => execute(...Object.values(context)) };
+  return { calls, finish, finishServices, pending, context, run: () => execute(...Object.values(context)),
+    setCurrentStatus: (status: typeof currentStatus) => { currentStatus = status; } };
 }
 
 test('ordinary startup launches Gateway before local integrations without waiting for engine completion', async () => {
@@ -174,6 +187,21 @@ test('upgrade startup retains integration ordering and waits for its same engine
   expect(settled).toBe(false);
   f.finish({ phase: 'running' });
   await opening;
+});
+
+test('first-launch failure retains the confirmed memory reason if the retry becomes ready before finalization', async () => {
+  const f = fixture(StartupRoute.Fresh);
+  const opening = f.run();
+  await vi.waitFor(() => expect(f.calls).toContain('gateway'));
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    f.finish({ phase: EnginePhase.Starting, failureReason: EngineFailureReason.MemoryAllocation });
+    const owner = await opening;
+    f.setCurrentStatus({ phase: EnginePhase.Running });
+    expect(() => owner.finalize()).toThrow('startupEngineMemoryAllocationFailed');
+  } finally {
+    log.mockRestore();
+  }
 });
 
 test('ordinary startup does not launch an engine using failed configuration', async () => {

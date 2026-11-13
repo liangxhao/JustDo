@@ -10,9 +10,12 @@ import { expect, test, vi } from 'vitest';
 import { APP_PLUGIN_PYTHON_RUNTIME_ENV } from '../../../../plugins/sdk/app-plugin-sdk/runtimes';
 import { SHUTDOWN_BUDGET_MS } from '../../../shared/app/shutdownPolicy';
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
+import { EngineFailureReason, EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import { t } from '../../core/i18n';
+import { managedLogs } from '../../core/logging/logMaintenance';
 import { GATEWAY_RESTART_COMPLETION_TIMEOUT_MS } from './gatewayConfigReloadMonitor';
+import { GatewayMemoryEvent, type GatewayMemoryLogger } from './launch/gatewayMemoryDiagnostics';
 import { OPENCLAW_GATEWAY_SHUTDOWN_MESSAGE } from './launch/openclawLauncher';
 import {
   applyOpenClawCliNetworkMode,
@@ -515,6 +518,66 @@ test('ignores lifecycle events from a superseded Gateway process', () => {
   expect(scheduleGatewayRestart).toHaveBeenCalledOnce();
   expect(manager.gatewayProcess).toBeNull();
   expect(manager.gatewayMutationUnresolved).toBe(false);
+});
+
+test.each([
+  { late: false, target: 'JavaScript heap' },
+  { late: true, target: 'process' },
+])('reports Gateway $target memory failures (late stderr: $late)', async ({ late, target }) => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const child = Object.assign(new EventEmitter(), { stderr: new EventEmitter() });
+  const successor = new EventEmitter();
+  const logMemory = vi.fn<GatewayMemoryLogger>();
+  const manager = Object.assign(new EventEmitter(), {
+    gatewayProcess: child,
+    gatewayProcessGeneration: 1,
+    gatewayConfigReloadMonitor: { observeGatewayExit: vi.fn() },
+    expectedGatewayExits: new WeakSet(),
+    gatewayRestartAttempt: 0,
+    gatewayLogPath: path.join(os.tmpdir(), 'gateway-memory-test.log'),
+    status: { phase: EnginePhase.Starting, version: 'test', canRetry: false },
+    startGateway: vi.fn(),
+    observeGatewayProcessLine: vi.fn(),
+  });
+  Object.setPrototypeOf(manager, OpenClawEngineManager.prototype);
+  const engine = manager as unknown as {
+    attachGatewayExitHandlers: (child: EventEmitter, logMemory: GatewayMemoryLogger) => (line: string) => void;
+    attachGatewayProcessLogs: (child: EventEmitter, observeStderr: (line: string) => void) => void;
+    getStatus: () => OpenClawEngineStatus;
+  };
+  vi.spyOn(managedLogs, 'append').mockImplementation(() => undefined);
+  const oom = `FATAL ERROR: Committing semi space failed. Allocation failed - ${target} out of memory`;
+  try {
+    engine.attachGatewayProcessLogs(child, engine.attachGatewayExitHandlers(child, logMemory));
+    child.stderr.emit('data', `30 ms: Scavenge allocation failure\n${oom.slice(0, 25)}`);
+    expect(logMemory).not.toHaveBeenCalled();
+    child.stderr.emit('data', oom.slice(25));
+    if (!late) child.stderr.emit('end');
+    child.emit('exit', 134, null);
+    expect(engine.getStatus()).toMatchObject({ phase: EnginePhase.Starting, restarting: true });
+    expect(engine.getStatus().failureReason).toBe(late ? undefined : EngineFailureReason.MemoryAllocation);
+    if (late) child.stderr.emit('end');
+    expect(engine.getStatus().failureReason).toBe(EngineFailureReason.MemoryAllocation);
+    expect(logMemory.mock.calls.map(([event]) => event)).toEqual(late
+      ? [GatewayMemoryEvent.UnexpectedExit]
+      : [GatewayMemoryEvent.FatalStderr, GatewayMemoryEvent.UnexpectedExit]);
+
+    manager.startGateway.mockImplementation(async () => {
+      manager.gatewayProcess = successor;
+      manager.gatewayProcessGeneration++;
+      engine.attachGatewayExitHandlers(successor, logMemory);
+    });
+    await vi.advanceTimersToNextTimerAsync();
+    successor.emit('exit', 134, null);
+    expect(engine.getStatus()).toMatchObject({ phase: EnginePhase.Starting, restarting: true });
+    expect(engine.getStatus().failureReason).toBeUndefined();
+  } finally {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
 });
 
 test.each(['startGateway', 'restartGateway'] as const)(

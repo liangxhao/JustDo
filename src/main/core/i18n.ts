@@ -21,6 +21,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkReservedSession: '此会话仅用于内部存储，无法作为聊天打开。',
     ...startupWindowTranslations.zh,
     runtimeNodeUnavailable: '运行时尚未准备就绪，请重新准备或修复应用。',
+    startupEngineMemoryAllocationFailed: 'AI 引擎启动时无法分配内存。请关闭占用内存较多的应用，然后重新打开本应用。',
     enginePreparationPending: 'AI 引擎正在启动，暂时无法发送。请在就绪后重新发送，草稿已保留。',
     enginePreparationFailed: 'AI 引擎未能完成启动准备，请查看原因或重试。',
     enginePreparationShuttingDown: '应用正在退出，无法确认本次 AI 引擎准备结果。请在下次打开应用后核对状态。',
@@ -250,6 +251,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     ...startupWindowTranslations.en,
     runtimeNodeUnavailable:
       'The execution runtime is unavailable. Prepare the runtime or repair the application.',
+    startupEngineMemoryAllocationFailed: 'The AI engine could not allocate memory during startup. Close apps that use a lot of memory, then reopen this app.',
     gatewayShutdownUnconfirmed: 'The engine did not close cleanly. Quit and restart the application.',
     gatewayStartupUnconfirmed: 'The AI engine did not finish starting within the time limit. Check its status and startup reason.',
     legacyWorkspaceSetupCleanupFailed: 'Could not remove the legacy workspace setup file: {path}. Check the path and file permissions, then retry.',

@@ -1,6 +1,6 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { AppInitializationTaskStatus } from '@shared/app/initialization';
-import { EnginePhase } from '@shared/openclaw/engineStatus';
+import { EngineFailureReason, EnginePhase } from '@shared/openclaw/engineStatus';
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useSelector } from 'react-redux';
@@ -53,7 +53,12 @@ const EngineStartupStatusBar: React.FC = () => {
 
   const isError = !isStarting && (readiness.failed || startError !== null);
   const isBusy = !isError && (isStarting || readiness.pending);
-  const statusText = isError
+  const memoryFailure = status?.failureReason === EngineFailureReason.MemoryAllocation;
+  const statusText = memoryFailure
+    ? i18nService.t(status?.phase === EnginePhase.Starting
+      ? 'engineMemoryAllocationRestarting'
+      : 'engineMemoryAllocationFailed')
+    : isError
     ? i18nService.t('engineStartFailed')
     : i18nService.t(status?.restarting ? 'engineRestarting' : 'engineStarting');
 

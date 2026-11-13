@@ -56,7 +56,7 @@ export function classifyEngineFailure(text: string): EngineFailureCategory {
     return 'certificate';
   if (/\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ENETUNREACH)\b|fetch failed/i.test(text))
     return 'network';
-  if (/heap out of memory|allocation failed|\bENOMEM\b/i.test(text)) return 'memory';
+  if (/(?:heap|process) out of memory|allocation failed|\bENOMEM\b/i.test(text)) return 'memory';
   if (
     /(?:secret|credential|api.key|auth profile).{0,70}(?:missing|unresolved|not found|failed|invalid)|unauthorized|authentication failed/i.test(
       text,

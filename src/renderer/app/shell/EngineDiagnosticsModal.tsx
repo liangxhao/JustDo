@@ -3,7 +3,7 @@ import type {
   EngineDiagnosticResult,
   EngineDiagnosticsQuery,
 } from '@shared/openclaw/engineDiagnostics';
-import type { OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
+import { EngineFailureReason, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { useEffect, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -14,6 +14,7 @@ import {
   engineDiagnosticText,
   engineLogCoverageText,
 } from './engineDiagnosticsPresentation';
+import { engineMemoryAdvice } from './engineMemoryAdvice';
 
 interface Props {
   status: OpenClawEngineStatus;
@@ -142,6 +143,12 @@ export default function EngineDiagnosticsModal({ status, commandError, onClose, 
           className="min-h-0 space-y-4 overflow-auto px-5 py-4 text-sm select-text"
           aria-busy={loading}
         >
+          {status.failureReason === EngineFailureReason.MemoryAllocation && (
+            <div className="rounded-lg border border-border p-3">
+              <h3 className="font-medium">{t('engineMemoryAllocationFailed')}</h3>
+              <p className="mt-1 text-secondary">{engineMemoryAdvice()}</p>
+            </div>
+          )}
           <p className="whitespace-pre-wrap break-words text-secondary">
             {commandError || status.message || t('engineReasonUnavailable')}
           </p>
