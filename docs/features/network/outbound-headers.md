@@ -45,6 +45,7 @@ method、允许的模型 endpoint、header 与 body，并重建固定的连接�
 ### Extension 的生效条件
 
 生效条件只有三项：Extension 已安装、已启用、声明文件合法。
+应用沿用 OpenClaw 的大小写无关配置键判断启用状态，保留 Extension 声明中的原始 ID。
 
 本功能不增加独立的权限弹窗、审批令牌、授权记录、SQLite 表或 Renderer 状态。Extension 的
 安装和启用已经是用户动作，不再为同一个动作叠加第二套授权协议。通用 Extension 安装
@@ -96,7 +97,7 @@ HTTP 与 HTTPS 不互相授权；主机、端口或相邻路径不同也不会�
 
 ### 手工规则与 Extension 的合并
 
-`OutboundHeaderPolicyService` 每次 reconcile 都重新读取：
+全局注入开启时，`OutboundHeaderPolicyService` 每次合并都重新读取：
 
 1. 代码中的默认策略；
 2. 用户手工 `config.json`（缺失时自动创建空默认配置）；
@@ -116,6 +117,7 @@ effective = manual.enabled
 的格式）会重写为 `DEFAULT_OUTBOUND_HEADER_POLICY_CONFIG`，其 `groups` 为空。预定义组只存在于
 代码中，不写入文件。旧版本写入的预定义组在合并时去重。
 `config.json` 的全局 `enabled` 控制所有注入。内置规则先合并，随后依次合并手工规则和已启用 Extension 规则。Extension 规则带 owner id 仅用于诊断，不单独持久化。
+全局注入关闭时直接发布空策略。扩展禁用时跳过其声明文件。
 
 服务生成 canonical digest，用于判断有效策略是否变化以及是否需要刷新运行时。digest 不是
 授权凭据，也不写入数据库。

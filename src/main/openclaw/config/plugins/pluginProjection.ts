@@ -5,7 +5,7 @@ import {
 } from '../../../../shared/browser/browser';
 import { EXTERNAL_AGENT_CATALOG } from '../../../../shared/integrations/externalAgentCatalog';
 import { type ExternalAgentSettings } from '../../../../shared/integrations/externalAgents';
-import { OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
+import { normalizeOpenClawPluginPolicyId, OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../../shared/speech/localTts';
 import {
   buildBundledExtensionEntries,
@@ -27,10 +27,20 @@ export const removeUnavailableOpenClawPluginRegistrations = (
   availableExtensionIds: readonly string[],
 ): Record<string, unknown> => {
   const availableIds = new Set(availableExtensionIds);
-  const filterRegistrationRecord = (value: unknown): Record<string, unknown> | undefined => {
+  // Keep policy keys for mixed-case manifests without admitting alternate keys
+  // for canonical IDs whose entries are managed separately below.
+  const mixedCasePolicyIds = new Set(availableExtensionIds
+    .map(normalizeOpenClawPluginPolicyId)
+    .filter(id => !availableIds.has(id)));
+  const isAvailablePolicyId = (id: string) =>
+    availableIds.has(id) || mixedCasePolicyIds.has(normalizeOpenClawPluginPolicyId(id));
+  const filterRegistrationRecord = (
+    value: unknown,
+    isAvailable: (id: string) => boolean,
+  ): Record<string, unknown> | undefined => {
     if (!isRecord(value)) return undefined;
     const filtered = Object.fromEntries(
-      Object.entries(value).filter(([extensionId]) => availableIds.has(extensionId)),
+      Object.entries(value).filter(([extensionId]) => isAvailable(extensionId)),
     );
     return Object.keys(filtered).length > 0 ? filtered : undefined;
   };
@@ -40,15 +50,15 @@ export const removeUnavailableOpenClawPluginRegistrations = (
       ...new Set(
         value.filter(
           (extensionId): extensionId is string =>
-            typeof extensionId === 'string' && availableIds.has(extensionId),
+            typeof extensionId === 'string' && isAvailablePolicyId(extensionId),
         ),
       ),
     ];
     return filtered.length > 0 ? filtered : undefined;
   };
 
-  const entries = filterRegistrationRecord(plugins.entries);
-  const installs = filterRegistrationRecord(plugins.installs);
+  const entries = filterRegistrationRecord(plugins.entries, isAvailablePolicyId);
+  const installs = filterRegistrationRecord(plugins.installs, id => availableIds.has(id));
   const allow = filterRegistrationList(plugins.allow);
   const deny = filterRegistrationList(plugins.deny);
   const slots = isRecord(plugins.slots)

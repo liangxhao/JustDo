@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import { getLanguage, setLanguage, t } from '../../core/i18n';
+import { OutboundHeaderPolicyService } from '../../core/network/outboundHeaderPolicyService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   __openClawExtensionImportTestUtils,
@@ -3930,6 +3931,49 @@ describe('OpenClawExtensionImportService', () => {
     expect(service.listInstalled()[0].enabled).toBe(false);
   });
 
+  it('applies outbound policy for a mixed-case extension using native config keys', () => {
+    const id = 'SampleExtension';
+    const installedDir = path.join(fixtureRoot, 'extensions', id);
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(path.join(installedDir, 'openclaw.plugin.json'), JSON.stringify({ id }));
+    const group = {
+      baseUrlWhitelist: ['https://extension.example/v1/'],
+      headerNames: ['X-Extension-Token'],
+    };
+    fs.writeFileSync(path.join(installedDir, 'outbound-header-policy.json'), JSON.stringify({
+      schemaVersion: 1,
+      groups: [group],
+    }));
+    const configPath = path.join(fixtureRoot, 'openclaw.json');
+    const extensionService = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => ({
+        getStateDir: () => fixtureRoot,
+        getConfigPath: () => configPath,
+      }) as unknown as OpenClawEngineManager,
+    });
+    const policyService = new OutboundHeaderPolicyService({
+      listInstalledExtensions: () => extensionService.listInstalled(),
+      configPath: path.join(fixtureRoot, 'header-config.json'),
+      userInfoPath: path.join(fixtureRoot, 'user_info.json'),
+    });
+
+    const allow = ['sampleextension'];
+    const entries = { sampleextension: { enabled: true } };
+    fs.writeFileSync(configPath, JSON.stringify({ plugins: { allow, entries } }));
+    expect(extensionService.listInstalled()).toMatchObject([{ id, enabled: true }]);
+    expect(policyService.reconcile().groups).toContainEqual(group);
+
+    fs.writeFileSync(configPath, JSON.stringify({
+      plugins: { allow, entries, deny: ['SAMPLEEXTENSION'] },
+    }));
+    expect(policyService.reconcile().groups).not.toContainEqual(group);
+
+    fs.writeFileSync(configPath, JSON.stringify({
+      plugins: { allow, entries: { [id]: { enabled: true }, sampleextension: { enabled: false } } },
+    }));
+    expect(policyService.reconcile().groups).not.toContainEqual(group);
+  });
+
   it('fills local descriptions from compatible manifest and package metadata', () => {
     const stateDir = path.join(fixtureRoot, 'state');
     const extensionsDir = path.join(stateDir, 'extensions');
@@ -4591,6 +4635,54 @@ describe('OpenClawExtensionImportService', () => {
       entries: { 'sample-extension': { enabled: true } },
     });
     expect(restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a mixed-case extension policy disabled when offline enable fails', async () => {
+    const id = 'SampleExtension';
+    const installedDir = path.join(fixtureRoot, 'extensions', id);
+    fs.mkdirSync(installedDir, { recursive: true });
+    fs.writeFileSync(path.join(installedDir, 'openclaw.plugin.json'), JSON.stringify({ id }));
+    const group = { baseUrlWhitelist: ['https://extension.example/v1/'], headerNames: ['X-Token'] };
+    fs.writeFileSync(path.join(installedDir, 'outbound-header-policy.json'), JSON.stringify({
+      schemaVersion: 1,
+      groups: [group],
+    }));
+    const configPath = path.join(fixtureRoot, 'openclaw.json');
+    const settings = { limit: 4 };
+    fs.writeFileSync(configPath, JSON.stringify({
+      plugins: {
+        allow: ['other-plugin'],
+        entries: { [id]: { enabled: false }, sampleextension: { enabled: true, config: settings } },
+      },
+    }));
+    const manager = {
+      getStateDir: () => fixtureRoot,
+      getBaseDir: () => fixtureRoot,
+      getConfigPath: () => configPath,
+      getStatus: () => ({ phase: 'stopped' }),
+      buildCliEnvironment: async () => ({
+        env: { JUSTDO_ELECTRON_PATH: process.execPath },
+        runtimeRoot: fixtureRoot,
+        openclawEntry: path.join(fixtureRoot, 'openclaw.mjs'),
+      }),
+    } as unknown as OpenClawEngineManager;
+    const runCommand = vi.fn().mockResolvedValue({ exitCode: 1, stdout: '', stderr: 'Enable rejected' });
+    const policyService = new OutboundHeaderPolicyService({
+      listInstalledExtensions: () => service.listInstalled(),
+      configPath: path.join(fixtureRoot, 'header-config.json'),
+      userInfoPath: path.join(fixtureRoot, 'user_info.json'),
+    });
+    const service = new OpenClawExtensionImportService({
+      getOpenClawEngineManager: () => manager,
+      outboundHeaderPolicy: policyService,
+      runCommand,
+    });
+
+    await expect(service.setEnabled(id, true)).resolves.toMatchObject({ success: false, error: 'Enable rejected' });
+    expect(runCommand).toHaveBeenCalledOnce();
+    expect(service.listInstalled()).toMatchObject([{ id, enabled: false }]);
+    expect(policyService.reconcile().groups).not.toContainEqual(group);
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).plugins.entries.sampleextension.config).toEqual(settings);
   });
 
   it('disables an installed extension and restarts a Gateway that was still starting', async () => {

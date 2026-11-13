@@ -18,6 +18,7 @@ import {
   type OpenClawExtensionConfigurationField,
   type OpenClawPluginCapabilityReview,
 } from '../../../shared/plugins/extensions';
+import { normalizeOpenClawPluginPolicyId } from '../../../shared/plugins/nativeIds';
 import {
   PluginOperationStage,
   toPluginOperationStage,
@@ -752,18 +753,27 @@ const isExtensionEnabled = (manager: OpenClawEngineManager, extensionId: string)
   const config = readJsonRecord(manager.getConfigPath());
   const pluginsConfig = isRecord(config.plugins) ? config.plugins : {};
   const pluginEntries = isRecord(pluginsConfig.entries) ? pluginsConfig.entries : {};
-  const pluginEntry = isRecord(pluginEntries[extensionId]) ? pluginEntries[extensionId] : {};
-  const allow = Array.isArray(pluginsConfig.allow)
-    ? pluginsConfig.allow.filter((id): id is string => typeof id === 'string')
+  // OpenClaw folds policy keys while retaining the manifest ID for runtime identity.
+  const policyId = normalizeOpenClawPluginPolicyId(extensionId);
+  let entryEnabled: boolean | undefined;
+  for (const [id, entry] of Object.entries(pluginEntries)) {
+    if (normalizeOpenClawPluginPolicyId(id) !== policyId) continue;
+    if (!isRecord(entry)) entryEnabled = undefined;
+    else if (typeof entry.enabled === 'boolean') entryEnabled = entry.enabled;
+  }
+
+  const readPolicyIds = (value: unknown): string[] => Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === 'string')
+      .map(normalizeOpenClawPluginPolicyId)
+      .filter(Boolean)
     : [];
-  const deny = Array.isArray(pluginsConfig.deny)
-    ? pluginsConfig.deny.filter((id): id is string => typeof id === 'string')
-    : [];
+  const allow = readPolicyIds(pluginsConfig.allow);
+  const deny = readPolicyIds(pluginsConfig.deny);
   return (
     pluginsConfig.enabled !== false &&
-    pluginEntry.enabled !== false &&
-    !deny.includes(extensionId) &&
-    (allow.length === 0 || allow.includes(extensionId))
+    entryEnabled !== false &&
+    !deny.includes(policyId) &&
+    (allow.length === 0 || allow.includes(policyId))
   );
 };
 
@@ -785,13 +795,20 @@ const updateExtensionAllowlist = (
   const existingAllow = Array.isArray(plugins.allow)
     ? plugins.allow.filter((id): id is string => typeof id === 'string')
     : [];
+  const policyId = normalizeOpenClawPluginPolicyId(extensionId);
+  const matchesPolicyId = (id: string) => normalizeOpenClawPluginPolicyId(id) === policyId;
   const managedIds = operation === 'add' && existingAllow.length === 0 ? managedPluginIds : [];
   const allow =
     operation === 'add'
-      ? [...new Set([...existingAllow, ...managedIds, extensionId])]
-      : existingAllow.filter(id => id !== extensionId);
+      ? [...new Set([...existingAllow, ...managedIds])]
+      : existingAllow.filter(id => !matchesPolicyId(id));
+  if (operation === 'add' && !allow.some(matchesPolicyId)) allow.push(extensionId);
   const entries = isRecord(plugins.entries) ? plugins.entries : {};
-  const extensionEntry = isRecord(entries[extensionId]) ? entries[extensionId] : {};
+  // OpenClaw folds equivalent entries in order. Stage the disable on the last key.
+  const entryId = disableBeforeEnable
+    ? Object.keys(entries).findLast(matchesPolicyId) ?? extensionId
+    : extensionId;
+  const extensionEntry = isRecord(entries[entryId]) ? entries[entryId] : {};
   const shouldDisableEntry = disableBeforeEnable && extensionEntry.enabled !== false;
   if (
     !shouldDisableEntry &&
@@ -803,7 +820,7 @@ const updateExtensionAllowlist = (
 
   plugins.allow = allow;
   if (shouldDisableEntry) {
-    entries[extensionId] = { ...extensionEntry, enabled: false };
+    entries[entryId] = { ...extensionEntry, enabled: false };
     plugins.entries = entries;
   }
   config.plugins = plugins;

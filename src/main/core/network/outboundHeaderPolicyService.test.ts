@@ -121,7 +121,7 @@ test('merges enabled native-retained Extension contributions with the manual pol
   );
 
   let extensionEnabled = true;
-  const installed = (): InstalledOpenClawExtension[] => [
+  const installed = vi.fn((): InstalledOpenClawExtension[] => [
     {
       id: 'example',
       name: 'Example',
@@ -131,7 +131,7 @@ test('merges enabled native-retained Extension contributions with the manual pol
       missingRequirements: [],
       configurationFields: [],
     },
-  ];
+  ]);
   const service = new OutboundHeaderPolicyService({
     listInstalledExtensions: installed,
     configPath,
@@ -176,8 +176,10 @@ test('merges enabled native-retained Extension contributions with the manual pol
     ),
   ).toEqual({ 'X-Extension-Token': 'renewed' });
 
+  const inspectExtension = vi.spyOn(service, 'inspectExtension');
   extensionEnabled = false;
   expect(service.reconcile().groups).toHaveLength(2);
+  expect(inspectExtension).not.toHaveBeenCalled();
 
   fs.writeFileSync(configPath, '{"enabled":false,');
   expect(service.reconcile().groups).toHaveLength(1);
@@ -196,7 +198,9 @@ test('merges enabled native-retained Extension contributions with the manual pol
       ],
     }),
   );
+  installed.mockClear();
   expect(service.reconcile().groups).toHaveLength(0);
+  expect(installed).not.toHaveBeenCalled();
 });
 
 test('keeps the manual policy when Extension inventory cannot be read', () => {

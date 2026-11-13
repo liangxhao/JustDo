@@ -64,15 +64,21 @@ test('reads the current outbound header policy each time its developer dialog op
   const getOutboundHeaderPolicy = vi.fn()
     .mockResolvedValueOnce({
       enabled: true,
-      targets: [{
-        url: 'https://internal.example/v1/',
-        headers: [
-          { name: 'X-Token', sourceField: null, value: 'fixed-fixture' },
-          { name: 'X-Tenant', sourceField: 'tenant$&id', value: 'runtime-fixture' },
-          { name: 'X-Empty', sourceField: 'empty', value: '' },
-          { name: 'X-Invalid', sourceField: 'invalid', value: null },
-        ],
-      }],
+      targets: [
+        {
+          url: 'https://internal.example/v1/',
+          headers: [
+            { name: 'X-Token', sourceField: null, value: 'fixed-fixture' },
+            { name: 'X-Tenant', sourceField: 'tenant$&id', value: 'runtime-fixture' },
+            { name: 'X-Empty', sourceField: 'empty', value: '' },
+            { name: 'X-Invalid', sourceField: 'invalid', value: null },
+          ],
+        },
+        {
+          url: 'https://internal.example/v2/',
+          headers: [{ name: 'X-Version', sourceField: 'version', value: 'v2' }],
+        },
+      ],
     })
     .mockResolvedValueOnce({ enabled: false, targets: [] });
   vi.stubGlobal('electron', { api: { getOutboundHeaderPolicy } });
@@ -83,7 +89,11 @@ test('reads the current outbound header policy each time its developer dialog op
   fireEvent.click(button);
   const dialog = within(screen.getByRole('dialog', { name: 'outboundHeaderPolicyTitle' }));
   expect(await dialog.findByText('https://internal.example/v1/')).toBeTruthy();
-  expect(dialog.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual([
+  const table = within(dialog.getByRole('table'));
+  expect(table.getByRole('rowgroup', { name: 'https://internal.example/v1/' })).toBeTruthy();
+  const secondTarget = within(table.getByRole('rowgroup', { name: 'https://internal.example/v2/' }));
+  expect(secondTarget.getByRole('rowheader', { name: 'X-Version' })).toBeTruthy();
+  expect(table.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual([
     'outboundHeaderPolicyHeaderName',
     'outboundHeaderPolicyHeaderValue',
     'outboundHeaderPolicyHeaderSource',

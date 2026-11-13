@@ -13,6 +13,31 @@ import {
   mergeOpenClawSkillConfig,
 } from './pluginProjection';
 
+test('preserves native policy keys for an installed mixed-case plugin during config sync', () => {
+  const installedId = 'SampleExtension';
+  const entry = { enabled: false, config: { limit: 4 } };
+  const install = { source: 'archive' };
+  const plugins = {
+    entries: { sampleextension: entry, removed: { enabled: true }, 'Runtime-Services': { enabled: false } },
+    installs: { [installedId]: install, Removed: { source: 'archive' } },
+    allow: ['sampleextension', 'removed'],
+    deny: ['SAMPLEEXTENSION', 'removed', 'OPENAI'],
+  };
+
+  const managedEntries = { 'runtime-services': { enabled: true }, openai: { enabled: true } };
+  expect(mergeOpenClawPluginConfig(plugins, managedEntries, [], [installedId])).toEqual({
+    enabled: true,
+    entries: {
+      sampleextension: entry,
+      'runtime-services': { enabled: true, hooks: { allowConversationAccess: true } },
+      openai: { enabled: true },
+    },
+    installs: { [installedId]: install },
+    allow: ['sampleextension', 'runtime-services', 'openai'],
+    deny: ['SAMPLEEXTENSION'],
+  });
+});
+
 test('removes an absent optional app plugin without changing other plugin choices or permissions', () => {
   const root = mkdtempSync(path.join(tmpdir(), 'optional-plugin-config-'));
   try {

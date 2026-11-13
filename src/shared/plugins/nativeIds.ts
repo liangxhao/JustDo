@@ -1,3 +1,6 @@
+/** Matches OpenClaw's configuration policy keys while retaining declared runtime IDs. */
+export const normalizeOpenClawPluginPolicyId = (id: string): string => id.trim().toLowerCase();
+
 export const OpenClawExtensionId = {
   ASK_USER_QUESTION: 'ask-user-question',
   AUTOMATION_PERMISSION: 'automation-permission',

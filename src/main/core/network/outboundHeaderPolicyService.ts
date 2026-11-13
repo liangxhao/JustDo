@@ -45,10 +45,12 @@ export class OutboundHeaderPolicyService {
 
     let installedExtensions: InstalledOpenClawExtension[] = [];
     try {
-      installedExtensions = this.deps
-        .listInstalledExtensions()
-        .filter(candidate => candidate.installPath)
-        .sort((left, right) => left.id.localeCompare(right.id));
+      if (manual.enabled) {
+        installedExtensions = this.deps
+          .listInstalledExtensions()
+          .filter(candidate => candidate.enabled && candidate.installPath)
+          .sort((left, right) => left.id.localeCompare(right.id));
+      }
     } catch (error) {
       console.warn(
         '[OutboundHeaderPolicyService] Failed to read Extension inventory; excluding all Extension contributions:',
@@ -68,9 +70,6 @@ export class OutboundHeaderPolicyService {
         continue;
       }
       if (!inspection) continue;
-      if (!manual.enabled || !extension.enabled) {
-        continue;
-      }
       groups.push(...inspection.manifest.groups);
     }
 
