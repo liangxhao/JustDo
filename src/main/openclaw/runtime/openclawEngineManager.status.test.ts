@@ -2,7 +2,9 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { rootCertificates } from 'node:tls';
 
+import { app } from 'electron';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import cliRuntimeFiles from '../../../shared/openclaw/cliRuntimeFiles.json';
@@ -11,11 +13,7 @@ import { GatewayConfigReloadMonitor } from './gatewayConfigReloadMonitor';
 import { getElectronNodeRuntimePath } from './launch/electronNodeRuntime';
 import { OpenClawEngineManager, type OpenClawEngineStatus } from './openclawEngineManager';
 
-vi.mock('electron', () => ({ app: { isPackaged: false, getPath: () => 'fixture-user-data' } }));
-vi.mock('../../core/network/trustedCertificates', () => ({
-  applyTrustedCertificateEnv: vi.fn(),
-  buildTrustedCaBundle: () => 'fixture-ca.pem',
-}));
+vi.mock('electron', () => ({ app: { isPackaged: false, getPath: vi.fn() } }));
 vi.mock('../../core/runtime/dependencyManagerConfig', () => ({
   applyDependencyManagerConfigEnv: vi.fn(),
 }));
@@ -54,23 +52,33 @@ function createManager(phase: 'starting' | 'running' = 'starting') {
   return { manager, harness, statuses };
 }
 
-afterEach(() => { vi.restoreAllMocks(); setLanguage('zh'); });
+function createCliManager(directory: string, phase: 'starting' | 'running' = 'running') {
+  for (const name of cliRuntimeFiles) fs.writeFileSync(path.join(directory, name), '');
+  vi.mocked(app.getPath).mockReturnValue(directory);
+  const { manager, harness, statuses } = createManager(phase);
+  harness.resolveRuntimeMetadata = () => ({ root: directory, version: 'test' });
+  harness.stateDir = directory;
+  harness.configPath = path.join(directory, 'openclaw.json');
+  harness.systemPromptReplacementRulesPath = path.join(directory, 'prompt-rules.json');
+  harness.gatewayPort = 14041;
+  harness.ensureBareEntryFiles = vi.fn();
+  harness.ensureGatewayToken = () => 'fixture-token';
+  harness.ensureBundledCliShims = () => null;
+  harness.readGatewayPort = () => 14041;
+  harness.writeGatewayPort = vi.fn();
+  return { manager, harness, statuses };
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  setLanguage('zh');
+});
 
 describe('Gateway lifecycle during runtime environment reads', () => {
   it.each(['zh', 'en'] as const)('localizes bundled Node admission failures in %s and keeps diagnostic secrets redacted', async language => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-status-'));
     try {
-      for (const name of cliRuntimeFiles) fs.writeFileSync(path.join(directory, name), '');
-      const { manager, harness } = createManager('running');
-      harness.resolveRuntimeMetadata = () => ({ root: directory, version: 'test' });
-      harness.stateDir = directory;
-      harness.configPath = path.join(directory, 'openclaw.json');
-      harness.systemPromptReplacementRulesPath = path.join(directory, 'prompt-rules.json');
-      harness.gatewayPort = 14041;
-      harness.ensureBareEntryFiles = vi.fn();
-      harness.ensureGatewayToken = () => 'fixture-token';
-      harness.readGatewayPort = () => 14041;
-      harness.writeGatewayPort = vi.fn();
+      const { manager } = createCliManager(directory);
       const cause = new Error('Bundled Node damaged; token=private-fixture-token');
       vi.mocked(getElectronNodeRuntimePath).mockImplementationOnce(() => { throw cause; });
       const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -201,18 +209,7 @@ describe('Gateway lifecycle during runtime environment reads', () => {
     async phase => {
       const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-status-'));
       try {
-        for (const name of cliRuntimeFiles) fs.writeFileSync(path.join(directory, name), '');
-        const { manager, harness, statuses } = createManager(phase);
-        harness.resolveRuntimeMetadata = () => ({ root: directory, version: 'test' });
-        harness.stateDir = directory;
-        harness.configPath = path.join(directory, 'openclaw.json');
-        harness.systemPromptReplacementRulesPath = path.join(directory, 'prompt-rules.json');
-        harness.gatewayPort = 14041;
-        harness.ensureBareEntryFiles = vi.fn();
-        harness.ensureGatewayToken = () => 'fixture-token';
-        harness.ensureBundledCliShims = () => null;
-        harness.readGatewayPort = () => 14041;
-        harness.writeGatewayPort = vi.fn();
+        const { manager, harness, statuses } = createCliManager(directory, phase);
         harness.resolveGatewayPort = vi.fn(async () => 14042);
         const before = manager.getStatus();
 
@@ -225,6 +222,43 @@ describe('Gateway lifecycle during runtime environment reads', () => {
         expect(harness.resolveGatewayPort).not.toHaveBeenCalled();
         expect(harness.writeGatewayPort).toHaveBeenCalledWith(14041);
       } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === 'win32').each(['missing', 'malformed', 'valid'] as const)(
+    'projects usable certificate trust into the launch environment when the inherited PEM is %s',
+    async kind => {
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-trust-'));
+      const originalKey = Object.keys(process.env).find(key => key.toUpperCase() === 'NODE_EXTRA_CA_CERTS');
+      const originalPath = process.env.NODE_EXTRA_CA_CERTS;
+      try {
+        const { manager } = createCliManager(directory);
+        const name = '企业 根证书.pem';
+        const filename = path.join(directory, name);
+        if (kind === 'valid') fs.writeFileSync(filename, rootCertificates[0]);
+        if (kind === 'malformed') {
+          fs.writeFileSync(filename, '-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----');
+        }
+        const envKey = kind === 'malformed' ? 'node_extra_ca_certs' : 'NODE_EXTRA_CA_CERTS';
+        const inheritedPath = kind === 'valid' ? name : filename;
+        delete process.env.NODE_EXTRA_CA_CERTS;
+        process.env[envKey] = inheritedPath;
+
+        const { env } = await manager.buildCliEnvironment();
+
+        const expected = kind === 'valid'
+          ? filename
+          : path.join(directory, 'outbound-header-proxy', 'certs', 'trusted-ca-bundle.pem');
+        expect(env.NODE_EXTRA_CA_CERTS).toBe(expected);
+        expect(env.REQUESTS_CA_BUNDLE).toBe(expected);
+        expect(env).not.toHaveProperty('node_extra_ca_certs');
+        expect(fs.readFileSync(expected, 'utf8')).toContain('-----BEGIN CERTIFICATE-----');
+        expect(process.env[envKey]).toBe(inheritedPath);
+      } finally {
+        delete process.env.NODE_EXTRA_CA_CERTS;
+        if (originalKey && originalPath !== undefined) process.env[originalKey] = originalPath;
         fs.rmSync(directory, { recursive: true, force: true });
       }
     },

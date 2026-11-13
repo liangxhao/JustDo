@@ -25,10 +25,6 @@ import type { SystemPromptReplacementRule } from '../../../shared/prompts/system
 import { t } from '../../core/i18n';
 import { LogKind, managedLogs } from '../../core/logging/logMaintenance';
 import { redactLogText } from '../../core/logging/logRedaction';
-import {
-  applyTrustedCertificateEnv,
-  buildTrustedCaBundle,
-} from '../../core/network/trustedCertificates';
 import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyManagerConfig';
 import { appendPluginPythonRuntimeToEnv } from '../../core/runtime/pluginPythonRuntime';
 import { applyPortableGitRuntimeEnv } from '../../core/runtime/portableGitRuntime';
@@ -54,6 +50,7 @@ import {
   loadPreparedWindowsRuntimePreload,
   resolvePreparedWindowsGatewayLauncher,
 } from './launch/preparedGatewayRuntime';
+import { applyRuntimeTrustEnvironment } from './launch/runtimeTrustEnvironment';
 import {
   buildOpenClawCompileCacheEnvironment,
   buildOpenClawCompileCacheSetupSource,
@@ -788,10 +785,7 @@ export class OpenClawEngineManager extends EventEmitter {
     await appendPluginPythonRuntimeToEnv(env as Record<string, string | undefined>);
     applyPortableGitRuntimeEnv(env as Record<string, string | undefined>);
     applyDependencyManagerConfigEnv(env);
-    applyTrustedCertificateEnv(
-      env,
-      env.NODE_EXTRA_CA_CERTS || buildTrustedCaBundle(app.getPath('userData')),
-    );
+    await applyRuntimeTrustEnvironment(env, runtime.root, app.getPath('userData'));
 
     const npmBinDir = resolveElectronNpmBinDir();
     const nodeShimDir = ensureElectronNodeShim(

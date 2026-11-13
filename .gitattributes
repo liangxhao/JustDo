@@ -1,6 +1,9 @@
 # Force LF line endings for shell scripts (required for bash on all platforms)
 *.sh text eol=lf
 
+# npm normalizes the shebang when linking this workspace executable.
+plugins/sdk/app-plugin-build/cli.mjs text eol=lf
+
 # Patch modules serialize function source into runtime bundles. Keep their source
 # stable so Windows autocrlf settings cannot change generated runtime artifacts.
 scripts/patches/** text eol=lf

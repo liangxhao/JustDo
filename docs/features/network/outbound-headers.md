@@ -231,9 +231,12 @@ env proxy。未配置代理、命中 `NO_PROXY` 或未命中 Header URL 白名�
 ### Windows 中文路径的 CA 加载
 
 Windows 随包 Node 的 OpenSSL 入口可能无法通过中文路径加载 `NODE_EXTRA_CA_CERTS`。
+在 Windows 上构造 Gateway 和受管 CLI 的子进程环境时，Main 先检查继承的 `NODE_EXTRA_CA_CERTS`。
+有效的 PEM 路径可继续用于基础网络环境，相对路径以 OpenClaw 运行时目录为基准。
+文件缺失、不可读或内容无效时，Main 记录警告并使用默认和系统信任。此处理只影响应用传给子进程的环境。
 Gateway、Node/npm 启动脚本及 MCP 显式 `--require` 共用的用户目录 preload 会在业务代码前
 通过 Node 文件接口读取同一 PEM，并将证书合入现有默认和系统 CA。证书校验保持启用；
-缺失或无效的 CA bundle 明确失败，不转为忽略校验。该过程不修改安装资源或系统证书库。
+传给 preload 的 CA bundle 缺失或无效时仍明确失败。该过程不修改安装资源或系统证书库。
 普通 MCP 保留其既有环境边界：不自动继承 Gateway 私有 CA 或代理 capability；
 共用 preload 保留系统信任，并只加载传输层实际收到的显式额外 CA，不能绕过原生环境策略。
 随包引擎仍可能打印原生路径加载 warning；release 验证以真实本地 TLS 受信成功、
