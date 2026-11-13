@@ -1,5 +1,6 @@
 import { SessionCopyErrorCode } from '@shared/cowork/sessionCopy';
 import { SessionRunBeginErrorCode } from '@shared/cowork/sessionRun';
+import { ExternalSessionSource, ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { coworkService } from '@/features/cowork/coworkService';
@@ -14,6 +15,7 @@ import {
   setPlanMode,
   setSessionListStatus,
   setSessionRuntimeActivity,
+  setSessionRuntimeSnapshot,
   setSessions,
 } from '@/features/cowork/coworkSlice';
 import type { CoworkSession } from '@/features/cowork/coworkTypes';
@@ -652,6 +654,35 @@ describe('cowork session permission selection', () => {
     expect(setConfig).not.toHaveBeenCalled();
     expect(store.getState().cowork.currentSession?.permissionMode).toBe('ask');
     expect(store.getState().cowork.config.permissionMode).toBe('full');
+  });
+
+  test('opening an inactive external session preserves the confirmed idle observation', async () => {
+    const session: CoworkSession = {
+      id: 'inactive-external', title: 'External session', status: 'running', pinned: false,
+      cwd: 'C:\\workspace', executionMode: 'local', permissionMode: 'ask',
+      activeSkillIds: [], agentId: 'main', createdAt: 1, updatedAt: 2,
+      external: {
+        origin: ExternalSessionSource.Cli, readOnly: true, status: ExternalSessionStatus.Running,
+        sessionKey: 'native-key',
+      },
+    };
+    store.dispatch(setCurrentSession(session));
+    store.dispatch(setSessionRuntimeSnapshot({
+      sessionId: session.id,
+      snapshot: { revision: 1, known: true, mainRunning: false, subagentRunning: false, running: false },
+    }));
+    vi.stubGlobal('window', { electron: { cowork: {
+      getSession: vi.fn().mockResolvedValue({ success: true, session }),
+      remoteManaged: vi.fn().mockResolvedValue({ success: true, remoteManaged: false }),
+    } } });
+
+    try {
+      await coworkService.loadSession(session.id);
+      expect(store.getState().cowork.sessionRuntimeActivity[session.id]).toBe(false);
+      expect(store.getState().cowork.isStreaming).toBe(false);
+    } finally {
+      store.dispatch(deleteSession(session.id));
+    }
   });
 
   test('keeps a new session selected when an older session load finishes late', async () => {

@@ -118,44 +118,58 @@ test('keeps late external activity observations from creating or reopening a set
   expect(timing.endedAt).toBe(2_000);
 });
 
-test('keeps historical external receipts running across repeated single and batch idle observations', async () => {
-  vi.useFakeTimers();
-  vi.setSystemTime(10_000);
-  const timing = {
-    id: 'exact-receipt', sessionId: 'external-session', clientTurnId: 'external-turn', rootRunId: 'external-turn',
-    state: 'running' as const, startedAt: 1_000, acceptedAt: 1_100,
-  };
-  const mutations = {
-    beginSessionRun: vi.fn(), reopenSessionRun: vi.fn(), bindSessionRunRootRun: vi.fn(), finishSessionRun: vi.fn(),
-  };
-  const store = {
-    getSession: () => ({ external: { origin: ExternalSessionSource.HistoricalAppServer, readOnly: true, status: ExternalSessionStatus.Running, sessionKey: 'native-key' } }),
-    getLatestSessionRun: () => timing,
-    ...mutations,
-  } as unknown as CoworkStore;
-  const idle = { known: true, mainRunning: false, subagentRunning: false, running: false };
-  const router = {
-    getSessionRuntimeStatus: vi.fn().mockResolvedValue(idle),
-    getSessionRuntimeStatuses: vi.fn().mockResolvedValue({ 'external-session': idle }),
-  } as unknown as CoworkEngineRouter;
-  const requestGateway = vi.fn();
-  registerCoworkSessionHandlers({
-    getCoworkStore: () => store, getCoworkEngineRouter: () => router, setSessionPermissionMode: vi.fn(), requestGateway,
-  });
-  const single = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:runtimeStatus')![1] as IpcHandler;
-  const batch = mocks.handle.mock.calls.find(([name]) => name === 'cowork:sessions:runtimeStatus')![1] as IpcHandler;
+test.each([ExternalSessionSource.Cli, ExternalSessionSource.HistoricalAppServer])(
+  'reports live inactivity without settling an open %s receipt',
+  async origin => {
+    const timing = {
+      id: 'exact-receipt', sessionId: 'external-session', clientTurnId: 'external-turn',
+      rootRunId: 'external-turn', state: 'running' as const, startedAt: 1_000, acceptedAt: 1_100,
+    };
+    const mutations = {
+      beginSessionRun: vi.fn(), reopenSessionRun: vi.fn(), bindSessionRunRootRun: vi.fn(),
+      finishSessionRun: vi.fn(),
+    };
+    const store = {
+      getSession: () => ({
+        external: { origin, readOnly: true, status: ExternalSessionStatus.Running, sessionKey: 'native-key' },
+      }),
+      getLatestSessionRun: () => timing,
+      ...mutations,
+    } as unknown as CoworkStore;
+    const idle = { known: true, mainRunning: false, subagentRunning: false, running: false };
+    const router = {
+      getSessionRuntimeStatus: vi.fn().mockResolvedValue(idle),
+      getSessionRuntimeStatuses: vi.fn().mockResolvedValue({ [timing.sessionId]: idle }),
+    } as unknown as CoworkEngineRouter;
+    const requestGateway = vi.fn();
+    const isExternalSessionExecuting = vi.fn().mockReturnValue(false);
+    registerCoworkSessionHandlers({
+      getCoworkStore: () => store, getCoworkEngineRouter: () => router,
+      setSessionPermissionMode: vi.fn(), requestGateway, isExternalSessionExecuting,
+    });
+    const single = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:runtimeStatus')![1] as IpcHandler;
+    const batch = mocks.handle.mock.calls.find(([name]) => name === 'cowork:sessions:runtimeStatus')![1] as IpcHandler;
 
-  await expect(single(null, timing.sessionId)).resolves.toMatchObject({ success: true, ...idle, running: true, timing, revision: expect.any(Number) });
-  vi.setSystemTime(11_000);
-  await expect(batch(null, [timing.sessionId])).resolves.toMatchObject({ success: true, statuses: { [timing.sessionId]: { ...idle, running: true, timing, revision: expect.any(Number) } } });
-  vi.setSystemTime(12_000);
-  await expect(single(null, timing.sessionId)).resolves.toMatchObject({ success: true, ...idle, running: true, timing });
+    await expect(single(null, timing.sessionId)).resolves.toMatchObject({
+      success: true, ...idle, timing, revision: expect.any(Number),
+    });
+    await expect(batch(null, [timing.sessionId])).resolves.toMatchObject({
+      success: true, statuses: { [timing.sessionId]: { ...idle, timing, revision: expect.any(Number) } },
+    });
 
-  for (const mutate of Object.values(mutations)) expect(mutate).not.toHaveBeenCalled();
-  expect(requestGateway).not.toHaveBeenCalled();
-  expect(timing.state).toBe('running');
-  expect(timing).not.toHaveProperty('endedAt');
-});
+    isExternalSessionExecuting.mockReturnValue(true);
+    await expect(single(null, timing.sessionId)).resolves.toMatchObject({
+      success: true, known: true, running: true, mainRunning: false, timing,
+    });
+    isExternalSessionExecuting.mockReturnValue(false);
+    await expect(single(null, timing.sessionId)).resolves.toMatchObject({ success: true, ...idle });
+
+    for (const mutate of Object.values(mutations)) expect(mutate).not.toHaveBeenCalled();
+    expect(requestGateway).not.toHaveBeenCalled();
+    expect(timing.state).toBe('running');
+    expect(timing).not.toHaveProperty('endedAt');
+  },
+);
 
 test.each(['copy', 'fork'] as const)('%s retains native external activity checks without treating the source as a new send', async action => {
   const source = { id: 'external-source', agentId: 'main', title: 'Source', external: {} };

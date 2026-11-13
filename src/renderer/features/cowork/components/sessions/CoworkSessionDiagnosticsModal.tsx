@@ -39,6 +39,7 @@ import {
 interface Props {
   sessionId: string;
   sessionTitle: string;
+  externalActivity?: 'running' | 'ended' | 'unknown';
   scopeLabel?: string;
   returnFocusRef?: React.RefObject<HTMLElement | null>;
   onClose: () => void;
@@ -52,6 +53,7 @@ const buttonClass = 'diagnostics-button';
 export default function CoworkSessionDiagnosticsModal({
   sessionId,
   sessionTitle,
+  externalActivity,
   scopeLabel,
   returnFocusRef,
   onClose,
@@ -387,6 +389,11 @@ export default function CoworkSessionDiagnosticsModal({
                   <ShieldCheckIcon aria-hidden="true" />
                   {t('diagnosticsLocalBadge')}
                 </span>
+                {(externalActivity === 'ended' || externalActivity === 'running') && (
+                  <span className="diagnostics-muted">
+                    {t(externalActivity === 'ended' ? 'coworkStatusEnded' : 'coworkStatusRunning')}
+                  </span>
+                )}
               </div>
               <p className="diagnostics-session-title" title={sessionTitle}>
                 {sessionTitle}
@@ -425,7 +432,9 @@ export default function CoworkSessionDiagnosticsModal({
                 <option value="">{t('diagnosticsLatest')}</option>
                 {runs.map(run => (
                   <option key={run.id} value={run.id}>
-                    {date(run.startedAt)} · {t(`diagnosticsState_${run.state}`)}
+                    {date(run.startedAt)}
+                    {(!externalActivity || run.state !== 'running') &&
+                      ` · ${t(`diagnosticsState_${run.state}`)}`}
                   </option>
                 ))}
               </select>

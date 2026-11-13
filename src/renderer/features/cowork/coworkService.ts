@@ -1231,7 +1231,7 @@ export class CoworkService {
     if (result.success && result.session) {
       const mainRuntimeRunning =
         store.getState().cowork.sessionMainRuntimeActivity[sessionId] === true ||
-        result.session.status === 'running';
+        (!result.session.external?.readOnly && result.session.status === 'running');
       let session = mainRuntimeRunning
         ? { ...result.session, status: 'running' as const }
         : result.session;

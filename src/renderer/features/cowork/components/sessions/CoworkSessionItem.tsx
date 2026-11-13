@@ -8,8 +8,10 @@ import {
   Square2StackIcon,
 } from '@heroicons/react/24/outline';
 import { isSourceGroupedSession } from '@shared/cowork/sessionSource';
+import { ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { useSyncExternalStore } from 'react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useSelector } from 'react-redux';
 
 import CoworkSessionDetailsModal from '@/features/cowork/components/sessions/CoworkSessionDetailsModal';
 import type {
@@ -24,6 +26,7 @@ import PencilSquareIcon from '@/shared/components/icons/PencilSquareIcon';
 import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Modal from '@/shared/components/ui/Modal';
 import Tooltip from '@/shared/components/ui/Tooltip';
+import type { RootState } from '@/store';
 
 import CoworkSessionDiagnosticsModal from './CoworkSessionDiagnosticsModal';
 
@@ -396,6 +399,14 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   const renameLabel = i18nService.t('renameConversation');
   const deleteLabel = i18nService.t('deleteSession');
   const showRunningIndicator = isRuntimeRunning || isAutomaticRetryActive;
+  const confirmedInactive = useSelector(
+    (state: RootState) => state.cowork?.sessionRuntimeActivity[session.id] === false,
+  );
+  const externalRunEnded = !showRunningIndicator && confirmedInactive &&
+    session.external?.status === ExternalSessionStatus.Running;
+  const externalActivity = session.external?.readOnly
+    ? showRunningIndicator ? 'running' : externalRunEnded ? 'ended' : 'unknown'
+    : undefined;
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const batchLabel = i18nService.t('batchOperations');
   const moveToGroupLabel = i18nService.t('moveToGroup');
@@ -833,6 +844,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         <CoworkSessionDiagnosticsModal
           sessionId={session.id}
           sessionTitle={session.title}
+          externalActivity={externalActivity}
           scopeLabel={pluginPresentation.diagnosticScopeLabel}
           returnFocusRef={sessionItemRef}
           onClose={() => setShowDiagnostics(false)}
@@ -842,7 +854,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         <CoworkSessionDetailsModal
           sessionSummary={session}
           groups={groups}
-          isRuntimeRunning={isRuntimeRunning}
+          isRuntimeRunning={session.external?.readOnly ? showRunningIndicator : isRuntimeRunning}
+          isRuntimeEnded={externalRunEnded}
           returnFocusRef={sessionItemRef}
           onClose={handleCloseDetails}
         />

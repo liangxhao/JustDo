@@ -5,6 +5,7 @@ import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRete
 import type { SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
 import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
+import { ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/security/approvals';
 
 import {
@@ -171,6 +172,11 @@ const coworkSlice = createSlice({
         updatedAt: Math.max(entry.updatedAt, previous.get(entry.id) ?? 0),
       }));
       const directory = new Map(state.sessionDirectory.map(entry => [entry.id, entry]));
+      for (const [id, running] of Object.entries(state.sessionRuntimeActivity)) {
+        if (!running && directory.get(id)?.external?.status !== ExternalSessionStatus.Running) {
+          delete state.sessionRuntimeActivity[id];
+        }
+      }
       state.sessions = state.sessions
         .filter(session => directory.has(session.id))
         .map(session => ({ ...session, ...directory.get(session.id)! }));
@@ -623,8 +629,17 @@ const coworkSlice = createSlice({
         snapshot.running ||
         state.sessionMainRuntimeActivity[sessionId] === true ||
         (!snapshot.known && state.sessionRuntimeActivity[sessionId] === true);
-      if (running) state.sessionRuntimeActivity[sessionId] = true;
-      else delete state.sessionRuntimeActivity[sessionId];
+      const summary = state.sessions.find(session => session.id === sessionId);
+      const current = state.currentSession?.id === sessionId ? state.currentSession : null;
+      const external = state.sessionDirectory?.find(entry => entry.id === sessionId)?.external ??
+        summary?.external ?? current?.external;
+      // Open external receipts can outlive execution. Preserve a confirmed idle
+      // observation so the UI can distinguish it from activity not yet checked.
+      if (running || (snapshot.known && external?.status === ExternalSessionStatus.Running)) {
+        state.sessionRuntimeActivity[sessionId] = running;
+      } else {
+        delete state.sessionRuntimeActivity[sessionId];
+      }
       if (snapshot.timing) {
         const timings = state.sessionRunTimings[sessionId] ?? [];
         const index = timings.findIndex(timing => timing.id === snapshot.timing!.id);
@@ -634,10 +649,9 @@ const coworkSlice = createSlice({
       }
       const status = running ? 'running' : snapshot.timing?.state === 'failed' ? 'error' : 'idle';
       updateDirectoryEntry(state, sessionId, { status });
-      const sessionIndex = state.sessions.findIndex(session => session.id === sessionId);
-      if (sessionIndex >= 0) state.sessions[sessionIndex].status = status;
-      if (state.currentSession?.id === sessionId) {
-        state.currentSession.status = status;
+      if (summary) summary.status = status;
+      if (current) {
+        current.status = status;
         state.isStreaming = state.sessionMainRuntimeActivity[sessionId] === true;
       }
     },

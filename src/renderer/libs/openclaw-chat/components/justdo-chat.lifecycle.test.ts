@@ -51,6 +51,33 @@ test('does not resurrect rendering resources from a pending update after removal
   expect(interval).toHaveBeenCalledOnce();
 });
 
+test('an external open receipt keeps its place in history without driving the live footer', async () => {
+  const controller = new ChatController();
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  controller.state.chatMessages = [
+    { role: 'user', content: 'First request', timestamp: 1_000 },
+    { role: 'assistant', content: 'First reply', timestamp: 2_000 },
+    { role: 'user', content: 'Second request', timestamp: 3_000 },
+    { role: 'assistant', content: 'Second reply', timestamp: 4_000 },
+  ];
+  vi.spyOn(controller, 'getLoadedMessages').mockReturnValue(controller.state.chatMessages);
+  chat.controller = controller;
+  chat.runTimings = [
+    { id: 'first', sessionId: 'session', clientTurnId: 'first', state: 'completed', startedAt: 1_000, endedAt: 2_000 },
+    { id: 'second', sessionId: 'session', clientTurnId: 'second', state: 'running', startedAt: 3_000 },
+  ];
+  chat.useOpenRunTimingForActivity = false;
+  document.body.append(chat);
+  await chat.updateComplete;
+
+  expect(chat.shadowRoot?.querySelector('.chat-group--assistant')).not.toBeNull();
+  expect(chat.shadowRoot?.querySelector('.active-turn__footer')).toBeNull();
+
+  chat.useOpenRunTimingForActivity = true;
+  await chat.updateComplete;
+  expect(chat.shadowRoot?.querySelector('.active-turn__footer')).not.toBeNull();
+});
+
 test('resubscribes to the existing controller when the same element reconnects', async () => {
   vi.stubGlobal(
     'requestAnimationFrame',

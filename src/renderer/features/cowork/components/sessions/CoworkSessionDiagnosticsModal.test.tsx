@@ -62,6 +62,23 @@ const open = () =>
   );
 
 describe('session diagnostics', () => {
+  it('shows current inactivity while keeping the selected run evidence intact', async () => {
+    const historical = report({
+      run: { id: 'run-1', startedAt: 1, state: 'running' },
+      conclusion: { reason: 'unknown', confidence: 'unknown', evidenceIds: [], toolFailures: 0 },
+    });
+    bridge.list.mockResolvedValue({ success: true, runs: [historical.run] });
+    bridge.read.mockResolvedValue({ success: true, report: historical });
+    render(<CoworkSessionDiagnosticsModal
+      sessionId="target" sessionTitle="External conversation" externalActivity="ended" onClose={vi.fn()}
+    />);
+
+    expect(screen.getByText(i18nService.t('coworkStatusEnded'))).toBeTruthy();
+    await screen.findByText(i18nService.t('diagnosticsState_running'));
+    expect(screen.getByRole('option', { name: /1970/ }).textContent)
+      .not.toContain(i18nService.t('diagnosticsState_running'));
+  });
+
   it('shows the public replay observation only on failed lifecycle and chat timeline events', () => {
     const events = [
       { kind: 'lifecycle', phase: 'error' },

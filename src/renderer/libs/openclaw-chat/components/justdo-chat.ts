@@ -285,6 +285,9 @@ export class JustDoChatElement extends LitElement {
   @property({ type: Array, attribute: false })
   declare runTimings: SessionRunTiming[];
 
+  @property({ type: Boolean, attribute: false })
+  declare useOpenRunTimingForActivity: boolean;
+
   @property({ attribute: false })
   declare productSessionId: string;
 
@@ -453,6 +456,7 @@ export class JustDoChatElement extends LitElement {
     this.searchCaseSensitive = false;
     this.processSummariesExpanded = false;
     this.runTimings = [];
+    this.useOpenRunTimingForActivity = true;
     this.productSessionId = '';
     this.onLastUserMessageAction = undefined;
     this.onAssistantMessageFork = undefined;
@@ -861,7 +865,10 @@ export class JustDoChatElement extends LitElement {
     const displayRunTimings = this.runTimings.filter(timing =>
       !timing.rootRunId || !hiddenRetryRunIds.has(timing.rootRunId),
     );
-    const currentRunTiming = displayRunTimings[displayRunTimings.length - 1] ?? null;
+    const latestRunTiming = displayRunTimings[displayRunTimings.length - 1] ?? null;
+    const currentRunTiming = !this.useOpenRunTimingForActivity && latestRunTiming?.state === 'running'
+      ? null
+      : latestRunTiming;
     const processFoldOptions = {
       foldUnresolvedTools: true,
       protectTrailingTurn: Boolean(
@@ -1380,8 +1387,9 @@ export class JustDoChatElement extends LitElement {
   private syncActiveTurnClock(): void {
     const isRunning =
       this._controller?.state.runActivity != null ||
-      this.runTimings[this.runTimings.length - 1]?.state === 'running' ||
-      (this.runTimings.length === 0 &&
+      (this.useOpenRunTimingForActivity &&
+        this.runTimings[this.runTimings.length - 1]?.state === 'running') ||
+      ((!this.useOpenRunTimingForActivity || this.runTimings.length === 0) &&
         (this._controller?.getCurrentTurnTiming()?.status === 'running' ||
           this.activeTurn?.status === 'running')) ||
       this._controller?.state.compactionInFlight === true;

@@ -59,6 +59,7 @@ interface SessionHandlerDependencies {
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
   getAutomaticErrorRetryActivity?: () => AutomaticErrorRetryActivitySnapshot | null;
+  isExternalSessionExecuting?: (sessionId: string) => boolean;
   setSessionPermissionMode: (
     sessionId: string,
     permissionMode: PermissionMode,
@@ -79,6 +80,7 @@ export const registerCoworkSessionHandlers = ({
   getCoworkStore,
   getCoworkEngineRouter,
   getAutomaticErrorRetryActivity,
+  isExternalSessionExecuting,
   setSessionPermissionMode,
   requestGateway,
   workspaceAppSessions,
@@ -147,12 +149,14 @@ export const registerCoworkSessionHandlers = ({
       external.origin === ExternalSessionSource.Cli ||
       external.origin === ExternalSessionSource.HistoricalAppServer
     )) {
-      // These receipts belong to the external execution owner. Native activity
-      // snapshots may arrive after its exact settlement and cannot create,
-      // reopen, bind or finish a receipt through desktop observation.
+      // Native activity and the external owner's receipt are independent.
+      // An open receipt can survive a restart even when Gateway confirms inactivity.
+      const preparingOrExecuting = isExternalSessionExecuting?.(sessionId) === true;
       return {
         ...raw,
-        running: raw.running || timing?.state === 'running',
+        // A live client can still be preparing an input that Gateway has yet to observe.
+        known: raw.known || preparingOrExecuting,
+        running: raw.running || preparingOrExecuting,
         revision: nextRevision(sessionId),
         ...(timing ? { timing } : {}),
       };

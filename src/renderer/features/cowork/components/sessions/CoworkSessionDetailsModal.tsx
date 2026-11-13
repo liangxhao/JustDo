@@ -5,6 +5,7 @@ import {
   InformationCircleIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { ExternalSessionStatus } from '@shared/integrations/externalSession';
 import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
 import { coworkService } from '@/features/cowork/coworkService';
@@ -30,6 +31,7 @@ interface CoworkSessionDetailsModalProps {
   sessionSummary: CoworkSessionSummary;
   groups: SessionGroup[];
   isRuntimeRunning: boolean;
+  isRuntimeEnded?: boolean;
   returnFocusRef?: React.RefObject<HTMLElement | null>;
   onClose: () => void;
   onBack?: () => void;
@@ -72,6 +74,7 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
   sessionSummary,
   groups,
   isRuntimeRunning,
+  isRuntimeEnded = false,
   returnFocusRef,
   onClose,
   onBack,
@@ -268,9 +271,13 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
     }
   }, [gatewaySessionId]);
   const displayedModels = stats?.models ?? [];
-  const currentStatus: CoworkSessionStatus = isRuntimeRunning
-    ? 'running'
-    : (session?.status ?? sessionSummary.status);
+  const savedSession = session ?? sessionSummary;
+  const external = savedSession.external ?? sessionSummary.external;
+  let currentStatus: CoworkSessionStatus | 'ended' | 'unconfirmed' = savedSession.status;
+  if (isRuntimeRunning) currentStatus = 'running';
+  else if (isRuntimeEnded) currentStatus = 'ended';
+  else if (external?.status === ExternalSessionStatus.Running) currentStatus = 'unconfirmed';
+  else if (external?.readOnly && currentStatus === 'running') currentStatus = 'idle';
   const groupName = groups.find(group => group.id === sessionSummary.groupId)?.name;
   const unavailable = i18nService.t('sessionDetailsUnavailable');
 
@@ -304,7 +311,9 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
         defaultView
         sessionSummary={selectedDetails.summary}
         groups={groups}
-        isRuntimeRunning={selectedDetails.summary.status === 'running'}
+        isRuntimeRunning={
+          !selectedDetails.summary.external?.readOnly && selectedDetails.summary.status === 'running'
+        }
         onBack={() => setSelectedDetails(undefined)}
         onClose={onClose}
       />
@@ -361,7 +370,9 @@ const CoworkSessionDetailsModal: React.FC<CoworkSessionDetailsModalProps> = ({
                       : 'bg-surface-raised text-secondary'
                 }`}
               >
-                {i18nService.t(statusLabels[currentStatus])}
+                {i18nService.t(currentStatus === 'ended' ? 'coworkStatusEnded'
+                  : currentStatus === 'unconfirmed' ? 'coworkExternalActivityUnknown'
+                    : statusLabels[currentStatus])}
               </span>
             </div>
             <p className="mt-0.5 text-xs text-secondary">{i18nService.t('sessionDetailsTitle')}</p>

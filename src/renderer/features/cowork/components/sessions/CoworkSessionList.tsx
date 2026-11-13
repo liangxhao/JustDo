@@ -266,7 +266,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         ...Object.entries(sessionRuntimeActivity)
           .filter(([, running]) => running)
           .map(([sessionId]) => sessionId),
-        ...directory.filter(session => session.status === 'running').map(session => session.id),
+        ...directory
+          .filter(session => !session.external?.readOnly && session.status === 'running')
+          .map(session => session.id),
       ]),
     [sessionRuntimeActivity, directory],
   );
