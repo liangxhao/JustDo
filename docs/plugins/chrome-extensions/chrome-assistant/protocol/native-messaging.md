@@ -9,7 +9,7 @@ Native Host 为 Chrome 扩展发现兼容的已运行桌面 app-server。通用 
 
 ## 注册
 
-打包后的 JustDo 首次成功启动时写入 Windows 当前用户注册表键。
+Windows 桌面主实例启动本机连接服务时写入当前用户注册表键。
 
 ```text
 HKCU\Software\Google\Chrome\NativeMessagingHosts\app.chrome_extension
@@ -29,14 +29,14 @@ HKCU\Software\Google\Chrome\NativeMessagingHosts\app.chrome_extension
 
 ### 开发版与安装版
 
-宿主开发启动流程选择 Vite 端口后编译独立 helper，生成同格式 manifest 并更新注册表。两个版本使用同一协议实现。
+宿主开发启动流程编译独立 helper，并将可执行文件路径交给 Electron。安装版和普通开发版均由持有单实例锁的 Main 按实际启用的 `userData` 写入 manifest、helper 配置和发现文件。应用数据目录迁移后，三份文件随下一次启动在新位置生成。独立开发资料不更新当前用户注册。`npm run chrome-extension:prepare-dev-host` 仅准备 helper 文件，注册随普通桌面启动完成。
 
 | 环境   | manifest 的 `path`                                                                                  |
 | ------ | --------------------------------------------------------------------------------------------------- |
 | 开发版 | `build/chrome-extension/native-host/<source digest>/<productName>-chrome-extension-native-host.exe` |
 | 安装版 | `resources/chrome-extension/native-host/<productName>-chrome-extension-native-host.exe`             |
 
-文件名使用 `package.json.productName`，不含协议或应用版本号。后启动的版本会更新当前用户注册。从安装版切回开发版时，重新运行宿主开发启动流程。
+文件名使用 `package.json.productName`，不含协议或应用版本号。从安装版切回开发版时，退出当前桌面实例，再运行宿主开发启动流程。
 
 开发 helper 目录包含 C# 源码摘要。相同摘要的有效 PE 文件直接复用，避免 Chrome 运行 helper 时 Windows 文件锁阻止覆盖。源码变化生成新目录，文件名保持稳定。
 

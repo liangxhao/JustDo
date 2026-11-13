@@ -2701,6 +2701,7 @@ if (agentBridgeArgv) {
     );
     initialization.reportActivity(AppInitializationActivity.LocalServices);
     const startChromeExtensionIngress = async (): Promise<boolean> => {
+      const userDataPath = app.getPath('userData');
       const chromeExtensionChatToken = randomBytes(32).toString('hex');
       const extensionChatController = new ChromeExtensionChatController({
         setSessionWorkspace,
@@ -2745,7 +2746,7 @@ if (agentBridgeArgv) {
               getOpenClawEngineManager().buildCliEnvironment(),
             ),
           webLaunchService,
-          path.join(app.getPath('userData'), 'app-server'),
+          path.join(userDataPath, 'app-server'),
         );
         await extensionChatServer.start();
         if (appShutdown.isQuitting()) {
@@ -2753,28 +2754,22 @@ if (agentBridgeArgv) {
           return false;
         }
         chromeExtensionChatServer = extensionChatServer;
-        await publishChromeExtensionAppServer(
-          app.getPath('userData'),
-          extensionChatServer.getCapability(),
-        );
+        await registerChromeExtensionNativeHost({
+          userDataPath,
+          appDataPath: app.getPath('appData'),
+          ownsDesktopProfile: getStorageBootstrapContext()?.singletonOwned,
+          packagedResourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+          developmentExecutablePath: process.env.CHROME_EXTENSION_NATIVE_HOST_EXECUTABLE,
+        });
+        if (appShutdown.isQuitting()) return false;
+        await publishChromeExtensionAppServer(userDataPath, extensionChatServer.getCapability());
         if (appShutdown.isQuitting()) {
-          await clearChromeExtensionAppServer(app.getPath('userData')).catch(() => {
+          await clearChromeExtensionAppServer(userDataPath).catch(() => {
             console.warn(
               `[ChromeExtensionChat] ${JSON.stringify({ event: 'rendezvous-clear-failed', code: 'UNAVAILABLE' })}`,
             );
           });
           return false;
-        }
-        if (app.isPackaged) {
-          await registerChromeExtensionNativeHost(
-            app.getPath('userData'),
-            path.join(
-              process.resourcesPath,
-              'chrome-extension',
-              'native-host',
-              `${APP_NAME}-chrome-extension-native-host.exe`,
-            ),
-          );
         }
         console.info('[ChromeExtensionChat] WebSocket app-server is listening on loopback.');
         return true;

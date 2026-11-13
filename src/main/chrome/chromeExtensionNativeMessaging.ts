@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
+import { PRODUCT_NAME, USER_DATA_DIRECTORY_NAME } from '../../shared/productMetadata';
 import {
   CHROME_EXTENSION_ID,
   CHROME_EXTENSION_NATIVE_HOST,
@@ -103,11 +104,28 @@ export const clearChromeExtensionAppServer = async (userDataPath: string): Promi
   await fs.promises.rm(chromeExtensionRendezvousPath(userDataPath), { force: true });
 };
 
-export const registerChromeExtensionNativeHost = async (
-  userDataPath: string,
-  nativeHostExecutablePath: string,
-): Promise<void> => {
+export const registerChromeExtensionNativeHost = async (options: {
+  userDataPath: string;
+  appDataPath: string;
+  ownsDesktopProfile?: boolean;
+  packagedResourcesPath?: string;
+  developmentExecutablePath?: string;
+}): Promise<void> => {
   if (process.platform !== 'win32') return;
+  const { userDataPath, appDataPath, ownsDesktopProfile, packagedResourcesPath } = options;
+  let nativeHostExecutablePath = options.developmentExecutablePath;
+  if (packagedResourcesPath) {
+    nativeHostExecutablePath = path.join(
+      packagedResourcesPath,
+      'chrome-extension',
+      'native-host',
+      `${PRODUCT_NAME}-chrome-extension-native-host.exe`,
+    );
+  } else {
+    const defaultUserDataPath = path.join(appDataPath, USER_DATA_DIRECTORY_NAME);
+    if (!ownsDesktopProfile && path.relative(defaultUserDataPath, userDataPath) !== '') return;
+  }
+  if (!nativeHostExecutablePath) return;
   await fs.promises.access(nativeHostExecutablePath, fs.constants.X_OK);
   const directory = nativeMessagingDirectory(userDataPath);
   await fs.promises.mkdir(directory, { recursive: true });

@@ -4,9 +4,6 @@ const {
   devServer: { port },
 } = require('../../package.json');
 const { findFreePort } = require('./find-free-port.cjs');
-const {
-  prepareChromeExtensionDevHost,
-} = require('../chrome/prepare-chrome-extension-dev-host.cjs');
 const { prepareDevelopmentLauncher } = require('../external-agent/prepare-development-launcher.cjs');
 const { launchElectron } = require('./launch-electron.cjs');
 const { stopElectron } = require('./electron-shutdown.cjs');
@@ -20,13 +17,6 @@ const start = async () => {
   }
   const devServerPort = await findFreePort(port);
   const devServerUrl = `http://localhost:${devServerPort}`;
-  const nativeHost = prepareChromeExtensionDevHost();
-  if (nativeHost) {
-    console.log(`[Electron Dev] Registered browser native host: ${nativeHost.manifestPath}`);
-    console.log(
-      '[Electron Dev] Browser extension discovery only; start the app from this terminal.',
-    );
-  }
   const env = {
     ...process.env,
     JUSTDO_DEV_SERVER_PORT: String(devServerPort),
@@ -78,7 +68,7 @@ const start = async () => {
       cancelled,
     ]);
     if (!ready || stopping) return;
-    electron = launchElectron({ env });
+    electron = launchElectron({ env, prepareChromeExtension: true });
     electron.on('error', error => {
       console.error('[Electron Dev] Failed to start Electron:', error.message);
       void stop(1);

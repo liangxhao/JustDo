@@ -139,8 +139,15 @@ describe('owned development process shutdown', () => {
       env: {}, argv: ['node', 'launch-electron.cjs'], exit: vi.fn(),
     });
     const entry = { exports: {} };
+    const helperPath = path.resolve('build/chrome-extension/native-host.exe');
+    const spawn = vi.fn((_executable: string, _args: string[], _options: {
+      env: Record<string, string>;
+    }) => electron);
     const modules: Record<string, unknown> = {
-      child_process: { spawn: () => electron }, path, electron: 'electron.exe',
+      child_process: { spawn }, path, electron: 'electron.exe',
+      '../chrome/prepare-chrome-extension-dev-host.cjs': {
+        prepareChromeExtensionDevHost: () => ({ executablePath: helperPath }),
+      },
       './electron-shutdown.cjs': { stopElectron, observeElectron },
       '../../package.json': { devServer: { port: 43127 } },
     };
@@ -152,6 +159,7 @@ describe('owned development process shutdown', () => {
       require: requireStub, module: entry, process: host,
       console: { log: vi.fn(), error: vi.fn() }, __dirname: path.resolve('scripts/electron'),
     });
+    expect(spawn.mock.calls[0]?.[2].env.CHROME_EXTENSION_NATIVE_HOST_EXECUTABLE).toBe(helperPath);
     host.emit('SIGINT');
     await vi.advanceTimersByTimeAsync(SHUTDOWN_BUDGET_MS.launcherGrace);
     expect(host.exit).toHaveBeenCalledExactlyOnceWith(1);
@@ -171,7 +179,6 @@ function startRunner() {
     child_process: { spawn: vi.fn(() => vite) }, path,
     '../../package.json': { devServer: { port: 43127 } },
     './find-free-port.cjs': { findFreePort: async () => 43127 },
-    '../chrome/prepare-chrome-extension-dev-host.cjs': { prepareChromeExtensionDevHost: () => null },
     '../external-agent/prepare-development-launcher.cjs': { prepareDevelopmentLauncher: () => undefined },
     './launch-electron.cjs': { launchElectron },
     './electron-shutdown.cjs': { stopElectron }, 'wait-on': waitOn,
@@ -192,6 +199,7 @@ describe('development runner', () => {
     const h = startRunner();
     h.ready();
     await vi.advanceTimersByTimeAsync(0);
+    expect(h.launchElectron).toHaveBeenCalledWith(expect.objectContaining({ prepareChromeExtension: true }));
     h.electron.exitCode = 0;
     h.electron.emit('close', 0);
     expect(h.vite.kill).not.toHaveBeenCalled();

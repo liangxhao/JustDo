@@ -1,6 +1,7 @@
 /** Launch Electron with Node mode cleared and an owned development IPC pipe. */
 const { spawn } = require('child_process');
 const path = require('path');
+const { prepareChromeExtensionDevHost } = require('../chrome/prepare-chrome-extension-dev-host.cjs');
 const { stopElectron, observeElectron } = require('./electron-shutdown.cjs');
 const { devServer: { port: devServerPort } } = require('../../package.json');
 const DEV_SERVER_URL_SWITCH = '--justdo-dev-server-url';
@@ -10,6 +11,15 @@ function launchElectron(options = {}) {
   const env = { ...process.env, ...options.env };
   const port = env.JUSTDO_DEV_SERVER_PORT || devServerPort;
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.CHROME_EXTENSION_NATIVE_HOST_EXECUTABLE;
+  if (options.prepareChromeExtension) {
+    try {
+      const nativeHost = prepareChromeExtensionDevHost();
+      if (nativeHost) env.CHROME_EXTENSION_NATIVE_HOST_EXECUTABLE = nativeHost.executablePath;
+    } catch (error) {
+      console.warn('[Electron Launcher] Chrome connection helper preparation failed:', error.message);
+    }
+  }
   env.NODE_ENV ||= 'development';
   env.ELECTRON_START_URL ||= `http://localhost:${port}`;
   console.log('[Electron Launcher] Starting Electron...');
@@ -27,7 +37,7 @@ function launchElectron(options = {}) {
 }
 
 if (require.main === module) {
-  const child = launchElectron({ args: process.argv.slice(2) });
+  const child = launchElectron({ args: process.argv.slice(2), prepareChromeExtension: true });
   let stopping;
   child.on('close', (code, signal) => {
     if (stopping) return; // The shared stop verdict also accounts for forced retirement.

@@ -5,19 +5,11 @@ import path from 'node:path';
 import { describe, expect, test } from 'vitest';
 
 const {
-  buildDevNativeHostConfig,
-  buildDevNativeHostPlan,
   compileChromeExtensionNativeHost,
   prepareChromeExtensionDevHost,
   resolveCompilerPath,
+  resolveDevelopmentNativeHostExecutable,
 } = require('../../../scripts/chrome/prepare-chrome-extension-dev-host.cjs') as {
-  buildDevNativeHostConfig: (plan: { manifestPath: string }) => Record<string, unknown>;
-  buildDevNativeHostPlan: (options: { appDataPath: string; repoRoot: string }) => {
-    executablePath: string;
-    manifest: Record<string, unknown>;
-    manifestPath: string;
-    registryKey: string;
-  };
   compileChromeExtensionNativeHost: (options: {
     executablePath?: string;
     platform: string;
@@ -26,14 +18,14 @@ const {
   }) => { executablePath: string; reused: boolean };
   prepareChromeExtensionDevHost: (options: { platform: string }) => unknown;
   resolveCompilerPath: () => string | null;
+  resolveDevelopmentNativeHostExecutable: (repoRoot: string) => string;
 };
 
 const projectRoot = path.resolve(__dirname, '../../..');
 
 describe('browser extension development native host', () => {
-  test('builds a Chrome manifest plan for the fixed extension identity', () => {
+  test('places the development helper in a directory keyed by its source digest', () => {
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-dev-native-host-'));
-    const appDataPath = path.join(repoRoot, 'app-data');
     fs.writeFileSync(
       path.join(repoRoot, 'package.json'),
       JSON.stringify({ productName: 'Acme' }),
@@ -46,55 +38,29 @@ describe('browser extension development native host', () => {
     );
 
     try {
-      const plan = buildDevNativeHostPlan({ appDataPath, repoRoot });
+      const executablePath = resolveDevelopmentNativeHostExecutable(repoRoot);
 
-      expect(plan.manifestPath).toBe(
-        path.join(appDataPath, 'Acme', 'chrome-extension', 'app.chrome_extension.json'),
-      );
-      expect(plan.manifest).toMatchObject({
-        allowed_origins: ['chrome-extension://jboajogplelmaahjbomgflnfngpolgcb/'],
-        name: 'app.chrome_extension',
-        path: plan.executablePath,
-        type: 'stdio',
-      });
-      expect(plan.registryKey).toBe(
-        'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\app.chrome_extension',
-      );
-      expect(path.basename(plan.executablePath)).toBe('Acme-chrome-extension-native-host.exe');
-      expect(path.basename(path.dirname(plan.executablePath))).toMatch(/^[0-9a-f]{16}$/);
-      expect(path.dirname(path.dirname(plan.executablePath))).toBe(
+      expect(path.basename(executablePath)).toBe('Acme-chrome-extension-native-host.exe');
+      expect(path.basename(path.dirname(executablePath))).toMatch(/^[0-9a-f]{16}$/);
+      expect(path.dirname(path.dirname(executablePath))).toBe(
         path.join(repoRoot, 'build', 'chrome-extension', 'native-host'),
       );
-      expect(buildDevNativeHostPlan({ appDataPath, repoRoot }).executablePath).toBe(
-        plan.executablePath,
-      );
+      expect(resolveDevelopmentNativeHostExecutable(repoRoot)).toBe(executablePath);
 
       fs.appendFileSync(
         path.join(repoRoot, 'scripts', 'chrome', 'chrome-extension-native-host.cs'),
         '\n// Changed development source.\n',
       );
-      const updatedPlan = buildDevNativeHostPlan({ appDataPath, repoRoot });
-      expect(updatedPlan.executablePath).not.toBe(plan.executablePath);
-      expect(path.basename(updatedPlan.executablePath)).toBe(
-        'Acme-chrome-extension-native-host.exe',
-      );
+      const updatedPath = resolveDevelopmentNativeHostExecutable(repoRoot);
+      expect(updatedPath).not.toBe(executablePath);
+      expect(path.basename(updatedPath)).toBe('Acme-chrome-extension-native-host.exe');
     } finally {
       fs.rmSync(repoRoot, { force: true, recursive: true });
     }
   });
 
-  test('does not register a Windows host on other platforms', () => {
+  test('skips helper preparation on other platforms', () => {
     expect(prepareChromeExtensionDevHost({ platform: 'linux' })).toBeNull();
-  });
-
-  test('only discovers the running development app and provides no launch target', () => {
-    const repoRoot = path.join('E:', 'workspace', 'JustDo');
-    const manifestPath = path.join(repoRoot, 'app-data', 'native-host.json');
-
-    expect(buildDevNativeHostConfig({ manifestPath })).toEqual({
-      allowAppLaunch: false,
-      rendezvousPath: path.join(path.dirname(manifestPath), 'app-server.json'),
-    });
   });
 
   test('reuses a content-addressed executable without invoking the compiler', () => {

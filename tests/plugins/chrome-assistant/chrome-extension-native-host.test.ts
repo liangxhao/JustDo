@@ -5,9 +5,8 @@ import path from 'node:path';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 
-const { buildDevNativeHostConfig, resolveCompilerPath } =
+const { resolveCompilerPath } =
   require('../../../scripts/chrome/prepare-chrome-extension-dev-host.cjs') as {
-    buildDevNativeHostConfig: (plan: { manifestPath: string }) => Record<string, unknown>;
     resolveCompilerPath: () => string | null;
   };
 
@@ -57,8 +56,7 @@ describe.skipIf(process.platform !== 'win32' || !compilerPath)(
       workingDirectory: caseDirectory,
     });
 
-    const devConfig = () =>
-      buildDevNativeHostConfig({ manifestPath: path.join(caseDirectory, 'manifest.json') });
+    const devConfig = () => ({ allowAppLaunch: false, rendezvousPath });
 
     const publish = (pid = process.pid) => {
       const rendezvous = {

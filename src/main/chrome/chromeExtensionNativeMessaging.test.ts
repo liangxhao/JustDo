@@ -36,28 +36,65 @@ describe('Chrome extension native messaging rendezvous', () => {
   });
 
   it.skipIf(process.platform !== 'win32')(
-    'registers packaged discovery without an application launch target',
+    'registers the helper against discovery published in the active data directory',
     async () => {
-      const userDataPath = await fs.promises.mkdtemp(
+      const directory = await fs.promises.mkdtemp(
         path.join(os.tmpdir(), 'browser-native-host-'),
       );
-      temporaryDirectories.push(userDataPath);
-      const helperPath = path.join(userDataPath, 'native-host.exe');
+      temporaryDirectories.push(directory);
+      const userDataPath = path.join(directory, 'moved profile');
+      const helperPath = path.join(directory, 'native-host.exe');
+      const localAppServerUrl = `ws://127.0.0.1:41234/app-server?token=${'a'.repeat(64)}`;
       await fs.promises.writeFile(helperPath, 'fixture');
 
-      await registerChromeExtensionNativeHost(userDataPath, helperPath);
+      await registerChromeExtensionNativeHost({
+        userDataPath,
+        appDataPath: path.join(directory, 'app-data'),
+        ownsDesktopProfile: true,
+        developmentExecutablePath: helperPath,
+      });
+      await publishChromeExtensionAppServer(userDataPath, { localAppServerUrl });
 
-      const configPath = path.join(userDataPath, 'chrome-extension', 'native-host.config.json');
-      expect(JSON.parse(await fs.promises.readFile(configPath, 'utf8'))).toEqual({
+      const registrationDirectory = path.join(userDataPath, 'chrome-extension');
+      const manifestPath = path.join(registrationDirectory, 'app.chrome_extension.json');
+      const configPath = path.join(registrationDirectory, 'native-host.config.json');
+      const config = JSON.parse(await fs.promises.readFile(configPath, 'utf8'));
+      expect(config).toEqual({
         allowAppLaunch: false,
         rendezvousPath: chromeExtensionRendezvousPath(userDataPath),
       });
+      expect(JSON.parse(await fs.promises.readFile(config.rendezvousPath, 'utf8'))).toMatchObject({
+        localAppServerUrl,
+        pid: process.pid,
+      });
+      expect(JSON.parse(await fs.promises.readFile(manifestPath, 'utf8'))).toMatchObject({
+        path: helperPath,
+        allowed_origins: ['chrome-extension://jboajogplelmaahjbomgflnfngpolgcb/'],
+      });
       expect(execFile).toHaveBeenCalledWith(
         'reg.exe',
-        expect.any(Array),
+        expect.arrayContaining(['/d', manifestPath]),
         { windowsHide: true },
         expect.any(Function),
       );
+    },
+  );
+
+  it.skipIf(process.platform !== 'win32')(
+    'preserves the current Chrome registration when an independent development profile starts',
+    async () => {
+      const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'browser-native-host-'));
+      temporaryDirectories.push(directory);
+      const helperPath = path.join(directory, 'native-host.exe');
+      await fs.promises.writeFile(helperPath, 'fixture');
+
+      await registerChromeExtensionNativeHost({
+        userDataPath: path.join(directory, 'independent profile'),
+        appDataPath: path.join(directory, 'app-data'),
+        developmentExecutablePath: helperPath,
+      });
+
+      expect(execFile).not.toHaveBeenCalled();
     },
   );
 
