@@ -14,6 +14,7 @@ import { i18nService, LanguageType } from '@/services/i18n';
 import ThemedSelect from '@/shared/components/ui/ThemedSelect';
 
 import { ControlUiSetting } from './ControlUiSetting';
+import { OutboundHeaderPolicySetting } from './OutboundHeaderPolicySetting';
 import { ProxySettingsSection } from './ProxySettingsSection';
 
 interface GeneralSettingsPageProps {
@@ -252,6 +253,7 @@ export function GeneralSettingsPage({
               isSaving={isSaving}
               embedded
             />
+            <OutboundHeaderPolicySetting />
 
             {/* Gateway Port Configuration */}
             <div className="space-y-3 py-5">

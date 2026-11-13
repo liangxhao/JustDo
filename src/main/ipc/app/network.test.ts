@@ -1,9 +1,12 @@
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
 
+import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { startLocalModelServer } from '../../../../tests/fixtures/localModelServer';
-import { type ApiFetchOptions, NetworkFetchPurpose } from '../../../shared/network/network';
+import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network/network';
+import type { OutboundHeaderPolicyConfig } from '../../core/network/outboundHeaderPolicyConfig';
 
 const testProviderConfig = vi.hoisted(() => ({ enabled: true, baseUrl: 'http://127.0.0.1:1/v1' }));
 vi.mock('../../../config/builtinModels', () => ({ BUILTIN_MODEL_PROVIDER_CONFIG: testProviderConfig }));
@@ -11,6 +14,7 @@ vi.mock('../../../config/builtinModels', () => ({ BUILTIN_MODEL_PROVIDER_CONFIG:
 const mocks = vi.hoisted(() => ({
   applyMainProcessOutboundHeaderPolicy: vi.fn(),
   fetch: vi.fn(),
+  getOutboundHeaderPolicyConfig: vi.fn<() => OutboundHeaderPolicyConfig>(),
   handle: vi.fn(),
   on: vi.fn(),
   removeAllListeners: vi.fn(),
@@ -37,16 +41,118 @@ vi.mock('../../core/network/mainProcessFetch', () => ({
   },
 }));
 
+vi.mock('../../core/network/outboundHeaderPolicyConfig', async importOriginal => ({
+  ...await importOriginal<typeof import('../../core/network/outboundHeaderPolicyConfig')>(),
+  getOutboundHeaderPolicyConfig: mocks.getOutboundHeaderPolicyConfig,
+}));
+
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../../config/builtinModels';
+import { publishOutboundHeaderUserInfoCache } from '../../core/network/outboundHeaderPolicyConfig';
 import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../providers/builtinModelCredential';
-import { registerNetworkHandlers } from './network';
+import { registerNetworkHandlers as registerHandlers } from './network';
 
 type ApiFetchHandler = (event: unknown, options: ApiFetchOptions) => Promise<unknown>;
+const registerNetworkHandlers = (getMainWindow = (): BrowserWindow | null => null) =>
+  registerHandlers({ getMainWindow });
 
 beforeEach(() => {
   testProviderConfig.baseUrl = 'http://127.0.0.1:1/v1';
   vi.clearAllMocks();
   clearActiveBuiltinModelCredential();
+});
+
+test('shows effective outbound header values from memory for each target to the current main frame', () => {
+  const mainFrame = {};
+  const contents = { mainFrame, isDestroyed: () => false };
+  const window = { webContents: contents, isDestroyed: () => false } as unknown as BrowserWindow;
+  const event = { sender: contents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent;
+  mocks.getOutboundHeaderPolicyConfig.mockReturnValue({
+    enabled: true,
+    groups: [
+      { baseUrlWhitelist: ['http://127.0.0.1/'], headerNames: ['X-Ignored'] },
+      {
+        baseUrlWhitelist: ['https://test-user:test-password@internal.example/v1/?token=test-query#test-fragment'],
+        headerNames: [
+          'X-Account',
+          { name: 'X-Tenant', from: 'tenant_id' },
+          { name: 'X-Token', value: ' fixed fixture ' },
+          { name: 'X-Empty', from: 'missing_field' },
+          { name: 'X-Invalid', from: 'invalid_field' },
+        ],
+      },
+      {
+        baseUrlWhitelist: ['https://internal.example/v1/', 'https://internal.example/v1/private/'],
+        headerNames: ['x-token'],
+      },
+      {
+        baseUrlWhitelist: ['https://internal.example/v1/private/'],
+        headerNames: [{ name: 'x-token', from: 'private_token' }],
+      },
+      {
+        baseUrlWhitelist: ['https://other.example/', 'https://other.example//'],
+        headerNames: [{ name: 'X-Route', value: 'test-route' }],
+      },
+    ],
+  });
+  const sourceKeys = ['X-Account', 'tenant_id', 'missing_field', 'invalid_field', 'private_token'];
+  const userInfo = {
+    'X-Account': ' test-account ',
+    tenant_id: 42,
+    invalid_field: '测试',
+    private_token: 'test-private',
+    unrelated: 'test-unrelated',
+  };
+  registerNetworkHandlers(() => window);
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === NetworkIpc.GetOutboundHeaderPolicy)![1];
+
+  expect(() => handler({ ...event, senderFrame: {} })).toThrow('main application frame');
+  expect(() => handler({ ...event, sender: { ...contents } })).toThrow('main application frame');
+  expect(mocks.getOutboundHeaderPolicyConfig).not.toHaveBeenCalled();
+  const readFileSync = vi.spyOn(fs, 'readFileSync');
+  try {
+    expect(handler(event).targets[0].headers).toEqual(expect.arrayContaining([
+      { name: 'X-Tenant', sourceField: 'tenant_id', value: null },
+      { name: 'X-Token', sourceField: null, value: ' fixed fixture ' },
+    ]));
+    publishOutboundHeaderUserInfoCache(userInfo, sourceKeys);
+    const commonHeaders = [
+      { name: 'X-Account', sourceField: 'X-Account', value: 'test-account' },
+      { name: 'X-Tenant', sourceField: 'tenant_id', value: '42' },
+    ];
+    const trailingHeaders = [
+      { name: 'X-Empty', sourceField: 'missing_field', value: '' },
+      { name: 'X-Invalid', sourceField: 'invalid_field', value: null },
+    ];
+    expect(handler(event)).toEqual({
+      enabled: true,
+      targets: [
+        {
+          url: 'https://internal.example/v1/',
+          headers: [...commonHeaders, { name: 'X-Token', sourceField: null, value: ' fixed fixture ' }, ...trailingHeaders],
+        },
+        {
+          url: 'https://internal.example/v1/private/',
+          headers: [...commonHeaders, { name: 'x-token', sourceField: 'private_token', value: 'test-private' }, ...trailingHeaders],
+        },
+        {
+          url: 'https://other.example/',
+          headers: [{ name: 'X-Route', sourceField: null, value: 'test-route' }],
+        },
+        {
+          url: 'https://other.example//',
+          headers: [{ name: 'X-Route', sourceField: null, value: 'test-route' }],
+        },
+      ],
+    });
+
+    publishOutboundHeaderUserInfoCache({ ...userInfo, tenant_id: 43 }, sourceKeys);
+    expect(handler(event).targets[0].headers[1].value).toBe('43');
+    mocks.getOutboundHeaderPolicyConfig.mockReturnValue({ enabled: false, groups: [] });
+    expect(handler(event)).toEqual({ enabled: false, targets: [] });
+    expect(readFileSync).not.toHaveBeenCalled();
+  } finally {
+    readFileSync.mockRestore();
+  }
 });
 
 const probeBody = JSON.stringify({ model: 'team-model', messages: [{ role: 'user', content: 'Hi' }], max_tokens: 1 });

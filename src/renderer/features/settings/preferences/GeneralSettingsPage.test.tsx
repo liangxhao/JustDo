@@ -15,7 +15,10 @@ vi.mock('@/services/config', () => ({
 vi.mock('@/features/settings/updates/AppUpdateFrequencySetting', () => ({ default: () => null }));
 vi.mock('./ProxySettingsSection', () => ({ ProxySettingsSection: () => null }));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 type Props = ComponentProps<typeof GeneralSettingsPage>;
 const defaults: Props = {
@@ -46,6 +49,7 @@ test('hides developer settings until revealed', () => {
   render(<Draft developerModeAvailable={false} />);
   expect(screen.queryByRole('region', { name: 'developerMode' })).toBeNull();
   expect(screen.queryByRole('switch', { name: 'controlUiTitle' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'outboundHeaderPolicyView' })).toBeNull();
 });
 
 test('groups developer controls without a developer mode switch', () => {
@@ -54,6 +58,55 @@ test('groups developer controls without a developer mode switch', () => {
   expect(developerSettings.getByRole('switch', { name: 'controlUiTitle' })).toBeTruthy();
   expect(developerSettings.getByText('openclawGatewayPortTitle')).toBeTruthy();
   expect(developerSettings.queryByRole('switch', { name: 'developerMode' })).toBeNull();
+});
+
+test('reads the current outbound header policy each time its developer dialog opens', async () => {
+  const getOutboundHeaderPolicy = vi.fn()
+    .mockResolvedValueOnce({
+      enabled: true,
+      targets: [{
+        url: 'https://internal.example/v1/',
+        headers: [
+          { name: 'X-Token', sourceField: null, value: 'fixed-fixture' },
+          { name: 'X-Tenant', sourceField: 'tenant$&id', value: 'runtime-fixture' },
+          { name: 'X-Empty', sourceField: 'empty', value: '' },
+          { name: 'X-Invalid', sourceField: 'invalid', value: null },
+        ],
+      }],
+    })
+    .mockResolvedValueOnce({ enabled: false, targets: [] });
+  vi.stubGlobal('electron', { api: { getOutboundHeaderPolicy } });
+  render(<Draft />);
+  const button = screen.getByRole('button', { name: 'outboundHeaderPolicyView' });
+  expect(getOutboundHeaderPolicy).not.toHaveBeenCalled();
+
+  fireEvent.click(button);
+  const dialog = within(screen.getByRole('dialog', { name: 'outboundHeaderPolicyTitle' }));
+  expect(await dialog.findByText('https://internal.example/v1/')).toBeTruthy();
+  expect(dialog.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual([
+    'outboundHeaderPolicyHeaderName',
+    'outboundHeaderPolicyHeaderValue',
+    'outboundHeaderPolicyHeaderSource',
+    'outboundHeaderPolicyHeaderState',
+  ]);
+  expect(dialog.getByText('X-Token')).toBeTruthy();
+  expect(dialog.getByText('outboundHeaderPolicyFixedValue')).toBeTruthy();
+  expect(dialog.getByText('fixed-fixture')).toBeTruthy();
+  expect(dialog.getByText('tenant$&id')).toBeTruthy();
+  expect(dialog.getByText('runtime-fixture')).toBeTruthy();
+  const emptyRow = within(dialog.getByRole('row', { name: /X-Empty/ }));
+  const skippedRow = within(dialog.getByRole('row', { name: /X-Invalid/ }));
+  expect(emptyRow.getAllByRole('cell')[0].textContent).toBe('');
+  expect(emptyRow.getByRole('img', { name: 'outboundHeaderPolicyInjected' })).toBeTruthy();
+  expect(skippedRow.getAllByRole('cell')[0].textContent).toBe('');
+  expect(skippedRow.getByRole('img', { name: 'outboundHeaderPolicyNotInjected' })).toBeTruthy();
+  fireEvent.click(dialog.getByRole('button', { name: 'close' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+
+  fireEvent.click(button);
+  expect(await screen.findByText('outboundHeaderPolicyDisabled')).toBeTruthy();
+  expect(screen.queryByText('https://internal.example/v1/')).toBeNull();
+  expect(getOutboundHeaderPolicy).toHaveBeenCalledTimes(2);
 });
 
 test('toggles the controlled Control UI preference without saving it', () => {

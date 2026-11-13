@@ -169,7 +169,7 @@ import {
   type ExternalAgentSettings,
   type ExternalAgentTestResult,
 } from '../../shared/integrations/externalAgents';
-import { type ApiFetchOptions, NetworkIpc } from '../../shared/network/network';
+import { type ApiFetchOptions, NetworkIpc, type OutboundHeaderPolicyView } from '../../shared/network/network';
 import {
   OpenClawAssistantMediaIpc,
   type OpenClawAssistantMediaPlaybackRequest,
@@ -598,6 +598,8 @@ contextBridge.exposeInMainWorld('electron', {
     fetch: (options: ApiFetchOptions) => ipcRenderer.invoke(NetworkIpc.Fetch, options),
     cancelFetch: (requestId: string): Promise<void> =>
       ipcRenderer.invoke(NetworkIpc.CancelFetch, requestId),
+    getOutboundHeaderPolicy: (): Promise<OutboundHeaderPolicyView> =>
+      ipcRenderer.invoke(NetworkIpc.GetOutboundHeaderPolicy),
   },
   ipcRenderer: {
     send: (channel: string, ...args: unknown[]) => {

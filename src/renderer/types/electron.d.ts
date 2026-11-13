@@ -776,6 +776,7 @@ interface IElectronAPI {
   api: {
     fetch: (options: ApiFetchOptions) => Promise<ApiResponse>;
     cancelFetch: (requestId: string) => Promise<void>;
+    getOutboundHeaderPolicy: () => Promise<import('../../shared/network/network').OutboundHeaderPolicyView>;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;
   checkApiConfig: (options?: {
