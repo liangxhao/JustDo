@@ -2006,6 +2006,7 @@ if (agentBridgeArgv) {
     getCoworkStore,
     getCoworkEngineRouter,
     getAutomaticErrorRetryActivity: () => getOpenClawRuntimeAdapter()?.getAutomaticErrorRetryActivity() ?? null,
+    isExternalSessionExecuting: sessionId => externalClientBackend?.isExecuting(sessionId) === true,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     setSessionPermissionMode: (sessionId, permissionMode, options) =>

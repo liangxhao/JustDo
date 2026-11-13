@@ -1148,6 +1148,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           processSummariesExpanded={processSummariesExpanded}
           onSearchMatchCountChange={onSearchMatchCountChange}
           runTimings={runTimings}
+          useOpenRunTimingForActivity={!currentSession?.external?.readOnly}
           onLastUserMessageAction={
             currentSession?.branchCreationPending ? undefined : onLastUserMessageAction
           }

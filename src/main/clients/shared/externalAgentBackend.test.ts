@@ -729,6 +729,7 @@ it('persists the exact binding before caller tool hooks and leaves unknown work 
   const thread = await f.backend.start({ cwd: f.cwd });
   const runId = randomUUID();
   const onPrepared = vi.fn(async () => {
+    expect(f.factory.isExecuting(thread.id)).toBe(true);
     expect(f.external.get(thread.id)).toMatchObject({
       executionRunId: runId,
       nativeSessionId: 'native-id',
@@ -751,6 +752,7 @@ it('persists the exact binding before caller tool hooks and leaves unknown work 
     f.backend.run(thread, runId, 'Task', () => {}, new AbortController().signal, { onPrepared }),
   ).rejects.toThrow('outcome is unknown');
   expect(onPrepared).toHaveBeenCalledTimes(1);
+  expect(f.factory.isExecuting(thread.id)).toBe(false);
   expect(f.factory.activeTaskCount).toBe(1);
   expect(f.external.get(thread.id)).toMatchObject({
     status: 'running',

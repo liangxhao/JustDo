@@ -395,6 +395,60 @@ it.each([1, 3, 15, 60])(
   },
 );
 
+it('shows an external session as ended after Gateway confirms inactivity', () => {
+  const store = createStore();
+  const session: CoworkSessionSummary = {
+    ...summary('External chat', 1),
+    status: 'running',
+    external: {
+      origin: ExternalSessionSource.Cli,
+      readOnly: true,
+      status: ExternalSessionStatus.Running,
+      sessionKey: 'key',
+    },
+  };
+  store.dispatch(setSessionDirectory([session]));
+  render(
+    <Provider store={store}>
+      <CoworkSessionList {...createProps([session])} currentSessionId={session.id} />
+    </Provider>,
+  );
+  const indicator = () => within(screen.getByRole('button', { name: session.title }))
+    .queryByTitle(translations.en.coworkStatusRunning);
+  const ended = () => within(screen.getByRole('button', { name: session.title }))
+    .queryByText(translations.en.coworkStatusEnded);
+  expect(indicator()).toBeNull();
+  expect(ended()).toBeNull();
+
+  act(() => {
+    store.dispatch(setSessionRuntimeSnapshot({
+      sessionId: session.id,
+      snapshot: { revision: 1, known: true, mainRunning: true, subagentRunning: false, running: true },
+    }));
+  });
+  expect(indicator()).toBeTruthy();
+  expect(ended()).toBeNull();
+
+  act(() => {
+    store.dispatch(setSessionRuntimeSnapshot({
+      sessionId: session.id,
+      snapshot: { revision: 2, known: true, mainRunning: false, subagentRunning: false, running: false },
+    }));
+    store.dispatch(setSessionDirectory([session]));
+  });
+  expect(indicator()).toBeNull();
+  expect(ended()).toBeTruthy();
+
+  act(() => {
+    store.dispatch(setSessionRuntimeSnapshot({
+      sessionId: session.id,
+      snapshot: { revision: 3, known: true, mainRunning: true, subagentRunning: false, running: true },
+    }));
+  });
+  expect(indicator()).toBeTruthy();
+  expect(ended()).toBeNull();
+});
+
 it('shows source activity for background Team, discussions and Swarm without changing main execution state', () => {
   activities.presentation = {
     Team: { status: 'running' },

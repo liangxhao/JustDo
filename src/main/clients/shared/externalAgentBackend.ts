@@ -68,6 +68,10 @@ export class ExternalAgentBackendFactory {
     return Math.max(this.active.size, this.options.getExternalSessionStore().countUnsettled());
   }
 
+  isExecuting(sessionId: string): boolean {
+    return this.active.has(sessionId);
+  }
+
   models(): ExternalAgentModel[] {
     return this.options.getModels();
   }
@@ -386,10 +390,8 @@ export class ExternalAgentBackendFactory {
             );
           throw error;
         } finally {
-          if (!unconfirmed) {
-            this.active.delete(external.coworkSessionId);
-            release();
-          }
+          this.active.delete(external.coworkSessionId);
+          if (!unconfirmed) release();
           this.options.onSessionsChanged();
         }
       },

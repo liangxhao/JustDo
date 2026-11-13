@@ -33,6 +33,7 @@ interface ChatMessageDisplayProps {
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
   runTimings?: SessionRunTiming[];
+  useOpenRunTimingForActivity?: boolean;
   onLastUserMessageAction?: (
     action: UserMessageHistoryAction,
     entryId: string,
@@ -72,6 +73,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   processSummariesExpanded = false,
   onSearchMatchCountChange,
   runTimings = [],
+  useOpenRunTimingForActivity = true,
   onLastUserMessageAction,
   onMessageQuote,
   onAssistantMessageFork,
@@ -139,6 +141,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.onOpenFile = openFile;
     chat.processSummariesExpanded = processSummariesExpanded;
     chat.runTimings = runTimings;
+    chat.useOpenRunTimingForActivity = useOpenRunTimingForActivity;
     chat.productSessionId = productSessionId ?? '';
     chat.onLastUserMessageAction = onLastUserMessageAction;
     chat.onMessageQuote = onMessageQuote;
@@ -157,6 +160,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     workingDirectory,
     openFile,
     runTimings,
+    useOpenRunTimingForActivity,
     productSessionId,
     onLastUserMessageAction,
     onMessageQuote,
