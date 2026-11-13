@@ -5,6 +5,11 @@ import path from 'node:path';
 import type { ChromeExtensionMessageDisplay } from '../../shared/chrome/chromeExtensionDisplay';
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import { parseCoworkAttachments } from '../../shared/cowork/attachments';
+import {
+  AutomaticErrorRetryDisposition as RetryDisposition,
+  AutomaticErrorRetryPhase as RetryPhase,
+  isAutomaticErrorRetryActive,
+} from '../../shared/cowork/automaticErrorRetry';
 import { hasMessageInput } from '../../shared/cowork/messageInput';
 import type { SessionRunTiming } from '../../shared/cowork/sessionRun';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
@@ -14,6 +19,7 @@ import type {
   OpenClawAssistantMediaRequest,
   OpenClawAssistantMediaResult,
 } from '../../shared/openclaw/assistantMedia';
+import { isKnownAutomaticRetryFailureCopy, projectRetryFailureMessages } from '../../shared/openclaw/automaticErrorRetryDisplay';
 import { isGatewayRequestOutcomeUnknown } from '../../shared/openclaw/gatewayRequestOutcome';
 import { normalizeMessageSessionKey } from '../../shared/openclaw/messageDomain';
 import { isHiddenNativeMessage } from '../../shared/openclaw/messageVisibility';
@@ -24,16 +30,19 @@ import {
 import { PRODUCT_NAME } from '../../shared/productMetadata';
 import { matchesModelSelectionIdentity } from '../../shared/providers/modelSelectionIdentity';
 import { isPermissionMode, resolvePermissionMode } from '../../shared/security/approvals';
+import { projectPersistedAppServerRetryTurns } from '../clients/appServer/protocol/appServerHistory';
 import { createAppServerHistoryReader } from '../clients/appServer/protocol/appServerHistoryReader';
 import { AppServerErrorCode, AppServerRpcError } from '../clients/appServer/protocol/appServerProtocol';
-import type { AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
+import type { AppServerRetryTurn, AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
 import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
 import { t } from '../core/i18n';
 import type { CoworkSession, CoworkStore } from '../data/coworkStore';
 import type { CoworkEngineRouter } from '../engine';
 import type { SessionWorkspaceUpdater } from '../engine/cowork/sessionWorkspace';
 import type { GatewayClientLike, GatewayEventFrame, NativeRunTerminalReceipt } from '../engine/gateway/types';
+import type { AutomaticErrorRetryWaitReceipt } from '../engine/openclaw/automaticErrorRetry/coordinator';
 import type { OpenClawRuntimeAdapter } from '../engine/openclaw/openclawRuntimeAdapter';
+import type { CoworkAutomaticErrorRetryOwner } from '../engine/types';
 import type { OpenClawEngineStatus } from '../openclaw/runtime/openclawEngineManager';
 import type { GatewayHistoryEntry } from '../openclaw/sessions/openclawHistory';
 import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
@@ -65,7 +74,62 @@ const MAX_MODEL_REF_LENGTH = 500;
 const MAX_TRACKED_TURN_ERRORS = 100;
 const MAX_RETAINED_TURN_RECEIPTS = 100;
 
-type WaitTerminalReceipt = Omit<NativeRunTerminalReceipt, 'agentSeq'>;
+function isRetryFailureStreamCopy(value: ChromeExtensionStreamEvent): boolean {
+  const hasMedia = (data: Record<string, unknown>) =>
+    [data.mediaUrls, data.managedMediaUrls, isRecord(data.openclawDelivery) && data.openclawDelivery.mediaUrls,
+      isRecord(data.__openclaw) && data.__openclaw.media].some(items => Array.isArray(items) && items.length > 0);
+  if (value.kind === 'agent') {
+    const { stream, data } = value.event;
+    return stream === 'assistant' && data.assistantTextScope === undefined && !hasMedia(data) &&
+      isKnownAutomaticRetryFailureCopy(data.text) && (data.delta === undefined || data.delta === data.text);
+  }
+  if (value.event.state !== 'delta') return false;
+  const { message, deltaText } = value.event;
+  if (!isRecord(message)) return isKnownAutomaticRetryFailureCopy(deltaText);
+  if (message.role !== 'assistant' || hasMedia(message)) return false;
+  const content = message.content;
+  const text = Array.isArray(content) && content.length === 1 && isRecord(content[0]) && content[0].type === 'text'
+    ? content[0].text : content;
+  return isKnownAutomaticRetryFailureCopy(text) &&
+    (deltaText === undefined || deltaText === '' || isKnownAutomaticRetryFailureCopy(deltaText));
+}
+
+function projectChromeRetryFailures(
+  messages: unknown[], runs: SessionRunTiming[], sessionKey: string, nativeSessionId: string,
+  lifecycleRevision: string | null, liveChainId?: string, cancelledRunIds: readonly string[] = [],
+): unknown[] {
+  const hidden = new Set(cancelledRunIds);
+  for (const run of runs) {
+    const metadata = run.automaticErrorRetry;
+    if (metadata?.sessionKey === sessionKey && metadata.nativeSessionId === nativeSessionId &&
+        metadata.lifecycleRevision === lifecycleRevision &&
+        (metadata.disposition === RetryDisposition.Superseded ||
+          (metadata.chainId === liveChainId && (metadata.disposition === RetryDisposition.Pending ||
+            metadata.disposition === RetryDisposition.Candidate)))) {
+      hidden.add(run.rootRunId ?? run.clientTurnId);
+    }
+  }
+  return projectRetryFailureMessages(messages, hidden);
+}
+
+function cancelledRetryRunIds(runs: readonly SessionRunTiming[], turns: readonly AppServerRetryTurn[]): string[] {
+  return turns.flatMap(turn => turn.state === 'aborted' && runs.some(run =>
+    run.clientTurnId === turn.clientTurnId && run.automaticErrorRetry?.chainPhase === 'cancelled')
+    ? turn.nativeRunIds.slice(-1) : []);
+}
+
+type WaitTerminalReceipt = Omit<NativeRunTerminalReceipt, 'agentSeq'> & { stopReason?: string };
+type TrackedTurn = {
+  runId: string;
+  physicalRunId?: string;
+  message?: string;
+  accepted?: boolean;
+  sessionKey: string;
+  nativeSessionId: string;
+  lifecycleRevision?: string;
+  clientGeneration: number | undefined;
+  approvals?: ChromeAppServerApprovals;
+};
 type RetainedWaitReceipt = {
   productSessionId: string;
   timingId: string;
@@ -423,18 +487,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
   }
   readonly supportsClientApprovals = true;
   private readonly pendingAdmissions = new Map<string, symbol>();
-  private readonly activeTurns = new Map<
-    string,
-    {
-      runId: string;
-      message?: string;
-      accepted?: boolean;
-      sessionKey: string;
-      nativeSessionId: string;
-      clientGeneration: number | undefined;
-      approvals?: ChromeAppServerApprovals;
-    }
-  >();
+  private readonly activeTurns = new Map<string, TrackedTurn>();
   private readonly completedTurnErrors = new Map<string, { sessionId: string; message: string }>();
   private readonly waitTerminalReceipts = new Map<string, RetainedWaitReceipt>();
   private readonly turnStateReads = new Map<string, Promise<ChromeExtensionTurnState | null>>();
@@ -445,10 +498,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     if (!turn) return;
     const message = error.trim();
     if (!message) return;
-    this.activeTurns.set(sessionId, {
-      ...turn,
-      message,
-    });
+    turn.message = message;
   };
 
   constructor(private readonly deps: ChromeExtensionChatControllerDependencies) {}
@@ -514,13 +564,18 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
 
   async getHistory(sessionId: string): Promise<AppServerThreadHistory> {
     const store = this.deps.getStore();
-    const active = this.activeTurns.get(sessionId);
-    if (active) await this.getTurnState(sessionId, active.runId);
+    this.requireChromeSession(sessionId);
     const identityOf = (session: CoworkSession) => JSON.stringify([
       session.id, session.source, session.agentId, session.cwd, session.nativeSessionKey ?? null,
       session.historyBinding ?? null, session.nativeParentSessionId ?? null,
     ]);
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      const recent = this.activeTurns.get(sessionId)?.runId ??
+        store.getSessionRuns(sessionId).at(-1)?.automaticErrorRetry?.chainId;
+      const retryRuntime = recent ? this.deps.getRuntime() : null;
+      const chainBefore = recent ? retryRuntime?.getAutomaticErrorRetryTurn?.(sessionId, recent) : null;
+      const logicalState = chainBefore ? await this.getTurnState(sessionId, recent) : null;
+      const chainRevision = recent ? retryRuntime?.getAutomaticErrorRetryTurn?.(sessionId, recent)?.presentation.revision : undefined;
       const session = this.requireChromeSession(sessionId);
       const identity = identityOf(session);
       const runs = store.getSessionRuns(sessionId);
@@ -574,13 +629,57 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
           proof.clientGeneration !== generation || !Number.isFinite(proof.endedAt) ||
           run.state !== expectedState || run.endedAt !== proof.endedAt;
       }).map(run => run.clientTurnId);
+      const chain = recent && runtime.getAutomaticErrorRetryTurn?.(sessionId, recent);
+      if (chain && (retryRuntime !== runtime || chain.presentation.revision !== chainRevision)) {
+        if (attempt === 0) continue;
+        throw new Error('Chrome history changed during the read. Please read it again.');
+      }
+      const retryTurns = projectPersistedAppServerRetryTurns(runs, {
+        sessionKey, nativeSessionId: native.sessionId, lifecycleRevision: native.lifecycleRevision,
+      }).map(turn => {
+        const last = runs.find(run => (run.rootRunId ?? run.clientTurnId) === turn.nativeRunIds.at(-1));
+        return last && unknownRunIds.includes(last.clientTurnId) && turn.state !== 'running'
+          ? { ...turn, uncertain: true } : turn;
+      });
+      let liveRetryTurn: AppServerRetryTurn | undefined;
+      if (chain && logicalState?.id === recent && chain.presentation.runs[0]?.clientTurnId === recent) {
+        const nativeRunIds: string[] = [];
+        for (const [index, run] of chain.presentation.runs.entries()) {
+          const previous = chain.presentation.runs[index - 1];
+          if (run.sessionKey !== sessionKey || run.nativeSessionId !== native.sessionId ||
+              run.lifecycleRevision !== native.lifecycleRevision || !runs.some(row =>
+                row.clientTurnId === run.clientTurnId && (row.rootRunId ?? row.clientTurnId) === run.runId) ||
+              (previous && previous.disposition !== RetryDisposition.Superseded &&
+                (!chain.outstandingLaunch || logicalState.nativeRunId !== run.runId))) break;
+          nativeRunIds.push(run.runId);
+        }
+        if (nativeRunIds.length) liveRetryTurn = {
+          clientTurnId: recent,
+          nativeRunIds,
+          state: !logicalState.executionSettled ? 'running' :
+            logicalState.status === 'interrupted' ? 'aborted' :
+              logicalState.status === 'completed' ? 'completed' : 'failed',
+          ...(logicalState.completedAt !== undefined ? { endedAt: logicalState.completedAt } : {}),
+          ...(logicalState.error ? { error: logicalState.error.message } : {}),
+          ...(logicalState.status === 'unknown' ? { uncertain: true } : {}),
+        };
+        if (liveRetryTurn) {
+          const index = retryTurns.findIndex(turn => turn.clientTurnId === liveRetryTurn!.clientTurnId);
+          if (index >= 0) retryTurns[index] = liveRetryTurn;
+          else retryTurns.push(liveRetryTurn);
+        }
+      }
       return {
-        threadId: sessionId, messages: history.messages, runs,
+        threadId: sessionId,
+        messages: projectChromeRetryFailures(history.messages, runs, sessionKey, native.sessionId,
+          native.lifecycleRevision, chain ? chain.presentation.chainId : undefined, cancelledRetryRunIds(runs, retryTurns)),
+        runs,
         unknownRunIds,
+        ...(retryTurns.length ? { retryTurns } : {}),
         identityRevision: createHash('sha256').update(JSON.stringify([
           sessionKey, native.sessionId, native.lifecycleRevision,
         ])).digest('base64url'),
-        ...(tracked ? { latestExternalRunId: tracked.runId } : {}),
+        ...(tracked || liveRetryTurn ? { latestExternalRunId: tracked?.runId ?? liveRetryTurn!.clientTurnId } : {}),
         ...(tracked && unknownRunIds.includes(tracked.runId)
           ? { unknownRunId: tracked.runId } : {}),
       };
@@ -631,7 +730,16 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       const timing = candidates.length === 1 ? candidates[0] : undefined;
       const tracked = this.activeTurns.get(sessionId);
       const receipt = nativeRunId ? runtime.getRunTerminalReceipt?.(nativeRunId) : undefined;
-      const binding = timing && tracked?.runId === timing.clientTurnId ? tracked : receipt;
+      const logicalTurnId = timing?.automaticErrorRetry?.chainId ?? timing?.clientTurnId;
+      const retry = logicalTurnId && runtime.getAutomaticErrorRetryTurn?.(sessionId, logicalTurnId);
+      const attempt = retry && retry.presentation.runs.find(run => run.runId === nativeRunId);
+      const retryError = (value.kind === 'chat' && value.event.state === 'error') ||
+        (value.kind === 'agent' && value.event.stream === 'lifecycle' && value.event.data.phase === 'error');
+      if ((attempt && (retryError || attempt.disposition === RetryDisposition.Superseded ||
+          retry.currentPhysicalRunId !== nativeRunId)) || timing?.automaticErrorRetry?.disposition === RetryDisposition.Superseded)
+        return;
+      const binding = timing && tracked?.runId === logicalTurnId &&
+        (!tracked.physicalRunId || tracked.physicalRunId === nativeRunId) ? tracked : receipt;
       const expectedSessionId = binding && ('nativeSessionId' in binding ? binding.nativeSessionId : binding.sessionId);
       if (timing && binding && this.deps.getRuntime() === runtime &&
         streamClient && runtime.getGatewayClient() === streamClient &&
@@ -641,8 +749,20 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
         binding.clientGeneration === runtime.getGatewayClientGeneration() &&
         normalizeMessageSessionKey(binding.sessionKey) === normalizeMessageSessionKey(value.event.sessionKey) &&
         (value.event.sessionId === null || value.event.sessionId === expectedSessionId)) {
-        listener({ ...value, turnId: timing.clientTurnId, startedAt: timing.startedAt });
-      } else listener(value);
+        if (retry && attempt) {
+          if (attempt.sessionKey !== binding.sessionKey || attempt.nativeSessionId !== expectedSessionId) return;
+          // The native guard emits its fixed diagnostic on both text lanes
+          // before settlement. The final native history still owns actual replies.
+          if (attempt.disposition !== RetryDisposition.Final && isRetryFailureStreamCopy(value)) return;
+          if (attempt.disposition !== RetryDisposition.Final && value.kind === 'agent' &&
+              value.event.stream === 'lifecycle' && value.event.data.phase === 'finishing' &&
+              value.event.data.livenessState === 'blocked' && isKnownAutomaticRetryFailureCopy(value.event.data.error)) {
+            const { error: _error, ...data } = value.event.data;
+            value = { ...value, event: { ...value.event, data } };
+          }
+          listener({ ...value, turnId: logicalTurnId, startedAt: timing.startedAt, retryAttempt: attempt.attempt });
+        } else listener({ ...value, turnId: timing.clientTurnId, startedAt: timing.startedAt });
+      } else if (!attempt && !timing?.automaticErrorRetry) listener(value);
     };
     let disposed = false;
     const subscribe = async () => {
@@ -690,6 +810,9 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     const error = this.completedTurnErrors.get(runId);
     if (error?.sessionId !== sessionId) return undefined;
     this.completedTurnErrors.delete(runId);
+    // The logical retry outcome already carries the exact final physical error.
+    // A router error recorded against the original send can belong to its predecessor.
+    if (this.deps.getStore().getSessionRunByClientTurnId?.(runId)?.automaticErrorRetry) return undefined;
     return error.message;
   }
 
@@ -736,6 +859,14 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     this.requireChromeSession(sessionId);
     const sessionKey = runtime.getSessionKeysForSession(sessionId)[0];
     if (!sessionKey) return [];
+    const store = this.deps.getStore();
+    const hasRetryMetadata = store.getSessionRuns?.(sessionId).some(run => run.automaticErrorRetry?.sessionKey === sessionKey);
+    const client = hasRetryMetadata ? runtime.getGatewayClient() : null;
+    const generation = client ? runtime.getGatewayClientGeneration() : undefined;
+    const describe = () => client?.request<{ session?: Record<string, unknown> }>(
+      'sessions.describe', { key: sessionKey },
+    ).catch((): undefined => undefined);
+    const before = (await describe())?.session;
     // Extension polling must observe the authoritative transcript. The shared
     // runtime delta cursor can temporarily remain on a pre-response snapshot
     // even after OpenClaw has persisted the final assistant message.
@@ -745,7 +876,25 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     });
     this.requireChromeSession(sessionId);
     if (!history) throw new Error('Unable to load conversation history.');
-    const projected = history.messages.map(message => ({
+    const native = (await describe())?.session;
+    this.requireChromeSession(sessionId);
+    const runs = store.getSessionRuns?.(sessionId) ?? [];
+    const logicalTurnId = this.activeTurns.get(sessionId)?.runId ?? runs.at(-1)?.automaticErrorRetry?.chainId;
+    const liveChain = logicalTurnId ? runtime.getAutomaticErrorRetryTurn?.(sessionId, logicalTurnId) : null;
+    const nativeSessionId = native?.sessionId;
+    const revision = native?.lifecycleRevision;
+    const verified = native?.key === sessionKey && before?.key === sessionKey && typeof nativeSessionId === 'string' &&
+      before.sessionId === nativeSessionId && typeof revision === 'string' && before.lifecycleRevision === revision &&
+      this.deps.getRuntime() === runtime && runtime.getGatewayClient() === client &&
+      runtime.getGatewayClientGeneration() === generation;
+    if (!verified && (liveChain || runs.some(run => run.automaticErrorRetry?.sessionKey === sessionKey)))
+      throw new Error('Unable to verify conversation history.');
+    const cancelledRuns = verified ? cancelledRetryRunIds(runs, projectPersistedAppServerRetryTurns(runs, {
+      sessionKey, nativeSessionId, lifecycleRevision: revision,
+    })) : [];
+    const messages = verified ? projectChromeRetryFailures(history.messages, runs, sessionKey, nativeSessionId, revision,
+      liveChain?.presentation.chainId, cancelledRuns) : history.messages;
+    const projected = messages.map(message => ({
       message,
       pendingInput: undefined as
         { id: string; state: string; runId?: string; incomplete?: boolean } | undefined,
@@ -927,21 +1076,144 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     const store = this.deps.getStore();
     this.requireChromeSession(sessionId);
     const tracked = this.activeTurns.get(sessionId)?.runId;
+    const latest = !turnId && !tracked ? store.getLatestSessionRun(sessionId) : undefined;
     const timing =
       turnId || tracked
         ? store.getSessionRunByClientTurnId(turnId || tracked!)
-        : store.getLatestSessionRun(sessionId);
+        : latest?.automaticErrorRetry
+          ? store.getSessionRunByClientTurnId(latest.automaticErrorRetry.chainId) ?? latest
+          : latest;
     if (timing?.sessionId !== sessionId) {
       return turnId ? { id: turnId, status: 'unknown', executionSettled: false } : null;
     }
     const readKey = JSON.stringify([sessionId, timing.clientTurnId]);
     const existing = this.turnStateReads.get(readKey);
     if (existing) return existing;
-    const reading = this.readTurnState(sessionId, timing, Boolean(turnId), tracked).finally(() => {
+    const reading = this.readLogicalTurnState(sessionId, timing, Boolean(turnId), tracked).finally(() => {
       if (this.turnStateReads.get(readKey) === reading) this.turnStateReads.delete(readKey);
     });
     this.turnStateReads.set(readKey, reading);
     return reading;
+  }
+
+  private async readLogicalTurnState(
+    sessionId: string,
+    timing: SessionRunTiming,
+    explicitTurn: boolean,
+    tracked: string | undefined,
+  ): Promise<ChromeExtensionTurnState | null> {
+    const runtime = this.deps.getRuntime();
+    const current = () => runtime?.getAutomaticErrorRetryTurn?.(sessionId, timing.clientTurnId);
+    let chain = current();
+    if (!chain) return this.readRetiredRetryTurnState(sessionId, timing, explicitTurn, tracked);
+    const store = this.deps.getStore();
+    const readCurrentPhysical = async (): Promise<ChromeExtensionTurnState | null> => {
+      const physical = chain?.presentation.runs.find(run => run.runId === chain?.currentPhysicalRunId);
+      const row = physical && store.getSessionRunByClientTurnId(physical.clientTurnId);
+      if (!physical || !row || row.sessionId !== sessionId) return null;
+      return this.readTurnState(sessionId, row, true, tracked, {
+        logicalTurnId: timing.clientTurnId, runId: physical.runId,
+        nativeSessionId: physical.nativeSessionId, lifecycleRevision: physical.lifecycleRevision,
+      });
+    };
+    const phase = chain.presentation.phase;
+    const physical = phase === RetryPhase.Eligible || phase === RetryPhase.Running ||
+      phase === RetryPhase.Unknown || (phase === RetryPhase.Cancelled && chain.outstandingLaunch) ||
+      (!chain.lastSettledReceipt && !isAutomaticErrorRetryActive(phase) && !chain.outstandingLaunch)
+      ? await readCurrentPhysical() : null;
+    if (this.deps.getRuntime() !== runtime) return { id: timing.clientTurnId, status: 'unknown', executionSettled: false };
+    chain = current();
+    if (!chain) return this.readRetiredRetryTurnState(sessionId, timing, explicitTurn, tracked);
+    const activePhase = chain.presentation.phase;
+    const unknown = activePhase === RetryPhase.Unknown ||
+      (activePhase === RetryPhase.Cancelled && chain.outstandingLaunch);
+    const pending = isAutomaticErrorRetryActive(activePhase) || unknown;
+    const attempt = chain.presentation.runs.find(run => run.runId === chain?.currentPhysicalRunId)?.attempt ?? 0;
+    if (pending) {
+      const waiting = activePhase === RetryPhase.Checking || activePhase === RetryPhase.Preparing;
+      return {
+        id: timing.clientTurnId, startedAt: timing.startedAt, executionSettled: false,
+        status: unknown ? 'unknown' : 'inProgress',
+        ...(waiting ? { retryWaiting: true } : { nativeRunId: chain.currentPhysicalRunId, retryAttempt: attempt }),
+      };
+    }
+    const receipt = chain.lastSettledReceipt;
+    if (!receipt || receipt.endedAt === undefined || !Number.isFinite(receipt.endedAt)) {
+      if (physical?.executionSettled) this.clearActiveTurn(sessionId, timing.clientTurnId);
+      return physical ? { ...physical, id: timing.clientTurnId }
+        : { id: timing.clientTurnId, startedAt: timing.startedAt, status: 'unknown', executionSettled: false };
+    }
+    const run = chain.presentation.runs.find(entry => entry.runId === receipt.runId);
+    if (!run || run.sessionKey !== receipt.sessionKey || run.nativeSessionId !== receipt.sessionId) {
+      return { id: timing.clientTurnId, status: 'unknown', executionSettled: false };
+    }
+    const row = store.getSessionRunByClientTurnId(run.clientTurnId);
+    const client = runtime?.getGatewayClient();
+    const generation = runtime?.getGatewayClientGeneration();
+    const native = client && (await client.request<{ session?: Record<string, unknown> }>(
+      'sessions.describe', { key: receipt.sessionKey },
+    ).catch((): undefined => undefined))?.session;
+    if (this.deps.getRuntime() === runtime && !current())
+      return this.readRetiredRetryTurnState(sessionId, timing, explicitTurn, tracked);
+    if (row?.sessionId !== sessionId || !this.findChromeSession(sessionId) || this.deps.getRuntime() !== runtime ||
+        !client || runtime?.getGatewayClient() !== client || runtime.getGatewayClientGeneration() !== generation ||
+        receipt.clientGeneration !== generation || native?.key !== run.sessionKey || native.sessionId !== run.nativeSessionId ||
+        native.lifecycleRevision !== run.lifecycleRevision || current()?.presentation.revision !== chain.presentation.revision) {
+      return { id: timing.clientTurnId, status: 'unknown', executionSettled: false };
+    }
+    store.finishSessionRun(row.id, receipt.status === 'interrupted' ? 'aborted' : receipt.status, receipt.endedAt);
+    const status = chain.presentation.runs[0]?.chainPhase === 'cancelled' ? 'interrupted' : receipt.status;
+    this.clearActiveTurn(sessionId, timing.clientTurnId);
+    return {
+      id: timing.clientTurnId, nativeRunId: receipt.runId, retryAttempt: run.attempt,
+      status, executionSettled: true, startedAt: timing.startedAt, completedAt: receipt.endedAt,
+      ...(status === 'failed' && receipt.error ? { error: { message: receipt.error } } : {}),
+    };
+  }
+
+  private async readRetiredRetryTurnState(
+    sessionId: string,
+    timing: SessionRunTiming,
+    explicitTurn: boolean,
+    tracked: string | undefined,
+  ): Promise<ChromeExtensionTurnState | null> {
+    const store = this.deps.getStore();
+    const unknown = () => !explicitTurn && !tracked && timing.state !== 'running' &&
+      !this.deps.getRouter().isSessionActive(sessionId) ? null : {
+        id: timing.clientTurnId, status: 'unknown' as const, executionSettled: false,
+      };
+    const latest = store.getSessionRunByClientTurnId(timing.clientTurnId);
+    if (!latest || latest.id !== timing.id || latest.sessionId !== sessionId) return unknown();
+    const root = latest.automaticErrorRetry;
+    if (!root || root.chainId !== timing.clientTurnId || root.attempt !== 0 ||
+        (root.disposition !== RetryDisposition.Superseded && root.chainPhase !== RetryPhase.Cancelled))
+      return this.readTurnState(sessionId, latest, explicitTurn, tracked);
+    const runs = store.getSessionRuns(sessionId);
+    const chainRows = (rows: SessionRunTiming[]) => rows.filter(run =>
+      run.sessionId === sessionId && run.automaticErrorRetry?.chainId === timing.clientTurnId);
+    const observedRows = JSON.stringify(chainRows(runs));
+    const lineage = projectPersistedAppServerRetryTurns(chainRows(runs), root).find(turn => turn.clientTurnId === timing.clientTurnId);
+    const runId = lineage?.nativeRunIds.at(-1);
+    const candidates = runs.filter(run => (run.rootRunId ?? run.clientTurnId) === runId);
+    const final = candidates.length === 1 ? candidates[0] : undefined;
+    if (!runId || !lineage || final?.sessionId !== sessionId ||
+        final.automaticErrorRetry?.chainId !== timing.clientTurnId ||
+        final.automaticErrorRetry.attempt !== lineage.nativeRunIds.length - 1 ||
+        final.automaticErrorRetry.disposition !== RetryDisposition.Final) return unknown();
+    const observed = await this.readTurnState(sessionId, final, explicitTurn, tracked, {
+      logicalTurnId: timing.clientTurnId, runId, nativeSessionId: root.nativeSessionId,
+      lifecycleRevision: root.lifecycleRevision,
+      isRetiredLineageCurrent: () => JSON.stringify(chainRows(store.getSessionRuns(sessionId))) === observedRows,
+    });
+    if (!observed) return null;
+    if (observed.executionSettled) this.clearActiveTurn(sessionId, timing.clientTurnId);
+    const { error, ...result } = observed;
+    const status = observed.executionSettled && root.chainPhase === RetryPhase.Cancelled ? 'interrupted' : observed.status;
+    return {
+      ...result, id: timing.clientTurnId, status, startedAt: timing.startedAt,
+      retryAttempt: final.automaticErrorRetry.attempt,
+      ...(status === 'failed' && error ? { error } : {}),
+    };
   }
 
   private async readTurnState(
@@ -949,6 +1221,13 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     timing: SessionRunTiming,
     explicitTurn: boolean,
     tracked: string | undefined,
+    retry?: {
+      logicalTurnId: string;
+      runId: string;
+      nativeSessionId: string;
+      lifecycleRevision: string | null;
+      isRetiredLineageCurrent?: () => boolean;
+    },
   ): Promise<ChromeExtensionTurnState | null> {
     const store = this.deps.getStore();
     const historical =
@@ -958,7 +1237,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       !this.deps.getRouter().isSessionActive(sessionId);
     const unknown: ChromeExtensionTurnState = {
       id: timing.clientTurnId,
-      nativeRunId: timing.rootRunId || timing.clientTurnId,
+      nativeRunId: retry?.runId ?? (timing.rootRunId || timing.clientTurnId),
       status: 'unknown',
       executionSettled: false,
       startedAt: timing.startedAt,
@@ -967,7 +1246,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     const client = runtime?.getGatewayClient();
     const sessionKey = runtime?.getSessionKeysForSession(sessionId)[0];
     if (!runtime || !client || !sessionKey) return historical ? null : unknown;
-    const nativeRunId = timing.rootRunId || timing.clientTurnId;
+    const nativeRunId = unknown.nativeRunId!;
     const unconfirmed = historical ? null : unknown;
     const generation = runtime.getGatewayClientGeneration();
     const liveReceipt = runtime.getRunTerminalReceipt(nativeRunId);
@@ -976,21 +1255,24 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       cached.clientTurnId === timing.clientTurnId && cached.runtime === runtime && cached.client === client
       ? cached : undefined;
     let receipt: Omit<NativeRunTerminalReceipt, 'agentSeq'> | null = liveReceipt ?? retained?.receipt ?? null;
-    const trackedBinding = this.activeTurns.get(sessionId)?.runId === timing.clientTurnId
-      ? this.activeTurns.get(sessionId) : undefined;
+    const trackedTurn = this.activeTurns.get(sessionId);
+    const trackedBinding = trackedTurn?.runId === (retry?.logicalTurnId ?? timing.clientTurnId) &&
+      (!retry || trackedTurn.physicalRunId === nativeRunId || (trackedTurn.physicalRunId === undefined &&
+        trackedTurn.runId === nativeRunId)) ? trackedTurn : undefined;
     const needsWait = !receipt;
     const pending = (): ChromeExtensionTurnState | null => historical ? null : ({
       ...unknown,
       status: this.deps.getRouter().isSessionActive(sessionId) &&
         (timing.acceptedAt || trackedBinding?.accepted) ? 'inProgress' : 'unknown',
     });
-    if (needsWait && (!trackedBinding || !trackedBinding.nativeSessionId ||
+    if (needsWait && (retry?.isRetiredLineageCurrent || !trackedBinding || !trackedBinding.nativeSessionId ||
       trackedBinding.clientGeneration !== generation ||
       normalizeMessageSessionKey(trackedBinding.sessionKey) !== normalizeMessageSessionKey(sessionKey)))
       return pending();
     if (
       receipt && (receipt.executionSettled !== true ||
       receipt.runId !== nativeRunId || receipt.clientGeneration !== generation ||
+      (retry && receipt.sessionId !== retry.nativeSessionId) ||
       normalizeMessageSessionKey(receipt.sessionKey) !== normalizeMessageSessionKey(sessionKey) ||
       (trackedBinding &&
         (trackedBinding.nativeSessionId !== receipt.sessionId ||
@@ -1008,7 +1290,9 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
         runtime.getSessionKeysForSession(sessionId)[0] === sessionKey &&
         Boolean(this.findChromeSession(sessionId)) && currentTiming?.id === timing.id &&
         currentTiming.sessionId === sessionId &&
-        (currentTiming.rootRunId || timing.clientTurnId) === nativeRunId &&
+        (retry && !retry.isRetiredLineageCurrent ? runtime.getAutomaticErrorRetryTurn?.(sessionId, retry.logicalTurnId)?.currentPhysicalRunId === nativeRunId
+          : (currentTiming.rootRunId || timing.clientTurnId) === nativeRunId) &&
+        retry?.isRetiredLineageCurrent?.() !== false &&
         (!needsWait || this.activeTurns.get(sessionId) === trackedBinding) &&
         (!retained || this.waitTerminalReceipts.get(nativeRunId) === retained) &&
         (!liveReceipt || (latest?.agentSeq === liveReceipt.agentSeq &&
@@ -1027,13 +1311,15 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       const before = await client.request<Description>('sessions.describe', { key: sessionKey });
       this.requireChromeSession(sessionId);
       if (!current() || !matches(before) ||
+        (retry && before.session?.lifecycleRevision !== retry.lifecycleRevision) ||
         (retained?.lifecycleRevision !== undefined &&
           before.session?.lifecycleRevision !== retained.lifecycleRevision)) return unconfirmed;
       if (!receipt) {
         const result = await client.request<unknown>('agent.wait', { runId: nativeRunId, timeoutMs: 0 });
         this.requireChromeSession(sessionId);
         if (!current()) return unconfirmed;
-        if (!isRecord(result) || result.runId !== nativeRunId || result.yielded === true ||
+        if (!isRecord(result) || result.runId !== nativeRunId || result.yielded === true || result.pendingError === true ||
+          result.stopReason === 'restart' || result.stopReason === 'superseded' ||
           (result.sessionId !== undefined && result.sessionId !== expectedSessionId) ||
           (result.sessionKey !== undefined && (typeof result.sessionKey !== 'string' ||
             normalizeMessageSessionKey(result.sessionKey) !== normalizeMessageSessionKey(sessionKey))) ||
@@ -1047,6 +1333,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
           lifecycleGeneration: null, clientGeneration: generation, executionSettled: true,
           status: interrupted ? 'interrupted' : failed ? 'failed' : 'completed',
           endedAt: result.endedAt,
+          ...(typeof result.stopReason === 'string' ? { stopReason: result.stopReason } : {}),
           ...(failed && typeof result.error === 'string' ? { error: result.error.slice(0, 4096) } : {}),
         };
       }
@@ -1067,18 +1354,24 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
         while (this.waitTerminalReceipts.size > MAX_RETAINED_TURN_RECEIPTS)
           this.waitTerminalReceipts.delete(this.waitTerminalReceipts.keys().next().value!);
       }
+      if (retry && needsWait) {
+        const retryReceipt: AutomaticErrorRetryWaitReceipt = { ...receipt, source: 'agent.wait' };
+        runtime.observeAutomaticErrorRetryWait?.(retryReceipt, {
+          sessionKey, nativeSessionId: expectedSessionId, lifecycleRevision: retry.lifecycleRevision,
+        });
+      }
       const interrupted = receipt.status === 'interrupted';
       const failed = receipt.status === 'failed';
       const message = failed
-        ? receipt.error?.trim() || this.activeTurns.get(sessionId)?.message?.trim() || undefined
+        ? receipt.error?.trim() || (!retry ? this.activeTurns.get(sessionId)?.message?.trim() : undefined) || undefined
         : undefined;
-      this.clearActiveTurn(sessionId, timing.clientTurnId);
+      if (!retry) this.clearActiveTurn(sessionId, timing.clientTurnId);
       store.finishSessionRun(
         timing.id,
         interrupted ? 'aborted' : failed ? 'failed' : 'completed',
         receipt.endedAt,
       );
-      if (message) this.rememberTurnError(sessionId, timing.clientTurnId, message);
+      if (message && !retry) this.rememberTurnError(sessionId, timing.clientTurnId, message);
       return {
         id: timing.clientTurnId,
         nativeRunId,
@@ -1104,6 +1397,26 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     const client = runtime?.getGatewayClient();
     const sessionKey = runtime?.getSessionKeysForSession(sessionId)[0];
     if (!runtime || !client || !sessionKey) throw new Error('OpenClaw runtime is unavailable.');
+    const chain = runtime.getAutomaticErrorRetryTurn?.(sessionId, turnId);
+    if (chain) {
+      const cancelled = runtime.cancelAutomaticErrorRetryTurn(sessionId, turnId);
+      if (!cancelled.matched) throw new Error('The active turn has changed or is already settled.');
+      const tracked = this.activeTurns.get(sessionId);
+      if (tracked?.runId === turnId) tracked.approvals?.withdraw();
+      if (!cancelled.physicalRunId || cancelled.unknown) return;
+      const run = chain.presentation.runs.find(entry => entry.runId === cancelled.physicalRunId);
+      const generation = runtime.getGatewayClientGeneration();
+      const described = await client.request<{ session?: Record<string, unknown> }>('sessions.describe', { key: sessionKey });
+      this.requireChromeSession(sessionId);
+      if (!run || run.sessionKey !== sessionKey || this.deps.getRuntime() !== runtime ||
+          runtime.getGatewayClient() !== client || runtime.getGatewayClientGeneration() !== generation ||
+          described.session?.key !== run.sessionKey || described.session.sessionId !== run.nativeSessionId ||
+          described.session.lifecycleRevision !== run.lifecycleRevision)
+        throw new Error('The current browser run could not be verified.');
+      await client.request('sessions.abort', { key: run.sessionKey, runId: run.runId });
+      this.requireChromeSession(sessionId);
+      return;
+    }
     // An exact abort cannot cancel a successor even if it starts while this
     // request is in flight. Its ACK is deliberately not execution completion.
     await client.request('sessions.abort', { key: sessionKey, runId: timing.rootRunId || turnId });
@@ -1292,23 +1605,66 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       });
       const approvalIdentity = (value: CoworkSession | undefined) => value && JSON.stringify([
         value.id, value.source, value.agentId, value.cwd, value.nativeSessionKey, value.historyBinding, value.nativeParentSessionId,
+        value.modelRef, value.permissionMode,
       ]);
       const expectedApprovalIdentity = approvalIdentity(session);
       const clientGeneration = this.deps.getRuntime()?.getGatewayClientGeneration();
-      const approvals: ChromeAppServerApprovals | undefined = trusted?.approvals ? new ChromeAppServerApprovals({
-        ...trusted.approvals, getRuntime: this.deps.getRuntime,
-        expected: { sessionKey: prepared.sessionKey, nativeSessionId: prepared.gatewaySessionId, clientGeneration },
-        threadId: session.id, turnId: runId,
-        isCurrent: () => this.activeTurns.get(session.id)?.approvals === approvals &&
-          approvalIdentity(this.findChromeSession(session.id)) === expectedApprovalIdentity,
-      }) : undefined;
-      this.activeTurns.set(session.id, {
+      const browserApproval = trusted?.approvals;
+      const tracked: TrackedTurn = {
         runId,
         sessionKey: prepared.sessionKey,
         nativeSessionId: prepared.gatewaySessionId,
         clientGeneration,
-        ...(approvals ? { approvals } : {}),
-      });
+      };
+      const createApprovals = (): ChromeAppServerApprovals | undefined => {
+        if (!browserApproval) return undefined;
+        const approvals: ChromeAppServerApprovals = new ChromeAppServerApprovals({
+          ...browserApproval, getRuntime: this.deps.getRuntime,
+          expected: { sessionKey: prepared.sessionKey, nativeSessionId: prepared.gatewaySessionId, clientGeneration },
+          threadId: session.id, turnId: runId,
+          isCurrent: () => this.activeTurns.get(session.id) === tracked && tracked.approvals === approvals &&
+            approvalIdentity(this.findChromeSession(session.id)) === expectedApprovalIdentity,
+        });
+        return approvals;
+      };
+      const approvals = createApprovals();
+      tracked.approvals = approvals;
+      this.activeTurns.set(session.id, tracked);
+      let successor: Parameters<CoworkAutomaticErrorRetryOwner['prepareSuccessor']>[0] | undefined;
+      const retryOwner: CoworkAutomaticErrorRetryOwner | undefined =
+        trusted?.automaticErrorRetry && browserApproval ? {
+          isCurrent: () => {
+            if (this.activeTurns.get(session.id) !== tracked || browserApproval.signal.aborted ||
+                browserApproval.context.isClosed() ||
+                approvalIdentity(this.findChromeSession(session.id)) !== expectedApprovalIdentity) return false;
+            try { trusted.assertCurrent(); return true; } catch { return false; }
+          },
+          prepareSuccessor: binding => {
+            trusted.assertCurrent();
+            if (this.activeTurns.get(session.id) !== tracked || tracked.physicalRunId !== binding.predecessorRunId ||
+                tracked.sessionKey !== binding.sessionKey || tracked.nativeSessionId !== binding.nativeSessionId ||
+                tracked.lifecycleRevision !== binding.lifecycleRevision || tracked.clientGeneration !== binding.clientGeneration)
+              throw new Error('Browser continuation ownership changed.');
+            // Main calls this only after the preceding physical run has settled.
+            tracked.approvals?.release();
+            tracked.approvals = createApprovals();
+            successor = binding;
+            tracked.physicalRunId = binding.runId;
+            tracked.message = undefined;
+            tracked.approvals?.prepare(binding);
+          },
+          confirmSuccessor: nativeRunId => {
+            if (successor?.runId !== nativeRunId || this.activeTurns.get(session.id) !== tracked) return;
+            tracked.approvals?.accepted({ ...successor, clientTurnId: runId, nativeRunId });
+          },
+          rejectSuccessor: nativeRunId => {
+            if (successor?.runId !== nativeRunId || this.activeTurns.get(session.id) !== tracked) return;
+            tracked.approvals?.release();
+            tracked.approvals = undefined;
+            tracked.physicalRunId = successor.predecessorRunId;
+            successor = undefined;
+          },
+        } : undefined;
       let accepted = false;
       let nativeSendAbandoned = false;
       let resolveAccepted!: () => void;
@@ -1338,6 +1694,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
         ...(visionModelRef ? { initialModelRef: visionModelRef } : {}),
         attachments,
         clientTurnId: runId,
+        ...(retryOwner ? { automaticErrorRetryOwner: retryOwner } : {}),
         onNativeSendAbandoned: async () => {
           if (!accepted) nativeSendAbandoned = true;
           if (!accepted) approvals?.release();
@@ -1347,9 +1704,15 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
           assertWorkspaceCurrent(this.requireChromeSession(session.id));
           assertVisionCurrent?.(expectedVisionModel ? [expectedVisionModel] : [undefined, visionModelRef]);
           trusted?.finalSyncAdmission?.(binding);
+          tracked.lifecycleRevision = binding.lifecycleRevision;
+          tracked.physicalRunId = runId;
           approvals?.prepare(binding);
         },
         ...(approvals || trusted?.onNativeAccepted ? { onNativeAccepted: binding => {
+          if (this.activeTurns.get(session.id) === tracked) {
+            tracked.physicalRunId = binding.nativeRunId;
+            tracked.lifecycleRevision = binding.lifecycleRevision;
+          }
           approvals?.accepted(binding);
           trusted?.onNativeAccepted?.(binding);
         } } : {}),

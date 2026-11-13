@@ -233,7 +233,8 @@ const parseAutomaticErrorRetryMetadata = (value: string | null): AutomaticErrorR
     if (typeof parsed.chainId !== 'string' || typeof parsed.sessionKey !== 'string' ||
       typeof parsed.nativeSessionId !== 'string' || !Number.isInteger(parsed.attempt) ||
       !Number.isInteger(parsed.maxContinuations) ||
-      !['candidate', 'pending', 'superseded', 'final'].includes(parsed.disposition)) return undefined;
+      !['candidate', 'pending', 'superseded', 'final'].includes(parsed.disposition) ||
+      (parsed.chainPhase !== undefined && parsed.chainPhase !== 'cancelled')) return undefined;
     return parsed;
   } catch { return undefined; }
 };

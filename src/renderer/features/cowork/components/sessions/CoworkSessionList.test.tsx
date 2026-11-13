@@ -2,6 +2,11 @@
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { configureStore } from '@reduxjs/toolkit';
+import {
+  type AutomaticErrorRetryActivitySnapshot,
+  AutomaticErrorRetryPhase as RetryPhase,
+  type AutomaticErrorRetryPresentation,
+} from '@shared/cowork/automaticErrorRetry';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import { ExternalSessionSource, ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -69,6 +74,7 @@ vi.mock('@/services/i18n', () => ({
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
   activities.presentation = {};
   vi.mocked(coworkService.ensureSessionSummaries).mockReset().mockResolvedValue(true);
@@ -459,6 +465,55 @@ it('updates plugin activity without granting main execution state', () => {
     notifyPresentation();
   });
   expect(indicator()).toBeNull();
+});
+
+it('keeps retry waits visible for background rows and reconciles live changes with the initial snapshot', async () => {
+  const store = createStore();
+  const props = createProps(['Selected', 'Already waiting', 'Stopped', 'New retry'].map(id => summary(id, 1)));
+  let resolveSnapshot!: (snapshot: AutomaticErrorRetryActivitySnapshot) => void;
+  let onChanged!: (presentation: AutomaticErrorRetryPresentation) => void;
+  const getAutomaticErrorRetryActivity = vi.fn(() => new Promise<AutomaticErrorRetryActivitySnapshot>(resolve => {
+    resolveSnapshot = resolve;
+  }));
+  const remove = vi.fn();
+  vi.stubGlobal('electron', { cowork: {
+    getAutomaticErrorRetryActivity,
+    onAutomaticErrorRetryChanged: (listener: typeof onChanged) => { onChanged = listener; return remove; },
+  } });
+  const { unmount } = render(
+    <Provider store={store}>
+      <CoworkSessionList {...props} currentSessionId="Selected" />
+    </Provider>,
+  );
+  const indicator = (id: string) => within(screen.getByRole('button', { name: id }))
+    .queryByTitle(translations.en.coworkStatusRunning);
+  const publish = (sessionId: string, revision: number, phase: RetryPhase) => onChanged({
+    sessionId, revision, phase, chainId: sessionId, attempt: 0, maxContinuations: 3, runs: [],
+  });
+
+  act(() => {
+    publish('Stopped', 5, RetryPhase.Cancelled);
+    publish('New retry', 6, RetryPhase.Checking);
+  });
+  expect(indicator('New retry')).toBeTruthy();
+
+  await act(async () => resolveSnapshot({ revision: 4, sessionIds: ['Already waiting', 'Stopped'] }));
+  expect(indicator('Already waiting')).toBeTruthy();
+  expect(indicator('Stopped')).toBeNull();
+  expect(indicator('New retry')).toBeTruthy();
+  expect(indicator('Selected')).toBeNull();
+
+  act(() => {
+    publish('Already waiting', 7, RetryPhase.Completed);
+    publish('New retry', 8, RetryPhase.Failed);
+    publish('Stopped', 4, RetryPhase.Checking);
+    publish('Selected', 3, RetryPhase.Checking);
+  });
+  expect(screen.queryByTitle(translations.en.coworkStatusRunning)).toBeNull();
+  expect(store.getState().cowork.sessionRuntimeActivity).toEqual({});
+  expect(getAutomaticErrorRetryActivity).toHaveBeenCalledOnce();
+  unmount();
+  expect(remove).toHaveBeenCalledOnce();
 });
 
 describe('sidebar browser extension group', () => {

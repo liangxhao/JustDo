@@ -3,6 +3,7 @@ import {
   type AppServerNotify,
   type AppServerParams,
   type AppServerResult,
+  isAppServerRecord,
 } from '../clients/appServer/protocol/appServerProtocol';
 import { CodexAppServerToolProgress } from '../clients/appServer/protocol/appServerToolProgress';
 import type { ChromeExtensionAppServerStreamEvent } from './chromeAppServerTypes';
@@ -19,6 +20,7 @@ interface TurnProjection {
   failed: boolean;
   backfillingTool: boolean;
   lastAgentSeq: number;
+  retryAttempt: number;
   nativeSessionId?: string;
   nativeRunId?: string;
   sessionKey?: string;
@@ -64,11 +66,22 @@ export class ChromeAppServerLiveProjection {
     if (!Number.isSafeInteger(event.agentSeq) || event.agentSeq < 0) return;
     const turn = this.turns.get(value.turnId) ?? this.create(value.turnId, undefined, true);
     if (!turn || turn.failed) return;
-    if (turn.nativeRunId && turn.nativeRunId !== event.runId) return;
     if (turn.sessionKey && event.sessionKey && turn.sessionKey !== event.sessionKey) return;
     if (turn.nativeSessionId && event.sessionId && turn.nativeSessionId !== event.sessionId) return;
+    const attempt = value.retryAttempt ?? 0;
+    if (!Number.isSafeInteger(attempt) || attempt < turn.retryAttempt) return;
+    if (attempt > turn.retryAttempt) {
+      if (!event.runId || turn.nativeRunId === event.runId) return;
+      turn.progress.finish();
+      turn.retryAttempt = attempt;
+      turn.lastAgentSeq = -1;
+      turn.nativeRunId = undefined;
+      turn.lifecycleGeneration = undefined;
+      Object.assign(turn, this.createItems(value.turnId, () => turn));
+    }
     if (turn.lifecycleGeneration && event.lifecycleGeneration &&
       turn.lifecycleGeneration !== event.lifecycleGeneration) return;
+    if (turn.nativeRunId && turn.nativeRunId !== event.runId) return;
     turn.nativeSessionId ??= event.sessionId ?? undefined;
     turn.nativeRunId ??= event.runId;
     turn.sessionKey ??= event.sessionKey ?? undefined;
@@ -114,24 +127,34 @@ export class ChromeAppServerLiveProjection {
       this.fail(new Error('Chrome item projection exceeded its execution limit.'));
       return undefined;
     }
-    let turn!: TurnProjection;
-    const failed = (message: string) => this.retire(turn, new Error(message));
-    const notify: AppServerNotify = (method, params) => this.deliver(turnId, turn, method, params);
-    const progress = new CodexAppServerProgress(input, notify, failed);
-    turn = {
+    const turn: TurnProjection = {
       admitted,
       failed: false,
       backfillingTool: false,
       lastAgentSeq: -1,
+      retryAttempt: 0,
       queued: [],
       queuedBytes: 0,
-      progress,
-      tools: new CodexAppServerToolProgress(notify, failed, () => {
-        if (!turn.backfillingTool) progress.beforeTool();
-      }),
+      ...this.createItems(turnId, () => turn, input),
     };
     this.turns.set(turnId, turn);
     return turn;
+  }
+
+  private createItems(turnId: string, getTurn: () => TurnProjection, input?: string | readonly AppServerResult[]) {
+    const failed = (message: string) => this.retire(getTurn(), new Error(message));
+    const notify: AppServerNotify = (method, params) => this.deliver(turnId, getTurn(), method, params);
+    const progress = new CodexAppServerProgress(input, notify, failed);
+    const notifyTool: AppServerNotify = (method, params) => {
+      const { retryAttempt, nativeRunId } = getTurn();
+      const item = params.item;
+      notify(method, retryAttempt > 0 && nativeRunId && isAppServerRecord(item) && typeof item.id === 'string'
+        ? { ...params, item: { ...item, id: `${nativeRunId}:${item.id}` } } : params);
+    };
+    const tools = new CodexAppServerToolProgress(notifyTool, failed, () => {
+      if (!getTurn().backfillingTool) progress.beforeTool();
+    });
+    return { progress, tools };
   }
 
   private deliver(turnId: string, turn: TurnProjection, method: string, params: AppServerParams): void {

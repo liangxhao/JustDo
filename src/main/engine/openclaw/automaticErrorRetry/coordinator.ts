@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { setTimeout as delay } from 'node:timers/promises';
 
 import {
   AUTOMATIC_ERROR_RETRY_MAX_CONTINUATIONS,
@@ -10,9 +9,8 @@ import {
   type AutomaticErrorRetryRunMetadata,
 } from '../../../../shared/cowork/automaticErrorRetry';
 import type { NativeRunTerminalReceipt } from '../../gateway/types';
+import { waitForAutomaticErrorRetry } from './retryDecision';
 import { type AutomaticErrorRetryRule, createAutomaticErrorRetryRuleIndex } from './rules';
-
-export const AUTOMATIC_ERROR_RETRY_DELAY_MS = 3_000;
 
 export interface AutomaticErrorRetryBinding {
   sessionId: string;
@@ -78,6 +76,7 @@ type Chain = {
   receipts: Map<string, AutomaticErrorRetrySettledReceipt>;
   launches: Map<string, string>;
   lastSettledRunId?: string;
+  cancelledInitialRun?: string;
 };
 
 /** Owns only bounded application follow-ups; native outcomes and permissions remain authoritative. */
@@ -98,7 +97,7 @@ export class AutomaticErrorRetryCoordinator {
         !input.sessionId || !input.nativeSessionId || !input.clientTurnId || !input.runId)
       return false;
     const previous = this.chains.get(input.sessionId);
-    if (previous?.launches.size) return false;
+    if (previous && this.isOutstanding(previous, previous.currentRunId)) return false;
     if (previous?.binding.clientTurnId === input.clientTurnId || this.runs.has(input.runId)) return false;
     this.cancel(input.sessionId);
     if (previous) for (const run of previous.presentation.runs) this.runs.delete(run.runId);
@@ -153,7 +152,7 @@ export class AutomaticErrorRetryCoordinator {
   }
 
   observeWaitSettled(receipt: AutomaticErrorRetryWaitReceipt): boolean {
-    if (receipt.source !== 'agent.wait') return false;
+    if (!this.isSettledWait(receipt)) return false;
     return this.observeTerminal(receipt);
   }
 
@@ -163,10 +162,10 @@ export class AutomaticErrorRetryCoordinator {
     identity: Pick<AutomaticErrorRetryBinding, 'sessionKey' | 'nativeSessionId' | 'lifecycleRevision'>,
   ): boolean {
     const chain = this.runs.get(receipt.runId);
-    if (!chain || !chain.closed || !chain.controller.signal.aborted || receipt.source !== 'agent.wait' ||
+    if (!chain || !chain.closed || !chain.controller.signal.aborted || !this.isSettledWait(receipt) ||
         receipt.executionSettled !== true || !Number.isSafeInteger(receipt.clientGeneration) ||
         receipt.clientGeneration <= chain.binding.clientGeneration ||
-        ![...chain.launches.values()].includes(receipt.runId) ||
+        !this.isOutstanding(chain, receipt.runId) ||
         receipt.sessionKey !== chain.binding.sessionKey || receipt.sessionId !== chain.binding.nativeSessionId ||
         identity.sessionKey !== chain.binding.sessionKey || identity.nativeSessionId !== chain.binding.nativeSessionId ||
         identity.lifecycleRevision !== chain.binding.lifecycleRevision) return false;
@@ -190,7 +189,7 @@ export class AutomaticErrorRetryCoordinator {
       }
     }
     if (chain.closed) {
-      if (launchSettled) this.finishRetainedRun(chain, receipt);
+      if (launchSettled || chain.cancelledInitialRun === receipt.runId) this.finishRetainedRun(chain, receipt);
       else if (admitted) this.publish(chain);
       return false;
     }
@@ -245,6 +244,54 @@ export class AutomaticErrorRetryCoordinator {
     return chain ? this.snapshot(chain) : null;
   }
 
+  rebindInitialRun(binding: AutomaticErrorRetryBinding): boolean {
+    const chain = this.chains.get(binding.sessionId);
+    if (!chain || !this.current(chain) || chain.presentation.phase !== AutomaticErrorRetryPhase.Eligible ||
+        chain.binding.clientTurnId !== binding.clientTurnId || chain.binding.sessionKey !== binding.sessionKey ||
+        chain.binding.nativeSessionId !== binding.nativeSessionId || chain.binding.lifecycleRevision !== binding.lifecycleRevision ||
+        chain.binding.clientGeneration !== binding.clientGeneration) return false;
+    if (chain.currentRunId === binding.runId) return true;
+    if (!binding.runId || this.runs.has(binding.runId)) return false;
+    this.runs.delete(chain.currentRunId);
+    chain.currentRunId = binding.runId;
+    chain.binding = binding;
+    this.lastRun(chain).runId = binding.runId;
+    this.runs.set(binding.runId, chain);
+    this.publish(chain);
+    return true;
+  }
+
+  getTurn(sessionId: string, logicalTurnId: string) {
+    const chain = this.chains.get(sessionId);
+    if (!chain || chain.presentation.chainId !== logicalTurnId) return null;
+    return {
+      presentation: this.snapshot(chain),
+      currentPhysicalRunId: chain.currentRunId,
+      lastSettledReceipt: chain.lastSettledRunId ? this.getSettledReceipt(chain.lastSettledRunId) : null,
+      outstandingLaunch: this.isOutstanding(chain, chain.currentRunId),
+    };
+  }
+
+  cancelTurn(sessionId: string, logicalTurnId: string): { matched: boolean; physicalRunId?: string; unknown?: boolean } {
+    const chain = this.chains.get(sessionId);
+    if (!chain || chain.presentation.chainId !== logicalTurnId) return { matched: false };
+    const outstanding = this.isOutstanding(chain, chain.currentRunId);
+    if (chain.closed && !outstanding) return { matched: true };
+    const phase = chain.presentation.phase;
+    if (!outstanding && chain.lastSettledRunId &&
+        (phase === AutomaticErrorRetryPhase.Checking || phase === AutomaticErrorRetryPhase.Preparing))
+      chain.presentation.runs[0].chainPhase = AutomaticErrorRetryPhase.Cancelled;
+    const physicalRunId = !chain.receipts.has(chain.currentRunId) &&
+      (outstanding || phase === AutomaticErrorRetryPhase.Eligible) ? chain.currentRunId : undefined;
+    if (physicalRunId && phase === AutomaticErrorRetryPhase.Eligible) chain.cancelledInitialRun = physicalRunId;
+    this.cancel(sessionId);
+    return {
+      matched: true,
+      ...(physicalRunId ? { physicalRunId } : {}),
+      ...(outstanding && phase !== AutomaticErrorRetryPhase.Running ? { unknown: true } : {}),
+    };
+  }
+
   /** End the policy decision without manufacturing native execution settlement. */
   expireUnsettledCandidate(sessionId: string, runId: string): void {
     const chain = this.chains.get(sessionId);
@@ -263,7 +310,7 @@ export class AutomaticErrorRetryCoordinator {
   clear(): void {
     for (const sessionId of this.chains.keys()) this.cancel(sessionId);
     for (const [sessionId, chain] of this.chains) {
-      if (chain.launches.size) continue;
+      if (this.isOutstanding(chain, chain.currentRunId)) continue;
       this.chains.delete(sessionId);
       for (const run of chain.presentation.runs) this.runs.delete(run.runId);
     }
@@ -271,17 +318,18 @@ export class AutomaticErrorRetryCoordinator {
 
   private async retry(chain: Chain, receipt: AutomaticErrorRetrySettledReceipt, operation: symbol): Promise<void> {
     try {
-      const code = await this.dependencies.readFailureCode(chain.binding, receipt, chain.controller.signal);
+      const rule = await waitForAutomaticErrorRetry({
+        readFailureCode: () => this.dependencies.readFailureCode(chain.binding, receipt, chain.controller.signal),
+        isCurrent: () => this.activeOperation(chain, operation),
+        attempt: chain.presentation.attempt,
+        signal: chain.controller.signal,
+        retryDelayMs: this.dependencies.retryDelayMs,
+        rules: this.rules,
+      });
       if (!this.activeOperation(chain, operation)) return;
-      const rule = code ? this.rules.get(code) : undefined;
       if (!rule) {
         this.decline(chain, receipt);
         return;
-      }
-      const waitMs = this.dependencies.retryDelayMs ?? AUTOMATIC_ERROR_RETRY_DELAY_MS;
-      if (waitMs > 0) {
-        await delay(waitMs, undefined, { signal: chain.controller.signal });
-        if (!this.activeOperation(chain, operation)) return;
       }
       const runId = (this.dependencies.createRunId ?? randomUUID)();
       if (!runId || this.runs.has(runId)) throw new Error('Invalid retry run identity');
@@ -363,9 +411,19 @@ export class AutomaticErrorRetryCoordinator {
 
   private finishRetainedRun(chain: Chain, receipt: AutomaticErrorRetrySettledReceipt): void {
     chain.lastSettledRunId = receipt.runId;
+    chain.cancelledInitialRun = undefined;
     const phase = receipt.status === 'completed' ? AutomaticErrorRetryPhase.Completed
       : receipt.status === 'interrupted' ? AutomaticErrorRetryPhase.Cancelled : AutomaticErrorRetryPhase.Failed;
     this.finish(chain, phase);
+  }
+
+  private isOutstanding(chain: Chain, runId: string): boolean {
+    return chain.cancelledInitialRun === runId || [...chain.launches.values()].includes(runId);
+  }
+
+  private isSettledWait(receipt: AutomaticErrorRetryWaitReceipt): boolean {
+    return receipt.source === 'agent.wait' && typeof receipt.endedAt === 'number' && Number.isFinite(receipt.endedAt) &&
+      receipt.stopReason !== 'restart' && receipt.stopReason !== 'superseded';
   }
 
   private releaseSettledReservations(chain: Chain): void {

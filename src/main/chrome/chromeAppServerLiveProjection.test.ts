@@ -74,6 +74,31 @@ describe('shared browser standard item projection', () => {
       .toEqual([[AppServerNotificationMethod.AgentMessageDelta, expect.objectContaining({ delta: 'accepted' })]]);
   });
 
+  it('keeps one user item and an independent native sequence and tool namespace after a retry', () => {
+    const notify = vi.fn();
+    const projection = new ChromeAppServerLiveProjection('thread', notify, vi.fn());
+    projection.prepareTurn('logical-turn', 'Input', 1_000);
+    projection.admitTurn('logical-turn');
+    projection.accept(event(1, 'lifecycle', { phase: 'start' }));
+    const tool = { phase: 'result', toolCallId: 'same-tool', name: 'read', result: { content: [] } };
+    projection.accept(event(8, 'tool', tool));
+    const retry = (sequence: number, stream: string, data: Record<string, unknown>) => ({
+      ...event(sequence, stream, data), retryAttempt: 1,
+      event: { ...event(sequence, stream, data).event, runId: 'successor', lifecycleGeneration: 'successor-generation' },
+    });
+    projection.accept(retry(1, 'lifecycle', { phase: 'start' }));
+    projection.accept(retry(2, 'tool', tool));
+    projection.accept(retry(3, 'assistant', { text: 'Continued reply' }));
+    projection.accept(event(100, 'assistant', { text: 'Late predecessor output' }));
+
+    const completed = notify.mock.calls.filter(([method]) => method === AppServerNotificationMethod.ItemCompleted);
+    expect(completed.filter(([, params]) => params.item.type === 'userMessage')).toHaveLength(1);
+    expect(completed.filter(([, params]) => params.item.type === 'mcpToolCall').map(([, params]) => params.item.id))
+      .toEqual(['same-tool', 'successor:same-tool']);
+    expect(notify.mock.calls.filter(([method]) => method === AppServerNotificationMethod.AgentMessageDelta))
+      .toEqual([[AppServerNotificationMethod.AgentMessageDelta, expect.objectContaining({ turnId: 'logical-turn', delta: 'Continued reply' })]]);
+  });
+
   it('retires a settled projection and never reopens it from a late native update', () => {
     const notify = vi.fn();
     const projection = new ChromeAppServerLiveProjection('thread', notify, vi.fn());

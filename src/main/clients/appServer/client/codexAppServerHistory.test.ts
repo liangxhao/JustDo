@@ -49,6 +49,29 @@ const history = (): ExternalAgentThreadHistory => ({
 });
 
 describe('authenticated native history projection', () => {
+  it('keeps settled retry attempts under one client turn and shows only its final failure', () => {
+    const input = history();
+    input.runs = [{ ...receipt(1), state: 'failed' }, { ...receipt(2), state: 'failed' }];
+    input.messages.push(
+      { ...message('previous-error', 'custom', 'previous failure', 'native-run-1'), customType: 'run-failed-before-reply' },
+      message('ordinary-empty', 'assistant', [], 'native-run-1'),
+      message('retry-partial', 'assistant', [{ type: 'text', text: 'Useful partial reply.' }], 'native-run-2'),
+      { ...message('final-error', 'custom', 'last failure', 'native-run-2'), customType: 'run-failed-before-reply' },
+    );
+    input.retryTurns = [{
+      clientTurnId: 'turn-1', nativeRunIds: ['native-run-1', 'native-run-2'], state: 'failed',
+      endedAt: 2_900,
+    }];
+    const snapshot = projectCodexHistory(input);
+    expect(snapshot.turns).toEqual([expect.objectContaining({ id: 'turn-1', status: 'failed' })]);
+    expect(snapshot.items.filter(entry => entry.item.type === 'userMessage')).toHaveLength(1);
+    expect(snapshot.items.filter(entry => entry.item.type === 'agentMessage' && entry.item.text === '')).toHaveLength(1);
+    const projected = JSON.stringify(snapshot);
+    expect(projected).toContain('Useful partial reply.');
+    expect(projected).toContain('last failure');
+    expect(projected).not.toContain('previous failure');
+  });
+
   it('retains authenticated native managed images in order without opening their paths or losing image-only history', () => {
     const input = history();
     input.messages = [{

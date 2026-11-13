@@ -2011,6 +2011,7 @@ if (agentBridgeArgv) {
     getSessionPlugins: () => getAppPlugins().sessions,
     getCoworkStore,
     getCoworkEngineRouter,
+    getAutomaticErrorRetryActivity: () => getOpenClawRuntimeAdapter()?.getAutomaticErrorRetryActivity() ?? null,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     setSessionPermissionMode: (sessionId, permissionMode, options) =>

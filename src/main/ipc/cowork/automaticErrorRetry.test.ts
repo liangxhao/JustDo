@@ -36,15 +36,38 @@ const timing = (disposition: 'candidate' | 'pending' | 'superseded'): SessionRun
 
 it('only exposes associations to the authorized desktop caller', () => {
   const getStore = vi.fn();
+  const getRouter = vi.fn();
+  const getActivity = vi.fn();
   registerAutomaticErrorRetryHandlers({
     isAllowedSender: () => false,
     getStore,
-    getRouter: vi.fn(),
+    getRouter,
+    getActivity,
   });
   expect(handlers.get(AutomaticErrorRetryIpc.Get)!({}, 'product')).toMatchObject({
     success: false,
   });
   expect(getStore).not.toHaveBeenCalled();
+  expect(handlers.get(AutomaticErrorRetryIpc.GetActivity)!({})).toBeNull();
+  expect(getRouter).not.toHaveBeenCalled();
+  expect(getActivity).not.toHaveBeenCalled();
+});
+
+it('loads the active retry list without initializing the runtime or querying stored run receipts', () => {
+  const snapshot = { revision: 2, sessionIds: ['product'] };
+  const getStore = vi.fn();
+  const getRouter = vi.fn();
+  const getActivity = vi.fn((): typeof snapshot | null => snapshot).mockReturnValueOnce(null);
+  registerAutomaticErrorRetryHandlers({
+    isAllowedSender: () => true,
+    getStore,
+    getRouter,
+    getActivity,
+  });
+  expect(handlers.get(AutomaticErrorRetryIpc.GetActivity)!({})).toBeNull();
+  expect(handlers.get(AutomaticErrorRetryIpc.GetActivity)!({})).toEqual(snapshot);
+  expect(getStore).not.toHaveBeenCalled();
+  expect(getRouter).not.toHaveBeenCalled();
 });
 
 it('merges earlier handled chains with the live current chain', () => {
@@ -54,6 +77,7 @@ it('merges earlier handled chains with the live current chain', () => {
     getStore: () =>
       ({ getSession: () => ({}), getSessionRuns: () => [timing('superseded')] }) as never,
     getRouter: () => ({ getAutomaticErrorRetry: () => live }) as never,
+    getActivity: () => null,
   });
   expect(handlers.get(AutomaticErrorRetryIpc.Get)!({}, 'product')).toMatchObject({
     success: true,

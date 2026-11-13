@@ -26,7 +26,7 @@ describe('Agent runtime settings', () => {
         approvalTimeoutMinutes: 2,
       },
       automaticErrorRetry: {
-        maxContinuations: 1,
+        maxContinuations: 3,
       },
       mcp: {
         requestTimeoutSeconds: 60,

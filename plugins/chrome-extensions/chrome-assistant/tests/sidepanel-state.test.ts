@@ -100,6 +100,15 @@ describe('Chrome extension side panel state', () => {
     expect(shouldShowTurnError('thread-1', 'thread-1', false)).toBe(false);
   });
 
+  it('shows a final failure once when the latest native history already displays it', () => {
+    const failure = { type: 'agentMessage', text: 'Final error', display: { stopReason: 'error' } };
+    const display = { turns: [{ items: [failure] }] };
+    expect(shouldShowTurnError('thread-1', 'thread-1', true, display, 'Final error')).toBe(false);
+    expect(shouldShowTurnError('thread-1', 'thread-1', true, display, 'A different error')).toBe(true);
+    expect(shouldShowTurnError('thread-1', 'thread-1', true, { turns: [...display.turns, { items: [] }] }, 'Final error')).toBe(true);
+    expect(shouldShowTurnError('thread-1', 'thread-1', true, { turns: [{ items: [{ ...failure, display: {} }] }] }, 'Final error')).toBe(true);
+  });
+
   it('shows a submitted user message until it appears in persisted history', () => {
     const pending = { threadId: 'thread-1', text: 'Hello' };
     expect(mergePendingUserMessage([], pending, 'thread-1')).toEqual([

@@ -93,8 +93,12 @@ export function isCurrentThreadRunning(activeThreadId, selectedThreadId) {
   return Boolean(activeThreadId) && activeThreadId === selectedThreadId;
 }
 
-export function shouldShowTurnError(completedThreadId, selectedThreadId, refreshApplied) {
-  return Boolean(refreshApplied) && completedThreadId === selectedThreadId;
+export function shouldShowTurnError(completedThreadId, selectedThreadId, refreshApplied, display, errorMessage) {
+  if (!refreshApplied || completedThreadId !== selectedThreadId) return false;
+  const items = display?.turns?.at(-1)?.items ?? [];
+  return !items.some(item => (item.type === 'agentMessage' || item.type === 'systemMessage') &&
+    (item.display?.stopReason === 'error' || item.display?.nativeFailure === true) &&
+    typeof item.text === 'string' && item.text.trim() === errorMessage?.trim());
 }
 
 export function mergePendingUserMessage(entries, pendingMessage, selectedThreadId) {

@@ -6,10 +6,11 @@
 
 ## 设置与规则
 
-运行参数 `automaticErrorRetry.maxContinuations` 默认 1，范围 0–3；0 关闭。
-旧设置只补缺失的新字段，不重置其他设置。此应用侧设置不投影到 Gateway 配置。
-确认命中规则且还有额度后，每次续跑默认等待 3 秒。默认值由 Main 的
-`AUTOMATIC_ERROR_RETRY_DELAY_MS` 定义，等待结束后才分配后继运行身份并记入次数。
+运行参数 `automaticErrorRetry.maxContinuations` 默认 3，范围 0–3；0 关闭。
+缺少此设置时采用默认值，已有的显式次数继续生效。此应用侧设置不投影到 Gateway 配置。
+每次确认命中规则且还有额度后开始计时。首次续跑等待 10 秒，后续每次增加 5 秒，默认三次
+分别等待 10、15、20 秒。Main 的 `retryDecision.ts` 定义共用的初始等待与增量。
+等待结束后才分配后继运行身份并记入次数。
 
 规则只包含 `id`、`errorCodes`、`fixedPrompt`；重复 ID/错误码或空提示被拒绝。
 已登记连续相同工具失败 `openclaw_repeated_tool_error`、上下文溢出 `context_overflow`，以及
@@ -26,10 +27,11 @@ Main 的执行实现集中在 `src/main/engine/openclaw/automaticErrorRetry/`，
 
 | 模块 | 职责 |
 | --- | --- |
-| `coordinator.ts` | 重试链、共用次数和唯一尝试的策略状态 |
+| `retryDecision.ts` | 共用错误规则核对和可取消的阶梯等待 |
+| `coordinator.ts` | 桌面和 Chrome 重试链、次数及原生前驱关联 |
 | `rules.ts` | 固定错误规则及规则索引验证 |
 | `failureCode.ts` | 经现有 Runtime Services 接口核对精确错误码 |
-| `host.ts` | 已准入桌面来源、工作区/权限准备、条件发送和回执持久化 |
+| `host.ts` | 已准入桌面及 Chrome 来源、工作区/权限准备、条件发送和重试状态发布 |
 | `lifecycle.ts` | 已接纳的原生结果暂存、错误展示延后和业务 owner 交接 |
 | `historyPresentation.ts` | 无正文历史关联的显示恢复，不重建执行 |
 
@@ -46,10 +48,10 @@ preload 的最小桥和 shared 的跨进程契约保持单文件；IPC 只校验
 
 ```mermaid
 flowchart LR
-  Send[桌面发送前登记精确运行] --> Terminal[原生整轮失败结算]
+  Send[应用入口登记精确运行] --> Terminal[原生整轮失败结算]
   Terminal --> Claim[认领唯一后继]
   Claim --> Code[核对结构化错误码]
-  Code -->|登记规则且有次数| Delay[等待 3 秒]
+  Code -->|登记规则且有次数| Delay[按次数等待 10、15、20 秒]
   Delay --> Check[复核身份 权限 停止与新输入]
   Code -->|未登记或耗尽| Final[交回实际最终结果]
   Check --> Next[同聊天内部提示的新运行]
@@ -58,7 +60,7 @@ flowchart LR
   Next -->|发送未知| Unknown[保留原身份并精确核验]
 ```
 
-Main 先登记桌面发送与 key、物理 SID、lifecycle revision、客户端代次的关联，再允许输入。
+Main 先登记发送与 key、物理 SID、lifecycle revision、客户端代次的关联，再允许输入。
 只接受精确原生整轮 `executionSettled:true` 终态；chat final、空闲和 Stop ACK 不替代结算。
 丢失实时事件时，精确 `agent.wait` 结果使用独立证明类型，不制造 agentSeq。
 
@@ -67,9 +69,10 @@ Runtime Services 的只读 `runtimeServices.executionFailure`
 最后一条 assistant 的结构化错误码及 `identityMatched`。不缓存原始报错、聊天正文或参数。
 读取有界，失败则保留普通失败行为。
 
-读回确认 `identityMatched:true` 后，已有 transcript 错误码优先。上下文溢出使用同一运行的
+读回确认 `identityMatched:true` 后，使用原生 transcript 错误码。上下文溢出使用同一运行的
 整轮 lifecycle 证据，要求 `phase:error`、`executionSettled:true`、`livenessState:blocked` 和
-`errorObservation.failoverReason:context_overflow`，排除取消和超时。OpenClaw 也可能在
+`errorObservation.failoverReason:context_overflow`，排除取消和超时。原生 transcript 保存
+模型接口返回的 `context_length_exceeded` 时，也要求这组 lifecycle 证据。OpenClaw 也可能在
 压缩本身因上下文不足而失败时保留该观测。一般压缩错误、尝试结束和只有 `agent.wait`
 失败状态的结果缺少这一证据。OpenClaw 先完成自己的压缩与恢复，Main 再决定是否派发续跑。
 压缩后若物理会话身份已变，现有身份校验会放弃本次应用侧续跑。
@@ -77,7 +80,7 @@ Runtime Services 的只读 `runtimeServices.executionFailure`
 读取许可失效有时只发布 `chat.error`。固定文案可唤起一次 `agent.wait` 查询，随后必须取得
 精确 run 的已结束失败结果、同一原生 SID/revision 和当前 `lastRunId`。当前锁定运行时的
 失败回执未公开细分错误码，Main 通过有界 `chat.history` 读取当前分支：要求已保存用户输入
-有精确的原生输入幂等键，并核对其后的 `run-failed-before-reply` 自定义回执确属同一 run，
+有精确的原生输入幂等键，并核对其后的 `run-failed-before-reply` 自定义回执确属失败 run，
 正文精确匹配这一种原生拒绝。发送前再次复核 `lastRunId`，避免旧错误接管较新的运行。
 错误气泡和助手正文均不能单独触发续跑。原始输入无需重新发送。
 
@@ -107,8 +110,13 @@ owner。Goal 对同一步的业务重试继承已消耗的通用次数；独立�
 
 Renderer 按 Main 的精确运行关联隐藏待核验和续跑中的报错。续跑过程中显示执行状态，
 发送结果未知时显示执行状态核对，待精确结果确认后收敛。
+阶梯等待和发送准备期间，输入框保持活动状态并提供停止按钮，会话列表持续显示运行中。
+列表也跟踪未选中的会话。原生运行间隙保留草稿，停止后取消尚未派发的续跑。
 额度耗尽、规则不匹配或确认无法发送时，只显示最后一次实际失败。续跑成功时，中间失败
 仍保留在原生历史和诊断，聊天保留有效的部分回复、工具活动、文件和媒体。
+外部客户端还处理 Gateway 在整轮结算前经文本流发出的固定失败文案。显示层只处理已绑定的
+续跑候选，实际续跑仍以精确终态和原生错误证据为准。公开历史可能只保留失败正文，显示层
+通过同一运行的原生终态消息标记识别并移除固定文案。
 
 已有 `cowork_session_runs` 的可空 `automatic_error_retry` 字段保存无正文关联，只服务呈现，
 不建立 transcript 缓存或执行恢复权威。刷新历史、切回和重连可恢复已确认处理的失败关联；
@@ -116,12 +124,26 @@ Renderer 按 Main 的精确运行关联隐藏待核验和续跑中的报错。�
 在 10 秒核验窗口结束后终止该次续跑资格，再显示原失败。已认领续跑的运行及发送结果
 未知的运行由其实际结果决议。Renderer 的计时器仅限制元数据加载等待。
 
+CLI、入站 ACP 和通用 app-server 经共用外部执行入口使用相同错误规则、预算和等待时间。
+外部执行在请求返回前完成重试，保留原客户端请求 ID 和会话预约。原请求持有的审批和
+MCP 资源由各自连接管理，后继运行重新建立与新原生运行的精确审批关联。取消、连接归属变化或
+原生发送结果未知会停止后续派发。恢复及历史关联只使用已保存的运行回执。
+
+支持客户端审批的 Chrome 侧栏沿用原轮次 ID、状态和历史通知。等待时轮次保持运行中，点击停止可
+取消尚未派发的续跑。已开始的续跑使用独立的原生运行 ID，审批和停止都绑定到发起该轮次的
+连接及当前运行。外部客户端在等待期主动停止时，请求显示已中止，上一轮的原生失败仍保留在
+诊断。Chrome 发起连接撤回订阅或断开后，未派发的续跑失去该连接的审批归属，保留最后一次
+实际结果。已派发的原生运行按现有规则等待结算。
+
 ## 范围与验证边界
 
-当前只接入能证明普通桌面发送归属及准备身份的执行，包括其已准入的 Goal 后继。
-ACP 完成回传、子代理、Agent Team、Swarm、cron、外部客户端及原生子任务回报触发的
+接入范围为能证明发送归属及准备身份的桌面聊天、已准入的 Goal 后继、CLI、入站 ACP、
+通用 app-server 和普通 Chrome 侧栏发送。Chrome 网页启动任务保留自己的运行回执和取消流程。
+原生 ACP 完成回传、子代理、Agent Team、Swarm、cron 及原生子任务回报触发的
 主会话运行由各自原生 owner 处理。原生主会话回报续跑的公开事件缺少精确前驱关系，且运行
 结束后原生投递仍可能排队重试。仅凭同一会话或空闲状态接管会与原生调度竞争。
+插件重载后的原生接续轮也归原生 owner。`Session event configuration changed` 发生在该轮时，
+公开接口只能核对物理运行，缺少原事件的接续归属和原始生产者权限，应用侧续跑不接管。
 
 续跑已收到接纳回执后，界面依赖原生整轮终态收敛。如果失败仅通过原生 `agent` 的后续 RPC
 响应返回，当前连接可能持续显示续跑状态，直至精确执行结果经事件或读回确认。
@@ -130,7 +152,14 @@ ACP 完成回传、子代理、Agent Team、Swarm、cron、外部客户端及原
 停止与身份竞态、先终态后 ACK、`agent.wait`、Goal 单后继和计数，以及实际聊天组件的
 首次错误绘制、历史接管、工具/文件/部分正文保留和最终错误放开。
 
-尚未使用与本次源码一致的冻结运行包执行真实 Gateway + 合成模型端到端验证。
-单元/集成测试及源码核对不替代此项验证或安装包验收。
+使用冻结运行包和本地合成模型执行真实 Gateway 端到端验证。连续相同工具失败用例覆盖
+Windows CLI、入站 ACP、通用 app-server 和 Chromium 中实际加载的 Chrome 侧栏。四个入口均
+完成同一轮次的自动续跑，等待期取消后未派发后继，客户端实时输出和适用的历史界面均隐藏
+中间失败及内部反馈。通用 app-server 额外验证默认三次续跑耗尽后交付最终失败。Chrome 侧栏
+额外验证最终失败只展示一次、停止按钮恢复为发送，以及成功回答引用同一文案时仍能显示。
+通用 app-server 还通过模型接口的 HTTP 400 响应验证了上下文溢出可在原会话续跑，且实时
+输出和历史不展示中间报错或内部反馈。首次外部执行可在原生会话创建时确认模型，避免创建后
+重复设置模型，使原生模型切换抢先处理该次错误。
+浏览器探针通过隔离配置提供本地连接信息，生产安装包及浏览器 Native Messaging 注册仍需单独验收。
 
 [返回执行控制](README.md)

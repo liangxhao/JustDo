@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { AutomaticErrorRetryDisposition, AutomaticErrorRetryPhase } from '../../../../shared/cowork/automaticErrorRetry';
@@ -10,6 +12,11 @@ import {
   type AutomaticErrorRetryWaitReceipt,
 } from './coordinator';
 import { CONTEXT_OVERFLOW_ERROR_CODE, createAutomaticErrorRetryRuleIndex, REPEATED_TOOL_ERROR_CODE, SESSION_READER_FAILURE_CODE } from './rules';
+
+vi.mock('node:timers/promises', async importOriginal => {
+  const timers = await importOriginal<typeof import('node:timers/promises')>();
+  return { ...timers, setTimeout: vi.fn(timers.setTimeout) };
+});
 
 const arm: AutomaticErrorRetryArm = {
   sessionId: 'product-session', sessionKey: 'agent:main:justdo:product-session',
@@ -25,7 +32,7 @@ function deferred<T>() {
   const promise = new Promise<T>(value => { resolve = value; });
   return { promise, resolve };
 }
-function fixture(maxContinuations = 2, retryDelayMs = 0) {
+function fixture(maxContinuations = 2, retryDelayMs: number | null = 0) {
   let current = true;
   let sequence = 0;
   const read = vi.fn(async () => REPEATED_TOOL_ERROR_CODE as string | null);
@@ -35,7 +42,7 @@ function fixture(maxContinuations = 2, retryDelayMs = 0) {
   const changed = vi.fn();
   const unclaimed = vi.fn();
   const coordinator = new AutomaticErrorRetryCoordinator({
-    retryDelayMs,
+    retryDelayMs: retryDelayMs ?? undefined,
     readFailureCode: read, isCurrent: () => current, reserveSuccessor: reserve,
     releaseSuccessor: release, launchSuccessor: launch, onChanged: changed,
     onUnclaimedSettled: unclaimed, createRunId: () => `technical-${++sequence}`,
@@ -46,6 +53,75 @@ function fixture(maxContinuations = 2, retryDelayMs = 0) {
 }
 
 describe('automatic error retry coordinator', () => {
+  it('retains the exact initial run after Stop until its native terminal arrives', () => {
+    const f = fixture();
+    expect(f.coordinator.cancelTurn(arm.sessionId, arm.clientTurnId)).toEqual({
+      matched: true, physicalRunId: arm.runId,
+    });
+    expect(f.coordinator.getTurn(arm.sessionId, arm.clientTurnId)).toMatchObject({
+      presentation: { phase: AutomaticErrorRetryPhase.Cancelled }, outstandingLaunch: true, lastSettledReceipt: null,
+    });
+    expect(f.coordinator.observeSettled(receipt(arm.runId, 'interrupted'))).toBe(false);
+    expect(f.coordinator.getTurn(arm.sessionId, arm.clientTurnId)).toMatchObject({
+      outstandingLaunch: false, lastSettledReceipt: { runId: arm.runId, status: 'interrupted' },
+    });
+    expect(f.launch).not.toHaveBeenCalled();
+  });
+
+  it('holds the accepted physical root under the original client turn and cancels the pending successor', async () => {
+    const f = fixture(3, null);
+    const actualRoot = 'gateway-accepted-root';
+    try {
+      expect(f.coordinator.rebindInitialRun({ ...arm, runId: actualRoot })).toBe(true);
+      expect(f.coordinator.observeSettled(receipt(arm.runId))).toBe(false);
+      expect(f.coordinator.observeSettled(receipt(actualRoot))).toBe(true);
+      expect(f.coordinator.getTurn(arm.sessionId, arm.clientTurnId)).toMatchObject({
+        presentation: { phase: AutomaticErrorRetryPhase.Checking },
+        currentPhysicalRunId: actualRoot, lastSettledReceipt: { runId: actualRoot }, outstandingLaunch: false,
+      });
+      expect(f.coordinator.cancelTurn(arm.sessionId, 'foreign-turn')).toMatchObject({ matched: false });
+      expect(f.coordinator.cancelTurn(arm.sessionId, arm.clientTurnId)).toEqual({ matched: true });
+      expect(f.coordinator.getPresentation(arm.sessionId)?.runs[0].chainPhase).toBe(AutomaticErrorRetryPhase.Cancelled);
+      await Promise.resolve();
+      expect(f.launch).not.toHaveBeenCalled();
+    } finally {
+      f.coordinator.clear();
+    }
+  });
+
+  it('waits 10, 15 and 20 seconds across three confirmed failures before exhausting the budget', async () => {
+    const f = fixture(3, null);
+    const expectedDelays = [10_000, 15_000, 20_000];
+    const waits = expectedDelays.map(() => deferred<void>());
+    const scheduledDelay = vi.mocked(delay);
+    scheduledDelay.mockClear();
+    for (const wait of waits) scheduledDelay.mockReturnValueOnce(wait.promise);
+    try {
+      expect(f.coordinator.getPresentation(arm.sessionId)?.phase).toBe(AutomaticErrorRetryPhase.Eligible);
+      for (const [attempt, waitMs] of expectedDelays.entries()) {
+        const predecessor = attempt === 0 ? arm.runId : `technical-${attempt}`;
+        expect(f.coordinator.observeSettled(receipt(predecessor))).toBe(true);
+        await vi.waitFor(() => expect(delay).toHaveBeenNthCalledWith(
+          attempt + 1, waitMs, undefined, { signal: expect.any(AbortSignal) },
+        ));
+        expect(f.launch).toHaveBeenCalledTimes(attempt);
+        expect(f.coordinator.getPresentation(arm.sessionId)).toMatchObject({
+          attempt, phase: AutomaticErrorRetryPhase.Checking,
+        });
+        waits[attempt].resolve(undefined);
+        await vi.waitFor(() => expect(f.launch).toHaveBeenCalledTimes(attempt + 1));
+      }
+      expect(f.coordinator.observeSettled(receipt('technical-3'))).toBe(false);
+      expect(delay).toHaveBeenCalledTimes(3);
+      expect(f.coordinator.getPresentation(arm.sessionId)).toMatchObject({
+        phase: AutomaticErrorRetryPhase.Failed, attempt: 3,
+      });
+    } finally {
+      f.coordinator.clear();
+      scheduledDelay.mockReset();
+    }
+  });
+
   it('waits before each eligible continuation and cancels the wait before dispatch', async () => {
     const delayMs = 25;
     const f = fixture(2, delayMs);
@@ -249,7 +325,7 @@ describe('automatic error retry coordinator', () => {
     f.coordinator.clear();
     const settled: AutomaticErrorRetryWaitReceipt = {
       source: 'agent.wait', runId: 'technical-1', sessionKey: arm.sessionKey, sessionId: arm.nativeSessionId,
-      lifecycleGeneration: 'generation', clientGeneration: 2, executionSettled: true, status: 'failed',
+      lifecycleGeneration: 'generation', clientGeneration: 2, executionSettled: true, status: 'failed', endedAt: 1,
     };
     expect(f.coordinator.observeWaitSettled(settled)).toBe(false);
     expect(f.coordinator.retireWaitSettled(settled, arm)).toBe(true);
@@ -274,7 +350,7 @@ describe('automatic error retry coordinator', () => {
     await vi.waitFor(() => expect(f.coordinator.getPresentation(arm.sessionId)?.phase).toBe(AutomaticErrorRetryPhase.Unknown));
     f.coordinator.clear();
     const settled: AutomaticErrorRetryWaitReceipt = { source: 'agent.wait', runId: 'technical-1', sessionKey: arm.sessionKey,
-      sessionId: arm.nativeSessionId, lifecycleGeneration: null, clientGeneration: 2, executionSettled: true, status: 'completed' };
+      sessionId: arm.nativeSessionId, lifecycleGeneration: null, clientGeneration: 2, executionSettled: true, status: 'completed', endedAt: 1 };
     expect(f.coordinator.retireWaitSettled({ ...settled, sessionId: 'replacement' }, arm)).toBe(false);
     expect(f.coordinator.retireWaitSettled(settled, { ...arm, lifecycleRevision: 'replacement' })).toBe(false);
     expect(f.coordinator.retireWaitSettled({ ...settled, clientGeneration: 1 }, arm)).toBe(false);

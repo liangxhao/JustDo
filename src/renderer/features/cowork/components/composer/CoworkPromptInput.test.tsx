@@ -92,6 +92,48 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test('offers Stop during automatic retry before a native run starts, even with a draft', async () => {
+  vi.stubGlobal('electron', {
+    extensions: { list: vi.fn().mockResolvedValue({ success: true, extensions: [] }), onChanged: () => () => {} },
+    cowork: {
+      getSessionGoal: vi.fn().mockResolvedValue({ success: true, goal: null }),
+      getGoalExecution: vi.fn().mockResolvedValue({ success: true }),
+      onSessionGoalChanged: () => () => {},
+      onGoalExecutionChanged: () => () => {},
+    },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const onSubmit = vi.fn();
+  const onQueue = vi.fn();
+  const onStop = vi.fn().mockResolvedValue(true);
+  const composer = (automaticRetryActive: boolean) => (
+    <Provider store={store}>
+      <CoworkPromptInput
+        sessionId="automatic-retry-stop"
+        automaticRetryActive={automaticRetryActive}
+        onSubmit={onSubmit}
+        onQueue={onQueue}
+        onStop={onStop}
+      />
+    </Provider>
+  );
+  const view = render(composer(false));
+  const draft = screen.getByRole('textbox');
+  fireEvent.change(draft, { target: { value: 'Keep this draft' } });
+  expect(screen.queryByRole('button', { name: i18nService.t('coworkStopTask') })).toBeNull();
+
+  view.rerender(composer(true));
+  expect(screen.queryByRole('button', { name: i18nService.t('coworkQueueMessage') })).toBeNull();
+  const stop = screen.getByRole('button', { name: i18nService.t('coworkStopTask') });
+  expect(stop).toHaveProperty('disabled', false);
+  await act(async () => fireEvent.click(stop));
+  expect(onStop).toHaveBeenCalledOnce();
+  expect(onQueue).not.toHaveBeenCalled();
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(draft).toHaveProperty('value', 'Keep this draft');
+});
+
 test('keeps inline voice alive across task start and both composer layouts with text editing intact', async () => {
   const config = configService.getConfig();
   vi.spyOn(configService, 'getConfig').mockReturnValue({

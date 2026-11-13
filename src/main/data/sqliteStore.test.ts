@@ -44,6 +44,13 @@ test('upgrades existing run receipts and retains content-free retry associations
     expect(new CoworkStore(reopened.getDatabase()).getSessionRun(timing.id)).toMatchObject({
       state: 'failed', automaticErrorRetry: metadata,
     });
+    const reopenedCowork = new CoworkStore(reopened.getDatabase());
+    reopenedCowork.setSessionRunAutomaticErrorRetry(timing.clientTurnId, {
+      ...metadata, disposition: 'final', chainPhase: 'cancelled',
+    });
+    expect(reopenedCowork.getSessionRun(timing.id)).toMatchObject({
+      state: 'failed', automaticErrorRetry: { disposition: 'final', chainPhase: 'cancelled' },
+    });
     reopened.getDatabase().prepare('UPDATE cowork_session_runs SET automatic_error_retry = ? WHERE id = ?')
       .run('{invalid', timing.id);
     expect(new CoworkStore(reopened.getDatabase()).getSessionRun(timing.id)?.automaticErrorRetry).toBeUndefined();

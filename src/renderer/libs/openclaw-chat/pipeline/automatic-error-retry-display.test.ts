@@ -55,4 +55,29 @@ describe('automatic error retry display projection', () => {
     expect(projected[1].content).toEqual(withoutDetail.content);
     expect(projected[2].content).toBe(stringPartial.content);
   });
+
+  it.each([
+    'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.',
+    'This conversation is too long for the model. Try /compact, or start a new conversation with /new.',
+  ])('hides native failure copy in public history while retaining partial text and media (%s)', failureCopy => {
+    const copy = { type: 'text', text: failureCopy };
+    const partial = { type: 'text', text: 'Useful partial answer' };
+    const file = { type: 'file', path: 'output.txt' };
+    const message = {
+      role: 'assistant', stopReason: 'error', content: [partial, copy, file],
+      __openclaw: { runId: 'run', idempotencyKey: 'run:terminal-error' },
+    };
+    const prefixed = { ...message, content: [{ ...partial, text: `${copy.text}\n\n${partial.text}` }] };
+    const ordinary = { ...message, __openclaw: { runId: 'run', idempotencyKey: 'run:assistant' } };
+    const final = { ...message, __openclaw: { runId: 'final', idempotencyKey: 'final:terminal-error' } };
+    const conflicting = { runId: 'final', message };
+
+    const projected = projectRetryFailureMessages([message, prefixed, ordinary, final, conflicting], new Set(['run']));
+
+    expect(projected[0].content).toEqual([partial, file]);
+    expect(projected[1].content).toEqual([partial]);
+    expect(projected[2].content).toEqual([partial, copy, file]);
+    expect(projected[3]).toBe(final);
+    expect(projected[4]).toBe(conflicting);
+  });
 });

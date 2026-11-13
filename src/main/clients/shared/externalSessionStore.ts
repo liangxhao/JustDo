@@ -189,6 +189,15 @@ export class ExternalSessionStore {
       .run(Date.now(), this.source, externalSessionKey, runId);
   }
 
+  replaceExecutionAttempt(externalSessionKey: string, from: string, to: string): void {
+    const changed = this.db.prepare(
+      `UPDATE cowork_external_sessions SET execution_run_id = ?, execution_state = 'running', updated_at = ?
+       WHERE source = ? AND external_session_key = ? AND execution_run_id = ? AND status = 'running'
+         AND execution_state IN ('running', 'unknown')`,
+    ).run(to, Date.now(), this.source, externalSessionKey, from).changes;
+    if (changed !== 1) throw new Error('External execution ownership changed before continuation.');
+  }
+
   finishExecution(externalSessionKey: string, runId: string, status: ExternalSessionStatus): void {
     const changed = this.db
       .prepare(

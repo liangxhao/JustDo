@@ -11,6 +11,8 @@ test('reads only retry metadata and retires its event listener', async () => {
   const api = createAutomaticErrorRetryApi();
   await api.getAutomaticErrorRetry('session');
   expect(ipc.invoke).toHaveBeenCalledWith(AutomaticErrorRetryIpc.Get, 'session');
+  await api.getAutomaticErrorRetryActivity();
+  expect(ipc.invoke).toHaveBeenCalledWith(AutomaticErrorRetryIpc.GetActivity);
   const callback = vi.fn();
   const remove = api.onAutomaticErrorRetryChanged(callback);
   const listener = ipc.on.mock.calls[0][1];

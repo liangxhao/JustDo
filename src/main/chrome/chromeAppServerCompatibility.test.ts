@@ -120,7 +120,8 @@ describe.each([true, false])('real app-server binding through the shared engine 
     } else {
       expect(h.backend.start).toHaveBeenCalledExactlyOnceWith({ cwd: h.thread.cwd, model: undefined });
       expect(h.backend.run).toHaveBeenCalledWith(
-        h.thread, expect.any(String), 'Shared input', expect.any(Function), expect.any(AbortSignal), {},
+        h.thread, expect.any(String), 'Shared input', expect.any(Function), expect.any(AbortSignal),
+        expect.objectContaining({ onRetry: expect.any(Function) }),
       );
       expect(h.api.sendMessage).not.toHaveBeenCalled();
     }

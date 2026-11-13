@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { ipcMain } from 'electron';
 
+import type { AutomaticErrorRetryActivitySnapshot } from '../../../shared/cowork/automaticErrorRetry';
 import {
   type CopyCoworkSessionInput,
   CoworkSessionCopyIpc,
@@ -57,6 +58,7 @@ interface SessionHandlerDependencies {
   getSessionPlugins?: () => AppSessionParticipants;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
+  getAutomaticErrorRetryActivity?: () => AutomaticErrorRetryActivitySnapshot | null;
   setSessionPermissionMode: (
     sessionId: string,
     permissionMode: PermissionMode,
@@ -76,6 +78,7 @@ export const registerCoworkSessionHandlers = ({
   getStartupEngineNotReadyResponse,
   getCoworkStore,
   getCoworkEngineRouter,
+  getAutomaticErrorRetryActivity,
   setSessionPermissionMode,
   requestGateway,
   workspaceAppSessions,
@@ -85,6 +88,7 @@ export const registerCoworkSessionHandlers = ({
   registerAutomaticErrorRetryHandlers({
     isAllowedSender: event => isAllowedWorkspaceSender?.(event) === true,
     getStore: getCoworkStore, getRouter: getCoworkEngineRouter,
+    getActivity: () => getAutomaticErrorRetryActivity?.() ?? null,
   });
   const sessionBranchDependencies: SessionBranchOperationDependencies = {
     getCoworkStore,

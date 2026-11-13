@@ -1,6 +1,7 @@
 import { ipcRenderer } from 'electron';
 
 import {
+  type AutomaticErrorRetryActivitySnapshot,
   AutomaticErrorRetryIpc,
   type AutomaticErrorRetryPresentation,
 } from '../../shared/cowork/automaticErrorRetry';
@@ -10,6 +11,8 @@ export function createAutomaticErrorRetryApi() {
   return {
     getAutomaticErrorRetry: (sessionId: string) =>
       ipcRenderer.invoke(AutomaticErrorRetryIpc.Get, sessionId),
+    getAutomaticErrorRetryActivity: (): Promise<AutomaticErrorRetryActivitySnapshot | null> =>
+      ipcRenderer.invoke(AutomaticErrorRetryIpc.GetActivity),
     onAutomaticErrorRetryChanged: (callback: (value: AutomaticErrorRetryPresentation) => void) => {
       let active = true;
       const listener = (_event: Electron.IpcRendererEvent, value: AutomaticErrorRetryPresentation) => {

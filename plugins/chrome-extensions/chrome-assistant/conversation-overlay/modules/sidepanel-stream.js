@@ -20753,6 +20753,7 @@ var ChromeExtensionStream = class {
   agentTextRun = null;
   activity = null;
   boundRunId = null;
+  retryAttempt = 0;
   pendingRunEvents = null;
   pendingRunChars = 0;
   historyOnly = false;
@@ -20803,10 +20804,23 @@ var ChromeExtensionStream = class {
     };
   }
   /** Bind a server-confirmed run before its first native stream event. */
-  bindRun(runId, startedAt = Date.now()) {
-    if (!runId.trim() || this.completedRuns.has(runId) || this.boundRunId !== null && this.boundRunId !== runId || this.state.activeTurn && this.state.activeTurn.runId !== runId)
+  bindRun(runId, startedAt = Date.now(), retryAttempt = 0) {
+    if (!runId.trim() || this.completedRuns.has(runId) || !Number.isSafeInteger(retryAttempt) || retryAttempt < this.retryAttempt) return false;
+    const previous = this.boundRunId ?? this.state.activeTurn?.runId;
+    if (retryAttempt > this.retryAttempt && previous) {
+      if (previous === runId) return false;
+      const index = this.anchor;
+      const sessionKey = this.state.sessionKey;
+      const sessionId = this.state.sessionId ?? this.state.activeTurn?.sessionId ?? null;
+      this.finish();
+      this.anchor = index;
+      this.state.sessionKey = sessionKey;
+      this.state.sessionId = sessionId;
+    }
+    if (this.boundRunId !== null && this.boundRunId !== runId || this.state.activeTurn && this.state.activeTurn.runId !== runId)
       return false;
     this.boundRunId = runId;
+    this.retryAttempt = retryAttempt;
     if (!this.historyOnly) this.activity ??= createRunActivity(runId, startedAt);
     const pending = this.pendingRunEvents;
     this.pendingRunEvents = null;
@@ -20883,6 +20897,13 @@ var ChromeExtensionStream = class {
       }
       return false;
     }
+    const attempt = value.retryAttempt;
+    if (attempt !== void 0 && (!Number.isSafeInteger(attempt) || attempt < this.retryAttempt)) return false;
+    if (attempt !== void 0 && attempt > this.retryAttempt) {
+      const { sessionKey, sessionId, runId } = value.event;
+      const expectedSessionId = this.state.sessionId ?? this.state.activeTurn?.sessionId;
+      if (!sessionKey || this.state.sessionKey && sessionKey !== this.state.sessionKey || sessionId && expectedSessionId && sessionId !== expectedSessionId || !runId || !this.bindRun(runId, value.startedAt, attempt)) return false;
+    }
     if (this.historyOnly) return false;
     const prepared = prepareChromeExtensionStreamEvent(value);
     if (!prepared) return false;
@@ -20940,6 +20961,7 @@ var ChromeExtensionStream = class {
     if (this.boundRunId) this.completedRuns.add(this.boundRunId);
     this.activity = null;
     this.boundRunId = null;
+    this.retryAttempt = 0;
     if (this.state.activeTurn) {
       this.completedRuns.add(this.state.activeTurn.runId);
     }

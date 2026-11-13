@@ -21,6 +21,7 @@ type Item = Record<string, unknown> & {
 };
 /** Optional browser presentation groups; not the app-server's canonical Thread/Turn. */
 type ChromeDisplayView = { id: string; turns: Array<{ id: string; items: Item[] }> };
+type ChromeStreamEvent = ChromeExtensionStreamEvent & { retryAttempt?: number; startedAt?: number };
 const MAX_PENDING_STREAM_EVENTS = 64;
 const MAX_PENDING_STREAM_CHARS = 1_000_000;
 const MAX_DISPLAY_ITEM_KEYS = 2048;
@@ -155,7 +156,8 @@ export class ChromeExtensionStream {
   private agentTextRun: string | null = null;
   private activity: RunActivity | null = null;
   private boundRunId: string | null = null;
-  private pendingRunEvents: ChromeExtensionStreamEvent[] | null = null;
+  private retryAttempt = 0;
+  private pendingRunEvents: ChromeStreamEvent[] | null = null;
   private pendingRunChars = 0;
   private historyOnly = false;
   private anchor: number | null = null;
@@ -211,15 +213,27 @@ export class ChromeExtensionStream {
   }
 
   /** Bind a server-confirmed run before its first native stream event. */
-  bindRun(runId: string, startedAt = Date.now()): boolean {
+  bindRun(runId: string, startedAt = Date.now(), retryAttempt = 0): boolean {
+    if (!runId.trim() || this.completedRuns.has(runId) || !Number.isSafeInteger(retryAttempt) ||
+        retryAttempt < this.retryAttempt) return false;
+    const previous = this.boundRunId ?? this.state.activeTurn?.runId;
+    if (retryAttempt > this.retryAttempt && previous) {
+      if (previous === runId) return false;
+      const index = this.anchor;
+      const sessionKey = this.state.sessionKey;
+      const sessionId = this.state.sessionId ?? this.state.activeTurn?.sessionId ?? null;
+      this.finish();
+      this.anchor = index;
+      this.state.sessionKey = sessionKey;
+      this.state.sessionId = sessionId;
+    }
     if (
-      !runId.trim() ||
-      this.completedRuns.has(runId) ||
       (this.boundRunId !== null && this.boundRunId !== runId) ||
       (this.state.activeTurn && this.state.activeTurn.runId !== runId)
     )
       return false;
     this.boundRunId = runId;
+    this.retryAttempt = retryAttempt;
     if (!this.historyOnly) this.activity ??= createRunActivity(runId, startedAt);
     const pending = this.pendingRunEvents;
     this.pendingRunEvents = null;
@@ -288,7 +302,7 @@ export class ChromeExtensionStream {
     if (original) this.history = original;
   }
 
-  accept(value: ChromeExtensionStreamEvent): boolean {
+  accept(value: ChromeStreamEvent): boolean {
     if (this.pendingRunEvents !== null) {
       // A new send can overlap delayed events from an earlier run on the same
       // subscription. Only an explicit native binding can adopt these frames.
@@ -309,6 +323,15 @@ export class ChromeExtensionStream {
         }
       }
       return false;
+    }
+    const attempt = value.retryAttempt;
+    if (attempt !== undefined && (!Number.isSafeInteger(attempt) || attempt < this.retryAttempt)) return false;
+    if (attempt !== undefined && attempt > this.retryAttempt) {
+      const { sessionKey, sessionId, runId } = value.event;
+      const expectedSessionId = this.state.sessionId ?? this.state.activeTurn?.sessionId;
+      if (!sessionKey || (this.state.sessionKey && sessionKey !== this.state.sessionKey) ||
+        (sessionId && expectedSessionId && sessionId !== expectedSessionId) ||
+        !runId || !this.bindRun(runId, value.startedAt, attempt)) return false;
     }
     // Missing deltas cannot be repaired by appending later fragments, even
     // after one history page arrives. Keep this run on authoritative history.
@@ -388,6 +411,7 @@ export class ChromeExtensionStream {
     if (this.boundRunId) this.completedRuns.add(this.boundRunId);
     this.activity = null;
     this.boundRunId = null;
+    this.retryAttempt = 0;
     if (this.state.activeTurn) {
       this.completedRuns.add(this.state.activeTurn.runId);
     }

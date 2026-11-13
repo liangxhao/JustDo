@@ -3547,6 +3547,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           pendingStartRef.current,
                         )}
                         isStreaming={currentSessionMainRunning}
+                        automaticRetryActive={automaticErrorRetryActive}
                         allowDraftWhileDisabled={!isEngineReady}
                         disabledMessage={engineUnavailableMessage}
                         disabled={

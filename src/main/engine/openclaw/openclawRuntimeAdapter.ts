@@ -47,6 +47,7 @@ import {
   type CoworkAttachmentPayload,
   toGatewayAttachment,
 } from '../../../shared/cowork/attachments';
+import type { AutomaticErrorRetryPresentation } from '../../../shared/cowork/automaticErrorRetry';
 import {
   type AskUserInteractionEnvelope,
   type AskUserRequest,
@@ -157,6 +158,7 @@ import type {
   CoworkStopOptions,
   GatewayRequestOptions,
 } from '../types';
+import type { AutomaticErrorRetryBinding, AutomaticErrorRetryWaitReceipt } from './automaticErrorRetry/coordinator';
 import { isSessionReaderErrorHint, readBlockedContextOverflow } from './automaticErrorRetry/failureCode';
 import { AutomaticErrorRetryHost } from './automaticErrorRetry/host';
 import { AutomaticErrorRetryLifecycle } from './automaticErrorRetry/lifecycle';
@@ -310,6 +312,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly goalContinuationCoordinator: GoalContinuationCoordinator;
   private readonly automaticErrorRetryHost: AutomaticErrorRetryHost;
   private readonly automaticErrorRetryLifecycle: AutomaticErrorRetryLifecycle;
+  private readonly externalRetryCancellations = new Map<string, () => void>();
   private readonly executionSuccessorClaims = new ExecutionSuccessorClaims();
   private readonly preparedNativeSessionIds = new Map<string, string>();
 
@@ -527,6 +530,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot: options.workspaceRoot,
       clientTurnId: options.clientTurnId,
       automaticErrorRetry: options.automaticErrorRetry,
+      automaticErrorRetryOwner: options.automaticErrorRetryOwner,
       beforeNativeSend: options.beforeNativeSend,
       finalSyncAdmission: options.finalSyncAdmission,
       onNativeAccepted: options.onNativeAccepted,
@@ -1212,7 +1216,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   async stopAllSessions(): Promise<void> {
-    const sessionIds = [...new Set([...this.activeTurns.keys(), ...this.pendingTurnStarts.keys()])];
+    const sessionIds = [...new Set([
+      ...this.activeTurns.keys(), ...this.pendingTurnStarts.keys(), ...this.externalRetryCancellations.keys(),
+      ...this.automaticErrorRetryHost.getActivitySnapshot().sessionIds,
+    ])];
     await Promise.all(
       sessionIds.map(sessionId => this.stopSession(sessionId, { bestEffort: true })),
     );
@@ -1297,7 +1304,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   hasActiveSessions(): boolean {
-    return this.activeTurns.size > 0 || this.pendingTurnStarts.size > 0 || this.sessionPreparationCounts.size > 0;
+    return this.activeTurns.size > 0 || this.pendingTurnStarts.size > 0 || this.sessionPreparationCounts.size > 0 ||
+      this.automaticErrorRetryHost.getActivitySnapshot().sessionIds.length > 0;
   }
 
   getSessionConfirmationMode(sessionId: string): 'modal' | 'text' | null {
@@ -1319,6 +1327,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       workspaceRoot?: string;
       clientTurnId?: string;
       automaticErrorRetry?: boolean;
+      automaticErrorRetryOwner?: CoworkStartOptions['automaticErrorRetryOwner'];
       beforeNativeSend?: () => Promise<void>;
       finalSyncAdmission?: CoworkStartOptions['finalSyncAdmission'];
       onNativeAccepted?: CoworkStartOptions['onNativeAccepted'];
@@ -1485,7 +1494,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           ? options.attachments.map(toGatewayAttachment)
           : undefined;
         const commandSessionId =
-          options.initialModelRef || options.finalSyncAdmission || options.onNativeAccepted ||
+          options.initialModelRef || options.finalSyncAdmission || options.onNativeAccepted || options.automaticErrorRetryOwner ||
           goalStartObjective !== null ||
           hasSlashCommandBeforeSendHook(
             commandPrompt,
@@ -1496,8 +1505,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (isStartCancelled()) return;
         await options.beforeNativeSend?.();
         if (isStartCancelled()) return;
-        if (options.automaticErrorRetry) {
-          await this.armAutomaticErrorRetry(sessionId, runId);
+        if (options.automaticErrorRetry || options.automaticErrorRetryOwner) {
+          await this.automaticErrorRetryHost.arm(
+            sessionId, runId, preparedSession.gatewaySessionId, options.automaticErrorRetryOwner,
+          );
           if (isStartCancelled()) return;
         }
         const sendParams: Record<string, unknown> = {
@@ -1573,7 +1584,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
               });
             }
           }
-          if (options.finalSyncAdmission || options.onNativeAccepted) {
+          if (options.finalSyncAdmission || options.onNativeAccepted || options.automaticErrorRetryOwner) {
             nativeSendBinding = await prepareNativeSendBinding({
               client, isCurrent: isNativeSendCurrent, sessionKey,
               nativeSessionId: preparedSession.gatewaySessionId,
@@ -1624,11 +1635,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             throw new Error('Gateway returned a mismatched Goal start receipt');
           }
         }
-        if (nativeSendBinding && options.onNativeAccepted) {
+        if (nativeSendBinding && (options.onNativeAccepted || options.automaticErrorRetryOwner)) {
           try {
             notifyNativeAccepted({
               binding: nativeSendBinding, receipt: result, clientTurnId: runId,
-              isCurrent: isNativeSendCurrent, onAccepted: options.onNativeAccepted,
+              isCurrent: isNativeSendCurrent,
+              onAccepted: accepted => {
+                options.onNativeAccepted?.(accepted);
+                if (this.automaticErrorRetryHost.acceptInitialRun(sessionId, accepted)) {
+                  const terminal = this.getRunTerminalReceipt(accepted.nativeRunId);
+                  if (terminal) this.automaticErrorRetryHost.observeSettled(sessionId, terminal);
+                }
+              },
             });
           } catch {
             // The input is already accepted. An observer cannot undo its outcome.
@@ -1812,7 +1830,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (this.pendingTurnStarts.get(sessionId) === pendingStart) {
         this.pendingTurnStarts.delete(sessionId);
       }
-      if (!nativeSendIssued) await options.onNativeSendAbandoned?.().catch((): void => undefined);
+      if (!nativeSendIssued) {
+        if (options.automaticErrorRetryOwner && turn)
+          this.automaticErrorRetryHost.coordinator.expireUnsettledCandidate(sessionId, turn.runId);
+        await options.onNativeSendAbandoned?.().catch((): void => undefined);
+      }
     }
 
     await completionPromise;
@@ -2626,7 +2648,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         : {}),
       ...(observedFailureCode ? { observedFailureCode } : {}),
     });
-    this.automaticErrorRetryHost.coordinator.observeSettled(this.runTerminalReceipts.get(event.runId)!);
+    const sessionId = this.resolveSessionIdBySessionKey(binding.sessionKey);
+    const receipt = this.runTerminalReceipts.get(event.runId)!;
+    if (sessionId) this.automaticErrorRetryHost.observeSettled(sessionId, receipt);
+    else this.automaticErrorRetryHost.coordinator.observeSettled(receipt);
     while (this.runTerminalReceipts.size > 100) {
       this.runTerminalReceipts.delete(this.runTerminalReceipts.keys().next().value!);
     }
@@ -3044,6 +3069,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     workspaceRoots: string[] = [],
   ): void {
     this.cancelAutomaticErrorRetry(sessionId);
+    this.automaticErrorRetryHost.forgetPresentation(sessionId);
     this.preparedNativeSessionIds.delete(sessionId);
     this.emit('sessionDeleted', sessionId);
     const removedKeys: string[] = [
@@ -3140,12 +3166,55 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
 
   cancelAutomaticErrorRetry(sessionId: string): void {
+    this.externalRetryCancellations.get(sessionId)?.();
     this.automaticErrorRetryHost.cancel(sessionId);
     this.automaticErrorRetryLifecycle.cancel(sessionId);
   }
 
   getAutomaticErrorRetry(sessionId: string) {
-    return this.automaticErrorRetryHost.coordinator.getPresentation(sessionId);
+    return this.automaticErrorRetryHost.getPresentation(sessionId);
+  }
+
+  getAutomaticErrorRetryActivity() {
+    return this.automaticErrorRetryHost.getActivitySnapshot();
+  }
+
+  publishAutomaticErrorRetry(presentation: Omit<AutomaticErrorRetryPresentation, 'revision'>): void {
+    if (this.store.getSession(presentation.sessionId)) this.automaticErrorRetryHost.publish(presentation, false);
+  }
+
+  registerExternalAutomaticErrorRetryCancellation(sessionId: string, cancel: () => void): () => void {
+    this.externalRetryCancellations.set(sessionId, cancel);
+    return () => {
+      if (this.externalRetryCancellations.get(sessionId) === cancel) this.externalRetryCancellations.delete(sessionId);
+    };
+  }
+
+  getAutomaticErrorRetryTurn(sessionId: string, logicalTurnId: string) {
+    return this.automaticErrorRetryHost.coordinator.getTurn(sessionId, logicalTurnId);
+  }
+
+  cancelAutomaticErrorRetryTurn(sessionId: string, logicalTurnId: string) {
+    const cancelled = this.automaticErrorRetryHost.coordinator.cancelTurn(sessionId, logicalTurnId);
+    const unknown = this.unknownSessionRuns.get(sessionId);
+    if (unknown && cancelled.physicalRunId === unknown.runId) {
+      unknown.cancelled = true;
+      void this.reconcileDisconnectedTurn(sessionId);
+    }
+    return cancelled;
+  }
+
+  observeAutomaticErrorRetryWait(
+    receipt: AutomaticErrorRetryWaitReceipt,
+    identity: Pick<AutomaticErrorRetryBinding, 'sessionKey' | 'nativeSessionId' | 'lifecycleRevision'>,
+  ): boolean {
+    const sessionId = this.resolveSessionIdBySessionKey(receipt.sessionKey);
+    if (!sessionId) return false;
+    const { coordinator } = this.automaticErrorRetryHost;
+    const metadata = coordinator.getRunMetadata(receipt.runId);
+    if (!metadata || metadata.sessionKey !== identity.sessionKey || metadata.nativeSessionId !== identity.nativeSessionId ||
+        metadata.lifecycleRevision !== identity.lifecycleRevision) return false;
+    return this.automaticErrorRetryHost.observeWaitSettled(sessionId, receipt, identity);
   }
 
   private forwardGoalLifecycle(event: GoalLifecycleEvent): void {
@@ -3217,7 +3286,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       );
       if (!isCurrent()) return log({ stage, outcome: 'candidate_changed' });
       if (session?.key !== binding.sessionKey || session.sessionId !== binding.nativeSessionId ||
-          session.lifecycleRevision !== binding.lifecycleRevision || session.lastRunId !== runId) {
+          session.lifecycleRevision !== binding.lifecycleRevision || session.lastRunId !== binding.clientTurnId) {
         const identityReported = typeof session?.key === 'string' && typeof session.sessionId === 'string' &&
           typeof session.lifecycleRevision === 'string' && typeof session.lastRunId === 'string';
         return log({ stage, outcome: identityReported ? 'session_changed' : 'identity_unconfirmed' });
@@ -3401,11 +3470,25 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     ) => this.automaticErrorRetryLifecycle.reconcileVerifiedWaitTerminal(
       event, { client, generation }, status, endedAt, verifiedRetryIdentity,
     );
+    const verifyRetryIdentity = async (): Promise<boolean> => {
+      if (!retryMetadata) return true;
+      const described = await client.request<{ session?: Record<string, unknown> }>(
+        'sessions.describe', { key: turn.sessionKey },
+      );
+      if (!isCurrent() || !nativeSessionId || described.session?.key !== turn.sessionKey ||
+        described.session.sessionId !== nativeSessionId || nativeSessionId !== retryMetadata.nativeSessionId ||
+        (described.session.lifecycleRevision ?? null) !== retryMetadata.lifecycleRevision) return false;
+      verifiedRetryIdentity = {
+        sessionKey: turn.sessionKey, nativeSessionId, lifecycleRevision: retryMetadata.lifecycleRevision,
+      };
+      return true;
+    };
     try {
       const unknownRun = this.unknownSessionRuns.get(sessionId);
       if (unknownRun?.cancelled && unknownRun.runId === turn.runId) {
         // Precise identity also cancels native pre-registered admission. Never
         // use a broad stop here: an old cancelled request must not kill a successor.
+        if (!await verifyRetryIdentity() || !isCurrent()) return;
         await client.request('sessions.abort', { key: turn.sessionKey, runId: unknownRun.runId });
         if (!isCurrent()) return;
       }
@@ -3420,17 +3503,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
       if (!isCurrent()) return;
       if (result.runId !== turn.runId || result.pendingError === true) return;
-      if (retryMetadata) {
-        const described = await client.request<{ session?: Record<string, unknown> }>(
-          'sessions.describe', { key: turn.sessionKey },
-        );
-        if (!isCurrent() || described.session?.key !== turn.sessionKey ||
-          described.session.sessionId !== nativeSessionId || nativeSessionId !== retryMetadata.nativeSessionId ||
-          (described.session.lifecycleRevision ?? null) !== retryMetadata.lifecycleRevision) return;
-        verifiedRetryIdentity = {
-          sessionKey: turn.sessionKey, nativeSessionId: nativeSessionId!, lifecycleRevision: retryMetadata.lifecycleRevision,
-        };
-      }
+      if (retryMetadata && ((result.yielded !== true && !Number.isFinite(result.endedAt)) ||
+        result.stopReason === 'restart' || result.stopReason === 'superseded' ||
+        !await verifyRetryIdentity() || !isCurrent())) return;
       if (
         result.yielded === true &&
         result.status === 'ok' &&

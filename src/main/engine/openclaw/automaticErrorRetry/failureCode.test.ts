@@ -20,12 +20,14 @@ const observation = {
 
 describe('exact native retry error code reader', () => {
   it('requests narrow metadata and accepts only the exact response identity', async () => {
-    const request = vi.fn(async () => observation);
+    const request = vi.fn(async (): Promise<Record<string, unknown>> => observation);
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, receipt)).toBe(observation.errorCode);
     expect(request).toHaveBeenCalledWith('runtimeServices.executionFailure', {
       sessionKey: binding.sessionKey, sessionId: 'native', lifecycleRevision: null, runId: 'run',
     }, expect.objectContaining({ timeoutMs: 10_000 }));
     request.mockResolvedValue({ ...observation, runId: 'foreign' });
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, receipt)).toBeNull();
+    request.mockResolvedValue({ ...observation, identityMatched: undefined });
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, receipt)).toBeNull();
   });
 
@@ -36,12 +38,16 @@ describe('exact native retry error code reader', () => {
     expect(request).toHaveBeenCalledOnce();
   });
 
-  it('uses a native overflow observation when an exact transcript lookup has no code', async () => {
+  it('uses a native overflow observation with an exact matching provider code or no transcript code', async () => {
     const terminal: NativeRunTerminalReceipt = { ...receipt, observedFailureCode: CONTEXT_OVERFLOW_ERROR_CODE };
     const request = vi.fn(async () => ({
       ...observation, lifecycleRevision: null as string | null, errorCode: null as string | null,
     }));
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBe(CONTEXT_OVERFLOW_ERROR_CODE);
+
+    request.mockResolvedValue({ ...observation, errorCode: 'context_length_exceeded' });
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBe(CONTEXT_OVERFLOW_ERROR_CODE);
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, receipt)).toBe('context_length_exceeded');
 
     request.mockResolvedValue(observation);
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBe(observation.errorCode);
@@ -86,5 +92,20 @@ describe('exact native retry error code reader', () => {
     const controller = new AbortController();
     const request = vi.fn(async () => { controller.abort(); return observation; });
     await expect(readAutomaticErrorRetryFailureCode({ request }, binding, receipt, controller.signal)).rejects.toThrow();
+  });
+
+  it('matches the original saved input and the exact successor failure when the retry prompt was not persisted', async () => {
+    const error = 'Session reader operation is no longer current';
+    const successor = { ...receipt, runId: 'successor', error };
+    const user = { role: 'user', __openclaw: { idempotencyKey: 'run:user' } };
+    const failure = { role: 'custom', customType: 'run-failed-before-reply',
+      __openclaw: { runId: successor.runId }, content: `Your request couldn't be completed: ${error}` };
+    const request = vi.fn(async (method: string) => method === 'chat.history'
+      ? { sessionKey: binding.sessionKey, sessionId: binding.nativeSessionId,
+          sessionInfo: { sessionId: binding.nativeSessionId }, messages: [user, failure] }
+      : { ...observation, runId: successor.runId, errorCode: null });
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, successor, undefined,
+      { userInputRunId: 'run' })).toBe(SESSION_READER_FAILURE_CODE);
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, successor)).toBeNull();
   });
 });

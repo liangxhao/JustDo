@@ -40,9 +40,12 @@ flowchart LR
 产品数据库位于 app.getPath('userData') 下，默认 `<appData>/<productName>/justdo.sqlite`。内部文件名稳定，productName 改变时不自动迁移旧品牌目录。Gateway state 和项目目录不是该数据库的子表，备份和删除时需要分别处理。
 
 `cowork_session_runs.automatic_error_retry` 是可空的无正文 JSON 关联，保存重试链、次数、
-精确原生身份、前驱及呈现 disposition。旧产品库按缺列检查增加该列，不改变原有运行结果。
+精确原生身份、前驱及呈现 disposition。外部请求在重试等待期被主动停止时，首轮回执的
+可选 `chainPhase` 保留请求已取消的展示结果，物理运行仍保留其原生结算。旧产品库按缺列
+检查增加该列。
 它只支持[错误自动重试](../features/execution/automatic-error-retry.md)的历史呈现，不从历史
-重建执行；重启只沿用已确认后继的 Superseded 关联，候选、待定和未知关联不隐藏原生失败。
+重建执行。重启恢复已确认后继的 Superseded 关联及明确取消的请求状态。候选、待定和未知
+关联保留原生失败供查询。
 
 声明受管数据目录的 App 插件通过公开 SDK 访问 `<state>/plugin-data/<plugin-id>/`。默认可清理目录用于模型、私有组件及缓存，更新和停用保留，卸载可选择清理；执行恢复账本可声明保留策略，卸载也不清理。目录归属、策略及安全清理见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。既有业务库和原生历史沿用各自的存储与删除规则。
 

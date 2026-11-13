@@ -36,6 +36,8 @@ export interface ChromeExtensionChatRequest {
 /** Application-owned callbacks; never constructed from wire request properties. */
 export interface ChromeExtensionTrustedSendHooks {
   assertCurrent: () => void;
+  /** Ordinary interactive side-panel turn, proved by its Main app-server owner. */
+  automaticErrorRetry?: true;
   untrustedContext?: string;
   finalSyncAdmission?: CoworkStartOptions['finalSyncAdmission'];
   onNativeAccepted?: CoworkStartOptions['onNativeAccepted'];
@@ -79,6 +81,8 @@ export interface ChromeExtensionTurnResult {
 export interface ChromeExtensionTurnState {
   id: string;
   nativeRunId?: string;
+  retryAttempt?: number;
+  retryWaiting?: boolean;
   status: 'inProgress' | 'unknown' | 'completed' | 'failed' | 'interrupted';
   executionSettled: boolean;
   startedAt?: number;
@@ -90,6 +94,7 @@ export interface ChromeExtensionTurnState {
 export type ChromeExtensionAppServerStreamEvent = ChromeExtensionStreamEvent & {
   turnId?: string;
   startedAt?: number;
+  retryAttempt?: number;
 };
 
 export interface ChromeExtensionChatApi {

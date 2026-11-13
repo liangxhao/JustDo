@@ -12,6 +12,7 @@ interface SessionGroupPanelProps extends SessionListPageFooterProps {
   currentSessionId: string | null;
   unreadSessionIds: string[];
   runtimeRunningSessionIds: Set<string>;
+  retryingSessionIds: ReadonlySet<string>;
   isBatchMode: boolean;
   selectedIds: Set<string>;
   onSelectSession: (sessionId: string) => void;
@@ -32,6 +33,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
   currentSessionId,
   unreadSessionIds,
   runtimeRunningSessionIds,
+  retryingSessionIds,
   isBatchMode,
   selectedIds,
   onSelectSession,
@@ -59,6 +61,7 @@ const SessionGroupPanel: React.FC<SessionGroupPanelProps> = ({
           session={session}
           hasUnread={unreadSessionIds.includes(session.id)}
           isRuntimeRunning={runtimeRunningSessionIds.has(session.id)}
+          isAutomaticRetryActive={retryingSessionIds.has(session.id)}
           isActive={currentSessionId === session.id}
           isBatchMode={isBatchMode}
           isSelected={selectedIds.has(session.id)}

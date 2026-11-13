@@ -1,6 +1,9 @@
 import { ipcMain } from 'electron';
 
-import { AutomaticErrorRetryIpc } from '../../../shared/cowork/automaticErrorRetry';
+import {
+  type AutomaticErrorRetryActivitySnapshot,
+  AutomaticErrorRetryIpc,
+} from '../../../shared/cowork/automaticErrorRetry';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import { buildRetryHistoryPresentations } from '../../engine/openclaw/automaticErrorRetry/historyPresentation';
@@ -9,7 +12,12 @@ export function registerAutomaticErrorRetryHandlers(dependencies: {
   isAllowedSender: (event: Electron.IpcMainInvokeEvent) => boolean;
   getStore: () => CoworkStore;
   getRouter: () => CoworkEngineRouter;
+  getActivity: () => AutomaticErrorRetryActivitySnapshot | null;
 }): void {
+  ipcMain.handle(AutomaticErrorRetryIpc.GetActivity, event => {
+    if (!dependencies.isAllowedSender(event)) return null;
+    return dependencies.getActivity();
+  });
   ipcMain.handle(AutomaticErrorRetryIpc.Get, (event, sessionId: unknown) => {
     if (!dependencies.isAllowedSender(event) || typeof sessionId !== 'string' || !sessionId.trim())
       return { success: false, error: 'Invalid retry presentation request.' };

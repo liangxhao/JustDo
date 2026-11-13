@@ -21,6 +21,7 @@ export type GatewayClientLike = {
     params?: unknown,
     opts?: {
       expectFinal?: boolean;
+      onAccepted?: (payload: unknown) => void;
       timeoutMs?: number;
       signal?: AbortSignal;
     },

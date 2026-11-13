@@ -14,6 +14,7 @@ const SESSION_READER_CAUSES = [
   `Error: ${SESSION_READER_ERROR}`,
 ];
 const SESSION_READER_REPORTS = SESSION_READER_CAUSES.map(cause => `Your request couldn't be completed: ${cause}`);
+const PROVIDER_CONTEXT_LENGTH_ERROR_CODE = 'context_length_exceeded';
 
 /** A native chat error can request verification, but does not establish a failure or authorize a send. */
 export function isSessionReaderErrorHint(error: unknown): error is string {
@@ -40,11 +41,14 @@ export async function readAutomaticErrorRetryFailureCode(
   binding: AutomaticErrorRetryBinding,
   receipt: AutomaticErrorRetrySettledReceipt,
   signal?: AbortSignal,
+  options?: { userInputRunId?: string },
 ): Promise<string | null> {
   signal?.throwIfAborted();
   if (receipt.status !== 'failed' || receipt.executionSettled !== true || receipt.runId === '' ||
       receipt.sessionKey !== binding.sessionKey || receipt.sessionId !== binding.nativeSessionId ||
       receipt.clientGeneration !== binding.clientGeneration) return null;
+  if ('source' in receipt && (receipt.stopReason === 'timeout' || receipt.stopReason === 'restart' ||
+      receipt.stopReason === 'superseded')) return null;
   const sessionReaderError = isSessionReaderErrorHint(receipt.error);
   const log = (check: Parameters<typeof logSessionReaderRecovery>[1]) => {
     if (sessionReaderError) logSessionReaderRecovery({ sessionId: binding.sessionId, runId: receipt.runId }, check);
@@ -62,23 +66,22 @@ export async function readAutomaticErrorRetryFailureCode(
   }
   if (!response || response.sessionKey !== binding.sessionKey || response.sessionId !== binding.nativeSessionId ||
       response.lifecycleRevision !== binding.lifecycleRevision || response.runId !== receipt.runId ||
-      response.identityMatched === false) {
+      response.identityMatched !== true) {
     log({ stage: 'execution_failure', outcome: 'identity_unconfirmed' });
     return null;
+  }
+  // OpenAI-compatible providers can persist the raw API code, while the exact
+  // whole-run lifecycle reports OpenClaw's normalized blocked reason.
+  if ((response.errorCode === null || response.errorCode === CONTEXT_OVERFLOW_ERROR_CODE ||
+      response.errorCode === PROVIDER_CONTEXT_LENGTH_ERROR_CODE) && !('source' in receipt) &&
+      receipt.observedFailureCode === CONTEXT_OVERFLOW_ERROR_CODE) {
+    return CONTEXT_OVERFLOW_ERROR_CODE;
   }
   if (typeof response.errorCode === 'string' && response.errorCode !== CONTEXT_OVERFLOW_ERROR_CODE &&
       response.errorCode !== SESSION_READER_FAILURE_CODE &&
       /^[A-Za-z0-9_.:-]{1,128}$/u.test(response.errorCode)) {
     log({ stage: 'execution_failure', outcome: 'different_failure' });
     return response.errorCode;
-  }
-  if (response.identityMatched !== true) {
-    log({ stage: 'execution_failure', outcome: 'identity_unconfirmed' });
-    return null;
-  }
-  if ((response.errorCode === null || response.errorCode === CONTEXT_OVERFLOW_ERROR_CODE) &&
-      !('source' in receipt) && receipt.observedFailureCode === CONTEXT_OVERFLOW_ERROR_CODE) {
-    return CONTEXT_OVERFLOW_ERROR_CODE;
   }
   if (!sessionReaderError) return null;
   if (response.errorCode !== null) {
@@ -106,7 +109,7 @@ export async function readAutomaticErrorRetryFailureCode(
   const user = record(history.messages[userIndex]);
   const userMetadata = record(user?.__openclaw);
   // The native chat.send recorder binds the saved input to the exact client run ID.
-  if (!user || (user.idempotencyKey ?? userMetadata?.idempotencyKey) !== `${receipt.runId}:user` ||
+  if (!user || (user.idempotencyKey ?? userMetadata?.idempotencyKey) !== `${options?.userInputRunId ?? receipt.runId}:user` ||
       user.display === false || user.excludeFromContext === true || userMetadata?.contextFreeCommand === true ||
       userMetadata?.steerTargetRunId) {
     log({ stage: 'chat.history', outcome: 'saved_input_mismatch' });

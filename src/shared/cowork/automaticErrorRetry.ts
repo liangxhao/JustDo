@@ -13,6 +13,11 @@ export const AutomaticErrorRetryPhase = {
 export type AutomaticErrorRetryPhase =
   (typeof AutomaticErrorRetryPhase)[keyof typeof AutomaticErrorRetryPhase];
 
+export function isAutomaticErrorRetryActive(phase: AutomaticErrorRetryPhase): boolean {
+  return phase === AutomaticErrorRetryPhase.Checking ||
+    phase === AutomaticErrorRetryPhase.Preparing || phase === AutomaticErrorRetryPhase.Running;
+}
+
 export const AutomaticErrorRetryDisposition = {
   Candidate: 'candidate',
   Pending: 'pending',
@@ -34,6 +39,7 @@ export interface AutomaticErrorRetryRunMetadata {
   disposition: AutomaticErrorRetryDisposition;
   predecessorRunId?: string;
   ruleId?: string;
+  chainPhase?: typeof AutomaticErrorRetryPhase.Cancelled;
 }
 
 export interface AutomaticErrorRetryPresentedRun extends AutomaticErrorRetryRunMetadata {
@@ -51,10 +57,16 @@ export interface AutomaticErrorRetryPresentation {
   runs: AutomaticErrorRetryPresentedRun[];
 }
 
+export interface AutomaticErrorRetryActivitySnapshot {
+  revision: number;
+  sessionIds: string[];
+}
+
 export const AutomaticErrorRetryIpc = {
   Get: 'execution:error-retry:get',
+  GetActivity: 'execution:error-retry:get-activity',
   Changed: 'execution:error-retry:changed',
 } as const;
 
-export const AUTOMATIC_ERROR_RETRY_DEFAULT_MAX_CONTINUATIONS = 1;
+export const AUTOMATIC_ERROR_RETRY_DEFAULT_MAX_CONTINUATIONS = 3;
 export const AUTOMATIC_ERROR_RETRY_MAX_CONTINUATIONS = 3;

@@ -4,6 +4,7 @@ import type { ExternalSessionStatus } from '../../../shared/integrations/externa
 import type { NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
 import type { PermissionMode } from '../../../shared/security/approvals';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import type { AppServerRetryTurn } from '../appServer/protocol/appServerTypes';
 import type { ExternalExecutionState } from './externalSessionStore';
 
 export interface ExternalAgentModel {
@@ -50,6 +51,7 @@ export interface ExternalAgentThreadHistory extends ExternalAgentHistorySnapshot
   unknownRunId?: string;
   /** Opaque incarnation pin for pagination; never contains raw native identities. */
   identityRevision?: string;
+  retryTurns?: AppServerRetryTurn[];
 }
 
 export interface ExternalAgentNativeBinding {
@@ -72,6 +74,8 @@ export interface ExternalAgentRunHooks {
   onPrepared?: (
     binding: ExternalAgentNativeBinding,
   ) => Promise<void | (() => void | Promise<void>)>;
+  /** Retire transient output for the failed native attempt while retaining the client turn. */
+  onRetry?: () => void;
 }
 
 export const ExternalAgentExecutionOutcome = {
@@ -113,11 +117,19 @@ export type ExternalAgentExecution = (input: {
   message: string;
   attachments?: readonly CoworkAttachmentPayload[];
   modelRef?: string;
+  /** The external owner has no prior execution or native binding. */
+  initialSession?: true;
   onEvent: (event: NormalizedAgentEvent) => void;
   signal: AbortSignal;
   hooks?: ExternalAgentRunHooks;
   onUnconfirmed?: () => void;
   onSettled?: (outcome: ExternalAgentExecutionOutcome) => void;
+  /** The original authenticated external request still owns its durable reservation. */
+  isRetryCurrent?: () => boolean;
+  /** Change the current native attempt while keeping the logical client request. */
+  onRetryPrepared?: (predecessorRunId: string, runId: string) => void;
+  /** Roll back a replacement that was definitively never submitted. */
+  onRetryNotSent?: (predecessorRunId: string, runId: string) => void;
   expectedBinding?: {
     sessionKey: string;
     sessionId: string;

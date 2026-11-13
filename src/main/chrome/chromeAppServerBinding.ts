@@ -917,6 +917,7 @@ export class ChromeAppServerHub {
         clientTurnId, attachments, message, modelRef, pageContext, permissionMode, sessionId: threadId,
         expectedWorkspaceRoot: sourceThread.cwd,
       }, { assertCurrent, ...(this.api.supportsClientApprovals === true && peer.context.request ? {
+        automaticErrorRetry: true,
         approvals: { context: peer.context, signal: approval.controller.signal, scope: approval.scope },
       } : {}) });
       if (turn.sessionId !== threadId || turn.runId !== clientTurnId)

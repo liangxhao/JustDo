@@ -198,7 +198,13 @@ const client = new AppServerClient((method, params) => {
   // viewer consumes its explicit browser lane once, without appending both.
   if (method === 'chrome/thread/stream') {
     if (typeof params?.threadId !== 'string' || !params.threadId) return;
+    const known = knownTurns.get(params.threadId);
+    if (params.retryAttempt > 0 && (!known || known.id !== params.turnId || known.uncertain)) return;
     if (!streamView(params.threadId).accept(params)) return;
+    if (known && params.retryAttempt > (known.retryAttempt ?? 0)) {
+      knownTurns.set(params.threadId, { ...known, nativeRunId: params.event.runId,
+        retryAttempt: params.retryAttempt, retryWaiting: false });
+    }
     if (params.threadId !== sessionSelect.value) return;
     if (streamRenderTimer === null) {
       streamRenderTimer = setTimeout(() => {
@@ -291,7 +297,7 @@ function rememberSettledTurn(threadId, turnId) {
   if (settledTurns.size > 48) settledTurns.delete(settledTurns.values().next().value);
 }
 
-function setRunningTurn(threadId, turnId, nativeRunId, confirmed = false) {
+function setRunningTurn(threadId, turnId, nativeRunId, confirmed = false, retry = {}) {
   activeThreadId = typeof threadId === 'string' ? threadId : '';
   activeTurnId = typeof turnId === 'string' ? turnId : '';
   send.classList.toggle('stop', Boolean(activeThreadId));
@@ -303,13 +309,15 @@ function setRunningTurn(threadId, turnId, nativeRunId, confirmed = false) {
       id: activeTurnId,
       nativeRunId:
         nativeRunId || (previous?.id === activeTurnId ? previous.nativeRunId : undefined),
+      retryAttempt: retry.retryAttempt ?? (previous?.id === activeTurnId ? previous.retryAttempt : undefined),
+      retryWaiting: retry.retryWaiting ?? (previous?.id === activeTurnId && previous.retryWaiting === true),
       uncertain: !confirmed && previous?.id === activeTurnId && previous.uncertain === true,
       startedAt: previous?.id === activeTurnId ? previous.startedAt : Date.now(),
     });
     const known = knownTurns.get(activeThreadId);
     if (known.nativeRunId && !known.uncertain) {
       const view = streamView(activeThreadId);
-      if (view.bindRun(known.nativeRunId) && activeThreadId === sessionSelect.value) {
+      if (view.bindRun(known.nativeRunId, known.startedAt, known.retryAttempt) && activeThreadId === sessionSelect.value) {
         renderThreadMessages(projectThreadMessages(view.project()), activeThreadId);
       }
     }
@@ -327,11 +335,13 @@ function updateActivity() {
   else if (knownTurns.get(threadId)?.uncertain)
     fallback = { stage: 'checking', startedAt: knownTurns.get(threadId).startedAt };
   else if (stoppingThreadId === threadId && threadId) fallback = { stage: 'stopping' };
+  else if (knownTurns.get(threadId)?.retryWaiting)
+    fallback = { stage: 'continuingAfterError', startedAt: knownTurns.get(threadId).startedAt };
   else if (sending && !activeThreadId) fallback = { stage: 'sending', startedAt: sendingStartedAt };
   else if (isCurrentThreadRunning(activeThreadId, threadId) && !activity)
     fallback = { stage: 'starting' };
   if (!transportReady && (activity || fallback)) fallback = { ...fallback, stage: 'checking' };
-  activityView.render(activity, fallback);
+  activityView.render(knownTurns.get(threadId)?.retryWaiting ? null : activity, fallback);
 }
 
 function updateComposerDisabledState() {
@@ -541,11 +551,12 @@ async function refreshMessages(threadId, generation) {
   const completed = pendingCompletions.get(threadId);
   if (completed) {
     const view = streamView(threadId);
-    view.setHistory(chromeDisplayThread(result.thread), true);
+    const display = chromeDisplayThread(result.thread);
+    view.setHistory(display, true);
     view.finish(completed.status === 'interrupted');
     pendingCompletions.delete(threadId);
     renderThreadMessages(projectThreadMessages(view.project()), threadId);
-    if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true)) {
+    if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true, display, completed.error.message)) {
       showError(completed.error.message);
     }
   } else {
@@ -557,7 +568,11 @@ function applyTurnObservation(threadId, observation, expectedTurnId) {
   if (observation?.id && (!expectedTurnId || observation.id === expectedTurnId)) {
     if (observation.executionSettled === true) {
       approvals.cancelTurn(threadId, observation.id);
-      if (settledTurns.has(`${threadId}/${observation.id}`)) return false;
+      if (settledTurns.has(`${threadId}/${observation.id}`)) {
+        // A stale thread-list status cannot override the already observed terminal.
+        if (activeThreadId === threadId && (!activeTurnId || activeTurnId === observation.id)) setRunningTurn('', '');
+        return false;
+      }
       pendingSubmissions.delete(threadId);
       knownTurns.delete(threadId);
       rememberSettledTurn(threadId, observation.id);
@@ -568,12 +583,16 @@ function applyTurnObservation(threadId, observation, expectedTurnId) {
     } else if (observation.status === 'inProgress') {
       if (pendingSubmissions.has(threadId)) clearAttachments();
       pendingSubmissions.delete(threadId);
-      setRunningTurn(threadId, observation.id, observation.nativeRunId, true);
+      setRunningTurn(threadId, observation.id, observation.nativeRunId, true, {
+        retryAttempt: observation.retryAttempt,
+        retryWaiting: observation.retryWaiting === true,
+      });
     } else if (observation.status === 'unknown') {
       const previous = knownTurns.get(threadId);
       knownTurns.set(threadId, {
         id: observation.id,
         nativeRunId: observation.nativeRunId,
+        retryAttempt: observation.retryAttempt,
         uncertain: true,
         startedAt: previous?.id === observation.id ? previous.startedAt : Date.now(),
       });

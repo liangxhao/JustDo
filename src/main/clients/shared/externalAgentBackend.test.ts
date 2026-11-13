@@ -5,6 +5,7 @@ import path from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
+import { AutomaticErrorRetryDisposition as Disposition } from '../../../shared/cowork/automaticErrorRetry';
 import { ExternalSessionSource, ExternalSessionStatus } from '../../../shared/integrations/externalSession';
 import { OpenClawProviderId } from '../../../shared/providers/constants';
 import { getLanguage, setLanguage, t } from '../../core/i18n';
@@ -247,6 +248,8 @@ it('does not rename rejected tasks or overwrite names that are reset to the defa
   await f.factory.connect().run(thread, randomUUID(), 'Later task', vi.fn(), new AbortController().signal);
 
   expect(f.backend.describe!(thread.id).name).toBe(originalTitle);
+  expect(f.execute.mock.calls[0][0].initialSession).toBe(true);
+  expect(f.execute.mock.calls[1][0].initialSession).toBeUndefined();
 });
 
 it('does not infer an empty conversation from a default name when product history already exists', async () => {
@@ -260,6 +263,7 @@ it('does not infer an empty conversation from a default name when product histor
   await f.backend.run(thread, randomUUID(), 'New follow-up', vi.fn(), new AbortController().signal);
 
   expect(f.backend.describe!(thread.id).name).toBe(title);
+  expect(f.execute.mock.calls[0][0].initialSession).toBeUndefined();
 });
 
 it('retains a selected assistant and confirmed model route while rejecting unavailable identities', async () => {
@@ -462,6 +466,55 @@ it('pins receipt-only history to the external execution instead of a newer gener
   expect(result.latestExternalRunId).toBe(h.timing.clientTurnId);
   expect(result.latestExternalRunId).not.toBe(unrelated.clientTurnId);
   expect(result.runs).toHaveLength(2);
+});
+
+it('keeps the original client turn while recording and settling the exact native successor', async () => {
+  const f = fixture();
+  const h = await bindHistory(f);
+  f.store.finishSessionRun(h.timing.id, 'completed', 2_000);
+  const rootRunId = randomUUID();
+  const successorRunId = randomUUID();
+  const backend = new ExternalAgentBackendFactory({
+    ...f.options, readHistory: async () => ({ messages: [] }),
+  }).connect();
+  const identity = {
+    sessionKey: 'private-history-key', nativeSessionId: 'private-history-sid', lifecycleRevision: 'history-revision',
+  };
+  f.execute.mockImplementationOnce(async input => {
+    await input.hooks?.onPrepared?.({
+      ...identity, sessionId: identity.nativeSessionId, runId: rootRunId, localSessionId: h.external.coworkSessionId,
+      client: {} as never,
+    });
+    const root = f.store.beginSessionRun({ sessionId: h.external.coworkSessionId, clientTurnId: rootRunId, startedAt: 3_000 });
+    f.store.finishSessionRun(root.id, 'failed', 4_000);
+    f.store.setSessionRunAutomaticErrorRetry(rootRunId, {
+      ...identity, chainId: rootRunId, attempt: 0, maxContinuations: 1, disposition: Disposition.Pending,
+    });
+    expect(input.isRetryCurrent?.()).toBe(true);
+    const waiting = await backend.history!(h.thread.id);
+    expect(waiting.retryTurns).toEqual([expect.objectContaining({ clientTurnId: rootRunId, state: 'running' })]);
+    const successor = f.store.beginSessionRun({
+      sessionId: h.external.coworkSessionId, clientTurnId: successorRunId, startedAt: 5_000,
+    });
+    input.onRetryPrepared?.(rootRunId, successorRunId);
+    expect(f.external.get(h.thread.id)?.executionRunId).toBe(successorRunId);
+    f.store.setSessionRunAutomaticErrorRetry(rootRunId, {
+      ...identity, chainId: rootRunId, attempt: 0, maxContinuations: 1, disposition: Disposition.Superseded,
+    });
+    f.store.setSessionRunAutomaticErrorRetry(successorRunId, {
+      ...identity, chainId: rootRunId, attempt: 1, maxContinuations: 1, disposition: Disposition.Final,
+      predecessorRunId: rootRunId,
+    });
+    f.store.finishSessionRun(successor.id, 'completed', 6_000);
+    return 'Answer';
+  });
+  await expect(backend.run(h.thread, rootRunId, 'Task', vi.fn(), new AbortController().signal)).resolves.toBe('Answer');
+  expect(f.external.get(h.thread.id)).toMatchObject({ status: 'completed', executionRunId: successorRunId });
+  const result = await backend.history!(h.thread.id);
+  expect(result.latestExternalRunId).toBe(rootRunId);
+  expect(result.retryTurns).toEqual([{
+    clientTurnId: rootRunId, nativeRunIds: [rootRunId, successorRunId], state: 'completed', endedAt: 6_000,
+  }]);
 });
 
 it('rejects deleted or replaced history ownership after an asynchronous native read', async () => {

@@ -1,3 +1,5 @@
+import { setTimeout as retryDelay } from 'node:timers/promises';
+
 import { createHash } from 'crypto';
 import { expect, test, vi } from 'vitest';
 
@@ -18,6 +20,11 @@ vi.mock('../../cowork/coworkLogger', () => ({
   coworkLog: vi.fn(),
 }));
 
+vi.mock('node:timers/promises', async importOriginal => {
+  const timers = await importOriginal<typeof import('node:timers/promises')>();
+  return { ...timers, setTimeout: vi.fn(timers.setTimeout) };
+});
+
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import { AutomaticErrorRetryPhase } from '../../../shared/cowork/automaticErrorRetry';
 import { AskUserQuestionGateway } from '../../../shared/cowork/interactions/askUserQuestion';
@@ -25,7 +32,6 @@ import { CoworkPlanHandoffState } from '../../../shared/cowork/interactions/plan
 import type { BeginSessionRunInput, SessionRunState, SessionRunTiming } from '../../../shared/cowork/sessionRun';
 import { PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
-import { AUTOMATIC_ERROR_RETRY_DELAY_MS } from './automaticErrorRetry/coordinator';
 import type { AutomaticErrorRetryHost } from './automaticErrorRetry/host';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -1525,18 +1531,20 @@ test.each([false, true])('holds a prepared desktop error until native classifica
     expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Checking);
     expect(errors).not.toHaveBeenCalled();
 
-    // The continuation delay uses Node's promise timer. Switch to its real clock
-    // after proving the error stays hidden while classification is outstanding.
-    vi.useRealTimers();
+    const delay = vi.mocked(retryDelay);
+    if (supported) delay.mockImplementationOnce((ms, value) => new Promise(resolve => {
+      setTimeout(resolve, ms, value);
+    }));
     resolveFailure({ sessionKey: key, sessionId: nativeSessionId,
-      lifecycleRevision, runId, errorCode: supported ? 'openclaw_repeated_tool_error' : 'unregistered_error' });
+      lifecycleRevision, runId, identityMatched: true,
+      errorCode: supported ? 'openclaw_repeated_tool_error' : 'unregistered_error' });
     if (supported) {
+      await vi.advanceTimersByTimeAsync(9_999);
       expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Checking);
       expect(errors).not.toHaveBeenCalled();
       expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
-      await vi.waitFor(() => expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Running), {
-        timeout: AUTOMATIC_ERROR_RETRY_DELAY_MS + 1_000,
-      });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(adapter.getAutomaticErrorRetry(session.id)?.phase).toBe(AutomaticErrorRetryPhase.Running);
       const successor = adapter.getAutomaticErrorRetry(session.id)!.runs.at(-1)!;
       internals.automaticErrorRetryHost.coordinator.observeSettled({
         runId: successor.runId, sessionKey: key, sessionId: nativeSessionId, lifecycleGeneration: null,
@@ -1552,6 +1560,7 @@ test.each([false, true])('holds a prepared desktop error until native classifica
       expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
     }
   } finally {
+    vi.mocked(retryDelay).mockReset();
     internals.automaticErrorRetryHost.clear();
     vi.useRealTimers();
   }

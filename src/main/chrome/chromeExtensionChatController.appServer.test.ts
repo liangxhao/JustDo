@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { AutomaticErrorRetryDisposition, AutomaticErrorRetryPhase } from '../../shared/cowork/automaticErrorRetry';
 import type { SessionRunTiming } from '../../shared/cowork/sessionRun';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { projectCodexHistory } from '../clients/appServer/protocol/appServerHistory';
@@ -38,11 +39,15 @@ function fixture() {
     ensureReady: vi.fn(async () => {}),
     requestGateway: vi.fn(async () => ({})),
     getRunTerminalReceipt: vi.fn(),
+    getAutomaticErrorRetryTurn: vi.fn(),
     fetchSessionHistoryByKey: vi.fn(async () => ({ sessionKey: row.nativeSessionKey, messages })),
   });
   const updateSession = vi.fn((_id: string, patch: object) => Object.assign(row, patch));
   const store = {
     getSession: () => row, getSessionRuns: () => runs, updateSession,
+    getLatestSessionRun: () => runs.at(-1),
+    getSessionRunByClientTurnId: (turnId: string) => runs.find(run => run.clientTurnId === turnId),
+    finishSessionRun: vi.fn(),
     getConfig: () => ({ workingDirectory: process.cwd(), permissionMode: 'ask' }),
     createSession: vi.fn(),
   };
@@ -100,6 +105,35 @@ describe('browser standard app-server data access', () => {
     const verified = await f.controller.getHistory(f.row.id);
     expect(verified.unknownRunIds).toEqual([]);
     expect(projectCodexHistory(verified).turns[0]).toMatchObject({ status: 'completed', completedAt: 2 });
+  });
+
+  it('keeps a completed logical turn settled from its successor after a new turn replaces the live chain', async () => {
+    const f = fixture();
+    const root = f.runs[0];
+    const identity = {
+      chainId: root.clientTurnId, maxContinuations: 1, sessionKey: f.row.nativeSessionKey,
+      nativeSessionId: 'private-physical', lifecycleRevision: 'private-revision',
+    };
+    root.state = 'failed';
+    root.automaticErrorRetry = { ...identity, attempt: 0, disposition: AutomaticErrorRetryDisposition.Superseded };
+    f.runs.push({
+      id: 'successor-receipt', sessionId: f.row.id, clientTurnId: 'successor-run', rootRunId: 'successor-run',
+      state: 'completed', startedAt: 3_000, endedAt: 4_000,
+      automaticErrorRetry: { ...identity, attempt: 1, predecessorRunId: 'native-run', disposition: AutomaticErrorRetryDisposition.Final },
+    }, { id: 'new-user-receipt', sessionId: f.row.id, clientTurnId: 'new-user', startedAt: 5_000, state: 'running' });
+    f.runtime.getRunTerminalReceipt.mockImplementation(runId => ({
+      runId, sessionKey: identity.sessionKey, sessionId: identity.nativeSessionId, clientGeneration: 1,
+      executionSettled: true, agentSeq: 15, endedAt: runId === 'successor-run' ? 4_000 : 2_000,
+      status: runId === 'successor-run' ? 'completed' : 'failed',
+    }));
+
+    await expect(f.controller.getTurnState(f.row.id, root.clientTurnId)).resolves.toMatchObject({
+      id: root.clientTurnId, nativeRunId: 'successor-run', retryAttempt: 1, status: 'completed', executionSettled: true,
+    });
+    f.changeGeneration();
+    await expect(f.controller.getTurnState(f.row.id, root.clientTurnId)).resolves.toMatchObject({
+      id: root.clientTurnId, status: 'unknown', executionSettled: false,
+    });
   });
 
   it('returns true empty history for a new unbound thread without looking up runtime services', async () => {
@@ -186,6 +220,45 @@ describe('browser standard app-server data access', () => {
     f.changeGeneration();
     emit();
     expect(listener.mock.calls[3][0]).not.toHaveProperty('turnId');
+    dispose();
+  });
+
+  it('withholds the native unscoped failure snapshot for the exact retry attempt before settlement', async () => {
+    const f = fixture();
+    const message = 'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.';
+    const binding = {
+      runId: 'logical-turn', physicalRunId: 'native-run', sessionKey: 'native-key',
+      nativeSessionId: 'private-physical', clientGeneration: 1, lifecycleRevision: 'private-revision',
+    };
+    (f.controller as unknown as { activeTurns: Map<string, typeof binding> }).activeTurns.set(f.row.id, binding);
+    const attempt = {
+      runId: binding.physicalRunId, clientTurnId: binding.runId, chainId: binding.runId,
+      attempt: 0, maxContinuations: 1, sessionKey: binding.sessionKey, nativeSessionId: binding.nativeSessionId,
+      lifecycleRevision: binding.lifecycleRevision, disposition: AutomaticErrorRetryDisposition.Candidate,
+    };
+    f.runtime.getAutomaticErrorRetryTurn.mockReturnValue({ currentPhysicalRunId: binding.physicalRunId,
+      presentation: { phase: AutomaticErrorRetryPhase.Eligible, runs: [attempt] } });
+    const listener = vi.fn();
+    const dispose = await f.controller.subscribeThreadEvents(f.row.id, listener);
+    const emit = (seq: number, data: object) => f.runtime.emit('gatewayEvent', { event: 'agent', payload: {
+      sessionKey: binding.sessionKey, runId: binding.physicalRunId, seq, stream: 'assistant', data,
+    } });
+
+    emit(40, { text: 'Existing work remains useful.', delta: 'Existing work remains useful.' });
+    f.runtime.emit('gatewayEvent', { event: 'chat', payload: {
+      sessionKey: binding.sessionKey, runId: binding.physicalRunId, seq: 42, state: 'delta',
+      message: { role: 'assistant', content: [{ type: 'text', text: message }], timestamp: 2_000 },
+    } });
+    emit(42, { text: message, delta: message, itemId: 'native-message:4' });
+    f.runtime.emit('gatewayEvent', { event: 'agent', payload: {
+      sessionKey: binding.sessionKey, runId: binding.physicalRunId, seq: 43, stream: 'lifecycle',
+      data: { phase: 'finishing', livenessState: 'blocked', error: message, endedAt: 2_000 },
+    } });
+    emit(44, { text: message, delta: message, assistantTextScope: { id: 'actual-model-text' } });
+    emit(45, { text: message, delta: message, mediaUrls: ['safe-artifact.pdf'] });
+
+    expect(listener.mock.calls.map(([value]) => value.event.agentSeq)).toEqual([40, 43, 44, 45]);
+    expect(listener.mock.calls[1][0].event.data).toEqual({ phase: 'finishing', livenessState: 'blocked', endedAt: 2_000 });
     dispose();
   });
 });

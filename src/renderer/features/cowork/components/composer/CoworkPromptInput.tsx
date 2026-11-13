@@ -201,6 +201,7 @@ interface CoworkPromptInputProps {
   /** Stable cancellation identity while a temporary session becomes canonical. */
   stopOperationKey?: string;
   isStreaming?: boolean;
+  automaticRetryActive?: boolean;
   placeholder?: string;
   disabled?: boolean;
   /** Keep text editing available while execution and native controls are disabled. */
@@ -270,6 +271,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       onStop,
       stopOperationKey,
       isStreaming = false,
+      automaticRetryActive = false,
       placeholder = 'Enter your task...',
       disabled = false,
       allowDraftWhileDisabled = false,
@@ -602,8 +604,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       (goalExecution?.phase === GoalExecutionPhase.Running ||
         goalExecution?.phase === GoalExecutionPhase.Continuing ||
         goalExecution?.phase === GoalExecutionPhase.Retrying);
+    const isAwaitingAutomaticRetry = automaticRetryActive && !isStreaming;
     const isRunActive =
-      isStopping || goalAutoRunning || isCoworkRunActive(isStreaming, goalRunProgress);
+      isStopping || goalAutoRunning || automaticRetryActive || isCoworkRunActive(isStreaming, goalRunProgress);
     const transcriptionActivity = useSpeechTranscriptionActivity();
     const realtimeVoice = useRealtimeVoiceSession({
       sessionId,
@@ -611,8 +614,9 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       startDisabled: (disabled && !allowDraftWhileDisabled) || isRunActive,
     });
     const canQueue =
-      Boolean(queuePrompt) && goalReadReady && !isSideChat && !isStopping && !hasSessionGoal;
-    const canStopRun = goalAutoRunning || canStopCoworkRun(isStreaming, goalRunProgress);
+      Boolean(queuePrompt) && goalReadReady && !isSideChat && !isStopping && !hasSessionGoal &&
+      !isAwaitingAutomaticRetry;
+    const canStopRun = goalAutoRunning || automaticRetryActive || canStopCoworkRun(isStreaming, goalRunProgress);
     const submissionAvailabilityRef = useRef({ disabled, isRunActive, canQueue });
     submissionAvailabilityRef.current = {
       disabled: disabled || goalSubmissionBlocked,

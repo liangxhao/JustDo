@@ -1,6 +1,6 @@
 import {
-  AutomaticErrorRetryPhase as Phase,
   type AutomaticErrorRetryPresentation,
+  isAutomaticErrorRetryActive,
 } from '@shared/cowork/automaticErrorRetry';
 import { useEffect, useState } from 'react';
 
@@ -24,6 +24,5 @@ export function useAutomaticErrorRetryActivity(sessionId?: string): boolean {
     }).catch(() => {});
     return () => { active = false; remove(); };
   }, [sessionId]);
-  return Boolean(value && value.sessionId === sessionId &&
-    (value.phase === Phase.Checking || value.phase === Phase.Preparing || value.phase === Phase.Running));
+  return Boolean(value && value.sessionId === sessionId && isAutomaticErrorRetryActive(value.phase));
 }

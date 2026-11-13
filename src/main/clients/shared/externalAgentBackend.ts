@@ -10,6 +10,7 @@ import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSe
 import { matchesTranslation, t } from '../../core/i18n';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
+import { projectPersistedAppServerRetryTurns } from '../appServer/protocol/appServerHistory';
 import {
   type ExternalAgentBackend,
   ExternalAgentBusyError,
@@ -203,16 +204,26 @@ export class ExternalAgentBackendFactory {
             if (attempt === 0) continue;
             throw new Error('Native history changed during the read. Please read it again.');
           }
+          const retryTurns = projectPersistedAppServerRetryTurns(runs, {
+            sessionKey: before.openclawSessionKey, nativeSessionId: before.nativeSessionId,
+            lifecycleRevision: before.lifecycleRevision,
+          }, after.executionRunId ? {
+            nativeRunId: after.executionRunId, running: after.status === ExternalSessionStatus.Running,
+            uncertain: after.executionState === ExternalExecutionState.Unknown,
+          } : undefined);
+          const logicalRunId = retryTurns.find(turn => turn.nativeRunIds.includes(after.executionRunId ?? ''))
+            ?.clientTurnId ?? after.executionRunId;
           return {
             threadId: id,
             messages: history.messages,
             runs,
-            ...(after.executionRunId ? { latestExternalRunId: after.executionRunId } : {}),
+            ...(logicalRunId ? { latestExternalRunId: logicalRunId } : {}),
+            ...(retryTurns.length ? { retryTurns } : {}),
             identityRevision: createHash('sha256').update(JSON.stringify([
               before.openclawSessionKey, before.nativeSessionId, before.lifecycleRevision,
             ])).digest('base64url'),
-            ...(after.executionState === ExternalExecutionState.Unknown && after.executionRunId
-              ? { unknownRunId: after.executionRunId } : {}),
+            ...(after.executionState === ExternalExecutionState.Unknown && logicalRunId
+              ? { unknownRunId: logicalRunId } : {}),
           };
         }
         throw new Error('Native history could not be verified.');
@@ -285,6 +296,7 @@ export class ExternalAgentBackendFactory {
         const receipts = externalStore();
         let unconfirmed = false;
         let started = false;
+        let currentRunId = runId;
         let outcome: ExternalAgentExecutionOutcome | undefined;
         const terminalStatus = () =>
           outcome === ExternalAgentExecutionOutcome.Completed
@@ -295,15 +307,13 @@ export class ExternalAgentBackendFactory {
         this.active.add(external.coworkSessionId);
         try {
           const session = store().getSession(external.coworkSessionId)!;
-          const shouldNameSession =
-            matchesTranslation('externalAgentNewSession', session.title) &&
-            !external.executionRunId && !external.openclawSessionKey &&
+          const initialSession = !external.executionRunId && !external.openclawSessionKey &&
             !external.nativeSessionId && !external.lifecycleRevision &&
             !session.nativeSessionKey && !session.historyBinding &&
             !store().getLatestSessionRun(session.id);
           receipts.beginExecution(current.id, runId);
           started = true;
-          if (shouldNameSession) {
+          if (initialSession && matchesTranslation('externalAgentNewSession', session.title)) {
             const firstLine = message.trim().split(/\r\n?|\n/u)[0].replace(/\s+/gu, ' ').trim();
             const title = Array.from(firstLine).slice(0, MAX_AUTOMATIC_THREAD_NAME_LENGTH).join('') ||
               t('externalAgentImageSession');
@@ -316,6 +326,7 @@ export class ExternalAgentBackendFactory {
             message,
             ...(hooks?.attachments?.length ? { attachments: hooks.attachments } : {}),
             modelRef,
+            ...(initialSession ? { initialSession: true as const } : {}),
             onEvent,
             signal,
             ...(external.openclawSessionKey &&
@@ -332,26 +343,41 @@ export class ExternalAgentBackendFactory {
             hooks: {
               ...(hooks?.interactiveApprovals === true ? { interactiveApprovals: true } : {}),
               onPrepared: async binding => {
-                receipts.bindExecution(current.id, runId, binding);
+                if (binding.runId === runId) receipts.bindExecution(current.id, runId, binding);
                 return hooks?.onPrepared?.(binding);
               },
+              onRetry: hooks?.onRetry,
             },
-            onUnconfirmed: () => receipts.markExecutionUnknown(current.id, runId),
+            isRetryCurrent: () => {
+              const owner = receipts.get(current.id);
+              return !signal.aborted && owner?.coworkSessionId === external.coworkSessionId &&
+                owner.executionRunId === currentRunId && owner.status === ExternalSessionStatus.Running &&
+                this.active.has(external.coworkSessionId);
+            },
+            onRetryPrepared: (predecessor, next) => {
+              receipts.replaceExecutionAttempt(current.id, predecessor, next);
+              currentRunId = next;
+            },
+            onRetryNotSent: (predecessor, next) => {
+              receipts.replaceExecutionAttempt(current.id, next, predecessor);
+              currentRunId = predecessor;
+            },
+            onUnconfirmed: () => receipts.markExecutionUnknown(current.id, currentRunId),
             onSettled: settled => {
               outcome = settled;
             },
           });
           outcome ??= ExternalAgentExecutionOutcome.Completed;
           if (signal.reason instanceof ExternalAgentStreamError) throw signal.reason;
-          receipts.finishExecution(current.id, runId, terminalStatus());
+          receipts.finishExecution(current.id, currentRunId, terminalStatus());
           return result;
         } catch (error) {
           unconfirmed = error instanceof ExternalAgentOutcomeUnknownError && !outcome;
-          if (started && unconfirmed) receipts.markExecutionUnknown(current.id, runId);
+          if (started && unconfirmed) receipts.markExecutionUnknown(current.id, currentRunId);
           else if (started)
             receipts.finishExecution(
               current.id,
-              runId,
+              currentRunId,
               outcome
                 ? terminalStatus()
                 : error instanceof ExternalAgentCancelledError

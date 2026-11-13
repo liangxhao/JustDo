@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import { AUTOMATIC_ERROR_RETRY_FAILURE_METHOD } from '../../engine/openclaw/automaticErrorRetry/failureCode';
+import { REPEATED_TOOL_ERROR_CODE } from '../../engine/openclaw/automaticErrorRetry/rules';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 import { AcpProgress } from '../cli/acpProgress';
 import { createExternalAgentExecution } from './externalAgentExecution';
@@ -16,7 +18,7 @@ import {
 
 afterEach(() => vi.useRealTimers());
 
-function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
+function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1], maxContinuations = 0) {
   const runtime = new EventEmitter();
   const session = {
     id: 'local',
@@ -30,8 +32,9 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
     beginSessionRun: vi.fn(() => ({ id: 'timing' })),
     finishSessionRun: vi.fn(),
     updateSession: vi.fn(),
+    getAgentRuntimeSettings: () => ({ automaticErrorRetry: { maxContinuations } }),
   };
-  const identity: { sessionId: string; lifecycleRevision: string; activeRunIds?: string[] } = {
+  const identity: { sessionId: string; lifecycleRevision: string; activeRunIds?: string[]; lastRunId?: string } = {
     sessionId: 'native-id',
     lifecycleRevision: 'revision-1',
   };
@@ -44,6 +47,8 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
       _options?: Parameters<GatewayClientLike['request']>[2],
     ): Promise<unknown> => {
       if (method === 'sessions.describe') return Promise.resolve({ session: { key: 'native-key', ...identity } });
+      if (method === AUTOMATIC_ERROR_RETRY_FAILURE_METHOD)
+        return Promise.resolve({ ..._params as object, identityMatched: true, errorCode: REPEATED_TOOL_ERROR_CODE });
       if (method === 'agent' || method === 'chat.send')
         return new Promise(resolve => {
           finishAgent = resolve;
@@ -62,6 +67,7 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
   });
   const registerUnknownSessionRun = vi.fn();
   const fetchSessionHistoryByKey = vi.fn(async () => ({ sessionKey: 'native-key', messages: [] as unknown[] }));
+  const publishAutomaticErrorRetry = vi.fn();
   Object.assign(runtime, {
     ensureReady: async () => {},
     getGatewayClient: () => current,
@@ -73,10 +79,11 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
     patchSessionModel,
     registerUnknownSessionRun,
     fetchSessionHistoryByKey,
+    publishAutomaticErrorRetry,
   });
   const router = {
     isSessionActive: () => false,
-    prepareSession: vi.fn(async () => ({
+    prepareSession: vi.fn(async (..._args: Parameters<CoworkEngineRouter['prepareSession']>) => ({
       sessionKey: 'native-key',
       gatewaySessionId: 'native-id',
     })),
@@ -124,6 +131,7 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1]) {
     onPrepared,
     registerUnknownSessionRun,
     fetchSessionHistoryByKey,
+    publishAutomaticErrorRetry,
     finishAgent: (value: unknown) => finishAgent(value),
     finishReceipt: (value: unknown) => finishReceipt(value),
     replaceClient: (replacement: GatewayClientLike) => {
@@ -151,6 +159,8 @@ const fullResponse = (text = fullReply, snapshot = cappedReply) => ({
   },
 });
 const cappedReceipt = { ...receipt, terminalReply: { disposition: 'visible', text: cappedReply } };
+const repeatedToolFailureCopy =
+  'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.';
 const emitTerminal = (f: ReturnType<typeof fixture>, text = cappedReply, seq = 1) =>
   f.runtime.emit('gatewayEvent', {
     event: 'agent',
@@ -170,6 +180,182 @@ const emitTerminal = (f: ReturnType<typeof fixture>, text = cappedReply, seq = 1
   });
 
 describe('external execution ownership', () => {
+  it('continues one logical external request with exact fresh native attempts and keeps errors internal until final failure', async () => {
+    const f = fixture({ retryDelayMs: 0 }, 2);
+    f.identity.activeRunIds = [];
+    const onRetryPrepared = vi.fn();
+    const onRetry = vi.fn();
+    const outcome = f.execute({
+      ...f.input, isRetryCurrent: () => true, onRetryPrepared,
+      hooks: { ...f.input.hooks, interactiveApprovals: true, onRetry },
+      attachments: [{ name: 'photo.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }],
+    });
+    const rejected = expect(outcome).rejects.toThrow('final failure');
+    const agentCalls = () => f.request.mock.calls.filter(([method]) => method === 'agent');
+    let runId = f.input.runId;
+    for (const attempt of [0, 1, 2]) {
+      await vi.waitFor(() => expect(agentCalls()).toHaveLength(attempt + 1));
+      const [, params] = agentCalls()[attempt];
+      const id = (params as { idempotencyKey: string }).idempotencyKey;
+      if (attempt) {
+        expect(id).not.toBe(runId);
+        expect(onRetryPrepared).toHaveBeenNthCalledWith(attempt, runId, id);
+        expect(params).toEqual(expect.objectContaining({
+          channel: 'webchat', deliver: false, suppressPromptPersistence: true,
+          expectedExistingSessionId: 'native-id', expectedExistingSessionLifecycleRevision: 'revision-1',
+          inputProvenance: { kind: 'internal_system', sourceTool: 'execution-error-retry' },
+        }));
+        expect(params).not.toHaveProperty('attachments');
+        expect(f.cleanup).toHaveBeenCalledTimes(attempt);
+        expect(f.onEvent.mock.calls.flatMap(([event]) => event.data.error ?? [])).toEqual([]);
+      }
+      runId = id;
+      f.identity.lastRunId = id;
+      const emit = (seq: number, stream: string, data: Record<string, unknown>) => f.runtime.emit('gatewayEvent', {
+        event: 'agent',
+        payload: {
+          runId: id, sessionKey: 'native-key', sessionId: 'native-id', lifecycleGeneration: 'generation-1',
+          seq, stream, data,
+        },
+      });
+      if (!attempt) emit(1, 'assistant', {
+        itemId: 'scoped', assistantTextScope: { id: 'model-output' },
+        text: repeatedToolFailureCopy, delta: repeatedToolFailureCopy,
+      });
+      emit(2, 'assistant', {
+        itemId: 'native-failure', text: repeatedToolFailureCopy,
+        ...(attempt ? { delta: '', replace: true } : { delta: repeatedToolFailureCopy }),
+      });
+      emit(3, 'lifecycle', { phase: 'finishing', livenessState: 'blocked', error: repeatedToolFailureCopy });
+      emit(4, 'lifecycle', {
+        phase: 'error', executionSettled: true, error: attempt === 2 ? 'final failure' : repeatedToolFailureCopy,
+      });
+    }
+    await rejected;
+    expect(onRetry).toHaveBeenCalledTimes(2);
+    expect(f.onSettled).toHaveBeenCalledExactlyOnceWith('failed');
+    const output = f.onEvent.mock.calls.map(([event]) => ({ runId: event.runId, data: event.data }));
+    expect(output.filter(event => event.data.text)).toEqual([{
+      runId: f.input.runId,
+      data: expect.objectContaining({ itemId: 'scoped', text: repeatedToolFailureCopy }),
+    }]);
+    expect(output.filter(event => event.data.phase === 'finishing')).toEqual(
+      Array.from({ length: 3 }, () => expect.objectContaining({ data: { phase: 'finishing', livenessState: 'blocked' } })),
+    );
+    expect(output.filter(event => event.data.error)).toEqual([{
+      runId, data: expect.objectContaining({ error: 'final failure' }),
+    }]);
+    expect(f.publishAutomaticErrorRetry).toHaveBeenLastCalledWith(expect.objectContaining({
+      phase: 'failed', attempt: 2, runs: [
+        expect.objectContaining({ disposition: 'superseded' }),
+        expect.objectContaining({ disposition: 'superseded' }),
+        expect.objectContaining({ disposition: 'final' }),
+      ],
+    }));
+  });
+
+  it.each([0, 1])('delivers genuine unscoped assistant copy on success with %i retries configured', async maxContinuations => {
+    const f = fixture(undefined, maxContinuations);
+    const outcome = f.execute({ ...f.input, isRetryCurrent: () => true });
+    await vi.waitFor(() => expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1));
+    f.runtime.emit('gatewayEvent', {
+      event: 'agent',
+      payload: {
+        seq: 1, sessionKey: 'native-key', sessionId: 'native-id', runId: 'run',
+        lifecycleGeneration: 'generation-1', stream: 'assistant',
+        data: { itemId: 'model-output', text: repeatedToolFailureCopy, delta: repeatedToolFailureCopy },
+      },
+    });
+    await Promise.resolve();
+    expect(f.onEvent).toHaveBeenCalledTimes(maxContinuations ? 0 : 1);
+    f.runtime.emit('gatewayEvent', {
+      event: 'agent',
+      payload: {
+        seq: 2, sessionKey: 'native-key', sessionId: 'native-id', runId: 'run',
+        lifecycleGeneration: 'generation-1', stream: 'tool', data: { phase: 'start', toolCallId: 'lookup' },
+      },
+    });
+    await vi.waitFor(() => expect(f.onEvent).toHaveBeenCalledTimes(2));
+    emitTerminal(f, repeatedToolFailureCopy, 3);
+    await expect(outcome).resolves.toBe(repeatedToolFailureCopy);
+    expect(f.onEvent.mock.calls.map(([event]) => event.stream)).toEqual(['assistant', 'tool', 'lifecycle']);
+    expect(f.onEvent.mock.calls[0][0].data.text).toBe(repeatedToolFailureCopy);
+  });
+
+  it.each([true, false])('selects the requested model before dispatch, with first native creation %s', async fresh => {
+    const f = fixture();
+    const outcome = f.execute({ ...f.input, ...(fresh ? { initialSession: true } : {
+      expectedBinding: { sessionKey: 'native-key', sessionId: 'native-id', lifecycleRevision: 'revision-1' },
+    }) });
+    await vi.waitFor(() => expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1));
+    if (fresh) {
+      expect(f.router.prepareSession).toHaveBeenCalledWith('local', expect.objectContaining({
+        modelRef: f.input.modelRef,
+      }));
+      expect(f.patchSessionModel).not.toHaveBeenCalled();
+    } else {
+      expect(f.router.prepareSession).toHaveBeenCalledWith('local', expect.objectContaining({ expectedSessionId: 'native-id' }));
+      expect(f.router.prepareSession.mock.calls[0][1]).not.toHaveProperty('modelRef');
+      expect(f.patchSessionModel).toHaveBeenCalledWith('local', f.input.modelRef, 'assistant');
+    }
+    emitTerminal(f);
+    f.finishAgent(fullResponse());
+    await expect(outcome).resolves.toBe(fullReply);
+  });
+
+  it('cancels an external retry during its delay without issuing another native request', async () => {
+    const f = fixture({ retryDelayMs: 5000 }, 1);
+    f.identity.activeRunIds = [];
+    f.identity.lastRunId = f.input.runId;
+    const rejected = expect(f.execute({ ...f.input, isRetryCurrent: () => true }))
+      .rejects.toBeInstanceOf(ExternalAgentCancelledError);
+    await vi.waitFor(() => expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1));
+    f.runtime.emit('gatewayEvent', {
+      event: 'agent',
+      payload: {
+        runId: f.input.runId, sessionKey: 'native-key', sessionId: 'native-id', lifecycleGeneration: 'generation-1',
+        seq: 1, stream: 'lifecycle', data: { phase: 'error', executionSettled: true, error: 'retryable' },
+      },
+    });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith(
+      AUTOMATIC_ERROR_RETRY_FAILURE_METHOD, expect.anything(), expect.anything(),
+    ));
+    f.controller.abort();
+    await rejected;
+    expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+    expect(f.publishAutomaticErrorRetry).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'cancelled' }));
+  });
+
+  it('keeps the exact successor pending after losing its send outcome and does not use the remaining allowance', async () => {
+    const f = fixture({ retryDelayMs: 0, timeoutMs: 100, pollIntervalMs: 20 }, 2);
+    f.identity.activeRunIds = [];
+    f.identity.lastRunId = f.input.runId;
+    const outcome = f.execute({ ...f.input, isRetryCurrent: () => true });
+    const rejected = expect(outcome).rejects.toBeInstanceOf(ExternalAgentOutcomeUnknownError);
+    const agentCalls = () => f.request.mock.calls.filter(([method]) => method === 'agent');
+    await vi.waitFor(() => expect(agentCalls()).toHaveLength(1));
+    f.runtime.emit('gatewayEvent', {
+      event: 'agent',
+      payload: {
+        runId: f.input.runId, sessionKey: 'native-key', sessionId: 'native-id', lifecycleGeneration: 'generation-1',
+        seq: 1, stream: 'lifecycle', data: { phase: 'error', executionSettled: true, error: 'retryable' },
+      },
+    });
+    await vi.waitFor(() => expect(agentCalls()).toHaveLength(2));
+    const nativeSuccessor = (agentCalls()[1][1] as { idempotencyKey: string }).idempotencyKey;
+    f.finishAgent({ status: 'ok', runId: nativeSuccessor });
+    await rejected;
+    expect(agentCalls()).toHaveLength(2);
+    expect(f.onSettled).not.toHaveBeenCalled();
+    expect(f.registerUnknownSessionRun).toHaveBeenCalledWith('local', nativeSuccessor, { cancelled: false });
+    expect(f.publishAutomaticErrorRetry).toHaveBeenLastCalledWith(expect.objectContaining({
+      phase: 'unknown', attempt: 1, runs: [
+        expect.objectContaining({ runId: f.input.runId, disposition: 'pending' }),
+        expect.objectContaining({ runId: nativeSuccessor, disposition: 'pending' }),
+      ],
+    }));
+  });
+
   it('passes real image bytes through the native agent RPC while retaining its revision CAS', async () => {
     const f = fixture();
     const attachments = [{ name: 'photo.png', mimeType: 'image/png', base64Data: 'aW1hZ2U=' }];

@@ -32,6 +32,7 @@ interface CoworkSessionItemProps {
   hasUnread: boolean;
   isActive: boolean;
   isRuntimeRunning?: boolean;
+  isAutomaticRetryActive?: boolean;
   isBatchMode: boolean;
   isSelected: boolean;
   showBatchOption?: boolean;
@@ -59,6 +60,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
   hasUnread,
   isActive,
   isRuntimeRunning = false,
+  isAutomaticRetryActive = false,
   isBatchMode,
   isSelected,
   showBatchOption = true,
@@ -393,7 +395,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
 
   const renameLabel = i18nService.t('renameConversation');
   const deleteLabel = i18nService.t('deleteSession');
-  const showRunningIndicator = isRuntimeRunning;
+  const showRunningIndicator = isRuntimeRunning || isAutomaticRetryActive;
   const showUnreadIndicator = !showRunningIndicator && hasUnread;
   const batchLabel = i18nService.t('batchOperations');
   const moveToGroupLabel = i18nService.t('moveToGroup');

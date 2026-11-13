@@ -81,6 +81,21 @@ describe('extension live projection', () => {
     expect(items(view).slice(-1)[0]?.text).toBe('Current reply continues');
   });
 
+  it('rebinds a successor to the same displayed user turn and ignores delayed predecessor frames', () => {
+    const view = new ChromeExtensionStream('one');
+    view.start('Question');
+    expect(view.bindRun('run-1')).toBe(true);
+    view.accept(agent(30, 'assistant', { text: 'Earlier native commentary' }));
+    view.setHistory(history([{ type: 'agentMessage', text: 'Earlier native commentary' }]));
+    const retry = { ...agent(1, 'assistant', { text: 'Continued reply' }), retryAttempt: 1 };
+    retry.event.runId = 'run-2';
+    expect(view.accept(retry)).toBe(true);
+    expect(view.accept(agent(50, 'assistant', { text: 'Late predecessor frame' }))).toBe(false);
+    expect(view.bindRun('run-1', 1, 0)).toBe(false);
+    expect(items(view).map(item => item.type)).toEqual(['userMessage', 'agentMessage', 'agentMessage']);
+    expect(items(view).map(item => item.text)).toEqual([undefined, 'Earlier native commentary', 'Continued reply']);
+  });
+
   it('calibrates overflowed pending deltas from history instead of displaying a missing prefix', () => {
     const view = new ChromeExtensionStream('one');
     view.start('Question');

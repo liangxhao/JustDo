@@ -514,6 +514,7 @@ export class ExternalAppServerBinding implements AppServerBinding {
           throw active.failure ?? new ExternalAgentCancelledError('The connection closed before native admission.');
         const hooks: ExternalAgentRunHooks = {
           ...(prepared.attachments.length ? { attachments: prepared.attachments } : {}),
+          onRetry: () => progress.finish(),
           ...(this.interactiveApprovals ? {
           interactiveApprovals: true,
           onPrepared: binding => {

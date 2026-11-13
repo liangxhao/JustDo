@@ -1,12 +1,24 @@
+import { randomUUID } from 'node:crypto';
+
 import { toGatewayAttachment } from '../../../shared/cowork/attachments';
-import { normalizeAgentEvent } from '../../../shared/openclaw/agentEvent';
+import {
+  AutomaticErrorRetryDisposition as Disposition,
+  AutomaticErrorRetryPhase as Phase,
+  type AutomaticErrorRetryPresentation,
+} from '../../../shared/cowork/automaticErrorRetry';
+import { normalizeAgentEvent, readTerminalGuardObservation } from '../../../shared/openclaw/agentEvent';
+import { isKnownAutomaticRetryFailureCopy } from '../../../shared/openclaw/automaticErrorRetryDisplay';
 import { toOpenClawSessionPermissionMode } from '../../../shared/security/approvals';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
 import { prepareNativeSendBinding } from '../../engine/gateway/nativeSendAdmission';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
+import type { AutomaticErrorRetryBinding, AutomaticErrorRetrySettledReceipt } from '../../engine/openclaw/automaticErrorRetry/coordinator';
+import { readAutomaticErrorRetryFailureCode, readBlockedContextOverflow } from '../../engine/openclaw/automaticErrorRetry/failureCode';
+import { waitForAutomaticErrorRetry } from '../../engine/openclaw/automaticErrorRetry/retryDecision';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
+import { assertStorageExecutionAdmission } from '../../storage/relocationAdmission';
 import { appServerNativeMessageRunIds, projectCodexHistory } from '../appServer/protocol/appServerHistory';
 import { createAppServerHistoryReader } from '../appServer/protocol/appServerHistoryReader';
 import { ExternalAgentProgress } from './externalAgentProgress';
@@ -33,12 +45,14 @@ interface ReconciliationTiming {
   pollIntervalMs?: number;
   outputRecoveryTimeoutMs?: number;
   progressTimeoutMs?: number;
+  retryDelayMs?: number;
 }
 
 interface NativeSessionIdentity {
   sessionId: string;
   lifecycleRevision: string;
   activeRunIds?: string[];
+  lastRunId?: string;
 }
 
 interface NativeResult {
@@ -57,6 +71,7 @@ interface NativeResult {
 
 interface SettledResult extends NativeResult {
   terminalReplyText?: string;
+  retryReceipt?: AutomaticErrorRetrySettledReceipt;
 }
 
 interface NativeReceipt {
@@ -64,16 +79,50 @@ interface NativeReceipt {
   status?: string;
   endedAt?: number;
   yielded?: boolean;
+  pendingError?: boolean;
   error?: string;
   stopReason?: string;
   terminalReply?: { disposition?: string; text?: string };
 }
+
+interface RetryAttemptContext {
+  predecessorRunId: string;
+  binding: AutomaticErrorRetryBinding;
+  client: GatewayClientLike;
+  assertCurrent(): void;
+}
+
+type AttemptSettlement = {
+  binding: AutomaticErrorRetryBinding;
+  client: GatewayClientLike;
+  receipt?: AutomaticErrorRetrySettledReceipt;
+  outcome: ExternalAgentExecutionOutcome;
+};
+
+type RetryPresentation = Omit<AutomaticErrorRetryPresentation, 'revision'>;
+
+const retrySourceIdentity = (store: CoworkStore, sessionId: string): string => {
+  const session = store.getSession(sessionId);
+  return JSON.stringify(session && [session.agentId, session.cwd, session.permissionMode, session.modelRef,
+    session.activeSkillIds, session.nativeSessionKey, session.historyBinding, session.nativeParentSessionId]);
+};
+
+type AttemptInput = Parameters<ExternalAgentExecution>[0] & {
+  retry?: RetryAttemptContext;
+  onAttemptSettled?: (result: AttemptSettlement) => void;
+  onAttemptPrepared?: (binding: AutomaticErrorRetryBinding) => void;
+  onAttemptAdmitted?: () => void;
+  onAttemptNotSent?: () => void;
+  onAttemptCleanupFailed?: () => void;
+  holdTerminalError?: (event: Parameters<AttemptInput['onEvent']>[0]) => void;
+};
 
 class NativeIdentityChangedError extends Error {}
 
 const TERMINAL_REPLY_MAX_CHARS = 4096;
 const MAX_OUTPUT_CHARS = 2 * 1024 * 1024;
 const UNSTAMPED_PROGRESS_STREAMS = new Set(['assistant', 'thinking', 'tool']);
+const NON_RETRY_STOP_REASONS = new Set(['aborted', 'rpc', 'restart', 'superseded', 'timeout', 'hard_timeout']);
 
 /** Native final-RPC payloads are display projections; do not recreate private metadata stripping. */
 const projectTerminalReplyText = (value: string): string => {
@@ -104,22 +153,31 @@ export function createExternalAgentExecution(
   const reconciliationTimeoutMs = timing.timeoutMs ?? 30_000;
   const pollIntervalMs = timing.pollIntervalMs ?? 1000;
   const outputRecoveryTimeoutMs = timing.outputRecoveryTimeoutMs ?? 5000;
-  return async ({
+  const executeAttempt = async ({
     sessionId,
     runId,
     message,
     attachments,
     modelRef,
+    initialSession,
     onEvent,
     signal,
     hooks,
     onUnconfirmed,
     onSettled,
     expectedBinding,
-  }) => {
+    retry,
+    onAttemptSettled,
+    onAttemptPrepared,
+    onAttemptAdmitted,
+    onAttemptNotSent,
+    onAttemptCleanupFailed,
+    holdTerminalError,
+  }: AttemptInput): Promise<string> => {
     const checkCancelled = () => {
       if (signal.aborted)
         throw new ExternalAgentCancelledError('Task cancelled before native submission.');
+      retry?.assertCurrent();
     };
     checkCancelled();
     const readiness = await deps.ensureReady();
@@ -132,10 +190,15 @@ export function createExternalAgentExecution(
     const router = deps.getRouter();
     if (router.isSessionActive(sessionId))
       throw new Error('Conversation already has an active turn.');
+    // Select the model during native preparation for the first tracked external execution.
+    // A separate model patch can leave a live-switch marker that preempts native error handling.
+    const initialModelRef = initialSession && !expectedBinding && !session.nativeSessionKey && !session.historyBinding
+      ? modelRef : undefined;
     const prepared = await router.prepareSession(sessionId, {
       agentId: session.agentId,
       permissionMode: session.permissionMode,
       workspaceRoot: session.cwd,
+      ...(initialModelRef ? { modelRef: initialModelRef } : {}),
       ...(expectedBinding ? { expectedSessionId: expectedBinding.sessionId } : {}),
     });
     checkCancelled();
@@ -143,9 +206,12 @@ export function createExternalAgentExecution(
     if (!runtime) throw new Error('Execution runtime is unavailable.');
     await runtime.ensureReady();
     const initialClient = runtime.getGatewayClient();
+    const initialGeneration = runtime.getGatewayClientGeneration?.() ?? 0;
     const key = prepared.sessionKey;
     if (!initialClient || !key || !prepared.gatewaySessionId)
       throw new Error('The native conversation identity is unavailable.');
+    if (retry && (retry.client !== initialClient || retry.binding.clientGeneration !== initialGeneration))
+      throw new Error('The native retry connection changed.');
     let client: GatewayClientLike = initialClient;
     const mediaOnly = !message.trim() && Boolean(attachments?.length);
     // The media-only native RPC has no lifecycle-revision CAS. Pin its complete
@@ -163,12 +229,22 @@ export function createExternalAgentExecution(
           sessionId?: string;
           lifecycleRevision?: string;
           activeRunIds?: unknown;
+          lastRunId?: unknown;
+          spawnedBy?: unknown;
+          subagentRole?: unknown;
+          acp?: unknown;
+          inheritedToolAllow?: unknown;
+          inheritedToolDeny?: unknown;
+          toolsAllow?: unknown;
         };
       }>('sessions.describe', { key });
       const described = result.session;
       if (
         runtime.getGatewayClient() !== current ||
-        (mediaOnly && (deps.getRuntime() !== runtime || described?.key !== key || !mediaConnection?.isCurrent())) ||
+        ((mediaOnly || retry || onAttemptSettled) && (deps.getRuntime() !== runtime || described?.key !== key)) ||
+        (mediaOnly && !mediaConnection?.isCurrent()) ||
+        (retry && (described?.spawnedBy || described?.subagentRole || described?.acp ||
+          described?.inheritedToolAllow || described?.inheritedToolDeny || described?.toolsAllow)) ||
         described?.sessionId !== prepared.gatewaySessionId ||
         typeof described.lifecycleRevision !== 'string' ||
         !described.lifecycleRevision
@@ -179,6 +255,7 @@ export function createExternalAgentExecution(
       return {
         sessionId: described.sessionId,
         lifecycleRevision: described.lifecycleRevision,
+        ...(typeof described.lastRunId === 'string' ? { lastRunId: described.lastRunId } : {}),
         ...(Array.isArray(described.activeRunIds) &&
         described.activeRunIds.every(value => typeof value === 'string')
           ? { activeRunIds: described.activeRunIds as string[] }
@@ -209,8 +286,22 @@ export function createExternalAgentExecution(
         );
       return next;
     };
+    const assertRetryHead = async (predecessorRunId: string): Promise<void> => {
+      assertStorageExecutionAdmission();
+      checkCancelled();
+      const head = await assertIdentity(client);
+      checkCancelled();
+      if (head.lastRunId !== predecessorRunId || head.activeRunIds?.length !== 0 ||
+          runtime.getGatewayClientGeneration() !== initialGeneration)
+        throw new Error('The failed native run is no longer the current session head.');
+    };
+    const retryBinding: AutomaticErrorRetryBinding = {
+      sessionId, clientTurnId: runId, runId, sessionKey: key,
+      nativeSessionId: identity.sessionId, lifecycleRevision: identity.lifecycleRevision,
+      clientGeneration: initialGeneration,
+    };
     checkCancelled();
-    if (modelRef) {
+    if (modelRef && !initialModelRef) {
       const result = await runtime.patchSessionModel(sessionId, modelRef, session.agentId);
       if (result.ok === false)
         throw new Error(result.error || 'The selected model could not be applied.');
@@ -225,10 +316,12 @@ export function createExternalAgentExecution(
     let nativeGeneration: string | null = null;
     let lastSequence = -1;
     let lastProgressSequence = -1;
+    let blockedFailureCopy = false;
     let startProgressProof: { source: GatewayClientLike; sequence: number } | undefined;
     let terminalProgressProof: { source: GatewayClientLike; sequence: number } | undefined;
     let terminal:
-      | { status: string; text?: string; silent?: boolean; yielded?: boolean; replyKnown?: boolean }
+      | { status: string; text?: string; silent?: boolean; yielded?: boolean; replyKnown?: boolean;
+          summary?: string; retryReceipt?: AutomaticErrorRetrySettledReceipt }
       | undefined;
     const terminalWake = Symbol('execution-settled');
     let wakeTerminal!: (value: typeof terminalWake) => void;
@@ -334,15 +427,26 @@ export function createExternalAgentExecution(
       ) {
         const reply = event.data.terminalReply as
           { disposition?: string; text?: string } | undefined;
+        const stopReason = event.data.stopReason;
+        const error = typeof event.data.error === 'string' ? event.data.error : undefined;
+        const interrupted = event.data.aborted === true || stopReason === 'aborted' || stopReason === 'rpc';
+        const retryReceipt = onAttemptSettled && event.data.phase === 'error' && !interrupted &&
+          !event.data.yielded && !event.data.timeoutPhase &&
+          event.data.status !== 'timed_out' && event.data.status !== 'timeout' &&
+          !(typeof stopReason === 'string' && NON_RETRY_STOP_REASONS.has(stopReason)) &&
+          client === initialClient && runtime.getGatewayClientGeneration?.() === initialGeneration
+          ? {
+              runId, sessionKey: key, sessionId: identity.sessionId, clientGeneration: initialGeneration,
+              lifecycleGeneration: nativeGeneration, agentSeq: event.agentSeq, executionSettled: true as const,
+              status: 'failed' as const, endedAt: typeof event.data.endedAt === 'number' &&
+                Number.isFinite(event.data.endedAt) ? event.data.endedAt : event.timestamp,
+              error, observedFailureCode: readBlockedContextOverflow(event.data),
+            }
+          : undefined;
         terminal = {
-          status:
-            event.data.aborted === true ||
-            event.data.stopReason === 'aborted' ||
-            event.data.stopReason === 'rpc'
-              ? 'cancelled'
-              : event.data.phase === 'error'
-                ? 'error'
-                : 'ok',
+          status: interrupted ? 'cancelled' : event.data.phase === 'error' ? 'error' : 'ok',
+          summary: error,
+          retryReceipt,
           ...(typeof reply?.text === 'string' && reply.text.length <= 2 * 1024 * 1024
             ? { text: reply.text }
             : {}),
@@ -362,7 +466,36 @@ export function createExternalAgentExecution(
       }
       if (event.agentSeq <= lastProgressSequence) return;
       lastProgressSequence = event.agentSeq;
-      progress.enqueue(event, client);
+      if (holdTerminalError) {
+        if (event.stream === 'lifecycle') {
+          if (event.data.phase === 'error' && event.data.executionSettled === true) {
+            holdTerminalError(event);
+            return;
+          }
+          if (event.data.phase === 'finishing' && event.data.livenessState === 'blocked' &&
+              isKnownAutomaticRetryFailureCopy(event.data.error)) {
+            blockedFailureCopy = true;
+            const data = { ...event.data };
+            delete data.error;
+            progress.enqueue({ ...event, data }, client);
+            return;
+          }
+        }
+      }
+      // The exact unscoped native failure copy can also be an authored answer.
+      // Hold it in the ordered queue until exact whole-run settlement.
+      const deferFailureCopy = Boolean(holdTerminalError && event.stream === 'assistant' &&
+        typeof event.data.itemId === 'string' && event.data.assistantTextScope === undefined &&
+        event.data.phase === undefined && event.data.mediaUrls === undefined &&
+        event.data.managedMediaUrls === undefined && !readTerminalGuardObservation(event.data) &&
+        isKnownAutomaticRetryFailureCopy(event.data.text) &&
+        (event.data.delta === event.data.text || (event.data.replace === true && event.data.delta === '')));
+      if (holdTerminalError && !blockedFailureCopy && (
+        (event.stream === 'tool' && event.data.phase === 'start') ||
+        (event.stream === 'assistant' && typeof event.data.text === 'string' && event.data.text.trim() &&
+          !isKnownAutomaticRetryFailureCopy(event.data.text) && !readTerminalGuardObservation(event.data))
+      )) progress.settleDeferred(true);
+      progress.enqueue(event, client, deferFailureCopy);
     };
     const receiptResult = (receipt: NativeReceipt): SettledResult => ({
       status:
@@ -372,6 +505,16 @@ export function createExternalAgentExecution(
             ? 'ok'
             : 'error',
       summary: receipt.error,
+      retryReceipt: onAttemptSettled && receipt.status === 'error' && !receipt.yielded && !receipt.pendingError &&
+        (receipt.stopReason === undefined || receipt.stopReason === 'error') &&
+        client === initialClient && runtime.getGatewayClientGeneration?.() === initialGeneration
+        ? {
+            source: 'agent.wait', runId, sessionKey: key, sessionId: identity.sessionId,
+            clientGeneration: initialGeneration, lifecycleGeneration: nativeGeneration,
+            executionSettled: true, status: 'failed', endedAt: receipt.endedAt,
+            error: receipt.error, stopReason: receipt.stopReason,
+          }
+        : undefined,
       ...(receipt.terminalReply?.disposition === 'visible' &&
       typeof receipt.terminalReply.text === 'string'
         ? { terminalReplyText: receipt.terminalReply.text }
@@ -418,8 +561,11 @@ export function createExternalAgentExecution(
           const confirmed = terminal;
           await withinWindow(assertIdentity(client));
           settled = true;
+          onAttemptAdmitted?.();
           return {
             status: confirmed.status,
+            summary: confirmed.summary,
+            retryReceipt: confirmed.retryReceipt,
             ...(confirmed.text !== undefined ? { terminalReplyText: confirmed.text } : {}),
             outputRecovered: confirmed.replyKnown || Array.isArray(initial?.result?.payloads),
             result: {
@@ -445,6 +591,8 @@ export function createExternalAgentExecution(
               nativeGeneration = null;
               lastSequence = -1;
               lastProgressSequence = -1;
+              blockedFailureCopy = false;
+              progress.settleDeferred(false);
               startProgressProof = undefined;
               terminalProgressProof = undefined;
               // Session-scoped MCP and approval leases belong to the original
@@ -480,6 +628,7 @@ export function createExternalAgentExecution(
                 'Native execution yielded. Its continuation cannot be attributed through the current public API; the conversation remains reserved.',
               );
             } else if (
+              !receipt.pendingError &&
               typeof receipt.endedAt === 'number' &&
               Number.isFinite(receipt.endedAt) &&
               (receipt.status === 'ok' ||
@@ -487,6 +636,7 @@ export function createExternalAgentExecution(
                 receipt.status === 'timeout')
             ) {
               settled = true;
+              onAttemptAdmitted?.();
               return receipt.terminalReply ||
                 receipt.stopReason === 'aborted' ||
                 receipt.stopReason === 'rpc'
@@ -598,6 +748,7 @@ export function createExternalAgentExecution(
     };
     runtime.on('gatewayEvent', handle);
     try {
+      if (retry) await assertRetryHead(retry.predecessorRunId);
       cleanup = await hooks?.onPrepared?.(binding);
       checkCancelled();
       await assertIdentity(client);
@@ -612,6 +763,7 @@ export function createExternalAgentExecution(
           throw new Error('The native media session changed before submission.');
         checkCancelled();
       }
+      if (retry) await assertRetryHead(retry.predecessorRunId);
       timingId = store.beginSessionRun({
         sessionId,
         clientTurnId: runId,
@@ -619,8 +771,10 @@ export function createExternalAgentExecution(
         startedAt: Date.now(),
       }).id;
       store.updateSession(sessionId, { status: 'running' });
+      onAttemptPrepared?.(retryBinding);
       signal.addEventListener('abort', abort, { once: true });
       checkCancelled();
+      if (retry) assertStorageExecutionAdmission();
       submitted = true;
       let result: NativeResult | undefined;
       try {
@@ -645,13 +799,27 @@ export function createExternalAgentExecution(
               expectedExistingSessionId: identity.sessionId,
               expectedExistingSessionLifecycleRevision: identity.lifecycleRevision,
               ...(attachments?.length ? { attachments: attachments.map(toGatewayAttachment) } : {}),
+              ...(retry ? {
+                inputProvenance: { kind: 'internal_system', sourceTool: 'execution-error-retry' },
+                deliver: false, suppressPromptPersistence: true,
+              } : {}),
               ...(hooks?.interactiveApprovals === true
                 ? { channel: 'webchat', deliver: false }
                 : {}),
             },
             // Cancels this transport wait only. The abort listener separately
             // requests exact native cancellation; settlement still needs evidence.
-            { expectFinal: true, signal: AbortSignal.any([signal, finalWaitController.signal]) },
+            {
+              expectFinal: true, signal: AbortSignal.any([signal, finalWaitController.signal]),
+              ...(onAttemptAdmitted && !mediaOnly ? {
+                onAccepted: value => {
+                  const accepted = value as { runId?: string; sessionKey?: string } | undefined;
+                  if (accepted?.runId === runId && accepted.sessionKey === key &&
+                    client === initialClient && runtime.getGatewayClientGeneration?.() === initialGeneration)
+                    onAttemptAdmitted();
+                },
+              } : {}),
+            },
           )
           .then(
             async response => {
@@ -690,6 +858,7 @@ export function createExternalAgentExecution(
         runtime.registerUnknownSessionRun(sessionId, runId, { cancelled: signal.aborted });
       }
       const outcome = await awaitSettlement(result);
+      const exactGeneration = runtime.getGatewayClientGeneration?.() === initialGeneration;
       nativeOutcome =
         outcome.status === 'ok'
           ? ExternalAgentExecutionOutcome.Completed
@@ -706,7 +875,7 @@ export function createExternalAgentExecution(
             : 'failed',
         Date.now(),
       );
-      store.updateSession(sessionId, {
+      if (!onAttemptSettled || nativeOutcome !== ExternalAgentExecutionOutcome.Failed) store.updateSession(sessionId, {
         status:
           nativeOutcome === ExternalAgentExecutionOutcome.Completed
             ? 'completed'
@@ -714,8 +883,14 @@ export function createExternalAgentExecution(
               ? 'idle'
               : 'error',
       });
+      onAttemptSettled?.({
+        binding: retryBinding, client, receipt: exactGeneration ? outcome.retryReceipt : undefined,
+        outcome: nativeOutcome,
+      });
       // Native settlement never waits for progress admission. Preserve its
       // outcome, then finish the bounded, ordered protocol output separately.
+      progress.settleDeferred(nativeOutcome === ExternalAgentExecutionOutcome.Completed ||
+        (!blockedFailureCopy && !isKnownAutomaticRetryFailureCopy(outcome.summary)));
       await progress.flush();
       if (outputError) throw outputError;
       if (signal.reason instanceof ExternalAgentStreamError) throw signal.reason;
@@ -746,10 +921,11 @@ export function createExternalAgentExecution(
               'Native execution could not be confirmed; the conversation remains reserved.',
             );
       }
+      if (!submitted) onAttemptNotSent?.();
       const cancelled = error instanceof ExternalAgentCancelledError;
       if (timingId && !nativeOutcome)
         store.finishSessionRun(timingId, cancelled ? 'aborted' : 'failed', Date.now());
-      if (timingId && !nativeOutcome)
+      if (timingId && !nativeOutcome && !retry)
         store.updateSession(sessionId, { status: cancelled ? 'idle' : 'error' });
       throw error;
     } finally {
@@ -765,6 +941,7 @@ export function createExternalAgentExecution(
           try {
             await cleanup();
           } catch {
+            onAttemptCleanupFailed?.();
             console.warn('[ExternalAgentExecution] Native turn cleanup failed.');
           }
         }
@@ -779,6 +956,197 @@ export function createExternalAgentExecution(
         // prevents a late abort from stopping a replacement native turn.
         abort();
       }
+    }
+  };
+
+  return async input => {
+    const store = deps.getStore();
+    const maximum = store.getAgentRuntimeSettings?.().automaticErrorRetry.maxContinuations ?? 0;
+    const isRetryCurrent = input.isRetryCurrent;
+    if (!maximum || !isRetryCurrent) return executeAttempt(input);
+
+    const controller = new AbortController();
+    const signal = AbortSignal.any([input.signal, controller.signal]);
+    let releaseCancellation: (() => void) | undefined;
+    let publishRuntime: OpenClawRuntimeAdapter | null = null;
+    let sourceIdentity: string | undefined;
+    const presentation: RetryPresentation = {
+      sessionId: input.sessionId, chainId: input.runId, phase: Phase.Eligible,
+      attempt: 0, maxContinuations: maximum, runs: [],
+    };
+    const publish = (phase: RetryPresentation['phase']): void => {
+      presentation.phase = phase;
+      if (presentation.runs.length)
+        publishRuntime?.publishAutomaticErrorRetry?.({ ...presentation, runs: presentation.runs.map(run => ({ ...run })) });
+    };
+    const finish = (
+      phase: RetryPresentation['phase'], outcome?: ExternalAgentExecutionOutcome, cancelledWhileWaiting = false,
+    ): void => {
+      for (const run of presentation.runs) {
+        if (run.disposition !== Disposition.Superseded) run.disposition = Disposition.Final;
+      }
+      if (cancelledWhileWaiting && presentation.runs[0]) presentation.runs[0].chainPhase = Phase.Cancelled;
+      publish(phase);
+      if (outcome) input.onSettled?.(outcome);
+      if (outcome === ExternalAgentExecutionOutcome.Failed || outcome === ExternalAgentExecutionOutcome.Cancelled)
+        store.updateSession(input.sessionId, { status: outcome === ExternalAgentExecutionOutcome.Failed ? 'error' : 'idle' });
+    };
+    const addRun = (binding: AutomaticErrorRetryBinding, predecessorRunId?: string, ruleId?: string): void => {
+      presentation.runs.push({
+        chainId: input.runId, attempt: presentation.attempt, maxContinuations: maximum,
+        sessionKey: binding.sessionKey, nativeSessionId: binding.nativeSessionId,
+        lifecycleRevision: binding.lifecycleRevision, runId: binding.runId, clientTurnId: binding.runId,
+        disposition: predecessorRunId ? Disposition.Pending : Disposition.Candidate,
+        ...(predecessorRunId ? { predecessorRunId, ruleId } : {}),
+      });
+    };
+    const cancelled = () => signal.reason instanceof ExternalAgentStreamError
+      ? signal.reason : new ExternalAgentCancelledError('Task cancelled before native submission.');
+
+    let next: AttemptInput = { ...input, signal };
+    let predecessorError: unknown;
+    const forwardTerminal = (event: Parameters<AttemptInput['onEvent']>[0] | undefined, attempt: AttemptSettlement): void => {
+      const runtime = deps.getRuntime();
+      if (event && runtime === publishRuntime && runtime?.getGatewayClient() === attempt.client &&
+          runtime.getGatewayClientGeneration() === attempt.binding.clientGeneration) input.onEvent(event);
+    };
+    let forwardPredecessorTerminal: (() => void) | undefined;
+    try {
+      for (;;) {
+        let settlement: AttemptSettlement | undefined;
+        let cleanupFailed = false;
+        let stoppedAtSettlement = false;
+        let prepared = false;
+        let admitted = false;
+        const { runId, retry } = next;
+        const predecessorRun = presentation.runs.at(-1);
+        let error: unknown;
+        let terminalError: Parameters<AttemptInput['onEvent']>[0] | undefined;
+        const forwardEvent: AttemptInput['onEvent'] = retry ? event => {
+          if (event.stream !== 'tool' || typeof event.data.toolCallId !== 'string') return input.onEvent(event);
+          input.onEvent({ ...event, data: { ...event.data, toolCallId: `${runId}:${event.data.toolCallId}` } });
+        } : input.onEvent;
+        try {
+          const value = await executeAttempt({
+            ...next,
+            onEvent: forwardEvent,
+            onSettled: undefined,
+            onAttemptSettled: result => {
+              settlement = result;
+              stoppedAtSettlement = signal.aborted;
+            },
+            onAttemptCleanupFailed: () => { cleanupFailed = true; },
+            holdTerminalError: event => { terminalError = event; },
+            onAttemptPrepared: binding => {
+              publishRuntime ??= deps.getRuntime();
+              releaseCancellation ??= publishRuntime?.registerExternalAutomaticErrorRetryCancellation?.(
+                input.sessionId, () => controller.abort(),
+              );
+              if (retry) input.onRetryPrepared?.(retry.predecessorRunId, runId);
+              else sourceIdentity = retrySourceIdentity(store, input.sessionId);
+              prepared = true;
+              addRun(binding, retry?.predecessorRunId, predecessorRun?.ruleId);
+              publish(retry ? Phase.Preparing : Phase.Eligible);
+            },
+            onAttemptAdmitted: () => {
+              if (!prepared || admitted) return;
+              admitted = true;
+              if (retry && predecessorRun) {
+                predecessorRun.disposition = Disposition.Superseded;
+                publish(Phase.Running);
+              }
+            },
+            onAttemptNotSent: () => {
+              if (retry && prepared) input.onRetryNotSent?.(retry.predecessorRunId, runId);
+            },
+          });
+          finish(Phase.Completed, settlement?.outcome);
+          return value;
+        } catch (caught) {
+          error = caught;
+        }
+        const attempt = settlement;
+        if (!attempt && error instanceof ExternalAgentOutcomeUnknownError) {
+          publish(Phase.Unknown);
+          throw error;
+        }
+        if (signal.aborted && !attempt) {
+          finish(Phase.Cancelled, retry ? ExternalAgentExecutionOutcome.Cancelled : undefined, Boolean(retry));
+          throw cancelled();
+        }
+        if (!attempt && retry) {
+          finish(Phase.Failed, ExternalAgentExecutionOutcome.Failed);
+          forwardPredecessorTerminal?.();
+          throw predecessorError;
+        }
+        if (!attempt || !attempt.receipt || cleanupFailed || stoppedAtSettlement ||
+            error instanceof ExternalAgentStreamError || signal.reason instanceof ExternalAgentStreamError ||
+            presentation.attempt >= maximum) {
+          finish(attempt?.outcome === ExternalAgentExecutionOutcome.Completed ? Phase.Completed :
+            attempt?.outcome === ExternalAgentExecutionOutcome.Cancelled ? Phase.Cancelled : Phase.Failed, attempt?.outcome);
+          if (attempt && terminalError && !cleanupFailed && !(error instanceof ExternalAgentStreamError))
+            forwardTerminal(terminalError, attempt);
+          throw error;
+        }
+        const retryReceipt = attempt.receipt;
+        const current = (): boolean => {
+          const runtime = deps.getRuntime();
+          return !signal.aborted && isRetryCurrent() && runtime === publishRuntime &&
+            runtime?.getGatewayClient() === attempt.client &&
+            runtime.getGatewayClientGeneration() === attempt.binding.clientGeneration &&
+            sourceIdentity === retrySourceIdentity(store, input.sessionId) &&
+            (store.getAgentRuntimeSettings?.().automaticErrorRetry.maxContinuations ?? 0) > 0;
+        };
+        const failed = presentation.runs.at(-1);
+        if (failed) failed.disposition = Disposition.Pending;
+        publish(Phase.Checking);
+        let rule: Awaited<ReturnType<typeof waitForAutomaticErrorRetry>>;
+        try {
+          rule = await waitForAutomaticErrorRetry({
+            readFailureCode: () => readAutomaticErrorRetryFailureCode(
+              attempt.client, attempt.binding, retryReceipt, signal, { userInputRunId: input.runId },
+            ),
+            isCurrent: current, attempt: presentation.attempt, signal, retryDelayMs: timing.retryDelayMs,
+          });
+        } catch {
+          // Classifier failure and withdrawn authority leave the original result in place.
+        }
+        if (signal.aborted) {
+          finish(Phase.Cancelled, ExternalAgentExecutionOutcome.Cancelled, true);
+          throw cancelled();
+        }
+        if (!rule || !current()) {
+          finish(Phase.Failed, attempt.outcome);
+          forwardTerminal(terminalError, attempt);
+          throw error;
+        }
+        if (failed) failed.ruleId = rule.id;
+        predecessorError = error;
+        forwardPredecessorTerminal = () => forwardTerminal(terminalError, attempt);
+        try {
+          input.hooks?.onRetry?.();
+        } catch (cause) {
+          finish(Phase.Failed, attempt.outcome);
+          throw cause;
+        }
+        presentation.attempt++;
+        next = {
+          ...input, signal, runId: randomUUID(), message: rule.fixedPrompt, modelRef: undefined,
+          initialSession: undefined, attachments: undefined,
+          expectedBinding: {
+            sessionKey: attempt.binding.sessionKey, sessionId: attempt.binding.nativeSessionId,
+            lifecycleRevision: attempt.binding.lifecycleRevision!,
+          },
+          retry: {
+            predecessorRunId: runId, binding: attempt.binding, client: attempt.client,
+            assertCurrent: () => {
+              if (!current()) throw new Error('The external retry owner changed.');
+            },
+          },
+        };
+      }
+    } finally {
+      releaseCancellation?.();
     }
   };
 }

@@ -115,6 +115,12 @@ export class AcpProgress {
     if (text) this.text('agent_message_chunk', text);
   }
 
+  nextAttempt(): void {
+    this.assistant = { text: '' };
+    this.thinking = { text: '' };
+    this.guarded = null;
+  }
+
   private check(text: string): void {
     if (text.length > MAX_TEXT_CHARS) throw new Error('ACP output exceeded the event limit.');
   }

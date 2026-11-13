@@ -36,6 +36,15 @@ export interface AppServerHistorySnapshot {
   messages: unknown[];
 }
 
+export interface AppServerRetryTurn {
+  clientTurnId: string;
+  nativeRunIds: string[];
+  state?: SessionRunTiming['state'];
+  endedAt?: number;
+  error?: string;
+  uncertain?: boolean;
+}
+
 /** One verified native snapshot and independently persisted execution receipts. */
 export interface AppServerThreadHistory extends AppServerHistorySnapshot {
   threadId: string;
@@ -44,5 +53,6 @@ export interface AppServerThreadHistory extends AppServerHistorySnapshot {
   unknownRunId?: string;
   /** Timing rows whose outcome has no independently verified native settlement proof. */
   unknownRunIds?: string[];
+  retryTurns?: AppServerRetryTurn[];
   identityRevision?: string;
 }

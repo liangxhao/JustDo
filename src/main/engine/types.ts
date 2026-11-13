@@ -146,9 +146,22 @@ export interface CoworkNativeAcceptedBinding extends CoworkNativeSendBinding {
   clientTurnId: string;
 }
 
+/** Main-owned continuation custody for an interactive client that owns the original send. */
+export interface CoworkAutomaticErrorRetryOwner {
+  isCurrent(): boolean;
+  prepareSuccessor(binding: CoworkNativeSendBinding & {
+    predecessorRunId: string;
+    runId: string;
+    attempt: number;
+  }): void;
+  confirmSuccessor(runId: string): void;
+  rejectSuccessor(runId: string): void;
+}
+
 export type CoworkStartOptions = {
   /** Main-proven ordinary desktop send, never accepted as an IPC option. */
   automaticErrorRetry?: boolean;
+  automaticErrorRetryOwner?: CoworkAutomaticErrorRetryOwner;
   /** Main-validated composer selection for the initial native admission. */
   initialModelRef?: string;
   /** Main-owned adoption of a prepared homepage App incarnation. Never accepted from IPC. */

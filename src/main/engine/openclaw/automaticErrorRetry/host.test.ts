@@ -44,7 +44,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function fixture(transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE) {
+function fixture(transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE, maxContinuations?: number) {
   // Ordinary prepared desktop sessions need not have an imported history binding.
   const session = {
     id: sessionId, agentId: 'main', cwd: 'E:/workspace/task', permissionMode: 'full',
@@ -71,9 +71,11 @@ function fixture(transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE) 
     const row = rows.get(clientTurnId);
     if (row) rows.set(clientTurnId, { ...row, automaticErrorRetry: metadata });
   });
+  const settings = createDefaultAgentRuntimeSettings();
+  if (maxContinuations !== undefined) settings.automaticErrorRetry.maxContinuations = maxContinuations;
   const store = {
     getSession,
-    getAgentRuntimeSettings: () => createDefaultAgentRuntimeSettings(),
+    getAgentRuntimeSettings: () => settings,
     getLatestSessionRun: () => [...rows.values()].at(-1),
     getSessionRunByClientTurnId: (clientTurnId: string) => rows.get(clientTurnId),
     beginSessionRun, finishSessionRun, setSessionRunAutomaticErrorRetry,
@@ -146,7 +148,7 @@ describe('automatic error retry host transport', () => {
     await f.arm();
 
     expect(f.host.coordinator.getPresentation(sessionId)).toMatchObject({
-      phase: AutomaticErrorRetryPhase.Eligible, attempt: 0, maxContinuations: 1,
+      phase: AutomaticErrorRetryPhase.Eligible, attempt: 0, maxContinuations: 3,
       runs: [expect.objectContaining({ runId: rootRunId, nativeSessionId, lifecycleRevision })],
     });
     expect(f.rows.get(rootRunId)?.automaticErrorRetry?.disposition).toBe(AutomaticErrorRetryDisposition.Candidate);
@@ -182,8 +184,60 @@ describe('automatic error retry host transport', () => {
     expect(f.agentCalls()).toHaveLength(1);
   });
 
+  it('installs the original interactive owner for the exact successor before native send', async () => {
+    const f = fixture();
+    const owner = { isCurrent: () => true, prepareSuccessor: vi.fn(), confirmSuccessor: vi.fn(), rejectSuccessor: vi.fn() };
+    await f.host.arm(sessionId, rootRunId, nativeSessionId, owner);
+    const physicalRoot = 'gateway-accepted-root';
+    f.host.acceptInitialRun(sessionId, {
+      sessionKey, nativeSessionId, lifecycleRevision, clientGeneration: 1,
+      clientTurnId: rootRunId, nativeRunId: physicalRoot,
+    });
+    f.host.coordinator.observeSettled(terminal(physicalRoot));
+    await vi.waitFor(() => expect(owner.confirmSuccessor).toHaveBeenCalledOnce());
+    const params = f.agentCalls()[0]![1]!;
+    expect(owner.prepareSuccessor).toHaveBeenCalledExactlyOnceWith({
+      sessionKey, nativeSessionId, lifecycleRevision, clientGeneration: 1,
+      predecessorRunId: physicalRoot, runId: params.idempotencyKey, attempt: 1,
+    });
+    expect(params).toMatchObject({ channel: 'webchat', suppressPromptPersistence: true });
+    expect(owner.confirmSuccessor).toHaveBeenCalledWith(params.idempotencyKey);
+    expect(owner.rejectSuccessor).not.toHaveBeenCalled();
+  });
+
+  it('uses a single activity revision for desktop and external retry presentation', async () => {
+    const f = fixture();
+    await f.arm();
+    const desktop = f.host.getPresentation(sessionId)!;
+    const external = { ...desktop, sessionId: 'external-session', phase: AutomaticErrorRetryPhase.Checking, runs: [] };
+    f.host.publish(external);
+    const active = f.host.getActivitySnapshot();
+    expect(active.sessionIds).toEqual([external.sessionId]);
+    expect(active.revision).toBeGreaterThan(desktop.revision);
+    f.host.publish({ ...external, phase: AutomaticErrorRetryPhase.Completed });
+    expect(f.host.getActivitySnapshot()).toEqual({ revision: active.revision + 1, sessionIds: [] });
+  });
+
+  it('keeps the real failure and sends nothing when the browser owner withdraws before dispatch', async () => {
+    const f = fixture();
+    const prepare = deferred<void>();
+    f.prepare.mockReturnValue(prepare.promise);
+    const owner = { isCurrent: vi.fn(() => true), prepareSuccessor: vi.fn(), confirmSuccessor: vi.fn(), rejectSuccessor: vi.fn() };
+    await f.host.arm(sessionId, rootRunId, nativeSessionId, owner);
+    f.host.observeSettled(sessionId, terminal());
+    await vi.waitFor(() => expect(f.prepare).toHaveBeenCalledOnce());
+    owner.isCurrent.mockReturnValue(false);
+    prepare.resolve();
+    await vi.waitFor(() => expect(f.host.coordinator.getTurn(sessionId, rootRunId)).toMatchObject({
+      presentation: { phase: AutomaticErrorRetryPhase.Cancelled },
+      lastSettledReceipt: terminal(), outstandingLaunch: false,
+    }));
+    expect(owner.prepareSuccessor).not.toHaveBeenCalled();
+    expect(f.agentCalls()).toHaveLength(0);
+  });
+
   it('continues a settled context overflow with saved work and spends the existing retry allowance', async () => {
-    const f = fixture(null);
+    const f = fixture(null, 1);
     await f.arm();
     const overflow = (runId?: string): NativeRunTerminalReceipt => ({
       ...terminal(runId), observedFailureCode: CONTEXT_OVERFLOW_ERROR_CODE,

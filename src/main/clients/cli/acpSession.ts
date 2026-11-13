@@ -245,6 +245,7 @@ export class AcpSession {
             controller.signal,
             {
               interactiveApprovals: true,
+              onRetry: () => progress.nextAttempt(),
               onPrepared: binding =>
                 this.resources.prepare(
                   session.thread,

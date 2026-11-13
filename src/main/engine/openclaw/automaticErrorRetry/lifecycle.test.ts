@@ -19,7 +19,7 @@ const event: GoalLifecycleEvent & { phase: 'error'; executionSettled: true } = {
 const receipt: AutomaticErrorRetryWaitReceipt = {
   source: 'agent.wait', runId: event.runId, sessionKey: event.sessionKey, sessionId: 'native',
   lifecycleGeneration: 'generation', clientGeneration: 7, status: 'failed', executionSettled: true,
-  error: 'tool failure',
+  error: 'tool failure', endedAt: 100,
 };
 
 function fixture() {
@@ -107,7 +107,7 @@ describe('automatic error retry lifecycle', () => {
   it('routes verified wait proof before Goal and keeps its native fields unchanged', async () => {
     const f = fixture();
     const identity = { sessionKey: event.sessionKey, nativeSessionId: 'native', lifecycleRevision: 'revision' };
-    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed', undefined, identity);
+    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed', receipt.endedAt, identity);
     expect(f.coordinator.retireWaitSettled).toHaveBeenCalledExactlyOnceWith(receipt, identity);
     expect(f.coordinator.observeWaitSettled).toHaveBeenCalledExactlyOnceWith(receipt);
     expect(f.coordinator.retireWaitSettled.mock.invocationCallOrder[0])
@@ -115,15 +115,26 @@ describe('automatic error retry lifecycle', () => {
     expect(f.reconcile).not.toHaveBeenCalled();
     const observed = f.coordinator.observeWaitSettled.mock.calls[0][0];
     expect(observed).not.toHaveProperty('agentSeq');
-    expect(observed).not.toHaveProperty('endedAt');
+    expect(observed.endedAt).toBe(receipt.endedAt);
     f.lifecycle.onUnclaimedSettled(receipt);
     f.lifecycle.onUnclaimedSettled(receipt);
     expect(f.reconcile).toHaveBeenCalledExactlyOnceWith(event);
   });
 
+  it('leaves yielded, superseded and unstamped waits to the existing owner', async () => {
+    const f = fixture();
+    const yielded = { ...event, yielded: true };
+    const superseded = { ...event, stopReason: 'superseded' };
+    await f.lifecycle.reconcileVerifiedWaitTerminal(yielded, f.connection, 'failed', receipt.endedAt);
+    await f.lifecycle.reconcileVerifiedWaitTerminal(superseded, f.connection, 'failed', receipt.endedAt);
+    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed');
+    expect(f.coordinator.observeWaitSettled).not.toHaveBeenCalled();
+    expect(f.reconcile.mock.calls.flat()).toEqual([yielded, superseded, event]);
+  });
+
   it('does not forward a held wait terminal after its connection changes', async () => {
     const f = fixture();
-    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed');
+    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed', receipt.endedAt);
     f.stale();
     f.lifecycle.onUnclaimedSettled(receipt);
     expect(f.reconcile).not.toHaveBeenCalled();
@@ -134,7 +145,7 @@ describe('automatic error retry lifecycle', () => {
     const f = fixture();
     f.lifecycle.deferError('app', 'run', 'tool failure');
     f.lifecycle.forwardGoalLifecycle(event);
-    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed');
+    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed', receipt.endedAt);
     f.presentation.phase = AutomaticErrorRetryPhase.Running;
     f.presentation.runs[0].disposition = AutomaticErrorRetryDisposition.Superseded;
     f.lifecycle.onPresentation(f.presentation);
@@ -177,7 +188,7 @@ describe('automatic error retry lifecycle', () => {
       expect(coordinator.observeSettled(native)).toBe(true);
       lifecycle.forwardGoalLifecycle(event);
     } else {
-      await lifecycle.reconcileVerifiedWaitTerminal(event, connection, 'failed');
+      await lifecycle.reconcileVerifiedWaitTerminal(event, connection, 'failed', receipt.endedAt);
     }
     await vi.waitFor(() => expect(launch).toHaveBeenCalledOnce());
     expect(coordinator.getPresentation('app')?.phase).toBe(AutomaticErrorRetryPhase.Preparing);
@@ -200,7 +211,7 @@ describe('automatic error retry lifecycle', () => {
     vi.useFakeTimers();
     const f = fixture();
     f.lifecycle.forwardGoalLifecycle(event);
-    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed');
+    await f.lifecycle.reconcileVerifiedWaitTerminal(event, f.connection, 'failed', receipt.endedAt);
     f.lifecycle.cancel('other');
     f.lifecycle.onUnclaimedSettled(receipt);
     expect(f.reconcile).toHaveBeenCalledOnce();

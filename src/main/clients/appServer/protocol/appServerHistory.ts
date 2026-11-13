@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
 
+import { AutomaticErrorRetryDisposition as Disposition } from '../../../../shared/cowork/automaticErrorRetry';
 import type { SessionRunTiming } from '../../../../shared/cowork/sessionRun';
+import { isRetryFailureMessage, projectRetryFailureMessages } from '../../../../shared/openclaw/automaticErrorRetryDisplay';
 import { OPENCLAW_NESTED_TOOL_CUSTOM_TYPE } from '../../../../shared/openclaw/constants';
 import { isHiddenNativeMessage } from '../../../../shared/openclaw/messageVisibility';
+import { readFailedRunMessageText } from '../../../../shared/openclaw/runFailureDisplay';
 import { PRODUCT_NAME } from '../../../../shared/productMetadata';
 import { normalizeAppServerImageDataUrl } from './appServerInput';
 import { invalidParams, optionalString } from './appServerPagination';
 import { type AppServerParams, type AppServerResult, isAppServerRecord } from './appServerProtocol';
-import type { AppServerThreadHistory } from './appServerTypes';
+import type { AppServerRetryTurn, AppServerThreadHistory } from './appServerTypes';
 import { codexTurn, CodexTurnStatus } from './appServerWire';
 
 const MAX_FRAME_BODY_BYTES = 6 * 1024 * 1024;
@@ -49,6 +52,8 @@ interface TurnGroup {
   run?: SessionRunTiming;
   items: CodexHistoryItemEntry[];
   tools: Map<string, number>;
+  retry?: AppServerRetryTurn;
+  failure?: string;
 }
 
 const record = (value: unknown): Record<string, unknown> => isAppServerRecord(value) ? value : {};
@@ -67,6 +72,48 @@ export function appServerNativeMessageRunIds(raw: unknown): readonly string[] {
   const marker = record(message.__openclaw);
   return [...new Set([message.runId, marker.runId, marker.run_id, outer.runId]
     .filter((value): value is string => typeof value === 'string' && Boolean(value)))];
+}
+
+/** Derive display-only lineage from exact native identity and persisted confirmed attempt links. */
+export function projectPersistedAppServerRetryTurns(
+  runs: readonly SessionRunTiming[],
+  identity: { sessionKey: string; nativeSessionId: string; lifecycleRevision: string | null },
+  active?: { nativeRunId: string; running: boolean; uncertain: boolean },
+): AppServerRetryTurn[] {
+  const byChain = new Map<string, SessionRunTiming[]>();
+  for (const run of runs) {
+    const metadata = run.automaticErrorRetry;
+    if (!metadata || metadata.sessionKey !== identity.sessionKey ||
+        metadata.nativeSessionId !== identity.nativeSessionId || metadata.lifecycleRevision !== identity.lifecycleRevision) continue;
+    const group = byChain.get(metadata.chainId) ?? [];
+    group.push(run);
+    byChain.set(metadata.chainId, group);
+  }
+  return [...byChain].flatMap(([clientTurnId, group]) => {
+    const root = group.find(run => run.clientTurnId === clientTurnId && run.automaticErrorRetry?.attempt === 0);
+    if (!root || (group.length < 2 && root.automaticErrorRetry?.disposition !== Disposition.Pending &&
+        root.automaticErrorRetry?.chainPhase !== 'cancelled')) return [];
+    const ordered = group.sort((left, right) => left.automaticErrorRetry!.attempt - right.automaticErrorRetry!.attempt);
+    const attempts: SessionRunTiming[] = [root];
+    for (const [index, attempt] of ordered.slice(1).entries()) {
+      const predecessor = attempts.at(-1)!;
+      if (attempt.automaticErrorRetry?.attempt !== index + 1 ||
+          attempt.automaticErrorRetry.predecessorRunId !== (predecessor.rootRunId ?? predecessor.clientTurnId) ||
+          predecessor.automaticErrorRetry?.disposition !== Disposition.Superseded &&
+            (attempt.rootRunId ?? attempt.clientTurnId) !== active?.nativeRunId) break;
+      attempts.push(attempt);
+    }
+    const last = attempts.at(-1)!;
+    const ownsExecution = active?.nativeRunId === (last.rootRunId ?? last.clientTurnId);
+    const uncertain = ownsExecution && active?.uncertain === true;
+    const waiting = ownsExecution && active?.running === true;
+    const state = waiting ? 'running' : root.automaticErrorRetry?.chainPhase === 'cancelled' ? 'aborted' : last.state;
+    return [{
+      clientTurnId, nativeRunIds: attempts.map(run => run.rootRunId ?? run.clientTurnId), state,
+      ...(!waiting && last.endedAt !== undefined ? { endedAt: last.endedAt } : {}),
+      ...(uncertain ? { uncertain } : {}),
+    }];
+  });
 }
 
 function unsupportedHistory(kind?: unknown): never {
@@ -167,17 +214,19 @@ function addTool(
   id: string,
   complete: boolean,
   timing: Pick<CodexHistoryItemEntry, 'startedAtMs' | 'completedAtMs'>,
+  nativeRunId?: string,
 ): void {
   const fn = record(source.function);
   const callId = firstText(source.toolCallId, source.tool_call_id, source.toolUseId, source.tool_use_id, source.id);
-  const index = callId ? group.tools.get(callId) : undefined;
+  const scopedCallId = callId && nativeRunId ? `${nativeRunId}:${callId}` : callId;
+  const index = scopedCallId ? group.tools.get(scopedCallId) : undefined;
   const previous = index === undefined ? undefined : group.items[index];
   const output = record(source.result ?? source.output ?? source.content ?? source.text);
   const failed = source.isError === true || source.is_error === true ||
     output.isError === true || output.is_error === true;
   const item: CodexHistoryItem = {
     ...previous?.item,
-    id: previous?.item.id ?? id,
+    id: previous?.item.id ?? (nativeRunId && nativeRunId !== group.retry?.nativeRunIds[0] ? scopedCallId : undefined) ?? id,
     type: 'mcpToolCall',
     server: PRODUCT_NAME,
     tool: firstText(source.toolName, source.tool_name, source.name, fn.name) ?? previous?.item.tool ?? 'unknown',
@@ -200,14 +249,16 @@ function addTool(
     completedAtMs: complete ? timing.completedAtMs : null,
   };
   if (index === undefined) {
-    if (callId) group.tools.set(callId, group.items.length);
+    if (scopedCallId) group.tools.set(scopedCallId, group.items.length);
     group.items.push(entry);
   } else {
     group.items[index] = entry;
   }
 }
 
-function projectMessage(group: TurnGroup, message: Record<string, unknown>, messageIdentity: string): void {
+function projectMessage(
+  group: TurnGroup, message: Record<string, unknown>, messageIdentity: string, nativeRunId?: string,
+): void {
   const role = String(message.role ?? '').toLowerCase();
   const timing = {
     startedAtMs: timestamp(message.startedAtMs),
@@ -220,11 +271,11 @@ function projectMessage(group: TurnGroup, message: Record<string, unknown>, mess
     return;
   }
   if (TOOL_RESULT_TYPES.has(role)) {
-    addTool(group, message, id(0), true, timing);
+    addTool(group, message, id(0), true, timing, nativeRunId);
     return;
   }
   if (role === 'tool_use') {
-    addTool(group, message, id(0), false, timing);
+    addTool(group, message, id(0), false, timing, nativeRunId);
     return;
   }
   const nestedTools = role === 'custom' && message.customType === OPENCLAW_NESTED_TOOL_CUSTOM_TYPE;
@@ -235,9 +286,9 @@ function projectMessage(group: TurnGroup, message: Record<string, unknown>, mess
   for (const [index, block] of blocks.entries()) {
     const type = String(block.type ?? '').toLowerCase();
     if (TOOL_CALL_TYPES.has(type)) {
-      addTool(group, block, id(index), false, timing);
+      addTool(group, block, id(index), false, timing, nativeRunId);
     } else if (TOOL_RESULT_TYPES.has(type)) {
-      addTool(group, block, id(index), true, timing);
+      addTool(group, block, id(index), true, timing, nativeRunId);
     } else if (type === 'thinking' || type === 'reasoning' || type === 'redacted_thinking') {
       const thinking = firstText(block.thinking, block.text, block.content);
       if (thinking === undefined && type !== 'redacted_thinking') return unsupportedHistory(type);
@@ -257,21 +308,22 @@ function projectMessage(group: TurnGroup, message: Record<string, unknown>, mess
 
 function turnResult(group: TurnGroup, unknownRunIds: ReadonlySet<string>): CodexHistoryTurn {
   const run = group.run;
-  const endedAt = timestamp(run?.endedAt);
-  const unknown = !run || unknownRunIds.has(run.clientTurnId);
-  const settled = !unknown && endedAt !== null && run && run.state !== 'running';
+  const endedAt = timestamp(group.retry?.state ? group.retry.endedAt : run?.endedAt);
+  const state = group.retry?.state ?? run?.state;
+  const unknown = !run || (group.retry ? group.retry.uncertain === true : unknownRunIds.has(run.clientTurnId));
+  const settled = !unknown && endedAt !== null && state !== 'running';
   const status = unknown
     ? CodexTurnStatus.Failed
     : !settled
       ? CodexTurnStatus.InProgress
-      : run.state === 'completed'
+      : state === 'completed'
         ? CodexTurnStatus.Completed
-        : run.state === 'aborted'
+        : state === 'aborted'
           ? CodexTurnStatus.Interrupted
           : CodexTurnStatus.Failed;
   const error = unknown
     ? run ? UNKNOWN_ACTIVE_OUTCOME : UNKNOWN_HISTORY_OUTCOME
-    : status === CodexTurnStatus.Failed ? 'Execution failed.' : undefined;
+    : status === CodexTurnStatus.Failed ? group.retry?.error || group.failure || 'Execution failed.' : undefined;
   return {
     ...codexTurn(group.id, status, {
       ...(error ? { error } : {}),
@@ -307,14 +359,41 @@ export function projectCodexHistory(history: AppServerThreadHistory): CodexHisto
       receiptByNativeRun.set(id, run);
     }
   }
+  const retries = new Map<string, AppServerRetryTurn>();
+  const hiddenRunIds = new Set<string>();
+  const finalFailures = new Map<string, string>();
+  const finalFailureRunIds = new Set<string>();
+  for (const retry of history.retryTurns ?? []) {
+    const root = receipts.get(retry.clientTurnId);
+    if (!root || retries.has(retry.clientTurnId) || retry.nativeRunIds[0] !== (root.rootRunId || root.clientTurnId))
+      throw new Error('Native retry history execution receipts are ambiguous.');
+    for (const id of retry.nativeRunIds) {
+      if (!receiptByNativeRun.has(id) || hiddenRunIds.has(id))
+        throw new Error('Native retry history execution receipts are ambiguous.');
+      receiptByNativeRun.set(id, root);
+      hiddenRunIds.add(id);
+    }
+    if (retry.state === 'failed' && !retry.uncertain) finalFailureRunIds.add(retry.nativeRunIds.at(-1)!);
+    retries.set(retry.clientTurnId, retry);
+  }
+  for (const raw of history.messages) {
+    const [id, ...conflicts] = appServerNativeMessageRunIds(raw);
+    if (!id || conflicts.length || !finalFailureRunIds.has(id) || !isRetryFailureMessage(raw)) continue;
+    const message = record(record(raw).message ?? raw);
+    const failure = typeof message.errorMessage === 'string' ? message.errorMessage : readFailedRunMessageText(raw);
+    if (failure) finalFailures.set(receiptByNativeRun.get(id)!.clientTurnId, failure);
+  }
   const groups = new Map<string, TurnGroup>();
   const identities = new Map<string, number>();
   let orphan: TurnGroup | undefined;
-  for (const raw of history.messages) {
+  const visibleMessages = projectRetryFailureMessages(history.messages, hiddenRunIds);
+  for (const [index, raw] of visibleMessages.entries()) {
     if (isHiddenNativeMessage(raw)) continue;
+    if (isRetryFailureMessage(raw) && record(record(raw).message ?? raw).role === 'custom') continue;
     const outer = record(raw);
     const message = typeof outer.role === 'string' ? outer : record(outer.message);
     if (typeof message.role !== 'string') return unsupportedHistory('message-envelope');
+    if (raw !== history.messages[index] && Array.isArray(message.content) && !message.content.length) continue;
     const marker = record(message.__openclaw);
     const nativeIdentity = firstText(marker.id, outer.messageId, message.id) ??
       (Number.isSafeInteger(marker.seq) ? `seq:${String(marker.seq)}` : `body:${digest(message)}`);
@@ -356,7 +435,10 @@ export function projectCodexHistory(history: AppServerThreadHistory): CodexHisto
     let group: TurnGroup;
     if (run) {
       orphan = undefined;
-      group = groups.get(run.clientTurnId) ?? { id: run.clientTurnId, run, items: [], tools: new Map() };
+      group = groups.get(run.clientTurnId) ?? {
+        id: run.clientTurnId, run, items: [], tools: new Map(), retry: retries.get(run.clientTurnId),
+        failure: finalFailures.get(run.clientTurnId),
+      };
     } else {
       if (!orphan || message.role.toLowerCase() === 'user') {
         const id = `history:${digest(identity)}`;
@@ -365,7 +447,7 @@ export function projectCodexHistory(history: AppServerThreadHistory): CodexHisto
       group = orphan;
     }
     groups.set(group.id, group);
-    projectMessage(group, message, identity);
+    projectMessage(group, message, identity, group.retry ? candidates.values().next().value : undefined);
   }
   // Generic product timing rows also include internal runtime recovery. Only an
   // explicit external execution pointer may add a turn without visible messages.
@@ -373,7 +455,10 @@ export function projectCodexHistory(history: AppServerThreadHistory): CodexHisto
   const receiptOnlyIds = new Set([history.latestExternalRunId, history.unknownRunId]);
   for (const run of history.runs) {
     if (groups.has(run.clientTurnId) || !receiptOnlyIds.has(run.clientTurnId)) continue;
-    const group: TurnGroup = { id: run.clientTurnId, run, items: [], tools: new Map() };
+    const group: TurnGroup = {
+      id: run.clientTurnId, run, items: [], tools: new Map(), retry: retries.get(run.clientTurnId),
+      failure: finalFailures.get(run.clientTurnId),
+    };
     const next = ordered.findIndex(existing => existing.run && existing.run.startedAt > run.startedAt);
     if (next < 0) ordered.push(group);
     else ordered.splice(next, 0, group);

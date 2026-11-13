@@ -37,6 +37,7 @@ it.each([false, true])(
     const store = {
       getSession: vi.fn(() => session),
       getAgent: vi.fn(() => ({ enabled: true })),
+      getLatestSessionRun: vi.fn(),
       getSessionRunByClientTurnId: vi.fn(),
     };
     const execute = vi.fn<ExternalAgentExecution>(async input => {

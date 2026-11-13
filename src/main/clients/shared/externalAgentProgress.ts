@@ -22,6 +22,7 @@ interface PendingEvent {
   sourceClient: GatewayClientLike;
   bytes: number;
   retained: boolean;
+  deferred: boolean;
 }
 
 interface FlushWaiter {
@@ -38,6 +39,7 @@ export class ExternalAgentProgress {
   private activeBatch: PendingEvent[] = [];
   private pendingFrames = 0;
   private pendingBytes = 0;
+  private deferredFrames = 0;
   private scheduled = false;
   private running = false;
   private closed = false;
@@ -51,7 +53,7 @@ export class ExternalAgentProgress {
       : DEFAULT_TIMEOUT_MS;
   }
 
-  enqueue(event: NormalizedAgentEvent, sourceClient: GatewayClientLike): void {
+  enqueue(event: NormalizedAgentEvent, sourceClient: GatewayClientLike, deferred = false): void {
     if (this.closed) return;
     try {
       // Freeze the observed wire data across the asynchronous identity read.
@@ -64,13 +66,26 @@ export class ExternalAgentProgress {
         throw new ExternalAgentStreamError('Native progress exceeded the pending output limit.');
       }
       const snapshot = JSON.parse(serialized) as NormalizedAgentEvent;
-      this.queue.push({ event: snapshot, sourceClient, bytes, retained: true });
+      this.queue.push({ event: snapshot, sourceClient, bytes, retained: true, deferred });
       this.pendingFrames += 1;
       this.pendingBytes += bytes;
+      if (deferred) this.deferredFrames += 1;
       this.schedule();
     } catch (error) {
       this.stop(this.streamError(error, 'Native progress could not be queued.'));
     }
+  }
+
+  settleDeferred(deliver: boolean): void {
+    if (!this.deferredFrames) return;
+    this.deferredFrames = 0;
+    this.queue = this.queue.filter(item => {
+      if (!item.deferred) return true;
+      item.deferred = false;
+      if (!deliver) this.release(item);
+      return deliver;
+    });
+    this.schedule();
   }
 
   flush(): Promise<void> {
@@ -94,7 +109,7 @@ export class ExternalAgentProgress {
   }
 
   private schedule(): void {
-    if (this.closed || this.running || this.scheduled) return;
+    if (this.closed || this.running || this.scheduled || this.queue[0]?.deferred) return;
     this.scheduled = true;
     queueMicrotask(() => {
       this.scheduled = false;
@@ -124,7 +139,9 @@ export class ExternalAgentProgress {
 
   private async drain(): Promise<void> {
     while (!this.closed && this.queue.length) {
-      const batch = this.queue.splice(0);
+      const deferredIndex = this.queue.findIndex(item => item.deferred);
+      if (deferredIndex === 0) return;
+      const batch = this.queue.splice(0, deferredIndex < 0 ? this.queue.length : deferredIndex);
       this.activeBatch = batch;
       try {
         const sourceClient = batch[0].sourceClient;
@@ -215,6 +232,7 @@ export class ExternalAgentProgress {
     this.activeBatch.forEach(item => this.release(item));
     this.queue = [];
     this.activeBatch = [];
+    this.deferredFrames = 0;
     this.cancelProof?.();
     this.finishWaiters();
     if (error) {

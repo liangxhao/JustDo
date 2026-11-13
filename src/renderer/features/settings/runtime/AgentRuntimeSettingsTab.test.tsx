@@ -277,7 +277,7 @@ describe('AgentRuntimeSettingsTab runtime settings', () => {
     const input = screen.getByRole('spinbutton', {
       name: 'automaticErrorRetryMaxContinuationsTitle',
     }) as HTMLInputElement;
-    expect(input.value).toBe('1');
+    expect(input.value).toBe('3');
 
     fireEvent.change(input, { target: { value: '0' } });
     expect(onChange).toHaveBeenLastCalledWith({

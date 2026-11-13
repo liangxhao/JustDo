@@ -17,6 +17,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useSyncExternalStore } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
+import { useAutomaticErrorRetryIndicators } from '@/features/cowork/components/sessions/automaticErrorRetryIndicators';
 import CoworkSessionItem from '@/features/cowork/components/sessions/CoworkSessionItem';
 import CreateGroupModal from '@/features/cowork/components/sessions/CreateGroupModal';
 import SessionGroupHeader from '@/features/cowork/components/sessions/SessionGroupHeader';
@@ -65,6 +66,7 @@ interface UngroupedDroppableZoneProps {
   unGroupedSessions: CoworkSessionSummary[];
   unreadSessionIdSet: Set<string>;
   runtimeRunningSessionIds: Set<string>;
+  retryingSessionIds: ReadonlySet<string>;
   currentSessionId: string | null;
   isBatchMode: boolean;
   selectedIds: Set<string>;
@@ -97,6 +99,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   unGroupedSessions,
   unreadSessionIdSet,
   runtimeRunningSessionIds,
+  retryingSessionIds,
   currentSessionId,
   isBatchMode,
   selectedIds,
@@ -123,6 +126,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
       session={session}
       hasUnread={unreadSessionIdSet.has(session.id)}
       isRuntimeRunning={runtimeRunningSessionIds.has(session.id)}
+      isAutomaticRetryActive={retryingSessionIds.has(session.id)}
       isActive={session.id === currentSessionId}
       isBatchMode={isBatchMode}
       isSelected={selectedIds.has(session.id)}
@@ -568,6 +572,8 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     });
   };
 
+  const retryingSessionIds = useAutomaticErrorRetryIndicators();
+
   if (directory.length === 0 && isLoading) {
     return (
       <div
@@ -653,6 +659,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                 currentSessionId={currentSessionId}
                 unreadSessionIds={unreadSessionIds}
                 runtimeRunningSessionIds={runtimeRunningSessionIds}
+                retryingSessionIds={retryingSessionIds}
                 isBatchMode={isBatchMode}
                 selectedIds={selectedIds}
                 onSelectSession={onSelectSession}
@@ -694,6 +701,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
                     currentSessionId={currentSessionId}
                     unreadSessionIds={unreadSessionIds}
                     runtimeRunningSessionIds={runtimeRunningSessionIds}
+                    retryingSessionIds={retryingSessionIds}
                     isBatchMode={isBatchMode}
                     selectedIds={selectedIds}
                     onSelectSession={onSelectSession}
@@ -739,6 +747,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             onToggleDateGroup={toggleDateGroup}
             unreadSessionIdSet={unreadSessionIdSet}
             runtimeRunningSessionIds={runtimeRunningSessionIds}
+            retryingSessionIds={retryingSessionIds}
             currentSessionId={currentSessionId}
             isBatchMode={isBatchMode}
             selectedIds={selectedIds}

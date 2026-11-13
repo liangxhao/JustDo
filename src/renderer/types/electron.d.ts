@@ -1210,6 +1210,9 @@ interface IElectronAPI {
       presentations?: import('@shared/cowork/automaticErrorRetry').AutomaticErrorRetryPresentation[];
       error?: string;
     }>;
+    getAutomaticErrorRetryActivity: () => Promise<
+      import('@shared/cowork/automaticErrorRetry').AutomaticErrorRetryActivitySnapshot | null
+    >;
     onAutomaticErrorRetryChanged: (
       callback: (value: import('@shared/cowork/automaticErrorRetry').AutomaticErrorRetryPresentation) => void,
     ) => () => void;
