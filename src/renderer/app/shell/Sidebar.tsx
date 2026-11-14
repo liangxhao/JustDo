@@ -1,17 +1,21 @@
 import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
+import { CoworkSessionExportFailure } from '@shared/cowork/sessionExport';
 import type { CoworkSessionMessageSearchMatch } from '@shared/cowork/sessionSearch';
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useSyncExternalStore } from 'react';
 import { useSelector } from 'react-redux';
 
+import { useAutomaticErrorRetryActivity } from '@/features/cowork/components/chat/useAutomaticErrorRetryActivity';
 import {
   type FilePreviewNavigationOptions,
   runGuardedFilePreviewNavigation,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
 import CoworkSearchModal from '@/features/cowork/components/sessions/CoworkSearchModal';
 import CoworkSessionList from '@/features/cowork/components/sessions/CoworkSessionList';
+import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import { toggleVisibleSessionSelection } from '@/features/cowork/components/sessions/sessionSelection';
+import { getSessionTranscriptActionError } from '@/features/cowork/components/sessions/useCoworkSessionActions';
 import {
   selectCoworkSessions,
   selectCurrentSessionId,
@@ -19,10 +23,7 @@ import {
   selectSessionDirectory,
 } from '@/features/cowork/coworkSelectors';
 import { coworkService } from '@/features/cowork/coworkService';
-import {
-  type CoworkSessionListAction,
-  requestCoworkSessionListAction,
-} from '@/features/cowork/sessionListActions';
+import { requestCoworkSessionListAction } from '@/features/cowork/sessionListActions';
 import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
 import ComposeIcon from '@/shared/components/icons/ComposeIcon';
@@ -34,6 +35,13 @@ import { store } from '@/store';
 import NavigationRail from './NavigationRail';
 import { SidebarView } from './sidebarNavigation';
 import { useSessionListResize } from './useSessionListResize';
+
+const exportFailureTranslation = {
+  [CoworkSessionExportFailure.Running]: 'coworkExportWaitForCompletion',
+  [CoworkSessionExportFailure.Unavailable]: 'coworkExportHistoryUnavailable',
+  [CoworkSessionExportFailure.Changed]: 'coworkExportHistoryChanged',
+  [CoworkSessionExportFailure.Failed]: 'coworkExportFailed',
+};
 
 interface SidebarProps {
   onShowSettings: () => void;
@@ -85,6 +93,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     (state: import('@/store').RootState) => state.scheduledTask.unreadResultCount,
   );
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [exportTarget, setExportTarget] = useState<{ id: string; title: string } | null>(null);
+  const exportTargetRetrying = useAutomaticErrorRetryActivity(exportTarget?.id);
   const [isBatchMode, setIsBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [displayedSessionIds, setDisplayedSessionIds] = useState<string[]>([]);
@@ -168,7 +178,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   });
   const visibleDirectoryIds = new Set(visibleDirectory.map(session => session.id));
   const visibleSessions = sessions.filter(session => visibleDirectoryIds.has(session.id));
-  const handleSessionListAction = async (sessionId: string, action: CoworkSessionListAction) => {
+  const handleCopySession = async (sessionId: string) => {
     const requestId = ++sessionNavigationRequestRef.current;
     await runGuardedFilePreviewNavigation(
       onBeforeCoworkNavigation,
@@ -183,11 +193,50 @@ const Sidebar: React.FC<SidebarProps> = ({
           session &&
           store.getState().cowork.currentSession?.id === sessionId
         ) {
-          requestCoworkSessionListAction({ action, sessionId });
+          requestCoworkSessionListAction({ action: 'copy', sessionId });
         }
       },
       { preserveTabs: true },
     );
+  };
+
+  const checkExportTarget = (sessionId: string): boolean => {
+    const source = visibleDirectory.find(session => session.id === sessionId);
+    const running =
+      store.getState().cowork.sessionRuntimeActivity?.[sessionId] === true ||
+      (source?.status === 'running' && !source.external?.readOnly) ||
+      (exportTarget?.id === sessionId && exportTargetRetrying);
+    const error = source
+      ? getSessionTranscriptActionError('export', sessionId, running)
+      : 'coworkExportHistoryUnavailable';
+    if (!error) return true;
+    window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t(error) }));
+    return false;
+  };
+
+  const handleOpenExport = (sessionId: string) => {
+    if (exportTarget) return;
+    const source = visibleSessions.find(session => session.id === sessionId);
+    if (source && checkExportTarget(sessionId)) setExportTarget({ id: sessionId, title: source.title });
+  };
+
+  const handleExport = async (includeRawData: boolean): Promise<boolean> => {
+    if (!exportTarget || !checkExportTarget(exportTarget.id)) return false;
+    try {
+      const result = await window.electron.cowork.exportSession({
+        sessionId: exportTarget.id,
+        includeRawData,
+      });
+      if (result.success && result.canceled) return false;
+      const toast = result.success ? 'coworkExportSuccess' : exportFailureTranslation[result.reason];
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: i18nService.t(toast) }));
+      return result.success;
+    } catch {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: i18nService.t('coworkExportFailed') }),
+      );
+      return false;
+    }
   };
 
   const handleEnterBatchMode = useCallback((sessionId: string) => {
@@ -331,8 +380,8 @@ const Sidebar: React.FC<SidebarProps> = ({
             onSelectSession={handleSelectSession}
             onDeleteSession={handleDeleteSession}
             onRenameSession={handleRenameSession}
-            onExportSession={sessionId => void handleSessionListAction(sessionId, 'export')}
-            onCopySession={sessionId => void handleSessionListAction(sessionId, 'copy')}
+            onExportSession={handleOpenExport}
+            onCopySession={sessionId => void handleCopySession(sessionId)}
             onToggleSelection={handleToggleSelection}
             onEnterBatchMode={handleEnterBatchMode}
           />
@@ -412,6 +461,12 @@ const Sidebar: React.FC<SidebarProps> = ({
           </Modal>
         )}
       </aside>
+      <ExportSessionModal
+        isOpen={exportTarget !== null}
+        sessionTitle={exportTarget?.title ?? ''}
+        onClose={() => setExportTarget(null)}
+        onExport={handleExport}
+      />
       <CoworkSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}

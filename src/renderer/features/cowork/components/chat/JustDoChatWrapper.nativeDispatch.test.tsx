@@ -80,7 +80,6 @@ describe('actual wrapper initial native dispatch lifecycle', () => {
     internals.subscribedMessageSessionKey = null;
     expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(false);
     internals.subscribedMessageSessionKey = nativeKey;
-    expect(ref.current!.getExportSnapshot().isLoading).toBe(true);
     expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(true);
     expect(ref.current!.isInitialDispatchReady('other-session')).toBe(false);
     internals.suspendedRunId = 'unresolved-run';
@@ -151,9 +150,8 @@ describe('actual wrapper initial native dispatch lifecycle', () => {
   });
 
   it('connects a cold native worktree session using its persisted key', async () => {
-    const { ref, controller } = await setup();
+    const { controller } = await setup();
     expect(controller.state.sessionKey).toBe(nativeKey);
-    expect(ref.current!.getExportSnapshot().sessionKey).toBe(nativeKey);
   });
 
   it('retires the optimistic initial control prompt so a normal next message can be sent', async () => {

@@ -13,7 +13,6 @@ import Modal from '@/shared/components/ui/Modal';
 interface ExportSessionModalProps {
   isOpen: boolean;
   sessionTitle: string;
-  messageCount: number;
   onClose: () => void;
   onExport: (includeRawData: boolean) => Promise<boolean>;
 }
@@ -21,7 +20,6 @@ interface ExportSessionModalProps {
 const ExportSessionModal: React.FC<ExportSessionModalProps> = ({
   isOpen,
   sessionTitle,
-  messageCount,
   onClose,
   onExport,
 }) => {
@@ -90,7 +88,6 @@ const ExportSessionModal: React.FC<ExportSessionModalProps> = ({
                 {i18nService.t('sessionExportMain')}
               </h2>
               <p className="mt-0.5 truncate text-xs text-muted">{sessionTitle}</p>
-              <p className="mt-1 text-xs text-muted">{i18nService.t('storageExportScope')}</p>
             </div>
           </div>
           <button
@@ -112,29 +109,13 @@ const ExportSessionModal: React.FC<ExportSessionModalProps> = ({
                 <DocumentTextIcon className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-foreground">
-                    {i18nService.t('coworkExportOpenAiFormat')}
-                  </p>
-                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-semibold tracking-wide text-primary ring-1 ring-inset ring-primary/15">
-                    <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                    JSON
-                  </span>
-                </div>
+                <p className="text-sm font-semibold text-foreground">
+                  {i18nService.t('coworkExportOpenAiFormat')}
+                </p>
                 <p className="mt-1.5 text-xs leading-5 text-secondary">
                   {i18nService.t('coworkExportOpenAiFormatDescription')}
                 </p>
               </div>
-            </div>
-            <div className="flex items-center gap-2 border-t border-primary/10 bg-surface/35 px-4 py-2.5">
-              <span className="rounded-md bg-surface-raised/80 px-2 py-1 text-[11px] font-medium text-secondary">
-                {i18nService
-                  .t('coworkExportMessageCountValue')
-                  .replace('{count}', String(messageCount))}
-              </span>
-              <span className="rounded-md bg-surface-raised/80 px-2 py-1 text-[11px] font-medium text-secondary">
-                UTF-8
-              </span>
             </div>
           </div>
 
@@ -148,6 +129,7 @@ const ExportSessionModal: React.FC<ExportSessionModalProps> = ({
             <input
               type="checkbox"
               checked={includeRawData}
+              disabled={isExporting}
               onChange={event => setIncludeRawData(event.target.checked)}
               className="sr-only"
             />

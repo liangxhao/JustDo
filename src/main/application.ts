@@ -216,6 +216,7 @@ import {
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
 import { registerSessionDiagnosticsHandlers } from './ipc/cowork/sessionDiagnostics';
+import { registerCoworkSessionExport } from './ipc/cowork/sessionExport';
 import { registerSessionReviewHandlers } from './ipc/cowork/sessionReview';
 import {
   registerOpenClawEngineHandlers,
@@ -2084,6 +2085,17 @@ if (agentBridgeArgv) {
   });
 
   registerSessionDiagnosticsHandlers(getSessionDiagnosticsService);
+
+  registerCoworkSessionExport({
+    isAllowedSender: event =>
+      !!mainWindow &&
+      !mainWindow.isDestroyed() &&
+      event.sender === mainWindow.webContents &&
+      event.senderFrame === event.sender.mainFrame,
+    getSession: sessionId => getCoworkStore().getSession(sessionId),
+    getRuntime: getOpenClawRuntimeAdapter,
+    isExternalSessionExecuting: sessionId => externalClientBackend?.isExecuting(sessionId) === true,
+  });
 
   registerCoworkSubtaskHandlers({
     getRuntime: getOpenClawRuntimeAdapter,

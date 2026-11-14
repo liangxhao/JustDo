@@ -1,21 +1,17 @@
 import { describe, expect, test } from 'vitest';
 
-import type { CoworkSession } from '@/features/cowork/coworkTypes';
+import { appendAppInput } from '../../../plugins/extensions/runtime-services/contracts/app-input';
 import {
   buildSessionExportFileName,
   createSessionExportDocument,
+  type CreateSessionExportOptions,
   SESSION_EXPORT_SCHEMA,
-} from '@/features/cowork/sessionExport';
+} from './sessionExport';
 
-const session: CoworkSession = {
+const session: CreateSessionExportOptions['session'] = {
   id: 'session-1',
   title: 'Export example',
-  status: 'completed',
-  pinned: false,
   cwd: 'C:\\workspace',
-  executionMode: 'local',
-  permissionMode: 'full',
-  activeSkillIds: [],
   agentId: 'main',
   createdAt: Date.parse('2026-07-20T01:00:00.000Z'),
   updatedAt: Date.parse('2026-07-20T02:00:00.000Z'),
@@ -81,6 +77,17 @@ describe('createSessionExportDocument', () => {
     });
 
     expect(result.extensions).toBeUndefined();
+  });
+
+  test('preserves the displayed user prompt without exposing its app plugin input trailer', () => {
+    const content = appendAppInput('User prompt', {
+      v: 1, pluginId: 'test-plugin', epoch: 'epoch', mode: 'chat', prompt: 'Private plugin input',
+    });
+    const result = createSessionExportDocument({
+      session, includeRawData: true, messages: [{ role: 'user', content }],
+    });
+    expect(result.messages).toEqual([{ role: 'user', content: 'User prompt' }]);
+    expect(result.extensions?.justdo.messages).toEqual([{ role: 'user', content: 'User prompt' }]);
   });
 
   test('extracts an inline tool result as a separate tool message', () => {

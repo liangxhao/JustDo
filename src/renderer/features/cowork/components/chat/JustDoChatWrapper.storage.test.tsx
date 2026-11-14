@@ -79,7 +79,6 @@ it('waits for execution admission before connecting history and uses the latest 
   expect(screen.getByRole('status').textContent).toContain('enginePreparingContent');
   expect(window.electron.openclaw.engine.getPort).not.toHaveBeenCalled();
   expect(window.electron.openclaw.engine.getToken).not.toHaveBeenCalled();
-  expect(ref.current?.getExportSnapshot().isLoading).toBe(true);
   await expect(ref.current?.sendMessage('retain draft')).rejects.toMatchObject({ requestSent: false });
   expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', false);
 
@@ -190,7 +189,7 @@ it.each([false, true])('retires restart failures while preserving current read r
   expect(send).not.toHaveBeenCalled();
 });
 
-it('blocks export and sending while history is loading or failed, and retry only reloads history', async () => {
+it('blocks sending while history is loading or failed, and retry only reloads history', async () => {
   let controller!: ChatController;
   const publish = () => (controller as unknown as { notify: () => void }).notify();
   const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
@@ -206,7 +205,7 @@ it('blocks export and sending while history is loading or failed, and retry only
   render(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
   await waitFor(() => expect(connect).toHaveBeenCalled());
   controller = connect.mock.instances[0] as ChatController;
-  expect(ref.current?.getExportSnapshot().isLoading).toBe(true);
+  expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', false);
   await expect(ref.current?.sendMessage('do not send')).rejects.toThrow();
   await expect(ref.current?.sendSideQuestion('do not send', 'side-run')).rejects.toThrow();
   act(() => {
@@ -215,7 +214,7 @@ it('blocks export and sending while history is loading or failed, and retry only
     publish();
   });
   expect(screen.getByText('storageHistoryFailed')).toBeTruthy();
-  expect(ref.current?.getExportSnapshot().isLoading).toBe(true);
+  expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', false);
   await expect(ref.current?.sendSideQuestion('do not send', 'side-run')).rejects.toThrow();
   fireEvent.click(screen.getByText('storageHistoryRetry'));
   expect(reload).toHaveBeenCalledWith(true);
@@ -224,7 +223,6 @@ it('blocks export and sending while history is loading or failed, and retry only
     controller.state.historyReadFailed = false;
     publish();
   });
-  expect(ref.current?.getExportSnapshot().isLoading).toBe(false);
   expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', true);
   await ref.current?.sendMessage('continue');
   expect(send).toHaveBeenCalledTimes(1);
@@ -252,7 +250,6 @@ it('shows native preparation loading with cached text and an honest retry notice
   expect(screen.getByRole('status').textContent).toContain('storageHistoryLoading');
   expect(controller.state.chatMessages).toEqual(messages);
   expect(onReady).toHaveBeenLastCalledWith('agent:main:justdo:old', false);
-  expect(ref.current?.getExportSnapshot().isLoading).toBe(true);
   await expect(ref.current?.sendMessage('must wait')).rejects.toThrow();
   act(() => {
     controller.state.historyPreparationPending = false;
@@ -394,6 +391,7 @@ it('keeps pending branch history readable while blocking direct native sends and
   ) {
     this.state.connected = true;
     this.state.initialHistoryReady = true;
+    (this as unknown as { notify: () => void }).notify();
   });
   const send = vi.spyOn(ChatController.prototype, 'sendMessage').mockResolvedValue();
   const side = vi.spyOn(ChatController.prototype, 'sendSideQuestion').mockResolvedValue('side');
@@ -409,10 +407,9 @@ it('keeps pending branch history readable while blocking direct native sends and
     .spyOn(ChatController.prototype, 'beginInitialDispatch')
     .mockImplementation(() => {});
   const refresh = vi.spyOn(ChatController.prototype, 'refreshProgressCard').mockResolvedValue(true);
-  const messages = [{ role: 'assistant', content: 'Copied history' }];
-  vi.spyOn(ChatController.prototype, 'getLoadedMessages').mockReturnValue(messages);
   const ref = createRef<JustDoChatWrapperRef>();
-  render(<JustDoChatWrapper ref={ref} />);
+  const onReady = vi.fn();
+  render(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
   await waitFor(() => expect(connect).toHaveBeenCalled());
   const sessionKey = 'agent:main:justdo:old';
 
@@ -442,11 +439,7 @@ it('keeps pending branch history readable while blocking direct native sends and
   for (const mutation of [send, side, queue, withdraw, dismiss, rewind, initialDispatch]) {
     expect(mutation).not.toHaveBeenCalled();
   }
-  expect(ref.current!.getExportSnapshot()).toMatchObject({
-    messages,
-    sessionKey,
-    isLoading: false,
-  });
+  expect(onReady).toHaveBeenLastCalledWith(sessionKey, true);
   await expect(ref.current!.refreshProgressCard()).resolves.toBe(true);
   expect(refresh).toHaveBeenCalledOnce();
 });

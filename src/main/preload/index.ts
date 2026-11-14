@@ -116,6 +116,7 @@ import {
 import { type CopyCoworkSessionInput, CoworkSessionCopyIpc } from '../../shared/cowork/sessionCopy';
 import { CoworkSessionDetailsIpc } from '../../shared/cowork/sessionDetails';
 import { SessionDirectoryIpc } from '../../shared/cowork/sessionDirectory';
+import { type CoworkSessionExportInput, CoworkSessionExportIpc } from '../../shared/cowork/sessionExport';
 import { CoworkSessionForkIpc, type ForkCoworkSessionInput } from '../../shared/cowork/sessionFork';
 import {
   GoalExecutionIpc,
@@ -825,6 +826,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   cowork: {
+    exportSession: (input: CoworkSessionExportInput) => ipcRenderer.invoke(CoworkSessionExportIpc.Export, input),
     diagnostics: {
       list: (query: { sessionId: string; cursor?: string }) =>
         ipcRenderer.invoke(SessionDiagnosticsIpc.List, query),

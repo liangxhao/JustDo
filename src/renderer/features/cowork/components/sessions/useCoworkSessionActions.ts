@@ -1,9 +1,8 @@
 import { SessionCopyErrorCode } from '@shared/cowork/sessionCopy';
 import { useEffect, useSyncExternalStore } from 'react';
 
-import { type JustDoChatWrapperRef } from '@/features/cowork/components/chat/JustDoChatWrapper';
 import { coworkService } from '@/features/cowork/coworkService';
-import type { CoworkSession, CoworkSessionSummary } from '@/features/cowork/coworkTypes';
+import type { CoworkSession } from '@/features/cowork/coworkTypes';
 import {
   COWORK_SESSION_LIST_ACTION_EVENT,
   type CoworkSessionListActionDetail,
@@ -44,20 +43,11 @@ interface CoworkSessionActionsOptions {
   >;
   pendingSessionListAction: CoworkSessionListActionDetail | null;
   currentSession: CoworkSession | null;
-  setPreferredDisplayTabId: React.Dispatch<React.SetStateAction<string | null>>;
-  setIsDisplayPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  setIsWorkspaceFilesOpen: React.Dispatch<React.SetStateAction<boolean>>;
   currentSessionRuntimeRunning: boolean;
-  sessions: Array<Pick<CoworkSessionSummary, 'id' | 'status'>>;
   sessionTranscriptMutationRef: React.MutableRefObject<SessionTranscriptMutation | null>;
   setSessionTranscriptMutation: React.Dispatch<
     React.SetStateAction<SessionTranscriptMutation | null>
   >;
-  currentSessionIdRef: React.MutableRefObject<string | null>;
-  chatWrapperRef: React.RefObject<JustDoChatWrapperRef>;
-  currentGatewaySessionKey: string | null;
-  setSessionExportMessageCount: React.Dispatch<React.SetStateAction<number>>;
-  setIsSessionExportOpen: React.Dispatch<React.SetStateAction<boolean>>;
   sessionTranscriptMutation: SessionTranscriptMutation | null;
 }
 
@@ -65,18 +55,9 @@ export function useCoworkSessionActions({
   setPendingSessionListAction,
   pendingSessionListAction,
   currentSession,
-  setPreferredDisplayTabId,
-  setIsDisplayPanelOpen,
-  setIsWorkspaceFilesOpen,
   currentSessionRuntimeRunning,
-  sessions,
   sessionTranscriptMutationRef,
   setSessionTranscriptMutation,
-  currentSessionIdRef,
-  chatWrapperRef,
-  currentGatewaySessionKey,
-  setSessionExportMessageCount,
-  setIsSessionExportOpen,
   sessionTranscriptMutation,
 }: CoworkSessionActionsOptions) {
   const pluginRevision = useSyncExternalStore(
@@ -86,7 +67,7 @@ export function useCoworkSessionActions({
   useEffect(() => {
     const handleSessionListAction = (event: Event) => {
       const detail = (event as CustomEvent<CoworkSessionListActionDetail>).detail;
-      if (!detail?.sessionId || !['copy', 'export'].includes(detail.action)) return;
+      if (!detail?.sessionId || detail.action !== 'copy') return;
       setPendingSessionListAction(detail);
     };
     window.addEventListener(COWORK_SESSION_LIST_ACTION_EVENT, handleSessionListAction);
@@ -116,103 +97,39 @@ export function useCoworkSessionActions({
       return;
     }
 
-    if (pendingSessionListAction.action === 'copy') {
-      if (sessionTranscriptMutationRef.current) return;
-      const operation = { kind: 'copy' as const, sessionId: currentSession.id };
-      setPendingSessionListAction(null);
-      sessionTranscriptMutationRef.current = operation;
-      setSessionTranscriptMutation(operation);
-      let failureCode: SessionCopyErrorCode | undefined;
-      void coworkService
-        .copySession(currentSession, code => { failureCode = code; })
-        .then(copied => {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', {
-              detail: i18nService.t(
-                copied ? 'coworkCopySessionSuccess' : copyFailureTranslation(failureCode),
-              ),
-            }),
-          );
-        })
-        .finally(() => {
-          if (sessionTranscriptMutationRef.current === operation) {
-            sessionTranscriptMutationRef.current = null;
-            setSessionTranscriptMutation(null);
-          }
-        });
-      return;
-    }
-
-    let attempts = 0;
-    let settled = false;
-    let timer: number | undefined;
-    const openExportWhenReady = () => {
-      if (settled) return;
-      attempts += 1;
-      const actionError = getSessionTranscriptActionError(
-        'export',
-        pendingSessionListAction.sessionId,
-        currentSessionRuntimeRunning,
-      );
-      if (actionError) {
-        settled = true;
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: i18nService.t(actionError) }),
-        );
-        setPendingSessionListAction(null);
-        return;
-      }
-      if (currentSessionIdRef.current !== pendingSessionListAction.sessionId) {
-        if (attempts >= 100) {
-          settled = true;
-          setPendingSessionListAction(null);
-        }
-        return;
-      }
-      const snapshot = chatWrapperRef.current?.getExportSnapshot();
-      if (snapshot && snapshot.sessionKey === currentGatewaySessionKey && !snapshot.isLoading) {
-        settled = true;
-        setSessionExportMessageCount(snapshot.messages.length);
-        setIsSessionExportOpen(true);
-        setPendingSessionListAction(null);
-        return;
-      }
-      if (attempts >= 100) {
-        settled = true;
+    if (sessionTranscriptMutationRef.current) return;
+    const operation = { kind: 'copy' as const, sessionId: currentSession.id };
+    setPendingSessionListAction(null);
+    sessionTranscriptMutationRef.current = operation;
+    setSessionTranscriptMutation(operation);
+    let failureCode: SessionCopyErrorCode | undefined;
+    void coworkService
+      .copySession(currentSession, code => { failureCode = code; })
+      .then(copied => {
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
-            detail: i18nService.t('coworkExportHistoryLoading'),
+            detail: i18nService.t(
+              copied ? 'coworkCopySessionSuccess' : copyFailureTranslation(failureCode),
+            ),
           }),
         );
-        setPendingSessionListAction(null);
-      }
-    };
-    openExportWhenReady();
-    if (!settled) timer = window.setInterval(openExportWhenReady, 100);
-    return () => {
-      settled = true;
-      if (timer !== undefined) window.clearInterval(timer);
-    };
+      })
+      .finally(() => {
+        if (sessionTranscriptMutationRef.current === operation) {
+          sessionTranscriptMutationRef.current = null;
+          setSessionTranscriptMutation(null);
+        }
+      });
   }, [
-    currentGatewaySessionKey,
     currentSession,
     currentSessionRuntimeRunning,
     pendingSessionListAction,
     pluginRevision,
-    sessions,
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
-    setPreferredDisplayTabId,
     sessionTranscriptMutation,
     setPendingSessionListAction,
     sessionTranscriptMutationRef,
     setSessionTranscriptMutation,
-    currentSessionIdRef,
-    chatWrapperRef,
-    setSessionExportMessageCount,
-    setIsSessionExportOpen,
   ]);
-  return {};
 }
 
 export type SessionTranscriptMutation = {

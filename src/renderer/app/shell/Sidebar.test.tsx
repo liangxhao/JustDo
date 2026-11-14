@@ -1,34 +1,39 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { translations } from '@/services/i18n/translations';
 
 import Sidebar from './Sidebar';
 import { SidebarView } from './sidebarNavigation';
 
 const state = vi.hoisted(() => ({
-  cowork: { sessionListStatus: 'ready' },
+  cowork: { sessionListStatus: 'ready', sessionRuntimeActivity: {} as Record<string, boolean> },
   scheduledTask: { unreadResultCount: 0 },
 }));
 const config = vi.hoisted(() => ({ developerMode: false, controlUiEnabled: false }));
+const exportSession = vi.hoisted(() => vi.fn());
+const exportSource = vi.hoisted(() => ({ id: 'target-chat', title: 'Target chat', status: 'idle' }));
 
 vi.mock('react-redux', () => ({
   useSelector: (selector: (value: typeof state) => unknown) => selector(state),
 }));
 vi.mock('@/store', () => ({ store: { getState: () => state } }));
 vi.mock('@/features/cowork/coworkSelectors', () => ({
-  selectCoworkSessions: () => [],
-  selectSessionDirectory: () => [],
+  selectCoworkSessions: () => [exportSource],
+  selectSessionDirectory: () => [exportSource],
   selectGroups: () => [],
   selectCurrentSessionId: () => 'existing-chat',
   selectIsOpenClawEngine: () => true,
 }));
 vi.mock('@/features/cowork/coworkService', () => ({ coworkService: {} }));
 vi.mock('@/features/cowork/components/sessions/CoworkSessionList', () => ({
-  default: () => <div>session-list</div>,
+  default: ({ onExportSession }: { onExportSession: (sessionId: string) => void }) => (
+    <button type="button" onClick={() => onExportSession(exportSource.id)}>Export target</button>
+  ),
 }));
 vi.mock('@/features/cowork/components/sessions/CoworkSearchModal', () => ({
   default: ({ isOpen }: { isOpen: boolean }) =>
@@ -44,12 +49,17 @@ vi.mock('@/services/i18n', () => ({
 beforeEach(() => {
   config.developerMode = false;
   config.controlUiEnabled = false;
+  state.cowork.sessionRuntimeActivity = {};
+  exportSession.mockReset();
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { platform: 'win32' },
+    value: { platform: 'win32', cowork: { exportSession } },
   });
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const createProps = () => ({
   onShowSettings: vi.fn(),
@@ -67,6 +77,43 @@ const createProps = () => ({
 });
 
 describe('Sidebar', () => {
+  it('exports the selected row without opening its conversation and passes the raw data choice', async () => {
+    exportSession.mockResolvedValue({ success: true, canceled: false });
+    const props = createProps();
+    render(<Sidebar {...props} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export target' }));
+    const options = within(screen.getByRole('dialog', { name: translations.zh.sessionExportMain }));
+    expect(options.getByText('Target chat')).toBeTruthy();
+    const includeRaw = options.getByRole('checkbox', { name: translations.zh.coworkExportIncludeRaw });
+    expect((includeRaw as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(includeRaw);
+    fireEvent.click(options.getByRole('button', { name: translations.zh.coworkExportSave }));
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(exportSession).toHaveBeenCalledExactlyOnceWith({ sessionId: exportSource.id, includeRawData: false });
+    expect(props.onShowCowork).not.toHaveBeenCalled();
+    expect(props.onBeforeCoworkNavigation).not.toHaveBeenCalled();
+  });
+
+  it.each(['plugin', 'runtime'] as const)('rechecks %s restrictions before sending the export', restriction => {
+    const spy = vi.spyOn(appBrowserRegistry, 'sessionPresentation').mockReturnValue({});
+    render(<Sidebar {...createProps()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Export target' }));
+    if (restriction === 'plugin') spy.mockReturnValue({ exportAllowed: false });
+    else state.cowork.sessionRuntimeActivity[exportSource.id] = true;
+
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
+    fireEvent.click(screen.getByRole('button', { name: translations.zh.coworkExportSave }));
+
+    expect(exportSession).not.toHaveBeenCalled();
+    const toast = dispatch.mock.calls.map(([event]) => event as CustomEvent)
+      .find(event => event.type === 'app:showToast');
+    expect(toast?.detail).toBe(restriction === 'plugin'
+      ? translations.zh.coworkExportFailed
+      : translations.zh.coworkExportWaitForCompletion);
+  });
+
   it('toggles the home list through Home while keeping navigation available', () => {
     const props = createProps();
     const Shell = () => {

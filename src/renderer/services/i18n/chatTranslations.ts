@@ -144,16 +144,15 @@ export const chatTranslations = {
     coworkSearchMatchCount: '{current}/{total}，共 {total} 个',
     coworkExportOpenAiFormat: 'OpenAI 兼容 JSON',
     coworkExportOpenAiFormatDescription:
-      '对话消息使用 role、content、tool_calls 和 tool_call_id 等标准字段，便于二次处理或迁移。',
-    coworkExportMessageCountValue: '{count} 条消息',
+      '将此会话可读取的完整历史导出为一个 JSON 文件。',
     coworkExportIncludeRaw: '附带原始消息，保留思考过程、附件和运行时扩展字段',
     coworkExportPrivacyNotice: '导出内容可能包含文件路径、工具输入输出及其他敏感信息，请妥善保管。',
     coworkExportSave: '另存为 JSON',
     coworkExportSaving: '正在导出...',
     coworkExportSuccess: '会话已导出',
     coworkExportFailed: '导出会话失败，请稍后重试',
-    coworkExportTooLarge: '导出内容超过 50 MB，请取消附带原始消息后重试',
-    coworkExportHistoryLoading: '会话历史仍在加载，请稍后再试',
+    coworkExportHistoryUnavailable: '暂时无法读取此会话的完整历史，请稍后再试',
+    coworkExportHistoryChanged: '导出期间会话历史发生变化，请重新导出',
     coworkExportWaitForCompletion: '请等待当前回复完成后再导出',
     coworkBranchCreationPending:
       '该副本或分支尚未完成创建，可在会话列表中检查或删除，暂时无法继续发送。',
@@ -883,8 +882,7 @@ export const chatTranslations = {
     coworkSearchMatchCount: '{current}/{total}, {total} total',
     coworkExportOpenAiFormat: 'OpenAI-compatible JSON',
     coworkExportOpenAiFormatDescription:
-      'Messages use standard role, content, tool_calls, and tool_call_id fields for processing or migration.',
-    coworkExportMessageCountValue: '{count} messages',
+      'Export the full available history of this session to a single JSON file.',
     coworkExportIncludeRaw:
       'Include raw messages to preserve reasoning, attachments, and runtime extension fields',
     coworkExportPrivacyNotice:
@@ -893,8 +891,8 @@ export const chatTranslations = {
     coworkExportSaving: 'Exporting...',
     coworkExportSuccess: 'Session exported',
     coworkExportFailed: 'Failed to export the session. Please try again.',
-    coworkExportTooLarge: 'The export exceeds 50 MB. Try again without raw messages.',
-    coworkExportHistoryLoading: 'Session history is still loading. Please try again shortly.',
+    coworkExportHistoryUnavailable: 'This session’s full history is unavailable. Try again shortly.',
+    coworkExportHistoryChanged: 'Session history changed during export. Please export it again.',
     coworkExportWaitForCompletion: 'Wait for the current response to finish before exporting',
     coworkBranchCreationPending:
       'This copy or branch is unfinished. You can inspect or delete it in the session list; sending is unavailable.',

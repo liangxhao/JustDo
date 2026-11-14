@@ -1004,6 +1004,9 @@ interface IElectronAPI {
     ) => () => void;
   };
   cowork: {
+    exportSession: (
+      input: import('../../shared/cowork/sessionExport').CoworkSessionExportInput,
+    ) => Promise<import('../../shared/cowork/sessionExport').CoworkSessionExportResult>;
     diagnostics: {
       list: (query: { sessionId: string; cursor?: string }) => Promise<DiagnosticListResult>;
       read: (query: DiagnosticQuery) => Promise<DiagnosticReadResult>;

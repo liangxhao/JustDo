@@ -154,12 +154,6 @@ export interface JustDoChatWrapperRef {
       sendMotionOrigin?: SendMotionOrigin;
     },
   ) => Promise<void>;
-  getExportSnapshot: () => {
-    messages: unknown[];
-    runtimeSessionId: string | null;
-    sessionKey: string | null;
-    isLoading: boolean;
-  };
   preparePlanImplementationReset: (request: {
     requestId: string;
     toolName: string;
@@ -624,19 +618,6 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             if (controller.state.sessionKey === sessionKey) void controller.loadHistory(true);
           }
           return receipt;
-        },
-        getExportSnapshot: () => {
-          const controller = controllerRef.current;
-          return {
-            messages: controller ? [...controller.getLoadedMessages()] : [],
-            runtimeSessionId: controller?.state.currentSessionId ?? null,
-            sessionKey: controller?.state.sessionKey ?? null,
-            isLoading:
-              !controller?.state.connected ||
-              !controller.state.initialHistoryReady ||
-              controller.state.chatLoading ||
-              controller.state.historyReadFailed === true,
-          };
         },
         preparePlanImplementationReset: request => {
           controllerRef.current?.preparePlanImplementationReset(request);

@@ -1,11 +1,8 @@
 export const COWORK_SESSION_LIST_ACTION_EVENT = 'cowork:session-list-action';
 
-export type CoworkSessionListAction = 'copy' | 'export';
-
 export interface CoworkSessionListActionDetail {
-  action: CoworkSessionListAction;
+  action: 'copy';
   sessionId: string;
-  memberSessionId?: string;
 }
 
 export const requestCoworkSessionListAction = (detail: CoworkSessionListActionDetail): void => {

@@ -1,4 +1,27 @@
-import type { CoworkSession } from '@/features/cowork/coworkTypes';
+import { stripAppInput } from '../../../plugins/extensions/runtime-services/contracts/app-input';
+import type { ExternalSessionMetadata } from '../integrations/externalSession';
+import { buildCoworkSessionKey } from './sessionKey';
+
+export const CoworkSessionExportIpc = { Export: 'cowork:session:export' } as const;
+
+export interface CoworkSessionExportInput {
+  sessionId: string;
+  includeRawData: boolean;
+}
+
+export const CoworkSessionExportFailure = {
+  Running: 'running',
+  Unavailable: 'unavailable',
+  Changed: 'changed',
+  Failed: 'failed',
+} as const;
+
+export type CoworkSessionExportFailure =
+  (typeof CoworkSessionExportFailure)[keyof typeof CoworkSessionExportFailure];
+
+export type CoworkSessionExportResult =
+  | { success: true; canceled: boolean }
+  | { success: false; reason: CoworkSessionExportFailure };
 
 export const SESSION_EXPORT_SCHEMA = 'justdo.openai-chat-export' as const;
 export const SESSION_EXPORT_VERSION = 1 as const;
@@ -45,16 +68,48 @@ export interface SessionExportDocument {
 }
 
 export interface CreateSessionExportOptions {
-  session: CoworkSession;
-  messages: unknown[];
+  session: SessionExportSource;
+  messages: readonly unknown[];
   model?: string;
+  sessionKey?: string;
   runtimeSessionId?: string | null;
   includeRawData: boolean;
   exportedAt?: Date;
 }
 
+interface SessionExportSource {
+  id: string;
+  title: string;
+  agentId: string;
+  cwd: string;
+  createdAt: number;
+  updatedAt: number;
+  external?: Pick<ExternalSessionMetadata, 'sessionKey'>;
+}
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+export function projectSessionExportMessage(value: unknown): unknown {
+  if (!isRecord(value) || value.role !== 'user') return value;
+  const stripTrailer = (text: string) => {
+    const comparable = text.replace(/\[\[inbound:[\s\S]*?\]\]/g, '').trim();
+    const display = stripAppInput(comparable);
+    return display === comparable ? text : display;
+  };
+  const content = typeof value.content === 'string'
+    ? stripTrailer(value.content)
+    : Array.isArray(value.content)
+      ? value.content.map(block => isRecord(block) && block.type === 'text' && typeof block.text === 'string'
+        ? { ...block, text: stripTrailer(block.text) }
+        : block)
+      : value.content;
+  return {
+    ...value,
+    ...(Object.prototype.hasOwnProperty.call(value, 'content') ? { content } : {}),
+    ...(typeof value.text === 'string' ? { text: stripTrailer(value.text) } : {}),
+  };
+}
 
 const readString = (...values: unknown[]): string | undefined => {
   const value = values.find(candidate => typeof candidate === 'string' && candidate.trim());
@@ -225,41 +280,50 @@ const sanitizeRawValue = (value: unknown): unknown => {
   );
 };
 
+export const toOpenAiExportMessages = (messages: readonly unknown[]): OpenAiExportMessage[] =>
+  messages.flatMap(convertMessage);
+
+export const toRawExportMessages = (messages: readonly unknown[]): unknown[] =>
+  messages.map(sanitizeRawValue);
+
 export const createSessionExportDocument = ({
   session,
   messages,
   model,
+  sessionKey,
   runtimeSessionId = null,
   includeRawData,
   exportedAt = new Date(),
-}: CreateSessionExportOptions): SessionExportDocument => ({
-  schema: SESSION_EXPORT_SCHEMA,
-  version: SESSION_EXPORT_VERSION,
-  exported_at: exportedAt.toISOString(),
-  ...(model?.trim() ? { model: model.trim() } : {}),
-  messages: messages.flatMap(convertMessage),
-  metadata: {
-    session_id: session.id,
-    title: session.title,
-    agent_id: session.agentId,
-    created_at: new Date(session.createdAt).toISOString(),
-    updated_at: new Date(session.updatedAt).toISOString(),
-    working_directory: session.cwd,
-  },
-  ...(includeRawData
-    ? {
-        extensions: {
-          justdo: {
-            session_key:
-              session.external?.sessionKey ||
-              `agent:${session.agentId || 'main'}:justdo:${session.id}`,
-            runtime_session_id: runtimeSessionId,
-            messages: messages.map(sanitizeRawValue),
+}: CreateSessionExportOptions): SessionExportDocument => {
+  const projected = messages.map(projectSessionExportMessage);
+  return {
+    schema: SESSION_EXPORT_SCHEMA,
+    version: SESSION_EXPORT_VERSION,
+    exported_at: exportedAt.toISOString(),
+    ...(model?.trim() ? { model: model.trim() } : {}),
+    messages: toOpenAiExportMessages(projected),
+    metadata: {
+      session_id: session.id,
+      title: session.title,
+      agent_id: session.agentId,
+      created_at: new Date(session.createdAt).toISOString(),
+      updated_at: new Date(session.updatedAt).toISOString(),
+      working_directory: session.cwd,
+    },
+    ...(includeRawData
+      ? {
+          extensions: {
+            justdo: {
+              session_key: sessionKey ?? session.external?.sessionKey ??
+                buildCoworkSessionKey(session.id, session.agentId || undefined),
+              runtime_session_id: runtimeSessionId,
+              messages: toRawExportMessages(projected),
+            },
           },
-        },
-      }
-    : {}),
-});
+        }
+      : {}),
+  };
+};
 
 export const buildSessionExportFileName = (title: string): string => {
   const safeTitle = title

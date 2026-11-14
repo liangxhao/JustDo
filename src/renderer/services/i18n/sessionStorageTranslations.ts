@@ -134,7 +134,6 @@ export const sessionStorageTranslations = {
     storageHistoryPreparing: '会话正在准备，完成后会自动加载历史。',
     storageHistoryPreparationPending: '会话仍在准备，请稍后重试。',
     storageHistoryRetry: '重新读取历史',
-    storageExportScope: '导出当前聊天快照，不包含全部会话、归档文件或附件文件，不能代替完整备份。',
   },
   en: {
     ...upgradeBackupTranslations.en,
@@ -278,7 +277,5 @@ export const sessionStorageTranslations = {
       'The session is preparing. History will load automatically when ready.',
     storageHistoryPreparationPending: 'The conversation is still preparing. Please retry shortly.',
     storageHistoryRetry: 'Reload history',
-    storageExportScope:
-      'Exports the current chat snapshot, not all sessions, archive files or attachment files. This is not a complete backup.',
   },
 };

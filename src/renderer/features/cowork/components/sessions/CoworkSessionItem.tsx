@@ -460,8 +460,8 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
         label: i18nService.t('exportSession'),
         onClick: handleExportClick,
         tone: 'neutral' as const,
-        disabled: isRuntimeRunning || pluginPresentation.exportAllowed === false,
-        title: isRuntimeRunning ? i18nService.t('coworkExportWaitForCompletion') : undefined,
+        disabled: showRunningIndicator || pluginPresentation.exportAllowed === false,
+        title: showRunningIndicator ? i18nService.t('coworkExportWaitForCompletion') : undefined,
       },
       ...(pluginPresentation.copyAllowed !== false
         ? [
@@ -533,6 +533,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
     sessionDetailsLabel,
     togglePinnedLabel,
     isRuntimeRunning,
+    showRunningIndicator,
   ]);
 
   const handleMoveToGroup = (groupId: string | null) => {

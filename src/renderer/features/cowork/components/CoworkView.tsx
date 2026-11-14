@@ -13,7 +13,6 @@ import {
   ShareIcon,
 } from '@heroicons/react/24/outline';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
-import { SaveTextFileErrorCode } from '@shared/app/dialogIpc';
 import { type BrowserAgentInteractionState } from '@shared/browser/browser';
 import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
 import { BrowserLinkTarget, isWebBrowserLink } from '@shared/browser/browserLinkOpening';
@@ -138,7 +137,6 @@ import { useFilePreviewEvents } from '@/features/cowork/components/preview/useFi
 import { useMessageFileLinkNavigation } from '@/features/cowork/components/preview/useMessageFileLinkNavigation';
 import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceFilesPanel';
 import { REVIEW_TAB_ID } from '@/features/cowork/components/review/reviewNavigation';
-import ExportSessionModal from '@/features/cowork/components/sessions/ExportSessionModal';
 import { getCompactFolderName, getLastPathSegment } from '@/features/cowork/components/shared/path';
 import WorkspaceFileIcon from '@/features/cowork/components/shared/WorkspaceFileIcon';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
@@ -185,10 +183,6 @@ import type {
   CoworkInteractionResult,
   CoworkSession,
 } from '@/features/cowork/coworkTypes';
-import {
-  buildSessionExportFileName,
-  createSessionExportDocument,
-} from '@/features/cowork/sessionExport';
 import { type CoworkSessionListActionDetail } from '@/features/cowork/sessionListActions';
 import { AppPluginSlot } from '@/features/plugins/app/AppPluginSlot';
 import { useAppWorkspace } from '@/features/plugins/app/useAppWorkspace';
@@ -253,10 +247,7 @@ import { useWidgetReferenceTabs } from './display/tabs/useWidgetReferenceTabs';
 import SessionReviewPanel from './review/SessionReviewPanel';
 import SessionWorkspacePicker from './sessions/SessionWorkspacePicker';
 import type { SessionTranscriptMutation } from './sessions/useCoworkSessionActions';
-import {
-  getSessionTranscriptActionError,
-  useCoworkSessionActions,
-} from './sessions/useCoworkSessionActions';
+import { useCoworkSessionActions } from './sessions/useCoworkSessionActions';
 import { useCoworkRuntimePolling } from './status/useCoworkRuntimePolling';
 import { useSessionFocusRefresh } from './status/useSessionFocusRefresh';
 
@@ -478,7 +469,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   const [progressCardState, setProgressCardState] = useState<ProgressCardViewState | null>(null);
   const [isSessionSearchOpen, setIsSessionSearchOpen] = useState(false);
   const [areProcessSummariesExpanded, setAreProcessSummariesExpanded] = useState(false);
-  const [isSessionExportOpen, setIsSessionExportOpen] = useState(false);
   const [pendingSessionListAction, setPendingSessionListAction] =
     useState<CoworkSessionListActionDetail | null>(null);
   const [sessionTranscriptMutation, setSessionTranscriptMutation] =
@@ -491,7 +481,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     nativeSessionKey?: string;
     nativeSessionId?: string;
   } | null>(null);
-  const [sessionExportMessageCount, setSessionExportMessageCount] = useState(0);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [sessionSearchIgnoreCase, setSessionSearchIgnoreCase] = useState(true);
   const [sessionSearchMatchCount, setSessionSearchMatchCount] = useState(0);
@@ -2144,18 +2133,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setPendingSessionListAction,
     pendingSessionListAction,
     currentSession,
-    setPreferredDisplayTabId,
-    setIsDisplayPanelOpen,
-    setIsWorkspaceFilesOpen,
     currentSessionRuntimeRunning,
-    sessions,
     sessionTranscriptMutationRef,
     setSessionTranscriptMutation,
-    currentSessionIdRef,
-    chatWrapperRef,
-    currentGatewaySessionKey,
-    setSessionExportMessageCount,
-    setIsSessionExportOpen,
     sessionTranscriptMutation,
   });
 
@@ -2833,73 +2813,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         confirmationKey: 'coworkWithdrawLastMessageConfirm',
       });
       return true;
-    };
-
-    const handleExportSession = async (includeRawData: boolean): Promise<boolean> => {
-      try {
-        const actionError = getSessionTranscriptActionError(
-          'export',
-          currentSession.id,
-          currentSessionRuntimeRunningRef.current,
-        );
-        if (actionError) {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', { detail: i18nService.t(actionError) }),
-          );
-          return false;
-        }
-        const snapshot = chatWrapperRef.current?.getExportSnapshot();
-        if (
-          !snapshot ||
-          snapshot.isLoading ||
-          currentSessionIdRef.current !== currentSession.id ||
-          snapshot.sessionKey !== currentGatewaySessionKey ||
-          currentGatewaySessionKeyRef.current !== currentGatewaySessionKey
-        ) {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', {
-              detail: i18nService.t('coworkExportHistoryLoading'),
-            }),
-          );
-          return false;
-        }
-        const document = createSessionExportDocument({
-          session: currentSession,
-          messages: snapshot.messages,
-          model: sessionSelectedModel?.id ?? sessionSelectedModel?.name,
-          runtimeSessionId: snapshot.runtimeSessionId,
-          includeRawData,
-        });
-        const result = await window.electron.dialog.saveTextFile({
-          title: i18nService.t('sessionExportMain'),
-          defaultFileName: buildSessionExportFileName(currentSession.title),
-          content: `${JSON.stringify({ ...document, scope: 'main', exportedAt: new Date().toISOString() }, null, 2)}\n`,
-          filters: [{ name: 'JSON', extensions: ['json'] }],
-        });
-        if (!result.success) {
-          const errorKey =
-            result.errorCode === SaveTextFileErrorCode.FileTooLarge
-              ? 'coworkExportTooLarge'
-              : 'coworkExportFailed';
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', { detail: i18nService.t(errorKey) }),
-          );
-          return false;
-        }
-        if (result.canceled) return false;
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', { detail: i18nService.t('coworkExportSuccess') }),
-        );
-        return true;
-      } catch (error) {
-        console.error('[CoworkView] Failed to export session:', error);
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', {
-            detail: i18nService.t('coworkExportFailed'),
-          }),
-        );
-        return false;
-      }
     };
 
     const planPreviewLabel = visiblePlanInteraction
@@ -3851,13 +3764,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               )}
             </CoworkDisplayPanel>
           )}
-          <ExportSessionModal
-            isOpen={isSessionExportOpen}
-            sessionTitle={currentSession.title}
-            messageCount={sessionExportMessageCount}
-            onClose={() => setIsSessionExportOpen(false)}
-            onExport={handleExportSession}
-          />
           {summaryMediaPreview?.scope === summaryNavigationScope.current && (
             <SummaryMediaPreview
               source={summaryMediaPreview.source}
