@@ -386,6 +386,15 @@ MCP 的传输支持状态使用原生清单的 `unsupported` 标记；`hasStdioT
 
 发现只增加缺失项，不因原生配置暂时缺失就删除产品记录。产品主动删除/改名后不能先读旧原生配置，否则会复活旧 name。未被表单建模的 cwd、OAuth、TLS、tool filter 等字段需要保留合并，不能保存一次表单就丢失。
 
+插件页的 MCP 文件导入和导出使用 Main 的专用文件选择与保存入口。导入预览解析
+`mcpServers` 或 `servers`，只把脱敏摘要和逐项校验结果返回主窗口。提交引用
+同一窗口的预览，在现有 MCP 配置队列内重新检查产品、扩展和原生名称归属。勾选项
+以关闭状态写入单个 SQLite 事务，再统一应用配置。应用和补偿都保留提交时已有的
+非产品原生 MCP 定义。同步失败沿用删除本次记录、撤销已投影名称和补偿同步的
+流程。导出从产品 Store 获取可管理记录，由 Main 按勾选项生成待保存内容并绑定
+到预览凭证。用户勾选保留环境变量值或请求头值时，预览仅返回遮盖后的文本，
+保存使用 Main 中保留的原始文件内容。导出无需触发原生发现或连接测试。
+
 请求 timeout 按单 server override 优先于全局默认投影为 requestTimeoutMs；连接建立 timeout 是另一概念。Extension 自带 MCP 的配置由父插件拥有，不套用户 server 的默认设置。
 
 probe/readResource 在 Main 使用真实 transport。HTTP/SSE probe 保持流式响应、禁止自动重定向并使用网络策略；stdio command/env 属于执行输入，敏感值不能进入 UI 诊断或日志。

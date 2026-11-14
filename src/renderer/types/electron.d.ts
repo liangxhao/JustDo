@@ -437,6 +437,17 @@ import type {
 } from '@shared/plugins/marketplace';
 import type { McpServerConfig, McpServerFormData } from '@shared/plugins/mcp';
 import type {
+  McpExportPreview,
+  McpExportPreviewInput,
+  McpExportRow,
+  McpExportSaveReceipt,
+  McpImportCommitInput,
+  McpImportCommitReceipt,
+  McpImportPreview,
+  McpImportSource,
+  McpTransferResult,
+} from '@shared/plugins/mcpTransfer';
+import type {
   ScheduledTask,
   ScheduledTaskChannelOption,
   ScheduledTaskInput,
@@ -717,6 +728,14 @@ interface IElectronAPI {
     readExtensionSettings: (
       id: string,
     ) => Promise<import('@shared/plugins/mcp').ExtensionMcpSettingsResult>;
+    previewImport: (source: McpImportSource) => Promise<McpTransferResult<McpImportPreview>>;
+    commitImport: (
+      input: McpImportCommitInput,
+      context?: PluginOperationContext,
+    ) => Promise<McpTransferResult<McpImportCommitReceipt>>;
+    listExport: () => Promise<McpTransferResult<McpExportRow[]>>;
+    previewExport: (input: McpExportPreviewInput) => Promise<McpTransferResult<McpExportPreview>>;
+    saveExport: (token: string) => Promise<McpTransferResult<McpExportSaveReceipt>>;
     create: (
       data: McpServerFormData,
       context?: PluginOperationContext,

@@ -15,6 +15,7 @@ import { filePreviewTranslations } from './filePreviewTranslations';
 import { getHomeGreetingTranslations } from './homeGreetings';
 import { initializationTranslations } from './initializationTranslations.mts';
 import { mcpAppsTranslations } from './mcpAppsTranslations';
+import { mcpTransferTranslations } from './mcpTransferTranslations';
 import { memoryTranslations } from './memoryTranslations';
 import { pluginsTranslations } from './pluginsTranslations';
 import { scheduledTaskTranslations } from './scheduledTaskTranslations';
@@ -48,6 +49,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...startupTranslations.zh,
     ...memoryTranslations.zh,
     ...mcpAppsTranslations.zh,
+    ...mcpTransferTranslations.zh,
     ...pluginsTranslations.zh,
     ...scheduledTaskTranslations.zh,
     ...sessionDiagnosticsTranslations.zh,
@@ -78,6 +80,7 @@ export const translations: Record<LanguageType, Record<string, string>> = {
     ...startupTranslations.en,
     ...memoryTranslations.en,
     ...mcpAppsTranslations.en,
+    ...mcpTransferTranslations.en,
     ...pluginsTranslations.en,
     ...scheduledTaskTranslations.en,
     ...sessionDiagnosticsTranslations.en,

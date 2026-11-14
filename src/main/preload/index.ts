@@ -216,6 +216,12 @@ import {
   type MarketplaceUpdateCheckRequest,
 } from '../../shared/plugins/marketplace';
 import { type ExtensionMcpEnabledInput, ExtensionMcpIpc } from '../../shared/plugins/mcp';
+import {
+  type McpExportPreviewInput,
+  type McpImportCommitInput,
+  type McpImportSource,
+  McpTransferIpc,
+} from '../../shared/plugins/mcpTransfer';
 import type { PluginOperationContext } from '../../shared/plugins/pluginOperation';
 import type { OpenClawSkillSource } from '../../shared/plugins/skills';
 import {
@@ -416,6 +422,13 @@ contextBridge.exposeInMainWorld('electron', {
     setExtensionEnabled: (input: ExtensionMcpEnabledInput, context?: PluginOperationContext) =>
       ipcRenderer.invoke(ExtensionMcpIpc.SetEnabled, input, context),
     readExtensionSettings: (id: string) => ipcRenderer.invoke(ExtensionMcpIpc.ReadSettings, id),
+    previewImport: (source: McpImportSource) => ipcRenderer.invoke(McpTransferIpc.PreviewImport, source),
+    commitImport: (input: McpImportCommitInput, context?: PluginOperationContext) =>
+      ipcRenderer.invoke(McpTransferIpc.CommitImport, input, context),
+    listExport: () => ipcRenderer.invoke(McpTransferIpc.ListExport),
+    previewExport: (input: McpExportPreviewInput) =>
+      ipcRenderer.invoke(McpTransferIpc.PreviewExport, input),
+    saveExport: (token: string) => ipcRenderer.invoke(McpTransferIpc.SaveExport, token),
     create: (data: unknown, context?: PluginOperationContext) =>
       ipcRenderer.invoke('mcp:create', data, context),
     update: (id: string, data: unknown, context?: PluginOperationContext) =>

@@ -1,5 +1,10 @@
 import { PluginKind } from '@shared/plugins/marketplace';
 import { mcpToolHasApp } from '@shared/plugins/mcpAppCapabilities';
+import type {
+  McpImportCommitInput,
+  McpImportCommitReceipt,
+  McpTransferResult,
+} from '@shared/plugins/mcpTransfer';
 import {
   PluginOperationAction,
   type PluginOperationFeedback,
@@ -273,6 +278,47 @@ class McpService {
 
   async readExtensionSettings(id: string) {
     return window.electron.mcp.readExtensionSettings(id);
+  }
+
+  async commitImport(
+    input: McpImportCommitInput,
+  ): Promise<McpTransferResult<McpImportCommitReceipt>> {
+    this.invalidateAppSupport();
+    const generation = this.serverGeneration;
+    const operation = startPluginOperation({
+      kind: PluginKind.MCP,
+      action: PluginOperationAction.INSTALL,
+      label: i18nService.t('mcpTransferTitle'),
+    });
+    try {
+      const result = await window.electron.mcp
+        .commitImport(input, operation.context)
+        .catch((): McpTransferResult<McpImportCommitReceipt> => ({
+          success: false,
+          code: 'unavailable',
+          operationUnconfirmed: true,
+        }));
+      if (!result.success) return result;
+      const receipt = result.value;
+      try {
+        if (receipt.servers) {
+          await this.applyMutationServers(receipt.servers, generation);
+        } else {
+          operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
+          await this.loadServers();
+        }
+      } catch {
+        this.serverLoadFailed = true;
+      }
+      if (this.serverLoadFailed) {
+        operation.fail(pluginOperationRefreshFailure({ mutationCompleted: true }));
+        return { success: true, value: { ...receipt, refreshWarning: true } };
+      }
+      return result;
+    } finally {
+      this.invalidateAppSupport();
+      operation.finish();
+    }
   }
 
   async createServer(data: McpServerFormData): Promise<McpMutationResult> {

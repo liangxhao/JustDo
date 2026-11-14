@@ -100,4 +100,12 @@ describe('McpStore request timeout overrides', () => {
     ).toBeNull();
     expect(store.listServers()).toHaveLength(1);
   });
+
+  test('keeps a failed batch insert from publishing any rows', () => {
+    const existing = store.createServer({ name: 'existing', transportType: 'stdio', command: 'node' });
+    const create = (name: string) => ({ name, transportType: 'stdio' as const, command: 'node' });
+
+    expect(() => store.createDisabledServers([create('first'), create('existing')])).toThrow();
+    expect(store.listServers()).toEqual([existing]);
+  });
 });

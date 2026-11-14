@@ -103,14 +103,21 @@ export const discoverExtensionMcpServers = async (
   );
 };
 
-export const readNativeMcpServerNames = (configPath: string): ReadonlySet<string> => {
-  if (!fs.existsSync(configPath)) return new Set();
+export const readNativeMcpServerNames = (configPath: string, strict = false): ReadonlySet<string> => {
+  if (!strict && !fs.existsSync(configPath)) return new Set();
   let config: unknown;
   try {
-    config = JSON5.parse(fs.readFileSync(configPath, 'utf8'));
+    const content = fs.readFileSync(configPath, 'utf8');
+    config = strict ? JSON.parse(content) : JSON5.parse(content);
   } catch (error) {
+    if (strict && (error as NodeJS.ErrnoException).code === 'ENOENT') return new Set();
     // Preserve the existing configuration recovery path for syntactically damaged files.
-    if (error instanceof SyntaxError) return new Set();
+    if (!strict && error instanceof SyntaxError) return new Set();
+    throw new Error('Native MCP configuration could not be read for ownership discovery');
+  }
+  if (strict && (!isRecord(config) ||
+    (config.mcp !== undefined && (!isRecord(config.mcp) ||
+      (config.mcp.servers !== undefined && !isRecord(config.mcp.servers)))))) {
     throw new Error('Native MCP configuration could not be read for ownership discovery');
   }
   const servers =

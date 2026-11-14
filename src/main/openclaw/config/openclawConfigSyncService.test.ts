@@ -20,6 +20,7 @@ import {
   resolveDeferredGatewayRestartAction,
   resolveOpenClawConfigApplyMode,
 } from './openclawConfigSyncService';
+import { mergeNativeMcpOverrides } from './plugins/nativeMcpOverrides';
 
 describe('resolveOpenClawConfigApplyMode', () => {
   it('uses native reload for ordinary config changes while the Gateway is running', () => {
@@ -1156,6 +1157,33 @@ describe('OpenClawConfigSyncService', () => {
     const harness = createHarness({ getExtensionMcpServerNames: async () => names });
     await expect(harness.service.syncConfig({ reason: 'preserve-extension', retiredMcpServerNames: ['old-user-server'] })).resolves.toMatchObject({ success: true });
     expect(harness.configSync.sync).toHaveBeenCalledWith('preserve-extension', names, new Set(['old-user-server']));
+  });
+
+  it('preserves unrelated native MCP definitions during import compensation', async () => {
+    const harness = createHarness({
+      phase: 'ready',
+      getExtensionMcpServerNames: async () => new Set(['extension']),
+    });
+    const native = { mcp: { servers: {
+      external: { command: 'node', args: ['external.js'] },
+      extension: { enabled: false },
+      imported: { command: 'node', enabled: false },
+    } } };
+    await expect(harness.service.syncConfig({
+      reason: 'mcp-server-changed',
+      discoverExternalMcpServers: false,
+      preservedMcpServerNames: ['external'],
+      retiredMcpServerNames: ['imported'],
+    })).resolves.toMatchObject({ success: true });
+    const [, preserved, retired] = harness.configSync.sync.mock.calls[0] as unknown as [
+      string,
+      ReadonlySet<string>,
+      ReadonlySet<string>,
+    ];
+    expect(mergeNativeMcpOverrides(native, {}, preserved, retired)).toEqual({
+      external: native.mcp.servers.external,
+      extension: native.mcp.servers.extension,
+    });
   });
 
   it.each([true, false, undefined])('requests decision snapshot restoration only for explicit rollback: %s', async restoreDecisionModelSnapshot => {

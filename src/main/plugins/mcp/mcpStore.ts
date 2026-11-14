@@ -123,7 +123,7 @@ export class McpStore {
     return this.deserializeRow(row);
   }
 
-  createServer(data: McpServerFormData): McpServerRecord {
+  private insertServer(data: McpServerFormData, enabled: boolean): string {
     const id = crypto.randomUUID();
     const now = Date.now();
     const configJson = this.serializeConfig(data);
@@ -131,11 +131,35 @@ export class McpStore {
     this.db
       .prepare(
         `INSERT INTO mcp_servers (id, name, description, enabled, transport_type, config_json, created_at, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, data.name, data.description?.trim() ?? '', data.transportType, configJson, now, now);
+      .run(
+        id,
+        data.name,
+        data.description?.trim() ?? '',
+        enabled ? 1 : 0,
+        data.transportType,
+        configJson,
+        now,
+        now,
+      );
 
-    return this.getServer(id)!;
+    return id;
+  }
+
+  createServer(data: McpServerFormData): McpServerRecord {
+    return this.getServer(this.insertServer(data, true))!;
+  }
+
+  createDisabledServers(servers: readonly PublicMcpServerFormData[]): string[] {
+    return this.db.transaction(() => servers.map(server => this.insertServer(server, false)))();
+  }
+
+  deleteServers(ids: readonly string[]): void {
+    this.db.transaction(() => {
+      const remove = this.db.prepare('DELETE FROM mcp_servers WHERE id = ?');
+      for (const id of ids) remove.run(id);
+    })();
   }
 
   createDiscoveredServer(
@@ -146,25 +170,7 @@ export class McpStore {
       .get(data.name) as { id: string } | undefined;
     if (existing) return null;
 
-    const id = crypto.randomUUID();
-    const now = Date.now();
-    const configJson = this.serializeConfig(data);
-    this.db
-      .prepare(
-        `INSERT INTO mcp_servers (id, name, description, enabled, transport_type, config_json, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        id,
-        data.name,
-        data.description?.trim() ?? '',
-        data.enabled ? 1 : 0,
-        data.transportType,
-        configJson,
-        now,
-        now,
-      );
-    return this.getServer(id)!;
+    return this.getServer(this.insertServer(data, data.enabled))!;
   }
 
   updateServer(id: string, data: Partial<McpServerFormData>): McpServerRecord | null {

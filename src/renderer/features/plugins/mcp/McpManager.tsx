@@ -1,7 +1,8 @@
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ArrowsRightLeftIcon } from '@heroicons/react/24/outline';
 import { PluginHubScope } from '@shared/plugins/management';
 import { PluginKind } from '@shared/plugins/marketplace';
 import { DEFAULT_MCP_REQUEST_TIMEOUT_SECONDS } from '@shared/plugins/mcp';
+import type { McpImportCommitInput } from '@shared/plugins/mcpTransfer';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 
@@ -30,6 +31,7 @@ import McpServerCard from '@/features/plugins/mcp/McpServerCard';
 import McpServerFormModal from '@/features/plugins/mcp/McpServerFormModal';
 import { mcpService } from '@/features/plugins/mcp/mcpService';
 import { setMcpServers } from '@/features/plugins/mcp/mcpSlice';
+import { McpTransferModal } from '@/features/plugins/mcp/McpTransferModal';
 import { MCP_TRANSPORT_BADGE_COLORS } from '@/features/plugins/mcp/mcpTransport';
 import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import PluginActivityStatus from '@/features/plugins/shared/PluginActivityStatus';
@@ -172,6 +174,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   const [isDeleting, setIsDeleting] = useState(false);
   const [updatingServerIds, setUpdatingServerIds] = useState<Set<string>>(() => new Set());
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [detailArtworkTone, setDetailArtworkTone] = useState(() =>
     getPluginArtworkTone('mcp:user'),
@@ -563,6 +566,28 @@ const McpManager: React.FC<McpManagerProps> = ({
     setIsFormOpen(true);
   };
 
+  const handleCommitImport = async (input: McpImportCommitInput) => {
+    invalidateConnectionResults();
+    const generation = ++inventoryReadGeneration.current;
+    try {
+      const result = await mcpService.commitImport(input);
+      if (mounted.current && generation === inventoryReadGeneration.current) {
+        dispatch(setMcpServers(mcpService.getServers()));
+        const failed = mcpService.hasServerLoadFailed();
+        setServerLoadFailed(failed);
+        setActionError(failed ? i18nService.t('mcpLoadFailed') : '');
+      }
+      return result;
+    } finally {
+      if (mounted.current) {
+        invalidateConnectionResults();
+        if (generation === inventoryReadGeneration.current && !providerReadPending.current) {
+          setIsLoadingServers(false);
+        }
+      }
+    }
+  };
+
   const setServerProbing = (serverId: string, probing: boolean) => {
     setProbingServerIds(current => {
       const next = new Set(current);
@@ -826,6 +851,17 @@ const McpManager: React.FC<McpManagerProps> = ({
     };
   }, []);
 
+  const transferAction = (
+    <button
+      type="button"
+      onClick={() => setIsTransferOpen(true)}
+      className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+    >
+      <ArrowsRightLeftIcon className="h-4 w-4" aria-hidden="true" />
+      {i18nService.t('mcpTransferAction')}
+    </button>
+  );
+
   const userActions = (
     <div className="flex max-w-full flex-wrap items-center justify-end gap-1">
       <button
@@ -835,6 +871,7 @@ const McpManager: React.FC<McpManagerProps> = ({
       >
         + {i18nService.t('addMcpServer')}
       </button>
+      {transferAction}
       <button
         type="button"
         onClick={handleOpenBulkProbe}
@@ -975,6 +1012,9 @@ const McpManager: React.FC<McpManagerProps> = ({
                     />
                   </div>
                 )}
+                {Boolean(searchQuery.trim()) && (
+                  <div className="flex justify-end">{transferAction}</div>
+                )}
                 {isLoadingServers && (
                   <PluginActivityStatus
                     title={i18nService.t('mcpServers')}
@@ -1088,6 +1128,20 @@ const McpManager: React.FC<McpManagerProps> = ({
           </section>
         )}
       </div>
+
+      {isTransferOpen && (
+        <McpTransferModal
+          knownNames={new Set(existingNames)}
+          onClose={() => setIsTransferOpen(false)}
+          onImport={handleCommitImport}
+          onEditImported={id => {
+            const server = mcpService.getServerById(id);
+            if (!server) return;
+            setIsTransferOpen(false);
+            void handleOpenEditForm(server, getPluginArtworkTone('mcp:user'));
+          }}
+        />
+      )}
 
       {/* Delete confirmation modal */}
       {pendingDelete && (

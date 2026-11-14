@@ -5,6 +5,7 @@ import path from 'node:path';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
+import { MCP_TRANSFER_MAX_BYTES, McpTransferIpc } from '../../../shared/plugins/mcpTransfer';
 import { PluginOperationIpc, PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { OpenClawConfigSyncService } from '../../openclaw/config/openclawConfigSyncService';
 import { mergeNativeMcpOverrides } from '../../openclaw/config/plugins/nativeMcpOverrides';
@@ -13,9 +14,11 @@ import type { McpServerRecord, McpStore } from '../../plugins/mcp';
 import { McpConfigSyncService } from '../../plugins/mcp/mcpConfigSyncService';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
+const fileDialogs = vi.hoisted(() => ({ showOpenDialog: vi.fn(), showSaveDialog: vi.fn() }));
 
 vi.mock('electron', () => ({
   BrowserWindow: { getAllWindows: () => [] },
+  dialog: fileDialogs,
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       handlers.set(channel, handler);
@@ -269,6 +272,7 @@ test('does not report success when an MCP mutation target is missing', async () 
 const createMutationHarness = (
   runExclusive?: Parameters<typeof registerMcpHandlers>[0]['runConfigMutationExclusive'],
   nativeNames: { extension?: readonly string[]; configured?: readonly string[] } = {},
+  getMainWindow?: Parameters<typeof registerMcpHandlers>[0]['getMainWindow'],
 ) => {
   const original: McpServerRecord = {
     id: 'server',
@@ -292,6 +296,16 @@ const createMutationHarness = (
       records.set(record.id, record);
       return record;
     }),
+    createDisabledServers: vi.fn((entries: Partial<McpServerRecord>[]) =>
+      entries.map((entry, index) => {
+        const id = `imported-${index}`;
+        records.set(id, { ...original, ...entry, id, enabled: false, openClawConfig: undefined });
+        return id;
+      }),
+    ),
+    deleteServers: vi.fn((ids: string[]) => {
+      for (const id of ids) records.delete(id);
+    }),
     updateServer: vi.fn((id: string, data: Partial<McpServerRecord>) => {
       const previous = records.get(id);
       if (!previous) return null;
@@ -314,6 +328,7 @@ const createMutationHarness = (
   const installationService = new PluginInstallationService();
   registerMcpHandlers({
     getStore: () => store as unknown as McpStore,
+    getMainWindow,
     requestGateway: vi.fn(),
     readExtensionDefinition: vi.fn(async () => null),
     getManagedPluginIds: () => [],
@@ -346,6 +361,170 @@ const createMutationHarness = (
     installationService,
   };
 };
+
+const createTransferWindow = () => {
+  const frame = {};
+  const sender = {
+    mainFrame: frame,
+    isDestroyed: () => false,
+    on: vi.fn(),
+    once: vi.fn(),
+    send: vi.fn(),
+  };
+  const window = {
+    webContents: sender,
+    isDestroyed: () => false,
+  } as unknown as Electron.BrowserWindow;
+  return { window, event: { sender, senderFrame: frame }, sender };
+};
+
+test('requires the current main frame and commits one reviewed batch with correlation', async () => {
+  const { window, event, sender } = createTransferWindow();
+  const native = { configured: ['native-claimed'], extension: ['extension-claimed'] };
+  const harness = createMutationHarness(undefined, native, () => window);
+  const preview = handlers.get(McpTransferIpc.PreviewImport)!;
+  const commit = handlers.get(McpTransferIpc.CommitImport)!;
+  const source = { kind: 'text', text: JSON.stringify({ mcpServers: {
+    'native-claimed': { command: 'node' },
+    'extension-claimed': { command: 'node' },
+    Docs: { command: 'node' },
+    Local: { command: 'node', env: { API_TOKEN: 'private-token' } },
+    Remote: { url: 'http://localhost:7000/mcp' },
+  } }) };
+
+  await expect(preview({ sender, senderFrame: {} }, source)).resolves.toEqual({
+    success: false,
+    code: 'forbidden',
+  });
+  const prepared = await preview(event, source);
+  expect(prepared).toMatchObject({
+    success: true,
+    value: { rows: [
+      { conflict: true }, { conflict: true }, { conflict: true }, { name: 'Local' }, { name: 'Remote' },
+    ] },
+  });
+  expect(JSON.stringify(prepared)).not.toContain('private-token');
+  expect(harness.store.createDisabledServers).not.toHaveBeenCalled();
+  expect(harness.syncConfig).not.toHaveBeenCalled();
+  expect(harness.discoverExternalServers).not.toHaveBeenCalled();
+
+  const token = (prepared as { value: { token: string } }).value.token;
+  const selection = [{ index: 3, name: 'Local copy' }, { index: 4, transportType: 'sse' }];
+  native.configured.push('Local copy');
+  await expect(commit(event, { token, selection })).resolves.toMatchObject({
+    success: false,
+    code: 'conflict',
+    conflictingIndices: [3],
+  });
+  expect(harness.store.createDisabledServers).not.toHaveBeenCalled();
+  const input = { token, selection: [{ index: 3 }, selection[1]] };
+  await expect(commit(event, input, { requestId: 'mcp-import-batch' })).resolves.toMatchObject({
+    success: true,
+    value: { skipped: 3, imported: [{ name: 'Local' }, { name: 'Remote' }] },
+  });
+  expect(harness.records.get('imported-0')).toMatchObject({ enabled: false });
+  expect(harness.records.get('imported-1')).toMatchObject({ enabled: false, transportType: 'sse' });
+  expect(harness.store.createDisabledServers).toHaveBeenCalledOnce();
+  expect(harness.syncConfig).toHaveBeenCalledExactlyOnceWith(
+    [],
+    { requestId: 'mcp-import-batch' },
+    ['native-claimed', 'Local copy'],
+  );
+  await expect(commit(event, input)).resolves.toMatchObject({ success: false, code: 'expired' });
+});
+
+test('removes the entire imported batch after an apply error and compensates once', async () => {
+  const { window, event } = createTransferWindow();
+  const harness = createMutationHarness(undefined, { configured: ['external'] }, () => window);
+  const prepared = await handlers.get(McpTransferIpc.PreviewImport)!(event, {
+    kind: 'text',
+    text: '{"mcpServers":{"First":{"command":"node"},"Second":{"command":"node"}}}',
+  });
+  const token = (prepared as { value: { token: string } }).value.token;
+  harness.syncConfig.mockResolvedValueOnce({ tools: 0, error: 'Native apply failed' });
+
+  await expect(handlers.get(McpTransferIpc.CommitImport)!(event, {
+    token,
+    selection: [{ index: 0 }, { index: 1 }],
+  })).resolves.toMatchObject({
+    success: false,
+    code: 'apply-failed',
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+  });
+  expect([...harness.records.values()]).toEqual([harness.original]);
+  expect(harness.store.deleteServers).toHaveBeenCalledExactlyOnceWith(['imported-0', 'imported-1']);
+  expect(harness.syncConfig.mock.calls).toEqual([
+    [[], undefined, ['external']],
+    [['First', 'Second'], undefined, ['external']],
+  ]);
+});
+
+test('previews only the native dialog selection and enforces the import byte limit', async () => {
+  const { window, event } = createTransferWindow();
+  const harness = createMutationHarness(undefined, {}, () => window);
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-import-'));
+  const filePath = path.join(folder, 'MCP 配置.json');
+  const preview = handlers.get(McpTransferIpc.PreviewImport)!;
+  try {
+    fs.writeFileSync(filePath, Buffer.alloc(MCP_TRANSFER_MAX_BYTES + 1));
+    fileDialogs.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [filePath] });
+    await expect(preview(event, { kind: 'file' })).resolves.toEqual({
+      success: false,
+      code: 'too-large',
+    });
+    fs.writeFileSync(filePath, '{"mcpServers":{"本地":{"command":"node"}}}');
+    fileDialogs.showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [filePath] });
+    await expect(preview(event, { kind: 'file', path: 'ignored.json' })).resolves.toMatchObject({
+      success: true,
+      value: { sourceLabel: 'MCP 配置.json', rows: [{ name: '本地' }] },
+    });
+    expect(fileDialogs.showOpenDialog).toHaveBeenLastCalledWith(
+      window,
+      expect.objectContaining({ properties: ['openFile'] }),
+    );
+    expect(harness.store.createDisabledServers).not.toHaveBeenCalled();
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('masks opted-in header values in the preview and saves the reviewed snapshot', async () => {
+  const { window, event } = createTransferWindow();
+  const harness = createMutationHarness(undefined, {}, () => window);
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-export-'));
+  const filePath = path.join(folder, 'mcp.json');
+  harness.records.set(harness.original.id, { ...harness.original, openClawConfig: undefined });
+  try {
+    const preview = handlers.get(McpTransferIpc.PreviewExport)!;
+    const ids = [harness.original.id];
+    const defaults = await preview(event, { ids });
+    const defaultJson = (defaults as { value: { json: string } }).value.json;
+    expect(JSON.parse(defaultJson).mcpServers.Docs.headers).toEqual({ 'X-Demo': '' });
+    await expect(preview(event, { ids, includeHeaderValues: 'true' })).resolves.toEqual({
+      success: false,
+      code: 'invalid',
+    });
+    const prepared = await preview(event, { ids, includeHeaderValues: true });
+    const { json, token } = (prepared as { value: { json: string; token: string } }).value;
+    expect(JSON.parse(json).mcpServers.Docs.headers).toEqual({ 'X-Demo': '••••' });
+    harness.records.delete(harness.original.id);
+    fileDialogs.showSaveDialog
+      .mockResolvedValueOnce({ canceled: true })
+      .mockResolvedValueOnce({ canceled: false, filePath });
+    const save = handlers.get(McpTransferIpc.SaveExport)!;
+    await expect(save(event, token)).resolves.toEqual({ success: false, code: 'cancelled' });
+    await expect(save(event, token)).resolves.toEqual({ success: true, value: { filePath, count: 1 } });
+    expect(fileDialogs.showSaveDialog).toHaveBeenLastCalledWith(window, expect.objectContaining({
+      defaultPath: 'mcp.json',
+    }));
+    expect(JSON.parse(fs.readFileSync(filePath, 'utf8'))).toEqual({
+      mcpServers: { Docs: { ...JSON.parse(json).mcpServers.Docs, headers: { 'X-Demo': 'original' } } },
+    });
+    expect(harness.discoverExternalServers).not.toHaveBeenCalled();
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
 
 test('reports real queued and runtime-application phases without completing the waiting mutation', async () => {
   vi.spyOn(console, 'info').mockImplementation(() => undefined);

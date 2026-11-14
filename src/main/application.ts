@@ -1858,14 +1858,15 @@ if (agentBridgeArgv) {
 
   registerMcpHandlers({
     getStore: getMcpStore,
+    getMainWindow: () => mainWindow,
     getManagedPluginIds: getApplicationManagedPluginIds,
     requestGateway: <T>(method: string, params?: unknown) =>
       getCoworkEngineService().requestGateway<T>(method, params),
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(({ syncConfig }) =>
-        operation((retiredMcpServerNames, context) =>
+        operation((retiredMcpServerNames, context, preservedMcpServerNames) =>
           getMcpServices().syncConfigAfterExclusiveMutation(
-            options => syncConfig({ ...options, retiredMcpServerNames }),
+            options => syncConfig({ ...options, retiredMcpServerNames, preservedMcpServerNames }),
             context,
           ),
         ),
@@ -1874,8 +1875,8 @@ if (agentBridgeArgv) {
     readResource: readMcpResource,
     listExtensionServers: () => discoverExtensionMcpServers(getOpenClawEngineManager()),
     readExtensionDefinition: id => getMcpServices().readExtensionDefinition(id),
-    getNativeMcpServerNames: () =>
-      readNativeMcpServerNames(getOpenClawEngineManager().getConfigPath()),
+    getNativeMcpServerNames: strict =>
+      readNativeMcpServerNames(getOpenClawEngineManager().getConfigPath(), strict),
     discoverExternalServers: async () => {
       const extensionNames = await discoverExtensionMcpOverrideNames(
         getOpenClawEngineManager(),

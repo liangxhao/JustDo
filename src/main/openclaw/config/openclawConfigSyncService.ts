@@ -79,6 +79,7 @@ type SyncOpenClawConfigOptions = {
   restartGatewayIfRunning?: boolean;
   discoverExternalMcpServers?: boolean;
   retiredMcpServerNames?: readonly string[];
+  preservedMcpServerNames?: readonly string[];
   retiredProviderIds?: readonly string[];
   restoreDecisionModelSnapshot?: boolean;
 };
@@ -526,6 +527,7 @@ export class OpenClawConfigSyncService {
     const status = manager.getStatus();
     if (this.pendingCredentialReload || this.pendingRetiredProviderIds.size > 0 ||
         options.retiredProviderIds?.length || options.retiredMcpServerNames?.length ||
+        options.preservedMcpServerNames?.length ||
         status.phase === EnginePhase.Starting) return completed(unconfirmed());
     const offline = (status.phase === EnginePhase.Ready || status.phase === EnginePhase.Error) &&
       manager.getGatewayProcessId() === null;
@@ -736,14 +738,17 @@ export class OpenClawConfigSyncService {
     const lifecycleGenerationBeforeSync = engineManager.getGatewayLifecycleGeneration();
     const configSync = this.getConfigSync();
     const retiredMcpNames = new Set(options.retiredMcpServerNames);
+    const preservedMcpNames = options.preservedMcpServerNames?.length
+      ? new Set([...extensionMcpNames, ...options.preservedMcpServerNames])
+      : extensionMcpNames;
     const syncResult = options.restoreDecisionModelSnapshot === true
       ? configSync.sync(
           options.reason,
-          extensionMcpNames,
+          preservedMcpNames,
           retiredMcpNames,
           { restoreDecisionModelSnapshot: true },
         )
-      : configSync.sync(options.reason, extensionMcpNames, retiredMcpNames);
+      : configSync.sync(options.reason, preservedMcpNames, retiredMcpNames);
     if (!syncResult.ok) {
       return this.failClosedConfigApplication({
         success: false,

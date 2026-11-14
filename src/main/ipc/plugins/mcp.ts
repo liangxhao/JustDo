@@ -1,4 +1,4 @@
-import { ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { type BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import { getUserMcpManagement } from '../../../shared/plugins/management';
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
@@ -9,6 +9,7 @@ import {
   MCP_NAME_CONFLICT_ERROR,
   type McpServerFormData,
 } from '../../../shared/plugins/mcp';
+import type { McpImportCommitReceipt, McpTransferResult } from '../../../shared/plugins/mcpTransfer';
 import {
   PluginOperationAction,
   type PluginOperationContext,
@@ -27,15 +28,19 @@ import {
   ExtensionMcpSettingsService,
   withExtensionMcpManagement,
 } from '../../plugins/mcp/extensionMcpSettingsService';
+import { McpTransferService } from '../../plugins/mcp/mcpTransferService';
+import { registerMcpTransferHandlers } from './mcpTransfer';
 import { createPluginOperationReporter } from './pluginOperationProgress';
 
 type SyncMcpConfig = (
   retiredMcpServerNames?: readonly string[],
   context?: PluginOperationContext,
+  preservedMcpServerNames?: readonly string[],
 ) => Promise<{ tools: number; error?: string }>;
 
 interface McpHandlerDependencies {
   getStore: () => McpStore;
+  getMainWindow?: () => BrowserWindow | null;
   runConfigMutationExclusive: <T>(
     operation: (syncConfig: SyncMcpConfig) => Promise<T>,
   ) => Promise<T>;
@@ -44,15 +49,22 @@ interface McpHandlerDependencies {
   installationService: PluginInstallationService;
   listExtensionServers: () => Promise<ExtensionProvidedMcpServer[]>;
   readExtensionDefinition: (id: string) => Promise<Record<string, unknown> | null>;
-  getNativeMcpServerNames?: () => ReadonlySet<string>;
+  getNativeMcpServerNames?: (strict?: boolean) => ReadonlySet<string>;
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>;
   getManagedPluginIds?: () => string[];
   discoverExternalServers: () => void | Promise<void>;
   onMarketplacePluginDeleted?: (kind: typeof PluginKind.MCP, runtimeId: string) => void;
 }
 
+class McpMutationApplyError extends Error {
+  constructor(message: string, readonly rollbackIncomplete: boolean) {
+    super(message);
+  }
+}
+
 export const registerMcpHandlers = ({
   getStore,
+  getMainWindow,
   runConfigMutationExclusive,
   probeServer,
   readResource,
@@ -76,7 +88,7 @@ export const registerMcpHandlers = ({
             .listServers()
             .map(server => server.name),
         );
-        return operation((_retiredNames, context) => {
+        return operation((_retiredNames, context, preservedNames) => {
           const currentNames = new Set(
             getStore()
               .listServers()
@@ -85,6 +97,7 @@ export const registerMcpHandlers = ({
           // A rollback must also retire names projected by the failed attempt.
           for (const name of currentNames) projectionNames.add(name);
           const retiredNames = [...projectionNames].filter(name => !currentNames.has(name));
+          if (preservedNames?.length) return syncConfig(retiredNames, context, preservedNames);
           return context ? syncConfig(retiredNames, context) : syncConfig(retiredNames);
         });
       }),
@@ -124,15 +137,16 @@ export const registerMcpHandlers = ({
         );
       }
       if (rollbackErrors.length > 0) {
-        console.error('[OpenClawMcp] MCP mutation rollback incomplete:', rollbackErrors);
+        console.error('[OpenClawMcp] MCP mutation rollback incomplete');
       }
-      throw new Error(
+      throw new McpMutationApplyError(
         [
           error instanceof Error ? error.message : 'Failed to synchronize MCP configuration',
           ...(rollbackErrors.length > 0
             ? [`Rollback incomplete: ${rollbackErrors.join('; ')}`]
             : []),
         ].join(' '),
+        rollbackErrors.length > 0,
       );
     }
   };
@@ -154,8 +168,9 @@ export const registerMcpHandlers = ({
     progress.report(PluginOperationStage.QUEUED);
     return runMcpOperationExclusive(syncConfig => {
       progress.report(PluginOperationStage.VALIDATING);
-      return operation(async retiredNames => {
+      return operation(async (retiredNames, _context, preservedNames) => {
         if (!rollingBack) progress.report(PluginOperationStage.APPLYING_CONFIGURATION);
+        if (preservedNames?.length) return syncConfig(retiredNames, context, preservedNames);
         return context ? syncConfig(retiredNames, context) : syncConfig(retiredNames);
       }, report);
     })
@@ -200,6 +215,71 @@ export const registerMcpHandlers = ({
     if (getNativeMcpServerNames().has(name)) return true;
     return (await listExtensionServers()).some(server => server.name === name);
   };
+
+  if (getMainWindow) {
+    const service = new McpTransferService();
+    const readNames = async () => {
+      const extensionServers = await listExtensionServers();
+      const storeNames = new Set(getStore().listServers().map(server => server.name));
+      const nativeNames = getNativeMcpServerNames(true);
+      return {
+        occupied: new Set([...storeNames, ...nativeNames, ...extensionServers.map(server => server.name)]),
+        preserved: [...nativeNames].filter(name => !storeNames.has(name)),
+      };
+    };
+    registerMcpTransferHandlers({
+      getMainWindow,
+      service,
+      readNames: () => runMcpOperationExclusive(async () => (await readNames()).occupied),
+      readServers: () => runMcpOperationExclusive(async () => getStore().listServers()),
+      commit: (event, owner, input, context) => runMcpMutationWithProgress<McpTransferResult<McpImportCommitReceipt>>(
+        event,
+        context,
+        PluginOperationAction.INSTALL,
+        async (syncConfig, report) => {
+          let preservedNames: readonly string[] = [];
+          const plan = await service.planImport(owner, input, async () => {
+            const names = await readNames();
+            preservedNames = names.preserved;
+            return names.occupied;
+          });
+          if (plan.success === false) return plan;
+          const store = getStore();
+          try {
+            report(PluginOperationStage.SAVING_CONFIGURATION);
+            const ids = store.createDisabledServers(plan.value.servers.map(server => server.config));
+            await syncMcpMutation(
+              (retired, syncContext) => syncConfig(retired, syncContext, preservedNames),
+              () => store.deleteServers(ids),
+              report,
+            );
+            report(PluginOperationStage.REFRESHING_INVENTORY);
+            return {
+              success: true,
+              value: {
+                imported: plan.value.servers.map((server, index) => ({
+                  id: ids[index],
+                  name: server.config.name,
+                  missingCredentials: server.missingCredentials,
+                })),
+                skipped: plan.value.skipped,
+                ...refreshServersAfterMutation(),
+              },
+            };
+          } catch (error) {
+            return {
+              success: false,
+              code: 'apply-failed',
+              ...(error instanceof McpMutationApplyError && error.rollbackIncomplete
+                ? { operationUnconfirmed: true }
+                : {}),
+            };
+          }
+        },
+      ),
+    });
+  }
+
   installationService.registerInstaller({
     kind: PluginKind.MCP,
     install: request => {
