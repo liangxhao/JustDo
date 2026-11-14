@@ -10,6 +10,7 @@ import type {
 
 const RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const GLOBAL_LIMIT = 20_000;
+const EXPORT_RUN_LIMIT = 512;
 
 export function initializeSessionDiagnosticsTables(db: Database.Database): void {
   db.exec(`
@@ -107,6 +108,70 @@ export class SessionDiagnosticsStore {
       ) as RunRow[];
     const runs = rows.slice(0, 20).map(mapRun);
     return { runs, ...(rows.length > 20 ? { nextCursor: runs[19].id } : {}) };
+  }
+
+  /** Retained product turns and exclusive native receipts for whole-session export. */
+  listExportRuns(sessionId: string) {
+    const rows = this.db.prepare(
+      `WITH selected AS (
+        SELECT * FROM cowork_session_runs WHERE session_id = ?
+        ORDER BY started_at DESC, id DESC LIMIT ?
+      ), candidate_ids AS (
+        SELECT root_run_id AS value FROM selected WHERE root_run_id IS NOT NULL
+        UNION SELECT client_turn_id FROM selected
+      ), matches AS (
+        SELECT root_run_id AS value, id FROM cowork_session_runs
+          WHERE root_run_id IN (SELECT value FROM candidate_ids)
+        UNION
+        SELECT client_turn_id AS value, id FROM cowork_session_runs
+          WHERE client_turn_id IN (SELECT value FROM candidate_ids)
+      ), owners AS (
+        SELECT value, count(*) AS owners FROM matches GROUP BY value
+      )
+      SELECT selected.*, roots.owners AS root_owners, turns.owners AS turn_owners
+      FROM selected
+      LEFT JOIN owners AS roots ON roots.value = selected.root_run_id
+      LEFT JOIN owners AS turns ON turns.value = selected.client_turn_id
+      ORDER BY selected.started_at DESC, selected.id DESC`,
+    ).all(sessionId, EXPORT_RUN_LIMIT + 1) as Array<RunRow & {
+      root_run_id?: string;
+      client_turn_id: string;
+      root_owners?: number;
+      turn_owners?: number;
+      accepted_at?: number | null;
+      model_ref?: string | null;
+    }>;
+    const runs = rows.slice(0, EXPORT_RUN_LIMIT).map(row => ({
+      ...mapRun(row),
+      acceptedAt: row.accepted_at ?? undefined,
+      configuredModel: row.model_ref ?? undefined,
+      nativeRunIds: [...new Set([
+        row.root_owners === 1 ? row.root_run_id : undefined,
+        row.turn_owners === 1 ? row.client_turn_id : undefined,
+      ])].filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 256),
+    })).reverse();
+    return { runs, limited: rows.length > EXPORT_RUN_LIMIT };
+  }
+
+  haveExclusiveExportReceipts(runs: readonly { id: string; nativeRunIds: readonly string[] }[]): boolean {
+    const owners = Object.fromEntries(runs.flatMap(run =>
+      run.nativeRunIds.map(receipt => [receipt, run.id]),
+    ));
+    const count = Object.keys(owners).length;
+    if (!count) return true;
+    const row = this.db.prepare(
+      `WITH keys AS (SELECT key AS receipt, value AS owner FROM json_each(?)), matches AS (
+        SELECT root_run_id AS value, id FROM cowork_session_runs
+          WHERE root_run_id IN (SELECT receipt FROM keys)
+        UNION
+        SELECT client_turn_id AS value, id FROM cowork_session_runs
+          WHERE client_turn_id IN (SELECT receipt FROM keys)
+      ), counts AS (
+        SELECT value, min(id) AS owner FROM matches GROUP BY value HAVING count(*) = 1
+      ) SELECT count(*) AS count FROM counts JOIN keys
+        ON counts.value = keys.receipt AND counts.owner = keys.owner`,
+    ).get(JSON.stringify(owners)) as { count: number };
+    return row.count === count;
   }
 
   append(sessionId: string, event: DiagnosticEvent): void {

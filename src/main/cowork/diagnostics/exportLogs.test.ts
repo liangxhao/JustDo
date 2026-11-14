@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import { DiagnosticExportLogs, redactDiagnosticLog } from './exportLogs';
 
+const logTime = '2026-09-28T10:00:00.000Z';
+const logTimestamp = Date.parse(logTime);
+const localLogTime = (timestamp: number) => {
+  const date = new Date(timestamp);
+  return new Date(timestamp - date.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, -1)
+    .replace('T', ' ');
+};
+
 describe('local diagnostic log text export', () => {
   it('keeps the error and stack while masking common credential formats', () => {
     const text =
@@ -24,6 +34,209 @@ describe('local diagnostic log text export', () => {
     expect(safe).toContain('missing required path');
     expect(safe).toContain('ECONNREFUSED');
     expect(safe).not.toContain('SECRET');
+  });
+
+  it('normalizes verified source times in place and preserves differing times and native metadata', () => {
+    const capture = new DiagnosticExportLogs();
+    const original = '2026-09-28T18:00:00.000+08:00';
+    const differentTime = '2026-09-28T10:00:00.012+00:00';
+    capture.append('main', `[${localLogTime(logTimestamp)}] [info] started`, 'run', {
+      id: 'log-main-1',
+      timestamp: logTimestamp,
+      level: 'info',
+    });
+    capture.append(
+      'cowork',
+      `[${original}] [INFO] using original payload time ${original}`,
+      'run',
+      {
+        id: 'log-cowork-1',
+        timestamp: logTimestamp,
+        level: 'info',
+      },
+    );
+    capture.append('gateway', `[${original}] [stdout] independent time`, 'run', {
+      id: 'log-gateway-1',
+      timestamp: logTimestamp + 12,
+      level: 'info',
+    });
+    const nativeRecord = {
+      time: original,
+      hostname: 'host',
+      0: 'a native message',
+      message: 'a native message',
+      _meta: {
+        date: logTime,
+        hostname: 'host',
+        logLevelName: 'INFO',
+        path: { fileName: 'log.ts' },
+      },
+      context: { time: original },
+    };
+    capture.append('native', JSON.stringify(nativeRecord), 'run', {
+      id: 'log-native-1',
+      timestamp: logTimestamp,
+      level: 'info',
+    });
+    const distinctRecord = {
+      ...nativeRecord,
+      _meta: { ...nativeRecord._meta, date: differentTime, hostname: 'worker' },
+      message: 'a different message',
+    };
+    capture.append('native', JSON.stringify(distinctRecord), 'run', {
+      id: 'log-native-2',
+      timestamp: logTimestamp,
+      level: 'info',
+    });
+    const metaOnly = {
+      ...nativeRecord,
+      time: undefined,
+      _meta: { ...nativeRecord._meta, date: original },
+    };
+    capture.append('native', JSON.stringify(metaOnly), 'run', {
+      id: 'log-native-3',
+      timestamp: logTimestamp,
+      level: 'info',
+    });
+
+    const result = capture.finish();
+
+    expect(result.entries['logs/main.log']).toBe(`[${logTime}] [info] started\n`);
+    expect(result.entries['logs/cowork.log']).toBe(
+      `[${logTime}] [INFO] using original payload time ${original}\n`,
+    );
+    expect(result.entries['logs/gateway.log']).toBe(`[${original}] [stdout] independent time\n`);
+    expect(
+      result.entries['logs/native.log']
+        .trimEnd()
+        .split('\n')
+        .map(line => JSON.parse(line)),
+    ).toEqual([
+      {
+        time: logTime,
+        hostname: 'host',
+        0: 'a native message',
+        context: { time: original },
+        _meta: { logLevelName: 'INFO', path: { fileName: 'log.ts' } },
+      },
+      { ...distinctRecord, time: logTime },
+      {
+        hostname: 'host',
+        0: 'a native message',
+        context: { time: original },
+        _meta: { date: logTime, logLevelName: 'INFO', path: { fileName: 'log.ts' } },
+      },
+    ]);
+  });
+
+  it('omits only one matching console copy per retained Gateway row and preserves forwarded errors', () => {
+    const capture = new DiagnosticExportLogs();
+    const gateway = (
+      id: number,
+      stream: string,
+      body: string,
+      association: 'run' | 'time_window' = 'run',
+    ) =>
+      capture.append('gateway', `[${logTime}] [${stream}] ${body}`, association, {
+        id: `log-gateway-${id}`,
+        timestamp: logTimestamp,
+        level: 'unknown',
+      });
+    const main = (id: number, stream: string, body: string, delay: number) => {
+      const timestamp = logTimestamp + delay;
+      const level = stream === 'stderr' ? 'error' : 'info';
+      capture.append(
+        'main',
+        `[${localLogTime(timestamp)}] [${level}] [OpenClaw ${stream}] ${body}`,
+        'run',
+        {
+          id: `log-main-${id}`,
+          timestamp,
+          level,
+        },
+      );
+    };
+    const date = new Date(logTimestamp);
+    const offset = -date.getTimezoneOffset();
+    const hours = String(Math.floor(Math.abs(offset) / 60)).padStart(2, '0');
+    const minutes = String(Math.abs(offset) % 60).padStart(2, '0');
+    const forwardedTime = `${localLogTime(logTimestamp).replace(' ', 'T')}${offset >= 0 ? '+' : '-'}${hours}:${minutes}`;
+    gateway(1, 'stdout', `nearby ${logTime}`);
+    gateway(2, 'stderr', 'Error: provider timed out');
+    gateway(3, 'stdout', 'two redactions token=FIRST');
+    gateway(4, 'stdout', 'wrong stream');
+    gateway(5, 'stdout', 'weaker association', 'time_window');
+    main(1, 'stdout', `nearby ${forwardedTime}`, 1);
+    main(2, 'stdout', `nearby ${forwardedTime}`, 2);
+    main(3, 'stderr', 'Error: provider timed out', 2);
+    main(4, 'stderr', 'wrong stream', 3);
+    main(5, 'stdout', 'two redactions token=SECOND', 5);
+    main(6, 'stdout', 'weaker association', 6);
+    main(7, 'stdout', `nearby ${forwardedTime}`, 101);
+
+    const result = capture.finish();
+
+    expect(result.coverage[0]).toMatchObject({
+      seenRecords: 7,
+      records: 5,
+      omitted: 0,
+      duplicateRecords: 2,
+    });
+    expect(result.entries['logs/main.log'].match(/nearby/g)).toHaveLength(2);
+    expect(result.entries['logs/main.log']).toContain('two redactions token=[REDACTED]');
+    expect(result.entries['logs/main.log']).toContain('weaker association');
+    expect(result.entries['logs/gateway.log']).not.toContain('provider timed out');
+    expect(result.entries['errors.log']).toBe(
+      `[${logTime}] [stderr] Error: provider timed out\n[${new Date(logTimestamp + 3).toISOString()}] [error] [OpenClaw stderr] wrong stream\n`,
+    );
+    expect(result.index).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 'log-main-1' })]),
+    );
+    expect(result.index?.find(record => record.id === 'log-gateway-2')).toMatchObject({
+      file: 'errors.log',
+      line: 1,
+      endLine: 1,
+      level: 'error',
+      source: 'gateway',
+    });
+    expect(result.coverage[0].bytes).toBe(
+      Buffer.byteLength(result.entries['logs/main.log']) +
+        Buffer.byteLength(result.entries['errors.log'].split('\n')[1] + '\n'),
+    );
+  });
+
+  it('retains the Main error if the corresponding Gateway line was evicted', () => {
+    const capture = new DiagnosticExportLogs();
+    capture.append('gateway', `[${logTime}] [stderr] Error: fallback`, 'time_window', {
+      id: 'log-gateway-1',
+      timestamp: logTimestamp,
+      level: 'unknown',
+    });
+    for (let index = 2; index <= 2049; index++) {
+      capture.append('gateway', `record ${index}`, 'run', {
+        id: `log-gateway-${index}`,
+        timestamp: logTimestamp,
+        level: 'info',
+      });
+    }
+    capture.append(
+      'main',
+      `[${localLogTime(logTimestamp)}] [error] [OpenClaw stderr] Error: fallback`,
+      'time_window',
+      {
+        id: 'log-main-1',
+        timestamp: logTimestamp,
+        level: 'error',
+      },
+    );
+
+    const result = capture.finish();
+
+    expect(result.entries['errors.log']).toBe(
+      `[${logTime}] [error] [OpenClaw stderr] Error: fallback\n`,
+    );
+    expect(result.coverage[0]).not.toHaveProperty('duplicateRecords');
+    expect(result.coverage[2].omitted).toBe(1);
   });
 
   it('keeps more than the UI preview limit and reports source byte omissions', () => {

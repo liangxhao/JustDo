@@ -156,6 +156,20 @@ export const resolveOpenClawRuntimeResourcePaths = (
   managedSkillsDir: path.join(stateDir, 'skills'),
 });
 
+export const getOpenClawStateDirectory = (): string =>
+  path.join(app.getPath('userData'), 'openclaw', 'state');
+
+export const listOpenClawRuntimeRootCandidates = (): string[] =>
+  app.isPackaged
+    ? [path.join(process.resourcesPath, 'cfmind')]
+    : [
+        path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
+        path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
+      ];
+
+export const findInstalledOpenClawRuntimeRoot = (): string | null =>
+  findPath(listOpenClawRuntimeRootCandidates());
+
 export const buildInitialOpenClawConfig = (): Record<string, unknown> => ({
   gateway: { mode: 'local' },
 });
@@ -349,7 +363,7 @@ export class OpenClawEngineManager extends EventEmitter {
     const userDataPath = app.getPath('userData');
     this.baseDir = path.join(userDataPath, 'openclaw');
     this.logsDir = path.join(this.baseDir, 'logs');
-    this.stateDir = path.join(this.baseDir, 'state');
+    this.stateDir = getOpenClawStateDirectory();
 
     this.gatewayTokenPath = path.join(this.stateDir, 'gateway-token');
     this.gatewayPortPath = path.join(this.stateDir, 'gateway-port.json');
@@ -1498,14 +1512,7 @@ export class OpenClawEngineManager extends EventEmitter {
   }
 
   private resolveRuntimeMetadata(): RuntimeMetadata {
-    const candidateRoots = app.isPackaged
-      ? [path.join(process.resourcesPath, 'cfmind')]
-      : [
-          path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
-          path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
-        ];
-
-    const runtimeRoot = findPath(candidateRoots);
+    const runtimeRoot = findInstalledOpenClawRuntimeRoot();
     const expectedPathHint = app.isPackaged
       ? path.join(process.resourcesPath, 'cfmind')
       : path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current');

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import yauzl from 'yauzl';
@@ -8,6 +9,8 @@ import yauzl from 'yauzl';
 import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { buildDiagnosticArchive, writeDiagnosticArchive } from './exporter';
 import { DiagnosticExportLogs } from './exportLogs';
+import { collectDiagnosticPluginInventory } from './exportPluginInventory';
+import { DiagnosticExportRequests } from './exportRequests';
 import { collectDiagnosticLogs } from './logCollector';
 
 const report = (): DiagnosticReport => ({
@@ -37,6 +40,72 @@ const report = (): DiagnosticReport => ({
       phase: 'start',
     },
   ],
+});
+
+it('adds redacted session details to the existing report and distinguishes the selected run model', () => {
+  const entries = buildDiagnosticArchive(report(), '1.0.0', 'zh', undefined, {
+    collectedAt: 20,
+    session: {
+      title: '<项目复盘>\n token=private-title-token',
+      cwd: 'E:/工作区',
+      createdAt: 1,
+      updatedAt: 19,
+      executionMode: 'local',
+      status: 'error',
+      agentId: 'raw-agent',
+      groupId: 'raw-group',
+      modelRef: 'provider/current',
+    },
+    groupName: '研究',
+    runModelRef: 'provider/selected',
+    native: {
+      nativeSessionId: 'raw-native-session',
+      nativeSessionSource: 'gateway_describe',
+      usage: {
+        models: ['provider/recorded'],
+        counts: { total: 5, user: 3, assistant: 2, toolCalls: 1 },
+        tokens: { input: 80, output: 20, total: 100 },
+      },
+    },
+  });
+  expect(Object.keys(entries).sort()).toEqual(['report.json', 'summary.md']);
+  const data = JSON.parse(entries['report.json']);
+  expect(data.session).toMatch(/^id-\d+$/);
+  expect(data.sessionDetails).toEqual({
+    scope: 'session_at_export',
+    collectedAt: '1970-01-01T00:00:00.020Z',
+    title: '<项目复盘>  token=[REDACTED]',
+    workingDirectory: 'E:/工作区',
+    createdAt: '1970-01-01T00:00:00.001Z',
+    updatedAt: '1970-01-01T00:00:00.019Z',
+    savedStatus: 'error',
+    executionMode: 'local',
+    source: 'desktop',
+    agent: expect.stringMatching(/^id-\d+$/),
+    group: expect.stringMatching(/^id-\d+$/),
+    nativeSession: expect.stringMatching(/^id-\d+$/),
+    nativeSessionSource: 'gateway_describe',
+    groupName: '研究',
+    configuredModel: 'provider/current',
+    usage: {
+      source: 'gateway_instance_rollup',
+      models: ['provider/recorded'],
+      messages: { total: 5, user: 3, assistant: 2, toolCalls: 1 },
+      tokens: { input: 80, output: 20, total: 100 },
+    },
+  });
+  expect(data.run.configuredModel).toBe('provider/selected');
+  expect(data.archive).toMatchObject({
+    metadataIdentifiersAliased: true,
+    identifiersAliased: false,
+    sessionTextMayIncludeTaskContent: true,
+  });
+  expect(entries['summary.md']).toContain('## 导出时的会话详情');
+  expect(entries['summary.md']).toContain('&lt;项目复盘&gt;');
+  expect(entries['summary.md']).toContain('运行服务统计的消息数: 5');
+  expect(JSON.stringify(entries)).not.toMatch(
+    /private-title-token|raw-agent|raw-group|raw-native-session/,
+  );
 });
 
 it.each(['en', 'zh'] as const)(
@@ -571,12 +640,135 @@ describe('diagnostic archive', () => {
     const data = JSON.parse(files['report.json']);
     expect(data.history.status).toBe('unavailable');
     expect(data.archive).toMatchObject({
-      formatVersion: 3,
+      formatVersion: 5,
       rawLogsIncluded: false,
       conversationFailureExcerptsIncluded: false,
       exportedLogCoverage: Array.from({ length: 4 }, () => expect.objectContaining({ records: 0 })),
     });
     expect(await fs.readdir(path.dirname(destination))).toEqual(['中文 diagnostics.zip']);
+  });
+
+  it('writes the conversation and inventory beside a report with linked request receipts', async () => {
+    const destination = path.join(await temporary(), 'full.zip');
+    const input = report();
+    const requests = new DiagnosticExportRequests({
+      sessionKey: 'session-key',
+      nativeSessionId: 'physical-id',
+      selectedRunIds: ['SECRET-native'],
+    });
+    requests.append(
+      [
+        {
+          type: 'runtime_services.model_call',
+          phase: 'ended',
+          outcome: 'completed',
+          callId: 'native-call-id',
+          runId: 'SECRET-native',
+          sessionId: 'physical-id',
+          sessionKey: 'session-key',
+          durationMs: 200,
+          requestPayloadBytes: 1234,
+        },
+      ],
+      123,
+    );
+    const plugins = await collectDiagnosticPluginInventory({
+      readMcpServers: () => [{ id: 'test-mcp', name: 'Local MCP', enabled: false }],
+    });
+    const contextDocument = {
+      messages: [{ message: { role: 'user', content: 'task input' } }],
+      toolInputs: [],
+      compactions: [],
+    };
+    const contextEntry = `${JSON.stringify(contextDocument, null, 2)}\n`;
+    const capture = new DiagnosticExportLogs();
+    const at = Date.parse('2026-11-14T20:00:00.456+08:00');
+    const sources = [
+      ['main', '[info] app context'],
+      ['cowork', '[INFO] cowork context'],
+      ['gateway', '[stdout] gateway context'],
+      ['native', ''],
+    ] as const;
+    for (const [source, body] of sources) {
+      const raw =
+        source === 'native'
+          ? '{"time":"2026-11-14T20:00:00.456+08:00","message":"native context"}'
+          : `[2026-11-14T20:00:00.456+08:00] ${body}`;
+      capture.append(source, raw, 'run', { id: `log-${source}-1`, timestamp: at, level: 'info' });
+    }
+    capture.append('main', '[2026-11-14T20:00:00.456+08:00] [error] Tool failed', 'run', {
+      id: 'log-main-2',
+      timestamp: at,
+      level: 'error',
+    });
+    const entries = buildDiagnosticArchive(input, '2026.8.27', 'zh', capture.finish(), undefined, {
+      runs: { limited: false, runs: [{ ...input.run!, nativeRunIds: ['SECRET-native'] }] },
+      context: {
+        entry: {
+          bytes: Buffer.byteLength(contextEntry),
+          open: () => Readable.from([Buffer.from(contextEntry)]),
+        },
+        coverage: {
+          source: 'gateway_chat_history',
+          status: 'partial',
+          pagesRead: 1,
+          reasons: ['upstream_truncation'],
+          messages: 1,
+          activityItems: 0,
+          upstreamTruncatedMessages: 1,
+          recoveredMessages: 0,
+          toolInputs: 0,
+          compactions: 0,
+          bytes: Buffer.byteLength(contextEntry),
+        },
+      },
+      plugins,
+      requests,
+    });
+    await writeDiagnosticArchive(destination, entries, () => {});
+    const files = await readZip(destination);
+    expect(Object.keys(files).sort()).toEqual([
+      'context.json',
+      'errors.log',
+      'logs/cowork.log',
+      'logs/gateway.log',
+      'logs/main.log',
+      'logs/native.log',
+      'plugins.json',
+      'report.json',
+      'summary.md',
+    ]);
+    for (const file of ['errors.log', 'logs/cowork.log', 'logs/gateway.log', 'logs/main.log']) {
+      expect(files[file]).toMatch(/^\[2026-11-14T12:00:00\.456Z\]/);
+    }
+    expect(JSON.parse(files['logs/native.log']).time).toBe('2026-11-14T12:00:00.456Z');
+    expect(files['report.json']).toContain(`${os.EOL}  "sessionContext": {${os.EOL}`);
+    expect(files['report.json'].endsWith(`}${os.EOL}`)).toBe(true);
+    expect(files['plugins.json']).toContain(`${os.EOL}  "mcpServers": {${os.EOL}`);
+    const data = JSON.parse(files['report.json']);
+    expect(data.archive).toMatchObject({
+      formatVersion: 5,
+      transcriptsIncluded: true,
+      identifiersAliased: false,
+    });
+    expect(data.sessionContext).toMatchObject({ file: 'context.json', messages: 1 });
+    expect(data.requests.calls[0]).toMatchObject({
+      association: 'selected_run',
+      endedAt: '1970-01-01T00:00:00.123Z',
+      durationMs: 200,
+      run: data.turnReceipts.turns[0].nativeRuns[0],
+      requestPayloadBytes: 1234,
+    });
+    expect(data.requests).not.toHaveProperty('nativeLogs');
+    expect(data.run.startedAt).toBe('1970-01-01T00:00:00.001Z');
+    expect(data.events[0].observedAt).toBe('1970-01-01T00:00:00.002Z');
+    expect(data).not.toHaveProperty('environment');
+    expect(files['report.json']).not.toMatch(/native-call-id|physical-id|task input/);
+    expect(files['summary.md']).toContain('context.json');
+    expect(JSON.parse(files['context.json'])).toEqual(contextDocument);
+    expect(JSON.parse(files['plugins.json']).mcpServers.entries).toMatchObject([
+      { name: 'Local MCP', configuredEnabled: false },
+    ]);
   });
 
   it('exports reviewed log evidence with coverage and rejects injected free text', async () => {
@@ -629,7 +821,7 @@ describe('diagnostic archive', () => {
     expect(
       JSON.parse(buildDiagnosticArchive(invalidMetrics, '2026.8.27', 'zh')['report.json']).logs
         .records[0].metrics,
-    ).toEqual({});
+    ).toBeUndefined();
     const forged = structuredClone(input);
     Object.assign(forged.logs!.records[0], {
       basis: 'SECRET-basis',
@@ -658,6 +850,90 @@ describe('diagnostic archive', () => {
     expect(await fs.readFile(destination, 'utf8')).toBe('original');
     expect(await fs.readdir(directory)).toEqual(['existing.zip']);
   });
+
+  it('streams context larger than the in-memory archive budget into the ZIP', async () => {
+    const destination = path.join(await temporary(), 'long-conversation.zip');
+    const prefix = Buffer.from('{"messages":[{"content":"');
+    const chunk = Buffer.alloc(1024 * 1024, 'x');
+    const suffix = Buffer.from('"}]}');
+    const chunks = 25;
+    await writeDiagnosticArchive(
+      destination,
+      {
+        'context.json': {
+          bytes: prefix.length + chunks * chunk.length + suffix.length,
+          open: () => Readable.from([prefix, ...Array<Buffer>(chunks).fill(chunk), suffix]),
+        },
+      },
+      () => {},
+    );
+    const files = await readZip(destination);
+    expect(JSON.parse(files['context.json']).messages[0].content.length).toBe(
+      chunks * chunk.length,
+    );
+  });
+
+  it('closes the context stream and preserves the destination when canceled during compression', async () => {
+    const directory = await temporary();
+    const destination = path.join(directory, 'existing.zip');
+    await fs.writeFile(destination, 'original');
+    const controller = new AbortController();
+    const cleanup = vi.fn();
+    async function* chunks() {
+      try {
+        yield Buffer.from('context');
+        controller.abort();
+        yield Buffer.from('more context');
+      } finally {
+        cleanup();
+      }
+    }
+    await expect(
+      writeDiagnosticArchive(
+        destination,
+        { 'context.json': { bytes: 19, open: () => Readable.from(chunks()) } },
+        () => {},
+        { signal: controller.signal },
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(await fs.readFile(destination, 'utf8')).toBe('original');
+    expect(await fs.readdir(directory)).toEqual(['existing.zip']);
+  });
+
+  it('publishes a readable ZIP when the destination filesystem does not support hard links', async () => {
+    const directory = await temporary();
+    const destination = path.join(directory, 'new.zip');
+    vi.spyOn(fs, 'link').mockRejectedValue(Object.assign(new Error(), { code: 'ENOTSUP' }));
+
+    await writeDiagnosticArchive(destination, { 'summary.md': 'safe' }, () => {}, {
+      replaceExisting: false,
+    });
+
+    expect(await readZip(destination)).toEqual({ 'summary.md': 'safe' });
+    expect(await fs.readdir(directory)).toEqual(['new.zip']);
+  });
+
+  it.each(['supported', 'unsupported'] as const)(
+    'preserves a concurrently created target when hard links are %s',
+    async hardLinkSupport => {
+      const directory = await temporary();
+      const destination = path.join(directory, 'existing.zip');
+      await fs.writeFile(destination, 'original');
+      if (hardLinkSupport === 'unsupported') {
+        vi.spyOn(fs, 'link').mockRejectedValue(Object.assign(new Error(), { code: 'ENOTSUP' }));
+      }
+
+      await expect(
+        writeDiagnosticArchive(destination, { 'summary.md': 'safe' }, () => {}, {
+          replaceExisting: false,
+        }),
+      ).rejects.toMatchObject({ code: 'EEXIST' });
+
+      expect(await fs.readFile(destination, 'utf8')).toBe('original');
+      expect(await fs.readdir(directory)).toEqual(['existing.zip']);
+    },
+  );
 
   it('removes temporary output and preserves an existing target when publication fails', async () => {
     const directory = await temporary();

@@ -576,6 +576,44 @@ describe('payload-free bounded diagnostic log collection', () => {
     expect(result.records.map(record => record.association)).toEqual(['run', 'time_window']);
   });
 
+  it('excludes only explicit foreign physical identities in native diagnostic envelopes', async () => {
+    const exported = vi.fn();
+    const record = (extra: Record<string, unknown>) =>
+      line({ time: new Date(time).toISOString(), session_id: 'native-key', ...extra });
+    const result = await collectDiagnosticLogs(
+      report(),
+      empty(),
+      {
+        lines: [
+          record({ type: 'model.call.error', sessionKey: 'native-key', sessionId: 'old-instance' }),
+          record({ type: 'model.call.error', sessionId: 'current-instance', runId: undefined }),
+          record({ 1: { type: 'runtime_services.model_call', sessionId: 'old-instance' } }),
+          record({ 1: { event: 'model_fallback_decision', sessionId: 'old-instance' } }),
+          record({
+            1: {
+              source: 'agent_end',
+              runtimeFailure: 'replay_admission_rejected',
+              sessionId: 'old-instance',
+            },
+          }),
+          record({ 1: { type: 'tool.execution.error', sessionId: 'current-instance' } }),
+          record({
+            1: { type: 'tool.execution.custom', sessionId: 'tool-input', note: 'application data' },
+          }),
+        ],
+      },
+      {
+        nativeSessionKey: 'native-key',
+        nativeSessionId: 'current-instance',
+        onExportRecord: exported,
+      },
+    );
+    expect(result.records.map(item => item.association).sort()).toEqual(['run', 'run', 'session']);
+    expect(result.sources[3].suppressed).toBe(4);
+    expect(exported.mock.calls.map(call => call[1]).join('\n')).not.toContain('old-instance');
+    expect(exported.mock.calls.map(call => call[1]).join('\n')).toContain('application data');
+  });
+
   it('keeps final fatal evidence after noisy retries and sorts selected records by time', async () => {
     const target = await file(
       [

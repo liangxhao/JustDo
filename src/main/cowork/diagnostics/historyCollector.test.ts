@@ -22,6 +22,31 @@ const clientWith = (request: ReturnType<typeof vi.fn>) =>
   ({ request }) as unknown as GatewayClientLike;
 
 describe('native conversation diagnostic scan', () => {
+  it.each(['page', 'cursor'])('discards older evidence when a %s points to a replacement instance', async source => {
+    const request = vi.fn().mockResolvedValueOnce({
+      sessionKey: 'native',
+      sessionId: 'original',
+      messages: [failedTool],
+      ...(source === 'page' ? { hasMore: true, nextOffset: 1 } : { deltaCursor: 'initial' }),
+    }).mockResolvedValueOnce(source === 'page' ? {
+      sessionKey: 'native',
+      sessionId: 'replacement',
+      messages: [],
+    } : {
+      kind: 'delta',
+      messages: [],
+      deltaCursor: 'updated',
+      sessionInfo: { sessionId: 'replacement' },
+    });
+
+    const result = await collectDiagnosticHistory(
+      report, clientWith(request), 'native', undefined, [], 'original',
+    );
+
+    expect(result).toMatchObject({ status: 'changed', reason: 'history_changed', failures: [] });
+    expect(result.lastResponse).toBeUndefined();
+  });
+
   it.each([
     'Persisted user turn changed before replay admission',
     'Error: Persisted user turn changed before replay admission',

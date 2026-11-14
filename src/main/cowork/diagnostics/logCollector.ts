@@ -104,6 +104,23 @@ const NATIVE_EVENTS: Record<string, DiagnosticLogSignal> = {
   'tool.execution.blocked': 'permission',
   'model.call.error': 'provider',
 };
+const NATIVE_IDENTITY_TYPES = new Set([
+  'model.call.started',
+  'model.call.completed',
+  'model.call.error',
+  'tool.execution.started',
+  'tool.execution.completed',
+  'tool.execution.error',
+  'tool.execution.blocked',
+  'harness.run.started',
+  'harness.run.completed',
+  'harness.run.error',
+  'run.started',
+  'run.completed',
+  'run.execution_phase',
+  'runtime_services.model_call',
+]);
+const NATIVE_IDENTITY_EVENTS = ['model_fallback_decision', 'embedded_run_failover_decision'];
 const httpSignal = (status: number | undefined): DiagnosticLogSignal | undefined =>
   status === 401
     ? 'auth'
@@ -316,12 +333,14 @@ export async function collectDiagnosticLogs(
     /** Exact product receipt identities and binding, supplied only by Main. */
     nativeRunIds?: readonly string[];
     nativeSessionKey?: string | null;
+    nativeSessionId?: string;
     onExportRecord?: (
       source: DiagnosticLogSource,
       text: string,
       association: DiagnosticLogRecord['association'],
       metadata: DiagnosticLogExportMetadata,
     ) => void;
+    onNativeRecord?: (fields: readonly Record<string, unknown>[], timestamp?: number) => boolean;
     signal?: AbortSignal;
     onProgress?: (progress: Omit<DiagnosticScanProgress, 'snapshotId'>) => void;
   } = {},
@@ -357,8 +376,14 @@ export async function collectDiagnosticLogs(
   );
   let totalBytes = 0;
   let fileCount = 0;
-  const consume = (text: string, coverage: DiagnosticLogCoverage) => {
+  const tailRecords = new Map<string, number>();
+  const consume = (
+    text: string,
+    coverage: DiagnosticLogCoverage,
+    origin: 'disk' | 'tail' | 'tail_requests_only' = 'disk',
+  ) => {
     let admitted = false;
+    const collectLogs = origin !== 'tail_requests_only';
     const lines = text.split(/\r?\n/);
     const records: string[] = [];
     for (const line of lines) {
@@ -376,7 +401,7 @@ export async function collectDiagnosticLogs(
       } else records.push(line);
     }
     for (const textRecord of records.reverse()) {
-      coverage.recordsRead++;
+      if (collectLogs) coverage.recordsRead++;
       if (
         Date.now() >= deadline ||
         (!options.fullScan && collection.records.length >= MAX_RECORDS) ||
@@ -388,33 +413,66 @@ export async function collectDiagnosticLogs(
         reason(coverage, 'limit');
         continue;
       }
-      if (textRecord.includes('\uFFFD')) {
-        coverage.parseFailures++;
-        coverage.suppressed++;
-        reason(coverage, 'malformed');
+      const parsed = textRecord.includes('\uFFFD')
+        ? undefined
+        : parseRecord(textRecord, coverage.source);
+      if (!parsed || parsed.malformed) {
+        if (collectLogs) {
+          coverage.parseFailures++;
+          coverage.suppressed++;
+          reason(coverage, 'malformed');
+        }
         continue;
       }
-      const parsed = parseRecord(textRecord, coverage.source);
-      if (parsed.malformed) {
-        coverage.parseFailures++;
-        coverage.suppressed++;
-        reason(coverage, 'malformed');
-        continue;
+      if (coverage.source === 'native' && options.onNativeRecord) {
+        const matches = tailRecords.get(textRecord);
+        if (origin === 'disk') {
+          if (matches !== undefined) tailRecords.set(textRecord, matches + 1);
+          options.onNativeRecord(parsed.fields, parsed.timestamp);
+        } else if (matches) {
+          tailRecords.set(textRecord, matches - 1);
+        } else {
+          options.onNativeRecord(parsed.fields, parsed.timestamp);
+        }
       }
-      const ids = (keys: string[]) =>
-        parsed.fields.flatMap(fields =>
+      if (!collectLogs) continue;
+      const ids = (keys: string[], records = parsed.fields) =>
+        records.flatMap(fields =>
           keys.flatMap(key => {
             const value = own(fields, key);
             return typeof value === 'string' && value.length ? [value] : [];
           }),
         );
       const runs = ids(['runId', 'nativeRunId', 'sessionRunId']);
-      const sessions = ids(['sessionId']);
+      // OpenClaw's promoted session_id may contain a session key. Use only
+      // camel-case sessionId from a recognized native diagnostic envelope.
+      const sessions = ids(
+        ['sessionId'],
+        coverage.source === 'native'
+          ? parsed.fields.filter(fields => {
+              const type = own(fields, 'type');
+              const event = own(fields, 'event');
+              const source = own(fields, 'source');
+              return (
+                (typeof type === 'string' && NATIVE_IDENTITY_TYPES.has(type)) ||
+                (typeof event === 'string' && NATIVE_IDENTITY_EVENTS.includes(event)) ||
+                (source === 'agent_end' &&
+                  own(fields, 'runtimeFailure') ===
+                    DiagnosticRuntimeFailure.ReplayAdmissionRejected) ||
+                (source === 'before_prompt_build' &&
+                  typeof own(fields, 'runId') === 'string' &&
+                  typeof own(fields, 'sessionKey') === 'string')
+              );
+            })
+          : parsed.fields,
+      );
+      const expectedSession =
+        coverage.source === 'native' ? options.nativeSessionId : report.sessionId;
       const sessionKeys = ids(['sessionKey']);
       // Known different identities must not be relabelled as this run by timestamp proximity.
       if (
         runs.some(id => !runIds.has(id)) ||
-        (coverage.source !== 'native' && sessions.some(id => id !== report.sessionId)) ||
+        (expectedSession !== undefined && sessions.some(id => id !== expectedSession)) ||
         (options.nativeSessionKey && sessionKeys.some(key => key !== options.nativeSessionKey))
       ) {
         coverage.suppressed++;
@@ -424,9 +482,7 @@ export async function collectDiagnosticLogs(
       let association: DiagnosticLogRecord['association'];
       if (runs.length && runs.every(id => runIds.has(id))) association = 'run';
       else if (
-        (coverage.source !== 'native' &&
-          sessions.length &&
-          sessions.every(id => id === report.sessionId)) ||
+        (expectedSession !== undefined && sessions.length > 0) ||
         (options.nativeSessionKey &&
           sessionKeys.length &&
           sessionKeys.every(key => key === options.nativeSessionKey))
@@ -701,7 +757,7 @@ export async function collectDiagnosticLogs(
     }
     return admitted;
   };
-  const consumeNativeTail = (lines: string[], coverage: DiagnosticLogCoverage) => {
+  const boundedNativeTail = (lines: string[]) => {
     const accepted: string[] = [];
     let tailBytes = 0;
     for (let index = lines.length - 1; index >= 0; index--) {
@@ -710,19 +766,31 @@ export async function collectDiagnosticLogs(
       if (
         Date.now() >= deadline ||
         tailBytes + bytes > FILE_BYTES ||
-        (!options.fullScan && totalBytes + bytes > totalBudget)
+        (!options.fullScan && totalBytes + tailBytes + bytes > totalBudget)
       ) {
-        coverage.truncated = true;
         break;
       }
       accepted.push(line);
       tailBytes += bytes;
-      totalBytes += bytes;
     }
-    coverage.bytesRead += tailBytes;
-    coverage.truncated ||= native?.truncated === true;
+    return {
+      lines: accepted.reverse(),
+      bytes: tailBytes,
+      truncated: accepted.length < lines.length,
+    };
+  };
+  const consumeNativeTail = (
+    tail: ReturnType<typeof boundedNativeTail>,
+    coverage: DiagnosticLogCoverage,
+    collectLogs = true,
+  ) => {
+    if (collectLogs) {
+      coverage.bytesRead += tail.bytes;
+      totalBytes += tail.bytes;
+    }
+    coverage.truncated ||= tail.truncated || native?.truncated === true;
     if (coverage.truncated) reason(coverage, 'limit');
-    consume(accepted.reverse().join('\n'), coverage);
+    consume(tail.lines.join('\n'), coverage, collectLogs ? 'tail' : 'tail_requests_only');
   };
   for (const source of ['main', 'cowork', 'gateway', 'native'] as const) {
     const coverage: DiagnosticLogCoverage = {
@@ -741,6 +809,11 @@ export async function collectDiagnosticLogs(
     const fullFiles = source === 'native' ? native?.files : sources[source];
     if (options.fullScan && fullFiles) {
       const files = [...new Set(fullFiles)];
+      const tail =
+        source === 'native' && native?.lines?.length ? boundedNativeTail(native.lines) : undefined;
+      if (tail && options.onNativeRecord) {
+        for (const line of tail.lines.join('\n').split(/\r?\n/)) if (line) tailRecords.set(line, 0);
+      }
       coverage.filesDiscovered = files.length;
       coverage.filesCompleted = 0;
       coverage.scanComplete = files.length > 0;
@@ -820,15 +893,14 @@ export async function collectDiagnosticLogs(
         }
       }
       if (
-        source === 'native' &&
-        native?.lines?.length &&
+        tail &&
         !coverage.scanComplete &&
-        !admittedFromDisk &&
+        (!admittedFromDisk || options.onNativeRecord) &&
         !options.signal?.aborted
       ) {
-        // Use the already bounded RPC tail only when disk scans yielded no usable records.
-        // Once a disk scan provided data, replaying the tail could export the same record twice.
-        consumeNativeTail(native.lines, coverage);
+        // Request observations may span runs even when disk already supplied chosen-run log text.
+        // Match only the bounded tail against disk records and do not replay raw log evidence.
+        consumeNativeTail(tail, coverage, !admittedFromDisk);
       }
     } else if (source === 'native') {
       if (options.fullScan) coverage.scanComplete = false;
@@ -838,7 +910,7 @@ export async function collectDiagnosticLogs(
         continue;
       }
       coverage.filesRead = 1;
-      consumeNativeTail(native.lines, coverage);
+      consumeNativeTail(boundedNativeTail(native.lines), coverage);
     } else {
       const files = [...new Set(sources[source])];
       if (!files.length) reason(coverage, 'missing');

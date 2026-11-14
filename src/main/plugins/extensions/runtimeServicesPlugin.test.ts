@@ -500,6 +500,56 @@ test('batches exact visible failure details with tool inputs and redacts only er
   });
 });
 
+test('pins history details to the requested native instance across async reads', async () => {
+  const { registerGatewayMethod } = registerPlugin();
+  const handler = registerGatewayMethod.mock.calls.find(
+    ([method]) => method === 'runtimeServices.historyDetails',
+  )![1] as HistoryHandler;
+  const params = {
+    sessionKey: 'agent:main:session-1',
+    sessionId: 'native-session-1',
+    toolCallIds: ['call-1'],
+  };
+  const respond = vi.fn();
+  sdk.getSessionEntry.mockReturnValue({ sessionId: 'different-instance' });
+  await handler({ params, respond });
+  expect(respond).toHaveBeenLastCalledWith(true, { status: 'changed' });
+  expect(sdk.readVisibleSessionTranscriptMessageEntries).not.toHaveBeenCalled();
+
+  sdk.getSessionEntry.mockReturnValueOnce({ sessionId: params.sessionId });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValueOnce([
+    {
+      entryId: 'source-1',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-1', arguments: { private: 'do not publish' } }],
+      },
+    },
+  ]);
+  await handler({ params, respond });
+  expect(respond).toHaveBeenLastCalledWith(true, { status: 'changed' });
+
+  sdk.getSessionEntry.mockReturnValue({ sessionId: params.sessionId });
+  sdk.readVisibleSessionTranscriptMessageEntries.mockResolvedValueOnce([
+    {
+      entryId: 'source-1',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'call-1', arguments: { text: 'x'.repeat(256 * 1024) } }],
+      },
+    },
+  ]);
+  await handler({ params, respond });
+  expect(respond).toHaveBeenLastCalledWith(
+    true,
+    expect.objectContaining({
+      sessionId: params.sessionId,
+      toolInputs: {},
+      truncated: true,
+    }),
+  );
+});
+
 test.each([
   [[], true],
   [[{ type: 'text', text: '  ' }], true],

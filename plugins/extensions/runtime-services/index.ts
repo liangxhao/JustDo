@@ -24,6 +24,7 @@ import { registerExternalMcp } from './external-mcp';
 import { isEmptyFailureSourceContent, projectFailurePartialContent } from './history-failure';
 import { registerMcpAppHistory } from './mcp-app-history';
 import { buildBuiltinModelAuthProvider } from './model-auth';
+import { registerModelCallObservations } from './model-call-observations';
 import { registerReplayAdmissionObservations } from './replay-admission-observations';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
 import { registerOwnerProvider } from './sdk/owner-provider';
@@ -250,6 +251,7 @@ const plugin = {
   description: 'Provides runtime progress, history detail, and embedding capabilities.',
   register(api: OpenClawPluginApi) {
     api.registerProvider(buildBuiltinModelAuthProvider());
+    registerModelCallObservations(api);
     registerReplayAdmissionObservations(api);
     registerCommandResultPolicy(api);
     registerGoalResultPolicy(api);
@@ -310,8 +312,22 @@ const plugin = {
           respond(false, undefined, { code: 'INVALID_REQUEST', message: 'Missing session key' });
           return;
         }
+        if (
+          params.sessionId !== undefined &&
+          (typeof params.sessionId !== 'string' ||
+            !params.sessionId.trim() ||
+            params.sessionId.length > MAX_DETAIL_ID_CHARS)
+        ) {
+          respond(false, undefined, { code: 'INVALID_REQUEST', message: 'Invalid session ID' });
+          return;
+        }
         const sessionKey = params.sessionKey.trim();
+        const expectedSessionId = params.sessionId;
         const entry = getSessionEntry({ sessionKey, readConsistency: 'latest' });
+        if (expectedSessionId !== undefined && entry?.sessionId !== expectedSessionId) {
+          respond(true, { status: 'changed' });
+          return;
+        }
         if (!entry?.sessionId) {
           respond(true, { toolInputs: {}, compactionDetails: {}, failureDetails: {} });
           return;
@@ -386,6 +402,37 @@ const plugin = {
             toolInputs,
             compactionDetails,
           );
+        }
+        if (expectedSessionId !== undefined) {
+          if (
+            getSessionEntry({ sessionKey, readConsistency: 'latest' })?.sessionId !==
+            expectedSessionId
+          ) {
+            respond(true, { status: 'changed' });
+            return;
+          }
+          // The export path reads batches under a separate deadline. Keep each
+          // response bounded even if one tool parameter or summary is oversized.
+          const maxBytes = 256 * 1024;
+          let bytes = 1024;
+          let truncated = false;
+          for (const lookup of [toolInputs, compactionDetails, failureDetails]) {
+            for (const id of Object.keys(lookup)) {
+              const recordBytes = Buffer.byteLength(JSON.stringify({ [id]: lookup[id] }));
+              if (bytes + recordBytes > maxBytes) {
+                delete lookup[id];
+                truncated = true;
+              } else bytes += recordBytes;
+            }
+          }
+          respond(true, {
+            sessionId: expectedSessionId,
+            toolInputs,
+            compactionDetails,
+            failureDetails,
+            truncated,
+          });
+          return;
         }
         respond(true, { toolInputs, compactionDetails, failureDetails });
       },

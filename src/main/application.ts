@@ -168,6 +168,7 @@ import {
   getWorkspaceWindowManager,
   isWorkspaceBrowserHost,
 } from './core/window/workspaceWindowManager';
+import { readDiagnosticNativeExtensions } from './cowork/diagnostics/exportPluginInventory';
 import { orderDiagnosticMainLogs } from './cowork/diagnostics/logSources';
 import { readDiagnosticRuntimeArtifact } from './cowork/diagnostics/runtimeInfo';
 import { SessionDiagnosticsService } from './cowork/diagnostics/service';
@@ -287,6 +288,9 @@ import { ensureExecutionReady } from './openclaw/runtime/executionReadiness';
 import { waitForGatewayStartup } from './openclaw/runtime/gatewayStartup';
 import { acquireOpenClawRuntimeDevLease } from './openclaw/runtime/launch/openclawRuntimeDevLease';
 import {
+  findInstalledOpenClawRuntimeRoot,
+  getOpenClawStateDirectory,
+  listOpenClawRuntimeRootCandidates,
   OpenClawEngineManager,
   type OpenClawEngineStatus,
 } from './openclaw/runtime/openclawEngineManager';
@@ -1167,12 +1171,64 @@ const getSessionDiagnosticsService = (): SessionDiagnosticsService => {
   sessionDiagnosticsService ??= new SessionDiagnosticsService({
     store: new SessionDiagnosticsStore(getStore().getDatabase()),
     hasSession: id => Boolean(getCoworkStore().getSession(id)),
-    getNativeSessionKey: id => {
+    getSessionBinding: id => {
       const session = getCoworkStore().getSession(id);
-      return session
-        ? session.nativeSessionKey || buildCoworkSessionKey(session.id, session.agentId)
-        : null;
+      if (!session) return null;
+      const externalKey = session.external?.sessionKey;
+      if (externalKey && session.nativeSessionKey && externalKey !== session.nativeSessionKey)
+        return null;
+      const key =
+        session.nativeSessionKey ||
+        externalKey ||
+        (session.external ? null : buildCoworkSessionKey(session.id, session.agentId));
+      if (!key) return null;
+      return {
+        key,
+        nativeSessionId:
+          session.historyBinding?.sessionKey === key
+            ? session.historyBinding.nativeSessionId
+            : undefined,
+      };
     },
+    getExportSessionDetails: (id, runId) => {
+      const store = getCoworkStore();
+      const row = store.getSession(id);
+      if (!row) return;
+      const run = runId === undefined ? undefined : store.getSessionRun(runId);
+      return {
+        session: {
+          title: row.title,
+          cwd: row.cwd,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+          status: row.status,
+          executionMode: row.executionMode,
+          source: row.source,
+          externalOrigin: row.external?.origin,
+          agentId: row.agentId,
+          groupId: row.groupId,
+          modelRef: row.modelRef,
+        },
+        groupName: row.groupId ? getGroupStore().getGroup(row.groupId)?.name : undefined,
+        runModelRef: run?.sessionId === id ? run.modelRef : undefined,
+      };
+    },
+    getPluginInventorySources: () => ({
+      readExtensions: signal => {
+        const stateDir = getOpenClawStateDirectory();
+        return readDiagnosticNativeExtensions(
+          {
+            stateDir,
+            configPath: path.join(stateDir, 'openclaw.json'),
+            runtimeRoots: listOpenClawRuntimeRootCandidates(),
+          },
+          signal,
+        );
+      },
+      readMcpServers: () => getMcpStore().listServers(),
+      readSavedHooks: () => getHookStore().listHooks(),
+      readAppPlugins: () => appPlugins?.snapshot(),
+    }),
     getRuntime: getOpenClawRuntimeAdapter,
     getRuntimeArtifact: signal =>
       readDiagnosticRuntimeArtifact(openClawEngineManager?.getRuntimeRoot() ?? null, signal),
@@ -2487,16 +2543,9 @@ if (agentBridgeArgv) {
 
   let startupCoordinator: StartupCoordinator;
   const startupStartedAt = Date.now();
-  const startupNativeStateDir = path.join(app.getPath('userData'), 'openclaw', 'state');
+  const startupNativeStateDir = getOpenClawStateDirectory();
   const startupDatabaseRuntime = new NativeDatabaseUpgradeRuntime({
-    getRuntimeRoot: () =>
-      (app.isPackaged
-        ? [path.join(process.resourcesPath, 'cfmind')]
-        : [
-            path.join(app.getAppPath(), 'vendor', 'openclaw-runtime', 'current'),
-            path.join(process.cwd(), 'vendor', 'openclaw-runtime', 'current'),
-          ]
-      ).find(candidate => fs.existsSync(candidate)) ?? null,
+    getRuntimeRoot: findInstalledOpenClawRuntimeRoot,
     stateDir: startupNativeStateDir,
     configPath: path.join(startupNativeStateDir, 'openclaw.json'),
     gatewayStopped: () =>

@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
@@ -140,6 +142,7 @@ export function registerSessionDiagnosticsHandlers(
     async (event, query: DiagnosticQuery & { snapshotId: string }) => {
       const owner = event.sender.id;
       let acquired = false;
+      let stagingDirectory: string | undefined;
       let exportController: AbortController | undefined;
       const destroyed = () => exportController?.abort();
       try {
@@ -167,7 +170,6 @@ export function registerSessionDiagnosticsHandlers(
           : `${result.filePath}.zip`;
         // Appending an extension changes the selected destination; never silently overwrite it.
         if (destination !== result.filePath) {
-          const fs = await import('node:fs/promises');
           try {
             await fs.access(destination);
             return { success: false, reason: 'export_failed' };
@@ -180,8 +182,10 @@ export function registerSessionDiagnosticsHandlers(
           service.snapshot(query, owner);
         };
         assertCurrent();
+        stagingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'session-diagnostics-'));
+        exportController.signal.throwIfAborted();
         let lastProgress = 0;
-        const collected = await service.exportLogs(query, owner, exportController.signal, {
+        const collected = await service.exportLogs(query, owner, stagingDirectory, exportController.signal, {
           onProgress: progress => {
             if (
               exportController?.signal.aborted ||
@@ -197,13 +201,21 @@ export function registerSessionDiagnosticsHandlers(
         const assertExportCurrent = () => {
           if (exportController?.signal.aborted) throw new Error('export_canceled');
           windowFor(event);
-          service.snapshot({ ...query, snapshotId: collected.report.snapshotId }, owner);
+          collected.assertExportCurrent();
         };
         assertExportCurrent();
         await writeDiagnosticArchive(
           destination,
-          buildDiagnosticArchive(collected.report, app.getVersion(), getLanguage(), collected.logs),
+          buildDiagnosticArchive(
+            collected.report,
+            app.getVersion(),
+            getLanguage(),
+            collected.logs,
+            collected.sessionDetails,
+            collected.detailEvidence,
+          ),
           assertExportCurrent,
+          { signal: exportController.signal, replaceExisting: destination === result.filePath },
         );
         const summary: DiagnosticExportSummary = {
           collectedAt: collected.report.logs?.collectedAt ?? collected.report.collectedAt,
@@ -226,6 +238,10 @@ export function registerSessionDiagnosticsHandlers(
           ? failure(error)
           : { success: false, reason: 'export_failed' };
       } finally {
+        if (stagingDirectory) {
+          await fs.rm(stagingDirectory, { recursive: true, force: true, maxRetries: 3 })
+            .catch(() => console.warn('[SessionDiagnostics] Temporary export cleanup failed'));
+        }
         if (exportController) {
           event.sender.removeListener('destroyed', destroyed);
           if (collecting.get(owner)?.controller === exportController) collecting.delete(owner);

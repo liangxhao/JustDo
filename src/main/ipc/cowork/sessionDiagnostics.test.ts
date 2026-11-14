@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+
 import type { IpcMainInvokeEvent } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -14,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   write: vi.fn(),
   archive: vi.fn(() => ({})),
+  assertExportCurrent: vi.fn(),
 }));
 vi.mock('electron', () => ({
   app: { getPath: () => 'C:/downloads', getVersion: () => '2026.8.27' },
@@ -25,7 +28,11 @@ vi.mock('electron', () => ({
   },
 }));
 vi.mock('../../core/i18n', () => ({ t: (key: string) => key, getLanguage: () => 'en' }));
-vi.mock('../../../shared/productMetadata', () => ({ PRODUCT_NAME: 'ExampleProduct' }));
+vi.mock('../../../shared/productMetadata', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../../shared/productMetadata')>()),
+  PRODUCT_NAME: 'ExampleProduct',
+  PRODUCT_NAME_LOWERCASE: 'exampleproduct',
+}));
 vi.mock('../../cowork/diagnostics/exporter', () => ({
   buildDiagnosticArchive: mocks.archive,
   writeDiagnosticArchive: mocks.write,
@@ -50,6 +57,7 @@ describe('diagnostics IPC', () => {
     mocks.window.isDestroyed.mockReturnValue(false);
     mocks.save.mockResolvedValue({ canceled: true });
     mocks.write.mockResolvedValue(undefined);
+    mocks.assertExportCurrent.mockReset();
     const mainFrame = {};
     event = {
       sender: {
@@ -72,6 +80,9 @@ describe('diagnostics IPC', () => {
       exportLogs: vi.fn().mockResolvedValue({
         report: { snapshotId: 'export-snapshot' },
         logs: { entries: {}, coverage: [] },
+        sessionDetails: { collectedAt: 20 },
+        detailEvidence: { context: { coverage: { messages: 2 } } },
+        assertExportCurrent: mocks.assertExportCurrent,
       }),
     };
     registerSessionDiagnosticsHandlers(() => service as unknown as SessionDiagnosticsService);
@@ -213,7 +224,7 @@ describe('diagnostics IPC', () => {
       success: true,
       canceled: false,
     });
-    expect(service.exportLogs).toHaveBeenCalledWith(query, 42, expect.any(AbortSignal), {
+    expect(service.exportLogs).toHaveBeenCalledWith(query, 42, expect.any(String), expect.any(AbortSignal), {
       onProgress: expect.any(Function),
     });
     expect(mocks.archive).toHaveBeenCalledWith(
@@ -221,8 +232,12 @@ describe('diagnostics IPC', () => {
       '2026.8.27',
       'en',
       { entries: {}, coverage: [] },
+      { collectedAt: 20 },
+      { context: { coverage: { messages: 2 } } },
     );
-    expect(service.snapshot).toHaveBeenCalledWith({ ...query, snapshotId: 'export-snapshot' }, 42);
+    expect(mocks.assertExportCurrent).toHaveBeenCalledOnce();
+    const stagingDirectory = service.exportLogs.mock.calls[0][2] as string;
+    await expect(fs.access(stagingDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('reports write failure without retaining the busy guard', async () => {
@@ -234,6 +249,21 @@ describe('diagnostics IPC', () => {
     });
     mocks.save.mockResolvedValue({ canceled: true });
     expect(await invoke(SessionDiagnosticsIpc.Export)).toEqual({ success: true, canceled: true });
+  });
+
+  it('checks session binding again before publishing the written archive', async () => {
+    mocks.save.mockResolvedValue({ canceled: false, filePath: 'C:/downloads/test.zip' });
+    mocks.write.mockImplementation(async (_path, _entries, assertCurrent) => assertCurrent());
+    mocks.assertExportCurrent.mockImplementationOnce(() => {}).mockImplementationOnce(() => {
+      throw new DiagnosticServiceError('expired');
+    });
+    expect(await invoke(SessionDiagnosticsIpc.Export)).toEqual({
+      success: false,
+      reason: 'expired',
+    });
+    expect(mocks.assertExportCurrent).toHaveBeenCalledTimes(2);
+    const stagingDirectory = service.exportLogs.mock.calls[0][2] as string;
+    await expect(fs.access(stagingDirectory)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('reports actual exported counts and read gaps without returning log text', async () => {
@@ -270,6 +300,7 @@ describe('diagnostics IPC', () => {
           { source: 'gateway', records: 8, omitted: 0 },
         ],
       },
+      assertExportCurrent: mocks.assertExportCurrent,
     });
     const result = await invoke(SessionDiagnosticsIpc.Export);
     expect(result).toMatchObject({
@@ -291,7 +322,7 @@ describe('diagnostics IPC', () => {
     let finish!: (value: unknown) => void;
     let signal!: AbortSignal;
     let publish!: () => void;
-    service.exportLogs.mockImplementation((_query, _owner, currentSignal, options) => {
+    service.exportLogs.mockImplementation((_query, _owner, _stagingDirectory, currentSignal, options) => {
       signal = currentSignal;
       publish = () =>
         options.onProgress({ snapshotId: 'snapshot', source: 'main', bytesRead: 1024 });

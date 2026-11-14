@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises';
+
 import {
   isSessionDetailModelVisible,
   type SessionDetailStats,
@@ -23,6 +25,8 @@ interface GatewaySessionUsageRequestOptions {
   retryDelayMs?: number;
   wait?: (delayMs: number) => Promise<void>;
   cacheDiscriminator?: number;
+  nativeSessionId?: string;
+  signal?: AbortSignal;
 }
 
 const DEFAULT_USAGE_CACHE_MAX_ATTEMPTS = 21;
@@ -143,7 +147,7 @@ export const requestGatewaySessionUsage = async (
   );
   const wait =
     options.wait ??
-    ((delayMs: number) => new Promise(resolve => setTimeout(resolve, delayMs)));
+    ((delayMs: number) => delay(delayMs, undefined, { signal: options.signal }));
   const requestedDiscriminator = options.cacheDiscriminator;
   const cacheDiscriminator =
     typeof requestedDiscriminator === 'number' &&
@@ -153,21 +157,32 @@ export const requestGatewaySessionUsage = async (
       : ((usageRequestSequence =
           (usageRequestSequence % (Number.MAX_SAFE_INTEGER - 1)) + 1));
 
+  // OpenClaw includes `limit` in the outer cache key even for an exact-key
+  // lookup. Keep the same discriminator across attempts while refreshing it.
+  const params = { key: sessionKey, range: 'all', groupBy: 'instance', limit: cacheDiscriminator };
+  const requestOptions: [options?: { signal: AbortSignal }] = options.signal
+    ? [{ signal: options.signal }]
+    : [];
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    // OpenClaw v2026.9.2 includes `limit` in the outer cache key even for an
-    // exact-key lookup. A session-revision discriminator avoids an older
-    // stale-while-revalidate entry without creating one key per retry attempt.
+    options.signal?.throwIfAborted();
     const result = await client.request<{
       sessions?: unknown[];
       cacheStatus?: { status?: unknown };
-    }>('sessions.usage', {
-      key: sessionKey,
-      range: 'all',
-      groupBy: 'instance',
-      limit: cacheDiscriminator,
-    });
+    }>('sessions.usage', params, ...requestOptions);
+    options.signal?.throwIfAborted();
     if (result.cacheStatus?.status === 'fresh') {
-      const row = Array.isArray(result.sessions) ? result.sessions.find(isRecord) : undefined;
+      const rows = Array.isArray(result.sessions) ? result.sessions : [];
+      if (options.nativeSessionId !== undefined) {
+        const [row] = rows;
+        return rows.length === 1 &&
+          isRecord(row) &&
+          row.key === sessionKey &&
+          row.sessionId === options.nativeSessionId &&
+          row.scope === 'instance'
+          ? row.usage ?? null
+          : null;
+      }
+      const row = rows.find(isRecord);
       return row && 'usage' in row ? (row.usage ?? {}) : null;
     }
     if (attempt < maxAttempts) await wait(retryDelayMs);

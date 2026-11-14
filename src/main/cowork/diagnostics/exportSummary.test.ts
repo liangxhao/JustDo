@@ -133,7 +133,7 @@ describe('readable diagnostic archive overview', () => {
           timestamp: at,
           kind: 'runtime',
           association: 'run_window',
-          excerpt: 'Persisted turn changed; password=PRIVATE',
+          excerpt: 'Persisted turn changed; password=PRIVATE\n  at worker.js:12',
           clipped: false,
           basis: 'failure_receipt',
         },
@@ -142,6 +142,7 @@ describe('readable diagnostic archive overview', () => {
     const summary = buildDiagnosticSummary(input, 'zh', aliaser());
     expect(summary).toContain('Persisted turn changed');
     expect(summary).not.toContain('PRIVATE');
+    expect(summary).not.toContain('worker.js');
     expect(summary).toContain('run_window');
     expect(summary).toContain('被省略的失败节选: 3');
     expect(summary).toContain('report.json → history.failures[0]');
@@ -177,8 +178,10 @@ describe('readable diagnostic archive overview', () => {
       ],
     };
     const summary = buildDiagnosticSummary(input, 'en', aliaser());
-    expect(summary).toContain('No additional read failures or log-text omissions were reported');
-    expect(summary).toContain('100 / 400');
+    expect(summary).not.toContain('Evidence gaps to check first');
+    expect(summary).toContain('| main | Read |');
+    expect(summary).not.toContain('100 / 400');
+    expect(summary).not.toContain('scanComplete');
     expect(summary).not.toContain('complete source scan not confirmed');
   });
 
@@ -203,8 +206,75 @@ describe('readable diagnostic archive overview', () => {
     input.events[0].phase = 'end';
     input.events[0].stopReason = 'stop';
     const summary = buildDiagnosticSummary(input, 'en', aliaser());
-    expect(summary).toContain('Evidence strength: more evidence needed');
+    expect(summary).not.toContain('Evidence strength');
     expect(summary).toContain('does not prove task completion');
+    expect(summary).not.toContain('## Failure excerpts');
+    expect(summary).not.toContain('## Issues and log clues');
+    expect(summary).not.toContain('## Source coverage');
+  });
+
+  it('prioritizes context and inventory gaps and reports only collected request counts', () => {
+    const input = report();
+    input.history = { status: 'scanned', messagesScanned: 0, omitted: 0, failures: [] };
+    const summary = buildDiagnosticSummary(input, 'en', aliaser(), undefined, 0, undefined, {
+      context: { status: 'unavailable', reasons: ['offline'], messages: 0 },
+      pluginsFile: 'plugins.json',
+      turns: 512,
+      callOmitted: 5,
+      fallbackOmitted: 2,
+      turnsLimited: true,
+      pluginGaps: 3,
+    });
+
+    const runStart = summary.indexOf('## Selected run');
+    for (const line of [
+      'Conversation context could not be exported (`offline`).',
+      'Model-call records omitted: 5',
+      'Fallback decisions omitted: 2',
+      'The report contains only the most recent saved turns.',
+      'Plugin inventory has gaps in 3 sections.',
+    ]) {
+      expect(summary).toContain(line);
+      expect(summary.indexOf(line)).toBeLessThan(runStart);
+    }
+    expect(summary).toContain('report.json lists 512 saved turns.');
+    expect(summary).not.toContain('0 model-call records');
+  });
+
+  it('describes exhausted retries as log evidence when a final reply was not verified', () => {
+    const input = report();
+    input.events = [];
+    input.conclusion = {
+      reason: 'unknown',
+      confidence: 'unknown',
+      evidenceIds: [],
+      toolFailures: 0,
+    };
+    input.logs = {
+      collectedAt: at,
+      window: { from: at - 2000, to: at + 2000 },
+      localTimezoneOffsetMinutes: 0,
+      partial: true,
+      sources: [],
+      records: [
+        {
+          id: 'log-native-1',
+          source: 'native',
+          timestamp: at,
+          level: 'warn',
+          association: 'run',
+          signal: 'provider',
+          inferred: true,
+          metrics: {},
+          responseIssue: 'empty_response',
+          responseRecovery: 'exhausted',
+        },
+      ],
+    };
+    const summary = buildDiagnosticSummary(input, 'en', aliaser());
+    expect(summary).toContain('Run logs record exhausted retries');
+    expect(summary).toContain('Any later recovery is unconfirmed.');
+    expect(summary).not.toContain('The last eligible response');
   });
 
   it('includes the native timeout stage when log text is unavailable', () => {

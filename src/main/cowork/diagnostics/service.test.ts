@@ -1,3 +1,7 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -20,14 +24,19 @@ describe('SessionDiagnosticsService', () => {
   let request: ReturnType<typeof vi.fn>;
   let logSources: Record<'main' | 'cowork' | 'gateway', ReturnType<typeof vi.fn>>;
   let nativeSessionKey: string;
+  let nativeSessionId: string | undefined;
   let runtime: DiagnosticRuntime;
   let getRuntimeArtifact: ReturnType<typeof vi.fn>;
-  beforeEach(() => {
+  let getExportSessionDetails: ReturnType<typeof vi.fn>;
+  let stagingDirectory: string;
+  beforeEach(async () => {
+    stagingDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'diagnostic-service-test-'));
     vi.useFakeTimers();
     currentTime = Date.now();
     connected = false;
     resolved = true;
     nativeSessionKey = 'agent:researcher:justdo:s';
+    nativeSessionId = undefined;
     db = new Database(':memory:');
     db.pragma('foreign_keys = ON');
     db.exec(`CREATE TABLE cowork_sessions (id TEXT PRIMARY KEY);
@@ -49,6 +58,7 @@ describe('SessionDiagnosticsService', () => {
         resolved && runId === 'native' && key === 'session-key' ? 's' : null,
     };
     getRuntimeArtifact = vi.fn().mockResolvedValue(undefined);
+    getExportSessionDetails = vi.fn();
     service = new SessionDiagnosticsService({
       store,
       now: () => currentTime,
@@ -56,14 +66,16 @@ describe('SessionDiagnosticsService', () => {
       getRuntimeArtifact,
       logSources,
       hasSession: id => !!db.prepare('SELECT id FROM cowork_sessions WHERE id = ?').get(id),
-      getNativeSessionKey: () => nativeSessionKey,
+      getSessionBinding: () => ({ key: nativeSessionKey, nativeSessionId }),
+      getExportSessionDetails,
     });
   });
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks();
     vi.clearAllTimers();
     vi.useRealTimers();
     db.close();
+    await fs.rm(stagingDirectory, { recursive: true, force: true });
   });
 
   it('publishes verified history while logs are pending and retains the busy guard', async () => {
@@ -153,6 +165,154 @@ describe('SessionDiagnosticsService', () => {
     });
     expect(result.history?.reason).toBe('offline');
     expect(service.snapshot({ sessionId: 's', snapshotId: result.snapshotId }, 1)).toBe(result);
+  });
+
+  it('collects local details only for the selected export, even when Gateway is offline', async () => {
+    nativeSessionId = 'saved-instance';
+    getExportSessionDetails.mockReturnValue({
+      session: { title: 'Local conversation', cwd: 'E:/work' },
+      runModelRef: 'provider/selected',
+    });
+    const previous = service.read({ sessionId: 's', sessionRunId: 'r' }, 1);
+    const query = { sessionId: 's', sessionRunId: 'r', snapshotId: previous.snapshotId };
+    await service.collect(query, 1);
+    expect(getExportSessionDetails).not.toHaveBeenCalled();
+
+    const result = await service.exportLogs(query, 1, stagingDirectory);
+    expect(getExportSessionDetails).toHaveBeenCalledExactlyOnceWith('s', 'r');
+    expect(result.sessionDetails).toMatchObject({
+      collectedAt: currentTime,
+      session: { title: 'Local conversation', cwd: 'E:/work' },
+      runModelRef: 'provider/selected',
+      native: { nativeSessionId: 'saved-instance', nativeSessionSource: 'saved_history_binding' },
+    });
+    expect(result.report).not.toHaveProperty('sessionDetails');
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it.each(['current', 'different-instance', 'timeout'])(
+    'includes only ready statistics from the exact native instance (%s)',
+    async scenario => {
+      connected = true;
+      getExportSessionDetails.mockReturnValue({ session: { title: 'Local conversation' } });
+      request.mockImplementation(async (method: string) => {
+        if (method === 'sessions.describe') {
+          return { session: { key: nativeSessionKey, sessionId: 'described-instance' } };
+        }
+        if (method === 'sessions.usage') {
+          if (scenario === 'timeout') return new Promise(() => {});
+          return {
+            cacheStatus: { status: 'fresh' },
+            sessions: [{
+              key: nativeSessionKey,
+              scope: 'instance',
+              sessionId: scenario === 'current' ? 'described-instance' : 'replaced-instance',
+              usage: { messageCounts: { total: 4 }, totalTokens: 120 },
+            }],
+          };
+        }
+        return method === 'chat.history' ? { messages: [] } : { lines: [] };
+      });
+      const previous = service.read({ sessionId: 's', sessionRunId: 'r' }, 1);
+      const exporting = service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory);
+      if (scenario === 'timeout') await vi.advanceTimersByTimeAsync(3100);
+      const { sessionDetails } = await exporting;
+
+      expect(request).toHaveBeenCalledWith(
+        'sessions.describe',
+        { key: nativeSessionKey },
+        { signal: expect.any(AbortSignal) },
+      );
+      expect(request).toHaveBeenCalledWith(
+        'sessions.usage',
+        expect.objectContaining({ key: nativeSessionKey, range: 'all', groupBy: 'instance' }),
+        { signal: expect.any(AbortSignal) },
+      );
+      expect(sessionDetails?.native.nativeSessionId).toBe('described-instance');
+      expect(sessionDetails?.native.nativeSessionSource).toBe('gateway_describe');
+      if (scenario === 'current') {
+        expect(sessionDetails?.native.usage).toMatchObject({
+          counts: { total: 4 },
+          tokens: { total: 120 },
+        });
+      } else {
+        expect(sessionDetails?.native.usage).toBeUndefined();
+      }
+    },
+  );
+
+  it('rejects a known replacement before reading history for the old saved session', async () => {
+    connected = true;
+    nativeSessionId = 'saved-instance';
+    request.mockImplementation(async method => method === 'sessions.describe'
+      ? { session: { key: nativeSessionKey, sessionId: 'replacement-instance' } }
+      : { lines: [] });
+    const previous = service.read({ sessionId: 's', sessionRunId: 'r' }, 1);
+
+    await expect(
+      service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory),
+    ).rejects.toMatchObject({ reason: 'expired' });
+    expect(request.mock.calls.map(([method]) => method)).not.toContain('chat.history');
+  });
+
+  it('validates long-running publication against the session and run after the preview expires', async () => {
+    const previous = service.read({ sessionId: 's', sessionRunId: 'r' }, 1);
+    const result = await service.exportLogs(
+      { sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory,
+    );
+    currentTime += 300_001;
+    expect(() => service.snapshot({ sessionId: 's', snapshotId: result.report.snapshotId }, 1))
+      .toThrow();
+    expect(result.assertExportCurrent).not.toThrow();
+
+    db.prepare('DELETE FROM cowork_session_runs WHERE id = ?').run('r');
+    expect(result.assertExportCurrent).toThrow();
+  });
+
+  it('does not publish a combined archive when the native instance changes during context collection', async () => {
+    connected = true;
+    request.mockImplementation(async (method: string, params: { offset?: number }) => {
+      if (method === 'sessions.describe') {
+        return { session: { key: nativeSessionKey, sessionId: 'original-instance' } };
+      }
+      if (method === 'chat.history') {
+        return {
+          sessionKey: nativeSessionKey,
+          sessionId: params.offset === undefined ? 'original-instance' : 'replacement-instance',
+          messages: [],
+        };
+      }
+      return { lines: [] };
+    });
+    const previous = service.read({ sessionId: 's' }, 1);
+    await expect(
+      service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory),
+    ).rejects.toMatchObject({ reason: 'expired' });
+  });
+
+  it('uses the instance from retained context to bind logs when describe is unavailable', async () => {
+    connected = true;
+    request.mockImplementation(async (method: string, params: { cursor?: string }) => {
+      if (method === 'chat.history') {
+        return params.cursor
+          ? { kind: 'delta', deltaCursor: 'cursor', messages: [] }
+          : { sessionKey: nativeSessionKey, sessionId: 'history-instance', messages: [], deltaCursor: 'cursor' };
+      }
+      return { lines: [] };
+    });
+    const collectLogs = vi.spyOn(logCollector, 'collectDiagnosticLogs');
+    const previous = service.read({ sessionId: 's', sessionRunId: 'r' }, 1);
+
+    const result = await service.exportLogs(
+      { sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory,
+    );
+
+    expect(collectLogs).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(),
+      expect.objectContaining({ nativeSessionId: 'history-instance' }),
+    );
+    expect(result.detailEvidence?.requestSessionIdentity).toBe('gateway_chat_history');
+    expect(result.report.history?.status).toBe('scanned');
   });
 
   it('revokes early evidence if the native binding changes while logs finish', async () => {
@@ -406,7 +566,7 @@ describe('SessionDiagnosticsService', () => {
       truncated: false,
     });
     const previous = service.read({ sessionId: 's' }, 1);
-    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory);
     expect(result.logs.entries['logs/native.log']).toContain('export-only-context');
     expect(result.logs.entries['logs/native.log']).not.toContain('SECRET');
     expect(result.logs.entries['errors.log']).toBeUndefined();
@@ -471,6 +631,7 @@ describe('SessionDiagnosticsService', () => {
     const result = await service.exportLogs(
       { sessionId: 's', snapshotId: previous.snapshotId },
       1,
+      stagingDirectory,
       undefined,
       { onProgress },
     );
@@ -507,7 +668,7 @@ describe('SessionDiagnosticsService', () => {
       ],
     });
     const read = vi.spyOn(service, 'read');
-    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory);
     expect(read).not.toHaveBeenCalled();
     expect(result.report.run).toBeUndefined();
     expect(result.report.events).toEqual([]);
@@ -539,7 +700,7 @@ describe('SessionDiagnosticsService', () => {
           },
     );
     const read = vi.spyOn(service, 'read');
-    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1);
+    const result = await service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory);
     expect(read).not.toHaveBeenCalled();
     expect(result.report.run).toMatchObject({ id: 'r', state: 'failed' });
     expect(result.report.run?.endedAt).toBeUndefined();
@@ -548,7 +709,7 @@ describe('SessionDiagnosticsService', () => {
     expect(result.logs.entries['errors.log']).toBeUndefined();
   });
 
-  it.each(['binding', 'receipt', 'connection'] as const)(
+  it.each(['binding key', 'native instance', 'receipt', 'connection'] as const)(
     'discards captured export text if the %s changes during collection',
     async change => {
       connected = true;
@@ -562,7 +723,8 @@ describe('SessionDiagnosticsService', () => {
             timestamp: currentTime,
             level: 'error',
           });
-          if (change === 'binding') nativeSessionKey = 'replacement';
+          if (change === 'binding key') nativeSessionKey = 'replacement';
+          else if (change === 'native instance') nativeSessionId = 'replacement';
           else if (change === 'receipt')
             db.prepare('UPDATE cowork_session_runs SET root_run_id = ? WHERE id = ?').run(
               'replacement',
@@ -581,7 +743,7 @@ describe('SessionDiagnosticsService', () => {
       );
       const previous = service.read({ sessionId: 's' }, 1);
       await expect(
-        service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1),
+        service.exportLogs({ sessionId: 's', snapshotId: previous.snapshotId }, 1, stagingDirectory),
       ).rejects.toMatchObject({ reason: 'expired' });
       expect(
         JSON.stringify(service.snapshot({ sessionId: 's', snapshotId: previous.snapshotId }, 1)),

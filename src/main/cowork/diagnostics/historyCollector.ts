@@ -28,6 +28,7 @@ export async function collectDiagnosticHistory(
   sessionKey: string | null,
   signal?: AbortSignal,
   nativeRunIds: readonly string[] = [],
+  expectedNativeSessionId?: string,
 ): Promise<DiagnosticHistoryEvidence> {
   const evidence: DiagnosticHistoryEvidence = {
     status: 'unavailable',
@@ -235,7 +236,11 @@ export async function collectDiagnosticHistory(
         const envelope = record(raw);
         const nested = record(envelope.message);
         const metadata = record(nested.__openclaw);
-        if (envelope.sessionKey !== sessionKey) throw new Error('history_changed');
+        if (
+          envelope.sessionKey !== sessionKey ||
+          (expectedNativeSessionId && envelope.sessionId !== undefined &&
+            envelope.sessionId !== expectedNativeSessionId)
+        ) throw new Error('history_changed');
         if (typeof nested.role !== 'string') throw new Error('invalid_delta');
         if (
           (envelope.messageId && metadata.id && envelope.messageId !== metadata.id) ||
@@ -264,11 +269,15 @@ export async function collectDiagnosticHistory(
     evidence.status = 'partial';
     evidence.reason = 'page_limit';
     for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
-      const page = parseChatHistoryResultV2026_10_6(
-        await request({ limit: 200, offset, maxChars: 8000 }),
-      );
+      const raw = await request({ limit: 200, offset, maxChars: 8000 });
+      const page = parseChatHistoryResultV2026_10_6(raw);
       signal?.throwIfAborted();
-      if (page.windowReset) throw new Error('history_changed');
+      const identity = record(raw);
+      if (
+        page.windowReset ||
+        (expectedNativeSessionId && (identity.sessionKey !== sessionKey ||
+          identity.sessionId !== expectedNativeSessionId))
+      ) throw new Error('history_changed');
       if (pageNumber === 0) {
         total = page.totalMessages;
         cursor = page.deltaCursor;
@@ -290,9 +299,15 @@ export async function collectDiagnosticHistory(
       offset = page.nextOffset;
     }
     if (cursor) {
-      const delta = parseChatHistoryCursorResultV2026_10_6(await request({ cursor }));
+      const raw = await request({ cursor });
+      const delta = parseChatHistoryCursorResultV2026_10_6(raw);
+      const deltaSessionId = record(record(raw).sessionInfo).sessionId;
       needsVerification = false;
-      if (delta.kind === 'reset') {
+      if (
+        delta.kind === 'reset' ||
+        (expectedNativeSessionId && deltaSessionId !== undefined &&
+          deltaSessionId !== expectedNativeSessionId)
+      ) {
         evidence.status = 'changed';
         evidence.reason = 'history_changed';
         evidence.failures = [];

@@ -31,6 +31,8 @@ describe('SessionDiagnosticsStore', () => {
       INSERT INTO cowork_sessions VALUES ('s'), ('other');
       INSERT INTO cowork_session_runs VALUES ('r', 's', 'native', 'client', 100, NULL, 'running');
       INSERT INTO cowork_session_runs VALUES ('copy', 'other', 'native', 'copy-client', 100, 101, 'completed');`);
+    db.exec(`ALTER TABLE cowork_session_runs ADD COLUMN accepted_at INTEGER;
+      ALTER TABLE cowork_session_runs ADD COLUMN model_ref TEXT;`);
     initializeSessionDiagnosticsTables(db);
     store = new SessionDiagnosticsStore(db);
   });
@@ -59,10 +61,24 @@ describe('SessionDiagnosticsStore', () => {
     );
     expect(store.getNativeRunIds('s', 'r')).toEqual(['native', 'client']);
     db.prepare(
-      `INSERT INTO cowork_session_runs VALUES
+      `INSERT INTO cowork_session_runs (
+        id, session_id, root_run_id, client_turn_id, started_at, ended_at, state
+      ) VALUES
        ('ambiguous', 's', 'native', 'another-client', 200, 201, 'completed')`,
     ).run();
     expect(store.getNativeRunIds('s', 'r')).toEqual(['client']);
+  });
+
+  it('exports per-session turn receipts and revalidates their exclusive owners', () => {
+    db.prepare('UPDATE cowork_session_runs SET accepted_at = ?, model_ref = ? WHERE id = ?')
+      .run(104, 'provider/model', 'r');
+    const { runs } = store.listExportRuns('s');
+    expect(runs).toMatchObject([{
+      id: 'r', acceptedAt: 104, configuredModel: 'provider/model', nativeRunIds: ['client'],
+    }]);
+    expect(store.haveExclusiveExportReceipts(runs)).toBe(true);
+    db.prepare('UPDATE cowork_session_runs SET root_run_id = ? WHERE id = ?').run('client', 'copy');
+    expect(store.haveExclusiveExportReceipts(runs)).toBe(false);
   });
 
   it('deduplicates native sequence replays while separating connection epochs', () => {
@@ -140,7 +156,9 @@ describe('SessionDiagnosticsStore', () => {
 
   it('uses stable bounded pagination and rejects foreign cursors', () => {
     const insert = db.prepare(
-      `INSERT INTO cowork_session_runs VALUES (?, 's', ?, ?, ?, NULL, 'running')`,
+      `INSERT INTO cowork_session_runs (
+        id, session_id, root_run_id, client_turn_id, started_at, ended_at, state
+      ) VALUES (?, 's', ?, ?, ?, NULL, 'running')`,
     );
     for (let index = 0; index < 25; index++)
       insert.run(`r-${index}`, `native-${index}`, `client-${index}`, 200);

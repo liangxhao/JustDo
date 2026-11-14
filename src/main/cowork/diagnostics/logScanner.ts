@@ -39,11 +39,15 @@ function assertLocalAbsolutePath(file: string): void {
 
 export async function assertDiagnosticLogPath(file: string, signal?: AbortSignal): Promise<void> {
   assertLocalAbsolutePath(file);
+  const paths: string[] = [];
   for (let current = path.resolve(file); ; current = path.dirname(current)) {
+    paths.push(current);
+    if (path.dirname(current) === current) break;
+  }
+  for (const current of paths.reverse()) {
     if (signal?.aborted) throw new Error('canceled');
     const stat = await operation(fs.lstat(current), signal);
     if (stat.isSymbolicLink()) throw new Error('unsafe_file');
-    if (path.dirname(current) === current) break;
   }
 }
 

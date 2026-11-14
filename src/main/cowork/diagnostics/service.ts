@@ -20,20 +20,35 @@ import {
 import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_6';
 import { classifyDiagnostics } from './classifier';
 import { projectDiagnosticEnvironment } from './environment';
+import { collectDiagnosticExportContext } from './exportContext';
 import { DiagnosticExportLogs } from './exportLogs';
+import { collectDiagnosticPluginInventory } from './exportPluginInventory';
+import { DiagnosticExportRequests } from './exportRequests';
+import {
+  collectDiagnosticSessionUsage,
+  describeDiagnosticSession,
+  type DiagnosticLocalSessionDetails,
+  type DiagnosticSessionBinding,
+} from './exportSessionDetails';
 import { collectDiagnosticHistory } from './historyCollector';
 import { collectDiagnosticLogs, type NativeDiagnosticLogs } from './logCollector';
 import { discoverNativeDiagnosticLogs } from './logScanner';
 
 export interface DiagnosticRuntime {
   getGatewayClient(): GatewayClientLike | null;
+  getGatewayClientGeneration?(): number;
   getDiagnosticGatewayInfo?(): DiagnosticGatewayInfo | null;
   resolveDiagnosticSession(runId: string, sessionKey?: string): string | null;
 }
 interface Dependencies {
   store: SessionDiagnosticsStore;
   hasSession: (id: string) => boolean;
-  getNativeSessionKey: (id: string) => string | null;
+  getSessionBinding: (id: string) => DiagnosticSessionBinding | null;
+  getExportSessionDetails?: (id: string, runId?: string) => DiagnosticLocalSessionDetails | undefined;
+  getPluginInventorySources?: () => Pick<
+    Parameters<typeof collectDiagnosticPluginInventory>[0],
+    'readExtensions' | 'readMcpServers' | 'readSavedHooks' | 'readAppPlugins'
+  >;
   getRuntime: () => DiagnosticRuntime | null;
   getRuntimeArtifact?: (signal?: AbortSignal) => Promise<DiagnosticRuntimeArtifact | undefined>;
   now?: () => number;
@@ -351,6 +366,7 @@ export class SessionDiagnosticsService {
   async exportLogs(
     query: DiagnosticQuery & { snapshotId: string },
     owner: number,
+    stagingDirectory: string,
     signal?: AbortSignal,
     options: { onProgress?: (progress: DiagnosticScanProgress) => void } = {},
   ) {
@@ -367,13 +383,13 @@ export class SessionDiagnosticsService {
       ...(selected.run ? { sessionRunId: selected.run.id } : {}),
     };
     const capture = new DiagnosticExportLogs();
-    const report = await this.collect(collectionQuery, owner, {
+    const collected = await this.collectEvidence(collectionQuery, owner, {
       signal,
       onProgress: progress => options.onProgress?.({ ...progress, snapshotId: query.snapshotId }),
-      onExportRecord: (source, text, association, metadata) =>
-        capture.append(source, text, association, metadata),
+      exportLogs: capture,
+      stagingDirectory,
     });
-    return { report, logs: capture.finish() };
+    return { ...collected, logs: capture.finish() };
   }
 
   async collect(
@@ -383,21 +399,44 @@ export class SessionDiagnosticsService {
       signal?: AbortSignal;
       onProgress?: (progress: DiagnosticScanProgress) => void;
       onHistory?: (update: DiagnosticHistoryUpdate) => void;
-      onExportRecord?: NonNullable<Parameters<typeof collectDiagnosticLogs>[3]>['onExportRecord'];
     } = {},
   ): Promise<DiagnosticReport> {
+    return (await this.collectEvidence(query, owner, options)).report;
+  }
+
+  private async collectEvidence(
+    query: DiagnosticQuery & { snapshotId: string },
+    owner: number,
+    options: {
+      signal?: AbortSignal;
+      onProgress?: (progress: DiagnosticScanProgress) => void;
+      onHistory?: (update: DiagnosticHistoryUpdate) => void;
+      exportLogs?: DiagnosticExportLogs;
+      stagingDirectory?: string;
+    },
+  ) {
     const previous = this.snapshot(query, owner);
     if (this.collecting.has(owner) || this.collecting.size >= 2)
       throw new DiagnosticServiceError('busy');
     this.collecting.add(owner);
     this.pinnedSnapshots.add(query.snapshotId);
     try {
-      const sessionKey = this.deps.getNativeSessionKey(previous.sessionId);
+      const { exportLogs } = options;
+      const binding = this.deps.getSessionBinding(previous.sessionId);
+      const sessionKey = binding?.key ?? null;
       const nativeRunIds = previous.run
         ? this.deps.store.getNativeRunIds(previous.sessionId, previous.run.id)
         : [];
       const runtime = this.deps.getRuntime();
       const client = runtime?.getGatewayClient();
+      const generation = runtime?.getGatewayClientGeneration?.();
+      const exportRuns = exportLogs ? this.deps.store.listExportRuns(previous.sessionId) : undefined;
+      const sessionIdentityTask = exportLogs
+        ? describeDiagnosticSession(binding, client, options.signal).then(identity => {
+            if (identity.replaced) throw new DiagnosticServiceError('expired');
+            return identity.nativeSessionId;
+          })
+        : Promise.resolve(undefined);
       const runtimeInfo: DiagnosticRuntimeInfo = {
         scope: 'collection_environment',
         collectedAt: this.now(),
@@ -408,16 +447,27 @@ export class SessionDiagnosticsService {
         },
       };
       const connectionCurrent = () =>
-        runtime === this.deps.getRuntime() && client === runtime?.getGatewayClient();
-      const bindingCurrent = () =>
-        sessionKey === this.deps.getNativeSessionKey(previous.sessionId) &&
-        JSON.stringify(nativeRunIds) ===
-          JSON.stringify(
-            previous.run
-              ? this.deps.store.getNativeRunIds(previous.sessionId, previous.run.id)
-              : [],
-          );
+        runtime === this.deps.getRuntime() &&
+        client === runtime?.getGatewayClient() &&
+        generation === runtime?.getGatewayClientGeneration?.();
+      const bindingCurrent = () => {
+        const current = this.deps.getSessionBinding(previous.sessionId);
+        return (
+          binding?.key === current?.key &&
+          binding?.nativeSessionId === current?.nativeSessionId &&
+          JSON.stringify(nativeRunIds) ===
+            JSON.stringify(
+              previous.run
+                ? this.deps.store.getNativeRunIds(previous.sessionId, previous.run.id)
+                : [],
+            )
+        );
+      };
       const isCurrent = () => connectionCurrent() && bindingCurrent();
+      const assertBindingCurrent = () => {
+        if (!isCurrent() || (exportRuns && !this.deps.store.haveExclusiveExportReceipts(exportRuns.runs)))
+          throw new DiagnosticServiceError('expired');
+      };
       const checkHistory = (history: NonNullable<DiagnosticReport['history']>) => {
         this.snapshot(query, owner);
         if (!isCurrent()) {
@@ -436,6 +486,30 @@ export class SessionDiagnosticsService {
           // Optional presentation notifications must not discard collected evidence.
         }
       };
+      const { stagingDirectory } = options;
+      const contextTask = stagingDirectory
+        ? sessionIdentityTask.then(nativeSessionId =>
+            collectDiagnosticExportContext(
+              isCurrent() ? client : null,
+              nativeSessionId && binding ? { ...binding, nativeSessionId } : binding,
+              stagingDirectory,
+              options.signal,
+            ),
+          )
+        : Promise.resolve(undefined);
+      const physicalSessionTask = sessionIdentityTask.then(async describedId =>
+        describedId ?? binding?.nativeSessionId ?? (await contextTask)?.nativeSessionId,
+      );
+      const requestsTask = exportLogs
+        ? physicalSessionTask.then(nativeSessionId =>
+            new DiagnosticExportRequests({
+              sessionKey,
+              nativeSessionId,
+              selectedRunIds: nativeRunIds,
+              runIds: exportRuns?.runs.flatMap(run => run.nativeRunIds),
+            }),
+          )
+        : Promise.resolve(undefined);
       const logsTask = (async () => {
         let native: NativeDiagnosticLogs | undefined;
         if (options.signal?.aborted) {
@@ -532,11 +606,20 @@ export class SessionDiagnosticsService {
             failedSources.add(source);
           }
         }
+        const requests = await requestsTask;
+        const nativeSessionId = await physicalSessionTask;
         const logs = await collectDiagnosticLogs(previous, sources, native, {
           fullScan: true,
           nativeRunIds,
           nativeSessionKey: sessionKey,
-          onExportRecord: options.onExportRecord,
+          nativeSessionId,
+          onNativeRecord: requests
+            ? (fields, timestamp) => requests.append(fields, timestamp)
+            : undefined,
+          onExportRecord: exportLogs
+            ? (source, text, association, metadata) =>
+                exportLogs.append(source, text, association, metadata)
+            : undefined,
           signal: options.signal,
           onProgress: progress =>
             options.onProgress?.({ ...progress, snapshotId: query.snapshotId }),
@@ -549,37 +632,77 @@ export class SessionDiagnosticsService {
         }
         return logs;
       })();
-      // Start independently of potentially large log files. Publish only after
-      // history's own cursor verification and current binding/owner checks.
-      const historyTask = collectDiagnosticHistory(
-        previous,
-        client,
-        sessionKey === this.deps.getNativeSessionKey(previous.sessionId) ? sessionKey : null,
-        options.signal,
-        nativeRunIds,
-      ).then(history => {
-        checkHistory(history);
-        publishHistory(history);
-        return history;
-      });
+      // The export's two history readers must use the same physical instance,
+      // even when only the context reader can establish it.
+      const historyTask = physicalSessionTask
+        .then(expectedId => {
+          const canReadHistory = isCurrent() && (!exportLogs || !client || expectedId);
+          return collectDiagnosticHistory(
+            previous,
+            client,
+            canReadHistory ? sessionKey : null,
+            options.signal,
+            nativeRunIds,
+            expectedId,
+          );
+        })
+        .then(history => {
+          checkHistory(history);
+          publishHistory(history);
+          return history;
+        });
       const artifactTask = Promise.resolve().then(() =>
         this.deps.getRuntimeArtifact?.(options.signal),
       );
+      const localDetailsTask = Promise.resolve().then(() =>
+        exportLogs && !options.signal?.aborted
+          ? this.deps.getExportSessionDetails?.(previous.sessionId, previous.run?.id)
+          : undefined,
+      );
+      const sessionDetailsTask = Promise.resolve().then(async () => {
+        const localDetails = await localDetailsTask;
+        if (!localDetails || options.signal?.aborted || !isCurrent()) return;
+        const collectedAt = this.now();
+        const verifiedSessionId = await sessionIdentityTask;
+        if (!isCurrent()) return;
+        const native = await collectDiagnosticSessionUsage(binding, client, verifiedSessionId, options.signal);
+        return { ...localDetails, collectedAt, native };
+      });
+      const pluginsTask = this.deps.getPluginInventorySources && exportLogs
+        ? localDetailsTask.catch((): undefined => undefined).then(localDetails => collectDiagnosticPluginInventory({
+            ...this.deps.getPluginInventorySources?.(),
+            client,
+            agentId: localDetails?.session.agentId,
+            sessionKey,
+          }, options.signal))
+        : Promise.resolve(undefined);
       // Keep the busy guard and snapshot pin until every independent task settles.
-      const [logResult, historyResult, artifactResult] = await Promise.allSettled([
-        logsTask,
-        historyTask,
-        artifactTask,
+      const [
+        logResult, historyResult, artifactResult, sessionDetailsResult, contextResult, pluginsResult,
+        requestsResult, identityResult,
+      ] = await Promise.allSettled([
+        logsTask, historyTask, artifactTask, sessionDetailsTask, contextTask, pluginsTask, requestsTask,
+        sessionIdentityTask,
       ]);
       if (logResult.status === 'rejected') throw logResult.reason;
       if (historyResult.status === 'rejected') throw historyResult.reason;
       const logs = logResult.value;
       const history = checkHistory(historyResult.value);
+      if (contextResult.status === 'rejected') throw contextResult.reason;
+      const context = contextResult.value;
+      if (identityResult.status === 'rejected') throw identityResult.reason;
+      const verifiedNativeSession = Boolean(identityResult.value);
+      if (
+        context?.coverage.reasons.includes('native_instance_changed') &&
+        (verifiedNativeSession || binding?.nativeSessionId)
+      ) {
+        throw new DiagnosticServiceError('expired');
+      }
       if (!isCurrent()) {
         publishHistory(history);
-        // Export-only raw text must not escape after its owner/connection changes.
-        if (options.onExportRecord) throw new DiagnosticServiceError('expired');
       }
+      // Export-only content must not escape after its connection or receipt ownership changes.
+      if (exportLogs) assertBindingCurrent();
       if (!bindingCurrent()) {
         logs.records = [];
         for (const source of logs.sources) {
@@ -597,7 +720,29 @@ export class SessionDiagnosticsService {
         runtimeInfo.installedArtifact = artifactResult.value;
       const report = { ...previous, snapshotId: randomUUID(), logs, history, runtimeInfo };
       this.remember(report, owner);
-      return report;
+      const assertExportCurrent = () => {
+        this.assertSession({ sessionId: previous.sessionId });
+        if (previous.run && !this.deps.store.getRun(previous.sessionId, previous.run.id))
+          throw new DiagnosticServiceError('missing');
+        assertBindingCurrent();
+      };
+      return {
+        report,
+        sessionDetails:
+          sessionDetailsResult.status === 'fulfilled' ? sessionDetailsResult.value : undefined,
+        detailEvidence: exportLogs ? {
+          runs: exportRuns,
+          requests: requestsResult.status === 'fulfilled' ? requestsResult.value : undefined,
+          requestSessionIdentity: verifiedNativeSession
+            ? 'gateway_describe' as const
+            : binding?.nativeSessionId
+              ? 'saved_history_binding' as const
+              : context?.nativeSessionId ? 'gateway_chat_history' as const : undefined,
+          context,
+          plugins: pluginsResult.status === 'fulfilled' ? pluginsResult.value : undefined,
+        } : undefined,
+        assertExportCurrent,
+      };
     } finally {
       this.collecting.delete(owner);
       this.pinnedSnapshots.delete(query.snapshotId);

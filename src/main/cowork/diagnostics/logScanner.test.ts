@@ -3,11 +3,15 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { DiagnosticReport } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { collectDiagnosticLogs } from './logCollector';
-import { discoverNativeDiagnosticLogs, scanDiagnosticLog } from './logScanner';
+import {
+  assertDiagnosticLogPath,
+  discoverNativeDiagnosticLogs,
+  scanDiagnosticLog,
+} from './logScanner';
 
 const time = Date.parse('2026-09-28T10:00:00Z');
 const report = (): DiagnosticReport => ({
@@ -156,6 +160,21 @@ describe('complete retained-log scanning', () => {
       await expect(discoverNativeDiagnosticLogs(file)).rejects.toThrow('unsafe_file');
     },
   );
+
+  it('rejects a linked ancestor before accessing any child of that path', async () => {
+    const dir = await directory();
+    const linked = path.join(dir, 'linked');
+    const file = path.join(linked, 'missing.log');
+    const target = await directory();
+    await fs.symlink(target, linked, process.platform === 'win32' ? 'junction' : 'dir');
+    const lstat = vi.spyOn(fs, 'lstat');
+    try {
+      await expect(assertDiagnosticLogPath(file)).rejects.toThrow('unsafe_file');
+      expect(lstat).not.toHaveBeenCalledWith(file);
+    } finally {
+      lstat.mockRestore();
+    }
+  });
 
   it('cancels between chunks and never labels the partially scanned source complete', async () => {
     const file = path.join(await directory(), 'main.log');

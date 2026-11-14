@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { pipeline } from 'node:stream/promises';
+import type { Readable } from 'node:stream';
+import { finished, pipeline } from 'node:stream/promises';
 
 import yazl from 'yazl';
 
+import { diagnosticSourceHasGaps } from '../../../shared/cowork/diagnostics/diagnosticEvidenceCoverage';
 import { buildDiagnosticFindings } from '../../../shared/cowork/diagnostics/diagnosticFindings';
 import {
   diagnosticErrorCodes,
@@ -26,9 +28,27 @@ import {
   diagnosticResponseIssues,
   diagnosticTimeoutPhases,
 } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
+import type { SessionDiagnosticsStore } from '../../data/sessionDiagnosticsStore';
 import { OPENCLAW_WIRE_VERSION } from '../../engine/openclaw/wire/v2026_10_6';
+import {
+  DIAGNOSTIC_CONTEXT_FILE,
+  type DiagnosticContextEntry,
+  type DiagnosticExportContext,
+} from './exportContext';
+import { diagnosticExportTime, formatDiagnosticJson } from './exportFormat';
 import type { DiagnosticExportLogBundle } from './exportLogs';
 import { DIAGNOSTIC_ERRORS_FILE, redactDiagnosticLog } from './exportLogs';
+import {
+  DIAGNOSTIC_PLUGIN_INVENTORY_FILE,
+  type DiagnosticPluginInventory,
+  serializeDiagnosticPluginInventory,
+} from './exportPluginInventory';
+import type { DiagnosticExportRequests } from './exportRequests';
+import {
+  diagnosticDetailText,
+  type DiagnosticExportSessionDetails,
+  projectDiagnosticExportSessionDetails,
+} from './exportSessionDetails';
 import { buildDiagnosticSummary } from './exportSummary';
 
 const member = (value: unknown, values: readonly string[], fallback = 'unknown'): string =>
@@ -45,12 +65,22 @@ interface ErrorLogRange {
   endLine: number;
 }
 
+interface DiagnosticDetailEvidence {
+  context?: DiagnosticExportContext;
+  runs?: ReturnType<SessionDiagnosticsStore['listExportRuns']>;
+  requests?: DiagnosticExportRequests;
+  requestSessionIdentity?: 'gateway_describe' | 'saved_history_binding' | 'gateway_chat_history';
+  plugins?: DiagnosticPluginInventory;
+}
+
 /** Defense in depth: aliases for identity and finite values for every exported string. */
 export function buildDiagnosticArchive(
   report: DiagnosticReport,
   appVersion: string,
   language: 'zh' | 'en',
   logBundle?: DiagnosticExportLogBundle,
+  details?: DiagnosticExportSessionDetails,
+  evidence?: DiagnosticDetailEvidence,
 ) {
   const aliases = new Map<string, string>();
   const alias = (value: unknown): string | undefined => {
@@ -62,7 +92,7 @@ export function buildDiagnosticArchive(
   const runtimeInfo = report.runtimeInfo
     ? {
         scope: 'collection_environment',
-        collectedAt: count(report.runtimeInfo.collectedAt),
+        collectedAt: diagnosticExportTime(report.runtimeInfo.collectedAt),
         wireVersion: member(report.runtimeInfo.wireVersion, [OPENCLAW_WIRE_VERSION]),
         gateway: {
           status: member(report.runtimeInfo.gateway.status, ['connected', 'offline', 'changed']),
@@ -125,8 +155,11 @@ export function buildDiagnosticArchive(
   const logs = report.logs
     ? {
         scanMode: member(report.logs.scanMode, ['full_files', 'tail']),
-        collectedAt: count(report.logs.collectedAt),
-        window: { from: count(report.logs.window.from), to: count(report.logs.window.to) },
+        collectedAt: diagnosticExportTime(report.logs.collectedAt),
+        window: {
+          from: diagnosticExportTime(report.logs.window.from),
+          to: diagnosticExportTime(report.logs.window.to),
+        },
         partial: true,
         localTimezoneOffsetMinutes:
           Number.isInteger(report.logs.localTimezoneOffsetMinutes) &&
@@ -140,41 +173,47 @@ export function buildDiagnosticArchive(
           filesCompleted: count(source.filesCompleted),
           matched: count(source.matched),
           outputOmitted: count(source.outputOmitted),
-          signalCounts: Object.fromEntries(
-            [
-              'auth',
-              'rate_limit',
-              'billing',
-              'context',
-              'timeout',
-              'network',
-              'tls',
-              'provider',
-              'tool',
-              'retry',
-              'disconnect',
-              'reconnect',
-              'process_exit',
-              'queue',
-              'storage',
-              'permission',
-              'unknown',
-            ].flatMap(signal => {
-              const value = count(
-                source.signalCounts?.[signal as keyof NonNullable<typeof source.signalCounts>],
-              );
-              return value === undefined ? [] : [[signal, value]];
-            }),
-          ),
-          status: member(source.status, ['available', 'partial', 'unavailable']),
+          signalCounts:
+            source.signalCounts &&
+            Object.fromEntries(
+              [
+                'auth',
+                'rate_limit',
+                'billing',
+                'context',
+                'timeout',
+                'network',
+                'tls',
+                'provider',
+                'tool',
+                'retry',
+                'disconnect',
+                'reconnect',
+                'process_exit',
+                'queue',
+                'storage',
+                'permission',
+                'unknown',
+              ].flatMap(signal => {
+                const value = count(
+                  source.signalCounts?.[signal as keyof NonNullable<typeof source.signalCounts>],
+                );
+                return value ? [[signal, value]] : [];
+              }),
+            ),
+          status:
+            !diagnosticSourceHasGaps(source) && source.status === 'partial'
+              ? 'available'
+              : member(source.status, ['available', 'partial', 'unavailable']),
           filesRead: count(source.filesRead),
           bytesRead: count(source.bytesRead),
           recordsRead: count(source.recordsRead),
           emitted: count(source.emitted),
           suppressed: count(source.suppressed),
           parseFailures: count(source.parseFailures),
-          truncated: source.truncated === true,
+          truncated: source.truncated || undefined,
           reasons: source.reasons
+            .filter(reason => reason !== 'outside_window' && reason !== 'no_safe_fields')
             .slice(0, 12)
             .map(value =>
               member(value, [
@@ -184,8 +223,6 @@ export function buildDiagnosticArchive(
                 'limit',
                 'malformed',
                 'native_unavailable',
-                'outside_window',
-                'no_safe_fields',
                 'output_limit',
                 'source_changed',
                 'read_timeout',
@@ -195,10 +232,13 @@ export function buildDiagnosticArchive(
         })),
         records: report.logs.records.slice(0, 400).map(record => {
           const location = locations.get(record.id);
+          const metrics = Object.entries(record.metrics).filter(([key, value]) =>
+            isDiagnosticMetricValue(key, value),
+          );
           return {
             id: alias(record.id),
             source: member(record.source, sources),
-            timestamp: count(record.timestamp),
+            timestamp: diagnosticExportTime(record.timestamp),
             level: member(record.level, ['error', 'warn', 'info', 'debug', 'unknown']),
             association: member(record.association, ['run', 'session', 'time_window']),
             signal: member(record.signal, [
@@ -234,35 +274,23 @@ export function buildDiagnosticArchive(
               record.responseRecovery === undefined
                 ? undefined
                 : member(record.responseRecovery, ['retrying', 'exhausted']),
-            basis: member(record.basis, [
-              'error_category',
-              'http_status',
-              'tool_error',
-              'tool_blocked',
-              'model_error',
-              'error_text',
-              'keyword',
-              'command_exit',
-              'command_timeout',
-              'command_error',
-              'routine',
-            ]),
-            metrics: Object.fromEntries(
-              [
-                'statusCode',
-                'attempt',
-                'durationMs',
-                'queueDepth',
-                'exitCode',
-                'waitMs',
-                'timeToFirstByteMs',
-                'requestPayloadBytes',
-                'responseStreamBytes',
-              ].flatMap(key => {
-                const value = record.metrics[key as keyof typeof record.metrics];
-                return isDiagnosticMetricValue(key, value) ? [[key, value]] : [];
-              }),
-            ),
+            basis:
+              record.basis === undefined
+                ? undefined
+                : member(record.basis, [
+                    'error_category',
+                    'http_status',
+                    'tool_error',
+                    'tool_blocked',
+                    'model_error',
+                    'error_text',
+                    'keyword',
+                    'command_exit',
+                    'command_timeout',
+                    'command_error',
+                    'routine',
+                  ]),
+            metrics: metrics.length ? Object.fromEntries(metrics) : undefined,
             location:
               location?.source === record.source
                 ? { file: location.file, line: location.line, endLine: location.endLine }
@@ -295,14 +323,15 @@ export function buildDiagnosticArchive(
       recoveryExhausted: boolean(stop.recoveryExhausted),
     },
     version: 1,
-    collectedAt: count(report.collectedAt),
+    collectedAt: diagnosticExportTime(report.collectedAt),
     session: alias(report.sessionId),
     run: report.run
       ? {
           id: alias(report.run.id),
-          startedAt: count(report.run.startedAt),
-          endedAt: count(report.run.endedAt),
+          startedAt: diagnosticExportTime(report.run.startedAt),
+          endedAt: diagnosticExportTime(report.run.endedAt),
           state: member(report.run.state, ['running', 'completed', 'failed', 'aborted']),
+          configuredModel: diagnosticDetailText(details?.runModelRef, 200),
         }
       : undefined,
     conclusion: {
@@ -318,32 +347,39 @@ export function buildDiagnosticArchive(
     })),
     coverage: {
       partial: true,
-      dropped: count(report.coverage.dropped),
-      collectorDropped: count(report.coverage.collectorDropped),
-      storageFailed: report.coverage.storageFailed === true,
-      firstObservedAt: count(report.coverage.firstObservedAt),
+      dropped: count(report.coverage.dropped) || undefined,
+      collectorDropped: count(report.coverage.collectorDropped) || undefined,
+      storageFailed: report.coverage.storageFailed || undefined,
+      firstObservedAt: diagnosticExportTime(report.coverage.firstObservedAt),
     },
     connection: member(report.connection, ['connected', 'offline']),
     runtimeInfo,
-    environment: {
-      scope: 'global',
-      status: member(report.environment.status, ['not_requested', 'available', 'unavailable']),
-      collectedAt: count(report.environment.collectedAt),
-      stabilityCount: count(report.environment.stabilityCount),
-      stabilityDropped: count(report.environment.stabilityDropped),
-      firstAt: count(report.environment.firstAt),
-      lastAt: count(report.environment.lastAt),
-      signals: Object.fromEntries(
-        ['model', 'tool', 'blocked', 'command', 'stuck', 'liveness'].flatMap(key => {
-          const value = count(
-            report.environment.signals?.[
-              key as keyof NonNullable<DiagnosticReport['environment']['signals']>
-            ],
-          );
-          return value === undefined ? [] : [[key, value]];
-        }),
-      ),
-    },
+    environment:
+      report.environment.status === 'not_requested'
+        ? undefined
+        : {
+            scope: 'global',
+            status: member(report.environment.status, [
+              'not_requested',
+              'available',
+              'unavailable',
+            ]),
+            collectedAt: diagnosticExportTime(report.environment.collectedAt),
+            stabilityCount: count(report.environment.stabilityCount),
+            stabilityDropped: count(report.environment.stabilityDropped),
+            firstAt: diagnosticExportTime(report.environment.firstAt),
+            lastAt: diagnosticExportTime(report.environment.lastAt),
+            signals: Object.fromEntries(
+              ['model', 'tool', 'blocked', 'command', 'stuck', 'liveness'].flatMap(key => {
+                const value = count(
+                  report.environment.signals?.[
+                    key as keyof NonNullable<DiagnosticReport['environment']['signals']>
+                  ],
+                );
+                return value === undefined ? [] : [[key, value]];
+              }),
+            ),
+          },
     events: report.events.slice(0, 232).map(event => ({
       id: alias(event.id),
       run: alias(event.runId),
@@ -351,8 +387,8 @@ export function buildDiagnosticArchive(
       generation: alias(event.generation),
       epoch: alias(event.epoch),
       sequence: count(event.sequence),
-      observedAt: count(event.observedAt),
-      occurredAt: count(event.occurredAt),
+      observedAt: diagnosticExportTime(event.observedAt),
+      occurredAt: diagnosticExportTime(event.occurredAt),
       timeoutPhase:
         event.timeoutPhase === undefined
           ? undefined
@@ -432,80 +468,128 @@ export function buildDiagnosticArchive(
       exitCode: isDiagnosticMetricValue('exitCode', event.exitCode) ? event.exitCode : undefined,
     })),
   };
+  const sessionDetails = details
+    ? projectDiagnosticExportSessionDetails(details, alias)
+    : undefined;
+  const extraEntries: Record<string, string> = {};
+  const sessionContext = evidence?.context && {
+    ...evidence.context.coverage,
+    file: evidence.context.entry ? DIAGNOSTIC_CONTEXT_FILE : undefined,
+  };
+  if (evidence?.plugins) {
+    extraEntries[DIAGNOSTIC_PLUGIN_INVENTORY_FILE] = serializeDiagnosticPluginInventory(
+      evidence.plugins,
+    );
+  }
+  const turnReceipts = evidence?.runs && {
+    scope: 'conversation_at_export',
+    limited: evidence.runs.limited,
+    turns: evidence.runs.runs.map(run => ({
+      id: alias(run.id),
+      nativeRuns: run.nativeRunIds.map(alias),
+      startedAt: diagnosticExportTime(run.startedAt),
+      acceptedAt: diagnosticExportTime(run.acceptedAt),
+      endedAt: diagnosticExportTime(run.endedAt),
+      savedStatus: member(run.state, ['running', 'completed', 'failed', 'aborted']),
+      configuredModel: diagnosticDetailText(run.configuredModel, 200),
+    })),
+  };
+  const requestEvidence = evidence?.requests?.finish(alias);
+  const requests = requestEvidence && {
+    ...requestEvidence,
+    calls: requestEvidence.calls.map(call => ({
+      ...call,
+      startedAt: diagnosticExportTime(call.startedAt),
+      endedAt: diagnosticExportTime(call.endedAt),
+    })),
+    fallbackDecisions: requestEvidence.fallbackDecisions.map(decision => ({
+      ...decision,
+      at: diagnosticExportTime(decision.at),
+    })),
+    physicalSessionIdentitySource: evidence?.requestSessionIdentity,
+  };
+  const pluginInventory = evidence?.plugins && {
+    file: DIAGNOSTIC_PLUGIN_INVENTORY_FILE,
+  };
+  const pluginGaps = evidence?.plugins && (() => {
+    const { scope: _scope, collectedAt: _collectedAt, ...sources } = evidence.plugins;
+    return Object.values(sources).filter(source =>
+      source.status === 'unavailable' || source.gaps.some(gap => gap !== 'local_discovery_only'),
+    ).length;
+  })();
+  const sessionTextMayIncludeTaskContent = Boolean(
+    sessionDetails?.title ||
+    sessionDetails?.workingDirectory ||
+    sessionDetails?.groupName ||
+    sessionDetails?.configuredModel ||
+    sessionDetails?.usage?.models?.length ||
+    safe.run?.configuredModel,
+  );
   const hasFailureExcerpts = Boolean(report.history?.failures.length);
   const archive = {
-    formatVersion: 3,
+    formatVersion: 5,
     redactionVersion: 2,
     appVersion: /^v?\d+(\.\d+){1,3}$/.test(appVersion) ? appVersion : 'unknown',
-    files: ['summary.md', 'report.json', ...Object.keys(logEntries)],
+    files: [
+      'summary.md',
+      'report.json',
+      ...(sessionContext?.file ? [sessionContext.file] : []),
+      ...Object.keys(extraEntries),
+      ...Object.keys(logEntries),
+    ],
     sources: [
       'local_run_metadata',
+      ...(sessionDetails ? ['local_session_metadata'] : []),
+      ...(sessionDetails?.usage ? ['gateway_session_usage'] : []),
+      ...(sessionContext?.file ? ['gateway_chat_history'] : []),
+      ...(requestEvidence?.calls.length || requestEvidence?.fallbackDecisions.length
+        ? ['native_model_call_logs']
+        : []),
+      ...(pluginInventory ? ['plugin_inventory'] : []),
       ...(report.environment.status === 'available' ? ['global_environment_snapshot'] : []),
       ...(logs ? ['sanitized_log_evidence'] : []),
     ],
     rawLogsIncluded: hasLogText,
-    logCredentialsMasked: hasLogText,
-    logTextMayIncludeTaskContent: hasLogText,
     errorLog: errorRecords
       ? { file: DIAGNOSTIC_ERRORS_FILE, records: errorRecords, ranges: errorRanges }
       : undefined,
     exportedLogCoverage: logBundle?.coverage,
-    transcriptsIncluded: false,
+    transcriptsIncluded: Boolean(sessionContext?.messages),
     conversationFailureExcerptsIncluded: hasFailureExcerpts,
-    identifiersAliased: !hasLogText && !hasFailureExcerpts,
+    ...(sessionDetails ? { sessionTextMayIncludeTaskContent } : {}),
+    identifiersAliased:
+      !hasLogText &&
+      !hasFailureExcerpts &&
+      !sessionTextMayIncludeTaskContent &&
+      !sessionContext?.file &&
+      !pluginInventory,
     metadataIdentifiersAliased: true,
-    limits: {
-      localFiles: report.logs?.scanMode === 'full_files' ? 'all_discovered' : 16,
-      localBytes:
-        report.logs?.scanMode === 'full_files'
-          ? 'all_discovered'
-          : report.run?.endedAt !== undefined
-            ? 13631488
-            : 4194304,
-      fileBytes:
-        report.logs?.scanMode === 'full_files'
-          ? 'captured_file_size'
-          : report.run?.endedAt !== undefined
-            ? 4194304
-            : 524288,
-      recordBytes: 65536,
-      outputRecords: 400,
-      nativeLines: 1000,
-      nativeBytes: report.logs?.sources.some(
-        source => source.source === 'native' && source.filesDiscovered !== undefined,
-      )
-        ? 'captured_file_size'
-        : 524288,
-      sourceFiles: report.logs?.scanMode === 'full_files' ? 'all_discovered' : 4,
-      sourceBytes:
-        report.logs?.scanMode === 'full_files'
-          ? 'all_discovered'
-          : report.run?.endedAt !== undefined
-            ? 4194304
-            : 1048576,
-      sourceRecords: 100,
-    },
-    localTimestampAssumption: 'collector_local_timezone_historical_offset_unverified',
+    localTimestampAssumption: logs
+      ? 'collector_local_timezone_historical_offset_unverified'
+      : undefined,
   };
   const history = report.history
     ? {
         status: report.history.status,
-        reason: member(report.history.reason, [
-          'offline',
-          'no_run',
-          'no_binding',
-          'canceled',
-          'timeout',
-          'read_failed',
-          'page_limit',
-          'history_changed',
-        ]),
+        reason:
+          report.history.reason === undefined
+            ? undefined
+            : member(report.history.reason, [
+                'offline',
+                'no_run',
+                'no_binding',
+                'canceled',
+                'timeout',
+                'read_failed',
+                'page_limit',
+                'history_changed',
+              ]),
         messagesScanned: report.history.messagesScanned,
         omitted: report.history.omitted,
         lastResponse: report.history.lastResponse
           ? {
               endTurn: boolean(report.history.lastResponse.endTurn),
-              timestamp: count(report.history.lastResponse.timestamp),
+              timestamp: diagnosticExportTime(report.history.lastResponse.timestamp),
               association: member(report.history.lastResponse.association, ['run', 'run_window']),
               thinking: boolean(report.history.lastResponse.thinking),
               text: boolean(report.history.lastResponse.text),
@@ -525,56 +609,161 @@ export function buildDiagnosticArchive(
             }
           : undefined,
         failures: report.history.failures.slice(0, 40).map(failure => ({
-          timestamp: failure.timestamp,
+          timestamp: diagnosticExportTime(failure.timestamp),
           kind: failure.kind,
           tool: failure.tool ? redactDiagnosticLog(failure.tool).slice(0, 100) : undefined,
           excerpt: redactDiagnosticLog(failure.excerpt).slice(0, 1600),
           clipped: failure.clipped,
           association: failure.association,
           basis: member(failure.basis, ['activity', 'result', 'model', 'failure_receipt']),
-          cause: member(failure.cause, [
-            'state_contention',
-            DiagnosticRuntimeFailure.ReplayAdmissionRejected,
-          ]),
-          outcome: member(failure.outcome, ['failed', 'blocked', 'aborted']),
+          cause:
+            failure.cause === undefined
+              ? undefined
+              : member(failure.cause, [
+                  'state_contention',
+                  DiagnosticRuntimeFailure.ReplayAdmissionRejected,
+                ]),
+          outcome:
+            failure.outcome === undefined
+              ? undefined
+              : member(failure.outcome, ['failed', 'blocked', 'aborted']),
         })),
       }
     : undefined;
   return {
-    'summary.md': buildDiagnosticSummary(report, language, alias, logBundle, errorRecords),
-    'report.json': JSON.stringify({ ...safe, archive, history, logs }, null, 2),
+    'summary.md': buildDiagnosticSummary(
+      report,
+      language,
+      alias,
+      logBundle,
+      errorRecords,
+      sessionDetails,
+      evidence
+        ? {
+            context: sessionContext,
+            pluginsFile: pluginInventory?.file,
+            calls: requestEvidence?.calls.length,
+            turns: turnReceipts?.turns.length,
+            callOmitted: requestEvidence?.coverage.callObservationsOmitted,
+            fallbackOmitted: requestEvidence?.coverage.fallbackObservationsOmitted,
+            turnsLimited: turnReceipts?.limited,
+            pluginGaps,
+          }
+        : undefined,
+    ),
+    'report.json': formatDiagnosticJson({
+      ...safe,
+      sessionDetails: sessionDetails && {
+        ...sessionDetails,
+        collectedAt: diagnosticExportTime(sessionDetails.collectedAt),
+        createdAt: diagnosticExportTime(sessionDetails.createdAt),
+        updatedAt: diagnosticExportTime(sessionDetails.updatedAt),
+        usage: sessionDetails.usage && {
+          ...sessionDetails.usage,
+          lastActivity: diagnosticExportTime(sessionDetails.usage.lastActivity),
+        },
+      },
+      sessionContext,
+      turnReceipts,
+      requests,
+      pluginInventory,
+      archive,
+      history,
+      logs,
+    }),
+    ...extraEntries,
     ...logEntries,
+    ...(evidence?.context?.entry ? { [DIAGNOSTIC_CONTEXT_FILE]: evidence.context.entry } : {}),
   };
 }
 
-/** Write only a fresh temporary file until complete; never unlink the user's target on failure. */
+const HARD_LINK_UNAVAILABLE_CODES = new Set(['EPERM', 'EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS']);
+
+/** Finish the temporary ZIP before publishing it to the user's chosen path. */
 export async function writeDiagnosticArchive(
   destination: string,
-  entries: Record<string, string>,
+  entries: Record<string, string | DiagnosticContextEntry>,
   assertCurrent: () => void,
+  options: { signal?: AbortSignal; replaceExisting?: boolean } = {},
 ): Promise<void> {
+  const { signal, replaceExisting = true } = options;
+  signal?.throwIfAborted();
   const bytes = Object.values(entries).reduce(
-    (total, value) => total + Buffer.byteLength(value),
+    (total, value) => total + (typeof value === 'string' ? Buffer.byteLength(value) : 0),
     0,
   );
-  if (bytes > 10 * 1024 * 1024) throw new Error('size');
+  if (bytes > 24 * 1024 * 1024) throw new Error('size');
   const temporary = path.join(path.dirname(destination), `.diagnostics-${randomUUID()}.tmp`);
   const zip = new yazl.ZipFile();
-  const output = fs.createWriteStream(temporary, { flags: 'wx' });
-  zip.on('error', error => (zip.outputStream as import('node:stream').Readable).destroy(error));
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 30_000);
+  const zipStream = zip.outputStream as Readable;
+  const outputFile = await fs.promises.open(temporary, 'wx', 0o600);
+  const output = outputFile.createWriteStream();
+  zip.on('error', error => zipStream.destroy(error));
+  let input: Readable | undefined;
+  let inputClosed: Promise<void> | undefined;
+  const idle = new AbortController();
+  const writeSignal = signal ? AbortSignal.any([signal, idle.signal]) : idle.signal;
+  let lastBytesWritten = output.bytesWritten;
+  let lastWrite = Date.now();
+  const watchdog = setInterval(() => {
+    if (output.bytesWritten !== lastBytesWritten) {
+      lastBytesWritten = output.bytesWritten;
+      lastWrite = Date.now();
+    } else if (Date.now() - lastWrite >= 60_000) {
+      idle.abort(new Error('Diagnostic archive write stalled'));
+    }
+  }, 5_000);
+  watchdog.unref();
+  const writing = pipeline(zipStream, output, { signal: writeSignal });
   try {
-    const writing = pipeline(zip.outputStream, output, { signal: controller.signal });
-    for (const [name, content] of Object.entries(entries))
-      zip.addBuffer(Buffer.from(content), name);
+    for (const [name, content] of Object.entries(entries)) {
+      if (typeof content === 'string') {
+        zip.addBuffer(Buffer.from(content), name);
+      } else {
+        zip.addReadStreamLazy(name, { size: content.bytes }, callback => {
+          if (writeSignal.aborted || zipStream.destroyed) {
+            callback(new Error('Diagnostic export stopped'), undefined!);
+            return;
+          }
+          try {
+            const stream = content.open();
+            input = stream;
+            stream.on('error', error => zipStream.destroy(error));
+            inputClosed = new Promise(resolve => stream.once('close', resolve));
+            callback(null, stream);
+          } catch (error) {
+            zipStream.destroy(
+              error instanceof Error ? error : new Error('Cannot open diagnostic context'),
+            );
+          }
+        });
+      }
+    }
     zip.end();
     await writing;
+    writeSignal.throwIfAborted();
     assertCurrent();
-    await fs.promises.rename(temporary, destination);
+    if (replaceExisting) {
+      await fs.promises.rename(temporary, destination);
+      return;
+    }
+    try {
+      await fs.promises.link(temporary, destination);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!code || !HARD_LINK_UNAVAILABLE_CODES.has(code)) throw error;
+      writeSignal.throwIfAborted();
+      assertCurrent();
+      await fs.promises.copyFile(temporary, destination, fs.constants.COPYFILE_EXCL);
+    }
   } finally {
-    clearTimeout(timer);
+    clearInterval(watchdog);
+    input?.destroy();
+    zipStream.destroy();
     output.destroy();
+    await writing.catch(() => {});
+    await inputClosed;
+    await finished(output).catch(() => {});
     await fs.promises.rm(temporary, { force: true }).catch(() => {});
   }
 }
