@@ -387,11 +387,11 @@ function renderSpawnedAgentLink(tool: ToolItem): TemplateResult | typeof nothing
       window.dispatchEvent(new CustomEvent(OPEN_SPAWNED_AGENT_EVENT, { detail: { sessionKey } }));
     }}
   >
-    <svg viewBox="0 0 16 16" width="18" height="18" fill="none" aria-hidden="true">
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
       <path
         d="M3.5 12.5 12 4M4.5 4H12v7.5"
         stroke="currentColor"
-        stroke-width="2"
+        stroke-width="1.5"
         stroke-linecap="round"
         stroke-linejoin="round"
       />

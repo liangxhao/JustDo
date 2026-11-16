@@ -17,28 +17,29 @@ export const chatStyles = [
       align-items: center;
       justify-content: center;
       flex: 0 0 auto;
-      width: 28px;
-      height: 26px;
+      width: 24px;
+      height: 24px;
       padding: 0;
-      border: 1px solid color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 35%, transparent);
-      border-radius: 6px;
-      color: var(--justdo-chat-accent, #6366f1);
-      background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 12%, transparent);
+      border: 0;
+      border-radius: 5px;
+      color: var(--justdo-chat-muted, #64748b);
+      background: transparent;
       cursor: pointer;
     }
     .tool-agent-link svg {
       display: block;
     }
-    .tool-agent-link:hover {
-      background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 23%, transparent);
-      border-color: currentColor;
+    .tool-agent-link:hover,
+    .tool-agent-link:focus-visible {
+      color: var(--justdo-chat-accent, #6366f1);
+      background: color-mix(in srgb, currentColor 10%, transparent);
     }
     .tool-agent-link:active {
-      background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 30%, transparent);
+      background: color-mix(in srgb, currentColor 18%, transparent);
     }
     .tool-agent-link:focus-visible {
       outline: 2px solid currentColor;
-      outline-offset: 2px;
+      outline-offset: 1px;
     }
     .process-summary__tool-title:has(.tool-agent-link) {
       padding: 3px 6px;
