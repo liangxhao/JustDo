@@ -4,7 +4,7 @@ import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 import { DEFAULT_MAX_RETAINED_DISPLAY_TABS } from '@shared/cowork/displayTabRetention';
 import type { SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
 import { DEFAULT_MAX_GOAL_CONTINUATION_TURNS } from '@shared/cowork/sessionGoal';
-import type { SessionRuntimeSnapshot, SessionRunTiming } from '@shared/cowork/sessionRun';
+import type { SessionRuntimeSnapshot, SessionRunTiming, SessionWorktreeBinding } from '@shared/cowork/sessionRun';
 import { ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { DEFAULT_PERMISSION_MODE, type PermissionMode } from '@shared/security/approvals';
 
@@ -53,6 +53,7 @@ interface CoworkState {
   isStreaming: boolean;
   sessionMainRuntimeActivity: Record<string, boolean>;
   sessionRuntimeActivity: Record<string, boolean>;
+  sessionWorktreeBindings: Record<string, SessionWorktreeBinding & { revision: number }>;
   sessionRunTimings: Record<string, SessionRunTiming[]>;
   manualModelSelections: Record<string, Model | null>;
   confirmedModelSelections: Record<string, Model | null>;
@@ -87,6 +88,7 @@ const initialState: CoworkState = {
   isStreaming: false,
   sessionMainRuntimeActivity: {},
   sessionRuntimeActivity: {},
+  sessionWorktreeBindings: {},
   sessionRunTimings: {},
   manualModelSelections: {},
   confirmedModelSelections: {},
@@ -172,6 +174,12 @@ const coworkSlice = createSlice({
         updatedAt: Math.max(entry.updatedAt, previous.get(entry.id) ?? 0),
       }));
       const directory = new Map(state.sessionDirectory.map(entry => [entry.id, entry]));
+      for (const [id, binding] of Object.entries(state.sessionWorktreeBindings)) {
+        const current = state.currentSession?.id === id ? state.currentSession : undefined;
+        if ((directory.get(id) ?? current)?.nativeSessionKey !== binding.nativeSessionKey) {
+          delete state.sessionWorktreeBindings[id];
+        }
+      }
       for (const [id, running] of Object.entries(state.sessionRuntimeActivity)) {
         if (!running && directory.get(id)?.external?.status !== ExternalSessionStatus.Running) {
           delete state.sessionRuntimeActivity[id];
@@ -482,6 +490,7 @@ const coworkSlice = createSlice({
 
     deleteSession(state, action: PayloadAction<string>) {
       removeSessionFromState(state, action.payload);
+      delete state.sessionWorktreeBindings[action.payload];
       clearSessionModelSelectionState(state, action.payload);
       delete state.planModeBySession[action.payload];
       state.pendingInteractions = state.pendingInteractions.filter(
@@ -495,6 +504,7 @@ const coworkSlice = createSlice({
     deleteSessions(state, action: PayloadAction<string[]>) {
       removeSessionsFromState(state, action.payload);
       for (const sessionId of action.payload) {
+        delete state.sessionWorktreeBindings[sessionId];
         clearSessionModelSelectionState(state, sessionId);
         delete state.planModeBySession[sessionId];
         delete state.draftMessageQuotes[sessionId];
@@ -654,6 +664,21 @@ const coworkSlice = createSlice({
         current.status = status;
         state.isStreaming = state.sessionMainRuntimeActivity[sessionId] === true;
       }
+    },
+
+    setSessionWorktreeBinding(
+      state,
+      action: PayloadAction<{ sessionId: string; binding: SessionWorktreeBinding; revision: number }>,
+    ) {
+      const { sessionId, binding, revision } = action.payload;
+      const session = state.sessionDirectory?.find(entry => entry.id === sessionId)
+        ?? state.sessions.find(entry => entry.id === sessionId)
+        ?? (state.currentSession?.id === sessionId ? state.currentSession : undefined);
+      if (session?.nativeSessionKey !== binding.nativeSessionKey) return;
+      const previous = state.sessionWorktreeBindings[sessionId];
+      if (previous?.nativeSessionKey === binding.nativeSessionKey && revision <= previous.revision)
+        return;
+      state.sessionWorktreeBindings[sessionId] = { ...binding, revision };
     },
 
     setSessionRunTimings(
@@ -966,6 +991,7 @@ export const {
   setSessionMainRuntimeActivity,
   setSessionRuntimeActivity,
   setSessionRuntimeSnapshot,
+  setSessionWorktreeBinding,
   setSessionRunTimings,
   upsertSessionRunTiming,
   setSessionRuntimeActivities,

@@ -183,6 +183,10 @@ it.each([
       id: worktree.id,
       cwd: worktree.cwd,
     });
+    expect(store.getState().cowork.sessionWorktreeBindings[worktree.id]).toMatchObject({
+      nativeSessionKey: worktree.nativeSessionKey,
+      isWorktree: true,
+    });
     return { runId: clientTurnId };
   });
   let isCurrent = true;
@@ -217,6 +221,7 @@ it.each([
     expect(beforeSessionSelected).not.toHaveBeenCalled();
     expect(dispatchInitialTurn).not.toHaveBeenCalled();
     expect(store.getState().cowork.currentSession).toBeNull();
+    expect(store.getState().cowork.sessionWorktreeBindings[worktree.id]).toBeUndefined();
   }
 });
 

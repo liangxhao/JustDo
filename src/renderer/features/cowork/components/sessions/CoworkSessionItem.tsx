@@ -14,6 +14,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { useSelector } from 'react-redux';
 
 import CoworkSessionDetailsModal from '@/features/cowork/components/sessions/CoworkSessionDetailsModal';
+import { WorktreeSessionIndicator } from '@/features/cowork/components/shared/WorktreeSessionIndicator';
 import type {
   CoworkSessionStatus,
   CoworkSessionSummary,
@@ -665,6 +666,10 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
                       </p>
                     )}
                   </Tooltip>
+                  <WorktreeSessionIndicator
+                    sessionId={session.id}
+                    nativeSessionKey={session.nativeSessionKey}
+                  />
                 </div>
               )}
             </div>

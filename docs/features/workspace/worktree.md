@@ -14,6 +14,10 @@
 
 模型创建[原生可见子会话](../assistants/profiles-and-subagents.md#原生-subagent)时可同时设置 `worktree: true`，让子会话在独立检出目录执行。Worktree 设置面板按原生托管注册表显示和操作检出；通过 shell 运行普通 `git worktree add` 创建的目录由 Git 管理。
 
+会话列表和聊天标题旁用浅色 Git 分支图标标记托管 Worktree 会话。图标使用现有会话状态读取返回的原生 Worktree 信息，按已绑定的原生会话 key 匹配。已确认的创建回执也可提供首轮发送时的标记。
+
+设置页的托管工作目录卡片展示分支和检出状态，并分别标注检出目录、源项目和最近活动时间。恢复、移除和清理仍由原生接口完成。
+
 ## 身份与执行目录
 
 ```mermaid

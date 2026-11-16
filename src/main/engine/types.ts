@@ -1,4 +1,5 @@
 import { AskUserInteractionEvent } from '../../shared/cowork/interactions/askUserQuestion';
+import type { SessionRuntimeActivity } from '../../shared/cowork/sessionRun';
 import type { OpenClawSkillSource } from '../../shared/plugins/skills';
 import type { PermissionMode } from '../../shared/security/approvals';
 
@@ -304,26 +305,9 @@ export interface CoworkRuntime {
   getSessionRuntimeStatus?(
     sessionId: string,
     options?: CoworkRuntimeStatusOptions,
-  ): Promise<{
-    known: boolean;
-    mainRunning: boolean;
-    subagentRunning: boolean;
-    running: boolean;
-    rootRunId?: string;
-  }>;
+  ): Promise<SessionRuntimeActivity>;
   getSessionRuntimeStatuses?(
     sessionIds: string[],
     options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
-  ): Promise<
-    Record<
-      string,
-      {
-        known: boolean;
-        mainRunning: boolean;
-        subagentRunning: boolean;
-        running: boolean;
-        rootRunId?: string;
-      }
-    >
-  >;
+  ): Promise<Record<string, SessionRuntimeActivity>>;
 }

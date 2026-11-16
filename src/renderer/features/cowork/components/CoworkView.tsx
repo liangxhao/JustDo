@@ -144,6 +144,7 @@ import WorkspaceFilesPanel from '@/features/cowork/components/preview/WorkspaceF
 import { REVIEW_TAB_ID } from '@/features/cowork/components/review/reviewNavigation';
 import { getCompactFolderName, getLastPathSegment } from '@/features/cowork/components/shared/path';
 import WorkspaceFileIcon from '@/features/cowork/components/shared/WorkspaceFileIcon';
+import { WorktreeSessionIndicator } from '@/features/cowork/components/shared/WorktreeSessionIndicator';
 import { CoworkPet } from '@/features/cowork/components/status/CoworkPet';
 import { isCoworkRunActive } from '@/features/cowork/components/status/coworkRunActivity';
 import {
@@ -3117,6 +3118,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 >
                   {currentSession.title}
                 </h1>
+                <WorktreeSessionIndicator
+                  sessionId={currentSession.id}
+                  nativeSessionKey={currentSession.nativeSessionKey}
+                  className="ml-1.5"
+                />
                 {currentSession.handoffSource && (
                   <button
                     type="button"

@@ -19,7 +19,9 @@ vi.mock('@/features/cowork/coworkService', () => ({
   coworkService: { updateConfig: mocks.updateConfig },
 }));
 
-vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
+vi.mock('@/services/i18n', () => ({
+  i18nService: { t: (key: string) => key, getLanguage: () => 'en' },
+}));
 
 afterEach(() => {
   cleanup();
@@ -144,7 +146,13 @@ test('lists native records and removes through the non-force Gateway action', as
   });
   vi.spyOn(window, 'confirm').mockReturnValue(true);
   render(<WorktreeSettingsPage />);
-  await screen.findByText('feature');
+  await screen.findByRole('heading', { name: 'feature' });
+  expect(screen.getByText('worktreeActive')).toBeTruthy();
+  expect(screen.getByText('worktreeOwnerSession')).toBeTruthy();
+  expect(screen.getByText('worktreeCheckoutPath').nextElementSibling?.textContent).toBe(
+    'E:\\state\\worktrees\\feature',
+  );
+  expect(screen.getByText('worktreeSourceProject').nextElementSibling?.textContent).toBe('E:\\project');
   fireEvent.click(screen.getByRole('button', { name: 'worktreeRemove' }));
   await waitFor(() => expect(remove).toHaveBeenCalledWith('tree-1'));
   expect(remove).toHaveBeenCalledTimes(1);

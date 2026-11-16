@@ -150,6 +150,7 @@ describe('runtime activity and subagent display caches', () => {
   it.each([false, true])('does not grant runtime authority to cached running labels when hasMore=%s', async hasMore => {
     const key = 'agent:main:session';
     const context = {
+      store: { getSession: () => null },
       disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(),
       goalContinuationCoordinator: { getSnapshot: () => undefined },
       isSessionActive: () => false, compactionInFlightSessionIds: new Set(),
@@ -169,6 +170,38 @@ describe('runtime activity and subagent display caches', () => {
 
     expect(result.session).toEqual({
       known: !hasMore, mainRunning: false, subagentRunning: false, running: false,
+    });
+  });
+
+  it('observes worktrees only through the exact current native session row', async () => {
+    const key = 'agent:main:workspace';
+    const alias = 'agent:main:old-workspace';
+    const row = { key, sessionId: 'new-native', hasActiveRun: false };
+    const older = { ...row, key: alias, worktree: { id: 'unrelated' } };
+    const snapshot = vi.fn()
+      .mockResolvedValueOnce({ known: true, sessions: [older], hasMore: true })
+      .mockResolvedValueOnce({
+        known: true, sessions: [{ ...row, worktree: { id: 'managed-checkout' } }], hasMore: true,
+      })
+      .mockResolvedValueOnce({ known: true, sessions: [older, row], hasMore: false });
+    const context = {
+      store: { getSession: () => ({ nativeSessionKey: key, agentId: 'main' }) },
+      disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(),
+      goalContinuationCoordinator: { getSnapshot: () => undefined },
+      isSessionActive: () => false, compactionInFlightSessionIds: new Set(),
+      getSessionKeysForSession: () => [alias, key], rootRunIdBySession: new Map(),
+      runtimeRowString: (value: unknown) => typeof value === 'string' ? value : '',
+      getRuntimeSessionSnapshot: snapshot,
+    } as unknown as RuntimeSessionStatusContext;
+    context.isRuntimeSessionRowMainActive = isRuntimeSessionRowMainActive.bind(context);
+
+    const read = () => getSessionRuntimeStatuses.call(context, ['workspace']);
+    expect((await read()).workspace.worktreeBinding).toBeUndefined();
+    expect((await read()).workspace.worktreeBinding).toEqual({
+      nativeSessionKey: key, isWorktree: true,
+    });
+    expect((await read()).workspace.worktreeBinding).toEqual({
+      nativeSessionKey: key, isWorktree: false,
     });
   });
 });

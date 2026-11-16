@@ -5,6 +5,7 @@ import {
   type SessionGoalMutationOutcome,
   type SessionGoalMutationRequest,
 } from '../../../shared/cowork/sessionGoal';
+import type { SessionRuntimeActivity } from '../../../shared/cowork/sessionRun';
 import type { SessionTurn } from '../gateway/types';
 
 export const STOP_COOLDOWN_MS = 10_000;
@@ -89,13 +90,7 @@ export const mergeGatewayHistoryPages = (older: unknown[], newer: unknown[]): un
   return [...older, ...newer.slice(retainedFrom)];
 };
 
-export type SessionRuntimeStatus = {
-  known: boolean;
-  mainRunning: boolean;
-  subagentRunning: boolean;
-  running: boolean;
-  rootRunId?: string;
-};
+export type SessionRuntimeStatus = SessionRuntimeActivity;
 
 export type RuntimeSessionSnapshot = {
   known: boolean;

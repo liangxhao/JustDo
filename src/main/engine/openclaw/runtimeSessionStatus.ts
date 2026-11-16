@@ -1,6 +1,7 @@
 import { GoalExecutionPhase } from '../../../shared/cowork/sessionGoal';
+import type { SessionWorktreeBinding } from '../../../shared/cowork/sessionRun';
 import { SubagentReadFailure } from '../../../shared/cowork/subagentDetails';
-import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import { buildManagedSessionKey, isCustodySessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { invalidateSessionListRequests } from '../gateway/sessionListClient';
@@ -36,7 +37,7 @@ export interface RuntimeSessionStatusContext {
   readonly targetedSessionStatusChecks: Map<string, Set<symbol>>;
   readonly unknownSessionRuns: ReadonlyMap<string, unknown>;
   readonly subagentStatusGenerations: Map<string, number>;
-  readonly getSessionKeysForSession: (sessionId: string) => string[];
+  readonly getSessionKeysForSession: (sessionId: string, session?: CoworkSession | null) => string[];
   readonly store: CoworkStore;
   readonly invalidateSubagentStatusSnapshot: (sessionId: string) => void;
   readonly getSessionRuntimeStatuses: (
@@ -178,13 +179,7 @@ export async function getSessionRuntimeStatus(
   this: RuntimeSessionStatusContext,
   sessionId: string,
   options?: CoworkRuntimeStatusOptions,
-): Promise<{
-  known: boolean;
-  mainRunning: boolean;
-  subagentRunning: boolean;
-  running: boolean;
-  rootRunId?: string;
-}> {
+): Promise<SessionRuntimeStatus> {
   if (!sessionId) {
     return { known: true, mainRunning: false, subagentRunning: false, running: false };
   }
@@ -204,6 +199,23 @@ export async function getSessionRuntimeStatus(
       running: false,
     }
   );
+}
+
+function readWorktreeBinding(
+  session: CoworkSession | null,
+  row?: Record<string, unknown>,
+): SessionWorktreeBinding | undefined {
+  const nativeSessionKey = session?.nativeSessionKey;
+  if (
+    !nativeSessionKey || session.external || !row || row.key !== nativeSessionKey ||
+    typeof row.sessionId !== 'string' || !row.sessionId.trim() ||
+    (row.agentId !== undefined && row.agentId !== session.agentId) ||
+    (session.historyBinding && row.sessionId !== session.historyBinding.nativeSessionId)
+  ) return;
+  if (row.worktree == null) return { nativeSessionKey, isWorktree: false };
+  if (typeof row.worktree !== 'object' || Array.isArray(row.worktree)) return;
+  const worktreeId = (row.worktree as { id?: unknown }).id;
+  if (typeof worktreeId === 'string' && worktreeId.trim()) return { nativeSessionKey, isWorktree: true };
 }
 
 const TargetedStatusReason = {
@@ -329,7 +341,11 @@ async function getTargetedSessionRuntimeStatus(
       // Native omits hasActiveSubagentRun when its complete descendant projection is inactive.
       const mainRunning = row.hasActiveRun;
       const subagentRunning = options.includeSubagents === true && row.hasActiveSubagentRun === true;
-      return activity(mainRunning, subagentRunning);
+      const worktreeBinding = readWorktreeBinding(source, row);
+      return {
+        ...activity(mainRunning, subagentRunning),
+        ...(worktreeBinding && { worktreeBinding }),
+      };
     } catch {
       return unknown(TargetedStatusReason.NativeReadFailed);
     } finally {
@@ -414,8 +430,10 @@ export async function getSessionRuntimeStatuses(
     options?.fullScan === true,
   );
   const parentByKey = new Map<string, string>();
+  const rowByKey = new Map<string, Record<string, unknown>>();
   for (const row of snapshot.sessions) {
     const key = this.runtimeRowString(row.key);
+    if (typeof row.key === 'string') rowByKey.set(row.key, row);
     const parent = this.runtimeRowString(row.spawnedBy);
     if (key && parent) parentByKey.set(key, parent);
   }
@@ -433,7 +451,12 @@ export async function getSessionRuntimeStatuses(
       continue;
     }
 
-    const sessionKeys = new Set(this.getSessionKeysForSession(sessionId));
+    const session = this.store.getSession(sessionId);
+    const sessionKeys = new Set(this.getSessionKeysForSession(sessionId, session));
+    const nativeKey = session?.nativeSessionKey;
+    const worktreeBinding = snapshot.known && nativeKey
+      ? readWorktreeBinding(session, rowByKey.get(nativeKey))
+      : undefined;
     const hasMainSessionRow = snapshot.sessions.some(row =>
       sessionKeys.has(this.runtimeRowString(row.key)),
     );
@@ -476,6 +499,7 @@ export async function getSessionRuntimeStatuses(
       mainRunning,
       subagentRunning,
       running: mainRunning || subagentRunning || scheduling,
+      ...(worktreeBinding && { worktreeBinding }),
       ...(mainRunning || subagentRunning || scheduling
         ? (() => {
             const rootRunId = this.rootRunIdBySession.get(sessionId);

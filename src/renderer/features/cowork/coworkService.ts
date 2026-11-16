@@ -42,6 +42,7 @@ import {
   setSessionRuntimeSnapshot,
   setSessionRunTimings,
   setSessions,
+  setSessionWorktreeBinding,
   setStreaming,
   touchSessionActivity,
   updateCurrentSessionPermissionMode,
@@ -499,6 +500,7 @@ export class CoworkService {
       running: result.running,
       revision: result.revision,
       ...(result.timing ? { timing: result.timing } : {}),
+      ...(result.worktreeBinding ? { worktreeBinding: result.worktreeBinding } : {}),
     };
   }
 
@@ -596,9 +598,15 @@ export class CoworkService {
     ) {
       return false;
     }
-    if (!status.known || !Number.isSafeInteger(status.revision) || status.revision <= 0) {
+    if (!Number.isSafeInteger(status.revision) || status.revision <= 0) {
       return true;
     }
+    if (status.worktreeBinding) {
+      store.dispatch(setSessionWorktreeBinding({
+        sessionId, binding: status.worktreeBinding, revision: status.revision,
+      }));
+    }
+    if (!status.known) return true;
     this.advanceRuntimeActivityVersion(sessionId);
     store.dispatch(setSessionRuntimeSnapshot({ sessionId, snapshot: status }));
     return true;
@@ -848,6 +856,15 @@ export class CoworkService {
               this.markSessionInProgress(preparedSession.id);
               provisionalActivityVersion = this.runtimeActivityVersions.get(preparedSession.id);
               store.dispatch(addSession({ session: preparedSession, select: true }));
+              if (options.worktree) {
+                // The first-turn handoff follows Main's confirmed native Worktree creation.
+                // A later authoritative runtime snapshot supersedes this observation.
+                store.dispatch(setSessionWorktreeBinding({
+                  sessionId: preparedSession.id,
+                  binding: { nativeSessionKey: request.sessionKey, isWorktree: true },
+                  revision: 0,
+                }));
+              }
               if (waitsOnHome) store.dispatch(setStreaming(true));
               store.dispatch(
                 setPlanModeState({

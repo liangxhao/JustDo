@@ -25,12 +25,23 @@ export interface SessionRunTiming {
   automaticErrorRetry?: AutomaticErrorRetryRunMetadata;
 }
 
-export interface SessionRuntimeSnapshot {
-  revision: number;
+/** Optional presentation fact from a row with this exact native key. */
+export interface SessionWorktreeBinding {
+  nativeSessionKey: string;
+  isWorktree: boolean;
+}
+
+export interface SessionRuntimeActivity {
   known: boolean;
   mainRunning: boolean;
   subagentRunning: boolean;
   running: boolean;
+  rootRunId?: string;
+  worktreeBinding?: SessionWorktreeBinding;
+}
+
+export interface SessionRuntimeSnapshot extends SessionRuntimeActivity {
+  revision: number;
   timing?: SessionRunTiming;
 }
 

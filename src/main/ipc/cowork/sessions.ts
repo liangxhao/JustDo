@@ -19,6 +19,7 @@ import {
   SessionRunBeginErrorCode,
   SessionRunIpc,
   type SessionRunState,
+  type SessionRuntimeActivity,
   type SessionRuntimeSnapshot,
   type SessionRunTiming,
   type SessionRunUnknownInput,
@@ -135,13 +136,7 @@ export const registerCoworkSessionHandlers = ({
   };
   const reconcileRuntimeStatus = async (
     sessionId: string,
-    raw: {
-      known: boolean;
-      mainRunning: boolean;
-      subagentRunning: boolean;
-      running: boolean;
-      rootRunId?: string;
-    },
+    raw: SessionRuntimeActivity,
   ): Promise<SessionRuntimeSnapshot> => {
     const store = getCoworkStore();
     let timing = store.getLatestSessionRun(sessionId);

@@ -1124,16 +1124,7 @@ interface IElectronAPI {
     getSessionRuntimeStatus: (
       sessionId: string,
       options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
-    ) => Promise<{
-      success: boolean;
-      known: boolean;
-      mainRunning: boolean;
-      subagentRunning: boolean;
-      running: boolean;
-      revision: number;
-      timing?: SessionRunTiming;
-      error?: string;
-    }>;
+    ) => Promise<SessionRuntimeSnapshot & { success: boolean; error?: string }>;
     getSessionRuntimeStatuses: (
       sessionIds: string[],
       options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },

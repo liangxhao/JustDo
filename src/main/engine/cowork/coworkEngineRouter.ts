@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 
+import type { SessionRuntimeActivity } from '../../../shared/cowork/sessionRun';
 import { assertStorageExecutionAdmission } from '../../storage/relocationAdmission';
 import type {
   CoworkGenerateTitleOptions,
@@ -160,13 +161,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   async getSessionRuntimeStatus(
     sessionId: string,
     options?: CoworkRuntimeStatusOptions,
-  ): Promise<{
-    known: boolean;
-    mainRunning: boolean;
-    subagentRunning: boolean;
-    running: boolean;
-    rootRunId?: string;
-  }> {
+  ): Promise<SessionRuntimeActivity> {
     if (this.runtime.getSessionRuntimeStatus) {
       return this.runtime.getSessionRuntimeStatus(sessionId, options);
     }
@@ -176,18 +171,7 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
   async getSessionRuntimeStatuses(
     sessionIds: string[],
     options?: { includeSubagents?: boolean; forceRefresh?: boolean; fullScan?: boolean },
-  ): Promise<
-    Record<
-      string,
-      {
-        known: boolean;
-        mainRunning: boolean;
-        subagentRunning: boolean;
-        running: boolean;
-        rootRunId?: string;
-      }
-    >
-  > {
+  ): Promise<Record<string, SessionRuntimeActivity>> {
     if (this.runtime.getSessionRuntimeStatuses) {
       return this.runtime.getSessionRuntimeStatuses(sessionIds, options);
     }

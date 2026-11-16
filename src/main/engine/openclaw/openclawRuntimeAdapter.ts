@@ -3349,12 +3349,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       : null;
   }
 
-  getSessionKeysForSession(sessionId: string): string[] {
+  getSessionKeysForSession(sessionId: string, session = this.store.getSession(sessionId)): string[] {
     const keys: string[] = [];
     for (const [key, id] of this.sessionIdBySessionKey.entries()) {
       if (id === sessionId) keys.push(key);
     }
-    const session = this.store.getSession(sessionId);
     if (session?.nativeSessionKey && !keys.includes(session.nativeSessionKey)) {
       keys.push(session.nativeSessionKey);
     }
@@ -3402,13 +3401,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   getSessionRuntimeStatus(
     sessionId: string,
     options?: CoworkRuntimeStatusOptions,
-  ): Promise<{
-    known: boolean;
-    mainRunning: boolean;
-    subagentRunning: boolean;
-    running: boolean;
-    rootRunId?: string;
-  }> {
+  ): Promise<SessionRuntimeStatus> {
     return runtimeSessionStatus.getSessionRuntimeStatus.call(
       this.runtimeSessionStatusContext,
       sessionId,
