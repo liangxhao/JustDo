@@ -1,4 +1,4 @@
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -39,32 +39,70 @@ function resolveGitExecutable(env: NodeJS.ProcessEnv): string | undefined {
   return undefined;
 }
 
-async function initializeProjectRepository(directory: string): Promise<void> {
-  if (await hasRepositoryMarker(directory)) return;
+function resolveProjectGitRuntime() {
   const env = applyPortableGitRuntimeEnv({ ...process.env });
   for (const key of Object.keys(env)) {
     if (/^GIT_/i.test(key)) delete env[key];
   }
   env.LC_ALL = 'C';
   const executable = resolveGitExecutable(env);
-  if (!executable) return;
-  const runGit = (args: string[]) =>
-    new Promise<void>((resolve, reject) => {
-      execFile(
-        executable,
-        args,
-        {
-          cwd: directory,
-          env,
-          timeout: GIT_TIMEOUT_MS,
-          windowsHide: true,
-        },
-        (error, _stdout, stderr) => {
-          if (error) reject(Object.assign(error, { stderr }));
-          else resolve();
-        },
-      );
+  if (executable) return { executable, env };
+}
+
+export function startProjectGit(directory: string, args: string[]) {
+  const runtime = resolveProjectGitRuntime();
+  if (!runtime) return undefined;
+  return spawn(runtime.executable, args, {
+    cwd: directory,
+    env: runtime.env,
+    timeout: GIT_TIMEOUT_MS,
+    windowsHide: true,
+  });
+}
+
+export function createProjectGitRunner(directory: string) {
+  const runtime = resolveProjectGitRuntime();
+  if (!runtime) return undefined;
+
+  return (
+    args: string[],
+    options: { input?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {},
+  ): Promise<string> => new Promise((resolve, reject) => {
+    const child = execFile(
+      runtime.executable,
+      args,
+      {
+        cwd: directory,
+        env: { ...runtime.env, ...options.env },
+        encoding: 'buffer',
+        maxBuffer: 32 * 1024 * 1024,
+        timeout: options.timeout ?? GIT_TIMEOUT_MS,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          reject(Object.assign(error, { stderr: stderr.toString('utf8') }));
+          return;
+        }
+        try {
+          // An undecodable filename must not be shown or subsequently selected as a different path.
+          resolve(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(stdout));
+        } catch (error) {
+          reject(error);
+        }
+      },
+    );
+    child.stdin?.on('error', () => {
+      // The Git exit status reports commands that stopped accepting input.
     });
+    child.stdin?.end(options.input);
+  });
+}
+
+async function initializeProjectRepository(directory: string): Promise<void> {
+  if (await hasRepositoryMarker(directory)) return;
+  const runGit = createProjectGitRunner(directory);
+  if (!runGit) return;
 
   try {
     // Covers bare repositories as well as parent repositories and worktrees.

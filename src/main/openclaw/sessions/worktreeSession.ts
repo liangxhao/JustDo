@@ -1,14 +1,28 @@
 import path from 'path';
 
 import { toOpenClawSessionPermissionMode } from '../../../shared/security/approvals';
+import { createProjectGitRunner } from '../../core/filesystem/projectGit';
 import { t } from '../../core/i18n';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import { buildManagedSessionKey } from './openclawSessionKeys';
+
+/** A known repository rejection with the uncreated session reconciled. */
+export class WorktreeRepositoryNoCommitsError extends Error {}
+
+export async function readWorktreeSourceCommit(cwd: string): Promise<string | undefined> {
+  const git = createProjectGitRunner(cwd);
+  const output = await git?.(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], {
+    env: { GIT_NO_LAZY_FETCH: '1' },
+  }).catch((): undefined => undefined);
+  const commit = output?.trim();
+  return commit && /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(commit) ? commit : undefined;
+}
 
 export async function createSessionWorktree(
   store: CoworkStore,
   session: CoworkSession,
   requestGateway: <T>(method: string, params?: unknown) => Promise<T>,
+  sourceCommit?: string,
 ): Promise<string> {
   const key = buildManagedSessionKey(session.id, session.agentId);
   // Bind before admission so uncertain creation outcomes retain a native identity
@@ -27,6 +41,7 @@ export async function createSessionWorktree(
       cwd: session.cwd,
       permissionMode,
       worktree: true,
+      ...(sourceCommit ? { worktreeBaseRef: sourceCommit } : {}),
     });
     const root = created.entry?.sessionRoot;
     if (
@@ -44,6 +59,7 @@ export async function createSessionWorktree(
     store.updateSession(session.id, { cwd: root });
     return root;
   } catch (error) {
+    let confirmedAbsent = false;
     try {
       const described = await requestGateway<{
         session?: { sessionRoot?: unknown; spawnedCwd?: unknown; worktree?: unknown } | null;
@@ -51,6 +67,7 @@ export async function createSessionWorktree(
       if (described.session === null) {
         // A negative native read confirms that no checkout-owning session exists.
         store.deleteSession(session.id);
+        confirmedAbsent = true;
       } else {
         const nativeRoot = described.session?.sessionRoot ?? described.session?.spawnedCwd;
         if (described.session?.worktree && typeof nativeRoot === 'string' && path.isAbsolute(nativeRoot)) {
@@ -61,6 +78,18 @@ export async function createSessionWorktree(
       // A failed read cannot establish that creation failed; retain its identity.
     }
     if (store.getSession(session.id)) store.updateSession(session.id, { status: 'error' });
+    // The Gateway currently exposes this repository reason only in its error message.
+    if (
+      error instanceof Error &&
+      'gatewayCode' in error && error.gatewayCode === 'INVALID_REQUEST' &&
+      error.message.startsWith('git checkout has no commits:') &&
+      error.message.endsWith('Create an initial commit, then retry.')
+    ) {
+      if (confirmedAbsent) {
+        throw new WorktreeRepositoryNoCommitsError(t('worktreeRepositoryNoCommits'), { cause: error });
+      }
+      throw new Error(t('worktreeCreateUnconfirmed'), { cause: error });
+    }
     throw error;
   }
 }

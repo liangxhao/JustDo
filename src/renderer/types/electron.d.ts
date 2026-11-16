@@ -1049,10 +1049,15 @@ interface IElectronAPI {
       engineStatus?: OpenClawEngineStatus;
       timing?: SessionRunTiming;
       cancelled?: boolean;
+      worktreeInitialCommit?: import('../../shared/cowork/worktreeInitialCommit').WorktreeInitialCommitOffer;
     }>;
     cancelSessionStart: (
       input: import('../../shared/cowork/sessionStart').CancelSessionStartInput,
     ) => Promise<import('../../shared/cowork/sessionStart').CancelSessionStartResult>;
+    confirmWorktreeInitialCommit: (
+      input: import('../../shared/cowork/worktreeInitialCommit').WorktreeInitialCommitInput,
+    ) => Promise<import('../../shared/cowork/worktreeInitialCommit').WorktreeInitialCommitResult>;
+    dismissWorktreeInitialCommit: (offerId: string) => Promise<void>;
     onNativeSessionDispatch: (
       callback: (
         request: import('../../shared/cowork/nativeSessionDispatch').NativeSessionDispatchRequest,

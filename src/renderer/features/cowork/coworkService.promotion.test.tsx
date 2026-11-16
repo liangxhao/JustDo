@@ -151,6 +151,76 @@ it('keeps every committed workspace visible during asynchronous native session h
 });
 
 it.each([
+  { label: 'the originating Home draft is current', current: true },
+  { label: 'the user left and returned to Home', current: false },
+])('waits for the exact Worktree handoff when $label', async ({ current }) => {
+  const worktree = { ...canonical, cwd: '/runtime/worktrees/synthetic' };
+  const preparedRow = deferred<{ success: boolean; session: CoworkSession }>();
+  const nativeResult = deferred<{ success: boolean; session?: CoworkSession; cancelled?: boolean }>();
+  let listener!: (request: NativeSessionDispatchRequest) => void;
+  const respond = vi.fn(async (response: NativeSessionDispatchResponse) => {
+    nativeResult.resolve(response.success
+      ? { success: true, session: worktree }
+      : { success: false, cancelled: true });
+  });
+  const startSession = vi.fn(() => nativeResult.promise);
+  const getSession = vi.fn(() => preparedRow.promise);
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { cowork: {
+      startSession,
+      getSession,
+      onNativeSessionDispatch: (next: typeof listener) => { listener = next; return vi.fn(); },
+      respondNativeSessionDispatch: respond,
+    } },
+  });
+  const clientTurnId = 'home-worktree-turn';
+  const beforeSessionSelected = vi.fn(() => {
+    expect(store.getState().cowork.currentSession).toBeNull();
+  });
+  const dispatchInitialTurn = vi.fn(async () => {
+    expect(store.getState().cowork.currentSession).toMatchObject({
+      id: worktree.id,
+      cwd: worktree.cwd,
+    });
+    return { runId: clientTurnId };
+  });
+  let isCurrent = true;
+  const service = new CoworkService();
+  const pending = service.startSession({ prompt: 'Synthetic', clientTurnId, worktree: true }, {
+    beforeSessionSelected,
+    dispatchInitialTurn,
+    isCurrent: () => isCurrent,
+  });
+  expect(startSession).toHaveBeenCalledWith(expect.objectContaining({ rendererDispatch: true }));
+  expect(store.getState().cowork.currentSession).toBeNull();
+  expect(dispatchInitialTurn).not.toHaveBeenCalled();
+  listener({
+    requestId: 'home-worktree-dispatch',
+    clientTurnId,
+    sessionId: worktree.id,
+    sessionKey: worktree.nativeSessionKey!,
+    params: { sessionKey: worktree.nativeSessionKey!, idempotencyKey: clientTurnId },
+  });
+  await vi.waitFor(() => expect(getSession).toHaveBeenCalledOnce());
+  expect(store.getState().cowork.currentSession).toBeNull();
+  isCurrent = current;
+  preparedRow.resolve({ success: true, session: worktree });
+
+  if (current) {
+    await expect(pending).resolves.toMatchObject({ session: { id: worktree.id } });
+    expect(beforeSessionSelected).toHaveBeenCalledOnce();
+    expect(dispatchInitialTurn).toHaveBeenCalledOnce();
+  } else {
+    await expect(pending).resolves.toMatchObject({ session: null, cancelled: true });
+    expect(respond).toHaveBeenCalledWith(expect.objectContaining({ success: false, requestSent: false }));
+    expect(beforeSessionSelected).not.toHaveBeenCalled();
+    expect(dispatchInitialTurn).not.toHaveBeenCalled();
+    expect(store.getState().cowork.currentSession).toBeNull();
+  }
+});
+
+it.each([
   { label: 'normal first send', appWorkspaceRequestId: undefined },
   { label: 'workspace App adoption', appWorkspaceRequestId: 'workspace-adoption' },
 ])('keeps every committed workspace visible during $label', async ({ appWorkspaceRequestId }) => {

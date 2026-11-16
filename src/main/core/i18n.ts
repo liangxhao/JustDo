@@ -87,6 +87,15 @@ const translations: Record<LanguageType, Record<string, string>> = {
       '其他会话仍在使用这个 Worktree，请先删除这些会话后再移除其所属会话。',
     worktreeCreateUnavailable: 'Worktree 创建服务暂不可用。',
     worktreeCreateUnconfirmed: '未能确认 Worktree 创建结果，请检查设置中的 Worktree 列表。',
+    worktreeRepositoryNoCommits:
+      '所选目录的 Git 仓库还没有提交。请创建首次提交、选择已有提交的 Git 仓库，或取消勾选 Worktree 后再发送。',
+    worktreeInitialCommitAlreadyExists: '项目已有首次提交。请重新发送以使用现有提交。',
+    worktreeInitialCommitChanged: '项目或文件列表已变更。请重新发送以获取最新状态。',
+    worktreeInitialCommitInvalidSelection: '选择的文件无效，请重新选择。',
+    worktreeInitialCommitUnavailable: '暂时无法读取项目的 Git 文件列表。请检查项目目录后重试。',
+    worktreeInitialCommitFailed: '无法创建初始提交。请检查项目目录和 Git 设置后重试。',
+    worktreeInitialCommitUnconfirmed: '无法确认初始提交是否成功。请关闭弹窗，检查项目后再发送。',
+    worktreeInitialCommitIndexRestoreFailed: 'Git 暂存状态未能恢复。请检查项目后再发送。',
     worktreeCleanupUnconfirmed:
       '上次 Worktree 清理结果尚未确认。再次检查只会查询原任务，不会重新提交清理。',
     worktreeCleanupUnavailable: '引擎尚未就绪，暂时无法清理 Worktree。',
@@ -325,6 +334,19 @@ const translations: Record<LanguageType, Record<string, string>> = {
     worktreeCleanupFailed: 'Worktree cleanup could not finish.',
     worktreeCreateUnconfirmed:
       'Could not confirm Worktree creation. Check the Worktree list in Settings.',
+    worktreeRepositoryNoCommits:
+      'The selected folder’s Git repository has no commits yet. Create an initial commit, select a Git repository with a commit, or uncheck Worktree before sending again.',
+    worktreeInitialCommitAlreadyExists:
+      'The project already has an initial commit. Send again to use it.',
+    worktreeInitialCommitChanged:
+      'The project or file list has changed. Send again to refresh it.',
+    worktreeInitialCommitInvalidSelection: 'The file selection is invalid. Select the files again.',
+    worktreeInitialCommitUnavailable: 'Could not read the project’s Git files. Check the project folder and try again.',
+    worktreeInitialCommitFailed: 'Could not create the initial commit. Check the project folder and Git settings and try again.',
+    worktreeInitialCommitUnconfirmed:
+      'Could not confirm the initial commit. Close the dialog, check the project, and send again.',
+    worktreeInitialCommitIndexRestoreFailed:
+      'Could not restore the Git staging area. Check the project before sending again.',
     worktreeIdentityMissing: 'Could not identify the Worktree conversation to clean up.',
     worktreeCancellationRetained:
       'Could not clean up the cancelled task workspace. Its conversation was retained. Check Worktrees in Settings.',

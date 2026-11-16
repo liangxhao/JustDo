@@ -1432,7 +1432,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
           }
 
           const clearBeforeSubmit =
-            !isRunActive && shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
+            !isRunActive && !(canSelectWorktree && useWorktree) &&
+            shouldClearSlashCommandComposerBeforeExecution(trimmedValue);
           if (clearBeforeSubmit) {
             clearSubmittedInput();
           }
@@ -1507,6 +1508,8 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         recordingTextOnly,
         showFolderSelector,
         workingDirectory,
+        canSelectWorktree,
+        useWorktree,
         dispatch,
         draftKey,
         modelSupportsImage,

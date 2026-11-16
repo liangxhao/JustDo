@@ -157,6 +157,10 @@ import {
   type WorkspaceWindowUpdate,
 } from '../../shared/cowork/workspaceWindow';
 import {
+  type WorktreeInitialCommitInput,
+  WorktreeInitialCommitIpc,
+} from '../../shared/cowork/worktreeInitialCommit';
+import {
   AgentCliIntegrationIpc,
   type AgentCliIntegrationStatus,
 } from '../../shared/integrations/agentCliIntegration';
@@ -884,6 +888,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(NativeSessionDispatchIpc.Respond, response),
     cancelSessionStart: (input: CancelSessionStartInput) =>
       ipcRenderer.invoke(SessionStartIpc.Cancel, input),
+    confirmWorktreeInitialCommit: (input: WorktreeInitialCommitInput) =>
+      ipcRenderer.invoke(WorktreeInitialCommitIpc.Confirm, input),
+    dismissWorktreeInitialCommit: (offerId: string) =>
+      ipcRenderer.invoke(WorktreeInitialCommitIpc.Dismiss, offerId),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
     deleteSession: (sessionId: string, expected?: CoworkSubagentConversationIdentity) =>
       ipcRenderer.invoke('cowork:session:delete', sessionId, ...(expected ? [expected] : [])),

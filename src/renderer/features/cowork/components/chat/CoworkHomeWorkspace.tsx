@@ -6,6 +6,8 @@ import CoworkPromptInput, {
 } from '@/features/cowork/components/composer/CoworkPromptInput';
 import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/draft/composerStyles';
 import type { ComposerSubmissionMetadata } from '@/features/cowork/components/composer/submission/composerSubmissionTiming';
+import { InitialWorktreeCommitDialog } from '@/features/cowork/components/composer/worktree/InitialWorktreeCommitDialog';
+import type { WorktreeInitialCommitDialogState } from '@/features/cowork/components/composer/worktree/useWorktreeInitialCommit';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
 } from '@/features/cowork/components/display/CoworkDisplayPanel';
@@ -42,6 +44,8 @@ interface CoworkHomeWorkspaceProps {
   maximumBrowserTabs: number;
   greetingKey: string;
   promptInputRef: React.RefObject<CoworkPromptInputRef>;
+  worktreeInitialCommitDialog?: WorktreeInitialCommitDialogState;
+  worktreePreparing?: boolean;
   handleStartSession: (
     prompt: string,
     attachments?: CoworkAttachmentPayload[],
@@ -103,6 +107,8 @@ export function renderCoworkHomeWorkspace({
   maximumBrowserTabs,
   greetingKey,
   promptInputRef,
+  worktreeInitialCommitDialog,
+  worktreePreparing,
   handleStartSession,
   handleStopSession,
   isStreaming,
@@ -141,6 +147,12 @@ export function renderCoworkHomeWorkspace({
 }: CoworkHomeWorkspaceProps) {
   return (
     <div className="cowork-home flex-1 flex flex-col h-full">
+      {worktreeInitialCommitDialog && (
+        <InitialWorktreeCommitDialog
+          key={worktreeInitialCommitDialog.offer.id}
+          {...worktreeInitialCommitDialog}
+        />
+      )}
       <div className="cowork-display-host relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {homeConversationHeader}
@@ -171,7 +183,7 @@ export function renderCoworkHomeWorkspace({
                       ref={promptInputRef}
                       onSubmit={handleStartSession}
                       onStop={handleStopSession}
-                      isStreaming={isStreaming}
+                      isStreaming={isStreaming || worktreePreparing}
                       disabled={!isEngineReady}
                       allowDraftWhileDisabled
                       disabledMessage={engineUnavailableMessage}
@@ -185,6 +197,11 @@ export function renderCoworkHomeWorkspace({
                       showModelSelector={true}
                     />
                   </div>
+                  {worktreePreparing && (
+                    <p role="status" className="px-2 text-sm text-muted">
+                      {i18nService.t('worktreePreparing')}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>

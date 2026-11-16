@@ -5,6 +5,7 @@ import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments
 import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { NativeSessionDispatchIpc } from '../../../shared/cowork/nativeSessionDispatch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
+import { WorktreeInitialCommitIpc } from '../../../shared/cowork/worktreeInitialCommit';
 import type { McpAppWorkspaceBinding } from '../../../shared/plugins/mcpApps';
 import {
   getEffectiveCustomProviderDisplayName,
@@ -13,6 +14,7 @@ import {
 } from '../../../shared/providers';
 import { matchesModelSelectionIdentity } from '../../../shared/providers/modelSelectionIdentity';
 import { resolvePermissionMode } from '../../../shared/security/approvals';
+import { ProjectInitialCommitError } from '../../core/filesystem/projectInitialCommit';
 import { resolveTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import { t } from '../../core/i18n';
 import type { CoworkStore } from '../../data/coworkStore';
@@ -21,6 +23,8 @@ import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngine
 import {
   createSessionWorktree,
   discardPreparedWorktreeSession,
+  readWorktreeSourceCommit,
+  WorktreeRepositoryNoCommitsError,
 } from '../../openclaw/sessions/worktreeSession';
 import {
   type AppSessionParticipants,
@@ -29,6 +33,7 @@ import {
 import type { WorkspaceAppSessions } from '../../plugins/mcp/workspaceAppSession';
 import { resolveAllEnabledProviderConfigs } from '../../providers/providerApiConfig';
 import { captureInitialDispatchLease, NativeSessionDispatcher } from './nativeSessionDispatch';
+import { WorktreeInitialCommitOffers } from './worktreeInitialCommitOffers';
 
 interface SessionExecutionHandlerDependencies {
   getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined;
@@ -100,6 +105,15 @@ export const registerCoworkSessionExecutionHandlers = ({
   workspaceAppSessions,
 }: SessionExecutionHandlerDependencies): void => {
   const nativeDispatcher = new NativeSessionDispatcher();
+  const initialCommitOffers = new WorktreeInitialCommitOffers(() =>
+    getCoworkStore().getConfig().workingDirectory,
+  );
+  ipcMain.handle(WorktreeInitialCommitIpc.Confirm, (event, input: unknown) =>
+    initialCommitOffers.confirm(event, input),
+  );
+  ipcMain.handle(WorktreeInitialCommitIpc.Dismiss, (event, id: unknown) =>
+    initialCommitOffers.dismiss(event, id),
+  );
   ipcMain.handle(NativeSessionDispatchIpc.Respond, (event, input: unknown) =>
     nativeDispatcher.respond(event, input),
   );
@@ -173,6 +187,7 @@ export const registerCoworkSessionExecutionHandlers = ({
   ipcMain.handle('cowork:session:start', async (event, options: StartSessionOptions) => {
     let operation: PendingStart | undefined;
     let dispatchLease: ReturnType<typeof captureInitialDispatchLease> | undefined;
+    let worktreeDispatchStarted = false;
     try {
       if (!options || typeof options.prompt !== 'string' || !hasMessageInput(options)) {
         return { success: false, error: 'Prompt is required.' };
@@ -204,7 +219,7 @@ export const registerCoworkSessionExecutionHandlers = ({
           };
         }
         dispatchLease = captureInitialDispatchLease(event, () => {
-          if (operation && !operation.sessionId) {
+          if (operation && (!operation.sessionId || (options.worktree && !worktreeDispatchStarted))) {
             operation.cancelled = true;
             operation.cancelBeforeAdmission();
           }
@@ -245,6 +260,7 @@ export const registerCoworkSessionExecutionHandlers = ({
         operation = { cancelled: false, cancelBeforeAdmission, cancellation };
         pendingStarts.set(options.clientTurnId, operation);
       }
+      const initialCommitGeneration = dispatchLease ? initialCommitOffers.beginStart() : undefined;
       await Promise.race([waitForConfigUpdates(), ...(operation ? [operation.cancellation] : [])]);
       if (operation?.cancelled) return { success: false, cancelled: true };
       const startupAfterConfig = getStartupEngineNotReadyResponse?.();
@@ -300,6 +316,12 @@ export const registerCoworkSessionExecutionHandlers = ({
       const initialModelRef = selectedModelRef ??
         (agentId === 'main' ? undefined : agent.model.trim() || undefined);
       let resolvedWorkspaceRoot = resolveTaskWorkingDirectory(selectedWorkspaceRoot);
+      // An explicit local commit avoids remote discovery. An unborn repository
+      // still reaches Gateway's repository validation and initial-commit offer.
+      const worktreeSourceCommit = options.worktree
+        ? await readWorktreeSourceCommit(resolvedWorkspaceRoot)
+        : undefined;
+      if (operation?.cancelled) return { success: false, cancelled: true };
       const createSession = (reservedSessionId?: string) =>
         store.createSession(
           options.title?.trim() || fallbackTitle,
@@ -327,7 +349,33 @@ export const registerCoworkSessionExecutionHandlers = ({
         if (operation) operation.sessionId = session.id;
       } else session = createSession();
       if (options.worktree) {
-        resolvedWorkspaceRoot = await createSessionWorktree(store, session, requestGateway!);
+        try {
+          resolvedWorkspaceRoot = await createSessionWorktree(
+            store, session, requestGateway!, worktreeSourceCommit,
+          );
+        } catch (error) {
+          if (!(error instanceof WorktreeRepositoryNoCommitsError) ||
+            initialCommitGeneration === undefined || !dispatchLease?.isCurrent() || operation?.cancelled) {
+            throw error;
+          }
+          try {
+            const offer = await initialCommitOffers.open(
+              event,
+              resolvedWorkspaceRoot,
+              initialCommitGeneration,
+              () => dispatchLease?.isCurrent() === true && !operation?.cancelled,
+            );
+            if (offer) return { success: false, worktreeInitialCommit: offer };
+          } catch (inspectError) {
+            return {
+              success: false,
+              error: t(inspectError instanceof ProjectInitialCommitError
+                ? inspectError.code
+                : 'worktreeInitialCommitUnavailable'),
+            };
+          }
+          throw error;
+        }
         if (operation?.cancelled) {
           await discardPreparedWorktreeSession(store, session.id, requestGateway!);
           return { success: false, cancelled: true };
@@ -349,6 +397,7 @@ export const registerCoworkSessionExecutionHandlers = ({
         });
         if (operation?.cancelled) {
           await getSessionPlugins().cancel(session.id, options.clientTurnId);
+          if (options.worktree) await discardPreparedWorktreeSession(store, session.id, requestGateway!);
           return {
             success: false,
             cancelled: true,
@@ -373,6 +422,8 @@ export const registerCoworkSessionExecutionHandlers = ({
         resolveAdmission = resolve;
         rejectAdmission = reject;
       });
+      const cancelledBeforeWorktreeDispatch = () =>
+        options.worktree && options.rendererDispatch && operation?.cancelled && !worktreeDispatchStarted;
       const run = getCoworkEngineRouter().startSession(
         session.id,
         options.gatewayPrompt ?? options.prompt,
@@ -392,8 +443,16 @@ export const registerCoworkSessionExecutionHandlers = ({
                 dispatchChatSend: (
                   params: Record<string, unknown>,
                   prepared: { sessionKey: string },
-                ) =>
-                  nativeDispatcher.dispatch(
+                ) => {
+                  if (options.worktree) {
+                    if (cancelledBeforeWorktreeDispatch()) {
+                      throw Object.assign(new Error(t('coworkInitialDispatchCancelled')), {
+                        requestSent: false,
+                      });
+                    }
+                    worktreeDispatchStarted = true;
+                  }
+                  return nativeDispatcher.dispatch(
                     event,
                     {
                       clientTurnId: options.clientTurnId!,
@@ -402,7 +461,8 @@ export const registerCoworkSessionExecutionHandlers = ({
                       params,
                     },
                     dispatchLease,
-                  ),
+                  );
+                },
               }
             : {}),
           ...(pluginSubmission
@@ -455,6 +515,7 @@ export const registerCoworkSessionExecutionHandlers = ({
             admissionSettled = true;
             rejectAdmission(error);
           }
+          if (cancelledBeforeWorktreeDispatch()) return;
           console.error('[Cowork] session error:', error);
           try {
             if (store.getSession(session.id)?.status !== 'error') {
@@ -465,7 +526,13 @@ export const registerCoworkSessionExecutionHandlers = ({
             console.error('[Cowork] failed to send error notification to renderer:', handlerError);
           }
         });
-      await admission;
+      await admission.catch(error => {
+        if (!cancelledBeforeWorktreeDispatch()) throw error;
+      });
+      if (cancelledBeforeWorktreeDispatch()) {
+        await discardPreparedWorktreeSession(store, session.id, requestGateway!);
+        return { success: false, cancelled: true };
+      }
 
       return {
         success: true,

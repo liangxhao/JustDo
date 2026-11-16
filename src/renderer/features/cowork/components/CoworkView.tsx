@@ -93,6 +93,10 @@ import {
 } from '@/features/cowork/components/composer/submission/composerSubmissionTiming';
 import { submitCoworkMessage } from '@/features/cowork/components/composer/submission/coworkMessageSubmit';
 import { QueuedInputCards } from '@/features/cowork/components/composer/submission/QueuedInputCards';
+import {
+  dismissWorktreeInitialCommit,
+  useWorktreeInitialCommit,
+} from '@/features/cowork/components/composer/worktree/useWorktreeInitialCommit';
 import CoworkDisplayPanel, {
   type CoworkDisplayTab,
   type CoworkDisplayTabCloseActions,
@@ -545,6 +549,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // Track pending start request so stop can cancel delayed startup.
   const pendingStartRef = useRef<{
     requestId: number;
+    worktree?: boolean;
     cancelled: boolean;
     cancellationAction: 'stop' | 'delete' | null;
     settled: Promise<boolean>;
@@ -552,6 +557,18 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     canonicalSessionId?: string;
     clientTurnId?: string;
   } | null>(null);
+  const {
+    dialog: worktreeInitialCommitDialog,
+    requestConfirmation: requestWorktreeInitialCommit,
+    finish: finishWorktreeInitialCommit,
+  } = useWorktreeInitialCommit();
+  const [worktreePreparing, setWorktreePreparing] = useState(false);
+  useEffect(() => () => {
+    const pending = pendingStartRef.current;
+    if (!pending?.worktree || pending.canonicalSessionId || pending.cancelled) return;
+    pending.cancelled = true;
+    if (pending.clientTurnId) void coworkService.cancelSessionStart(pending.clientTurnId);
+  }, []);
   const startRequestIdRef = useRef(0);
   // Ref for CoworkPromptInput
   const promptInputRef = useRef<CoworkPromptInputRef>(null);
@@ -1127,7 +1144,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       resolveStartSettled = resolve;
     });
     let cancelledStartStopped = false;
-    pendingStartRef.current = { requestId, cancelled: false, cancellationAction: null, settled };
+    pendingStartRef.current = {
+      requestId,
+      worktree,
+      cancelled: false,
+      cancellationAction: null,
+      settled,
+    };
     const isPendingStartCancelled = () => {
       const pending = pendingStartRef.current;
       return !pending || pending.requestId !== requestId || pending.cancelled;
@@ -1139,6 +1162,28 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       }
       return pending.cancellationAction;
     };
+
+    const workingDirectory = config.workingDirectory;
+    const stopWatchingHome = worktree
+      ? store.subscribe(() => {
+          const pending = pendingStartRef.current;
+          if (pending?.requestId !== requestId || pending.canonicalSessionId || pending.cancelled)
+            return;
+          const state = store.getState();
+          const homeAgentId = state.cowork.config.allowMainAgentSwitch
+            ? state.agent.currentAgentId
+            : MAIN_USER_AGENT_ID;
+          if (
+            !state.cowork.currentSession &&
+            state.cowork.config.workingDirectory === workingDirectory &&
+            homeAgentId === currentAgentId
+          )
+            return;
+          pending.cancelled = true;
+          finishWorktreeInitialCommit(false);
+          if (pending.clientTurnId) void coworkService.cancelSessionStart(pending.clientTurnId);
+        })
+      : undefined;
 
     try {
       try {
@@ -1176,7 +1221,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         return false;
       }
 
-      // Create a temporary session with user message to show immediately
+      // Ordinary starts show the optimistic conversation immediately. A Worktree
+      // start waits on Home for the canonical checkout and renderer handoff.
       const startInPlanMode = store.getState().cowork.newSessionPlanMode;
       const tempSessionId = `temp-${Date.now()}`;
       let appWorkspaceRequestId: string | undefined;
@@ -1190,24 +1236,19 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         );
         return false;
       }
-      if (pendingStartRef.current?.requestId === requestId)
+      if (!worktree && pendingStartRef.current?.requestId === requestId)
         pendingStartRef.current.temporarySessionId = tempSessionId;
       const titleInput = getMessageTitleInput(prompt, attachments, gatewayPrompt);
       const fallbackTitle =
         titleInput.split('\n')[0].slice(0, 50) || i18nService.t('coworkAttachmentSession');
       const now = resolveComposerSubmissionStartedAt(submission);
-      const clientTurnId = `justdo-${now}-${crypto.randomUUID()}`;
-      if (pendingStartRef.current?.requestId === requestId) {
-        pendingStartRef.current.clientTurnId = clientTurnId;
-      }
+      const newClientTurnId = () => `justdo-${now}-${crypto.randomUUID()}`;
+      let clientTurnId = newClientTurnId();
 
       // Capture active skill IDs before clearing them
       const sessionSkillIds = [...activeSkillIds];
 
       const initialGoal = inferInitialGoalObjective(prompt, true);
-      pendingInitialGoalRef.current = initialGoal
-        ? { sessionId: tempSessionId, objective: initialGoal }
-        : null;
       const tempSession: CoworkSession = {
         id: tempSessionId,
         title: fallbackTitle,
@@ -1222,83 +1263,72 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         agentId: currentAgentId,
       };
 
-      // Local workspace state and Redux selection must reach the same commit.
-      // An intermediate empty display state hides the native workspace surface.
-      flushSync(() => {
+      const prepareHomePromotion = (targetSessionId: string) => {
         // Prepare the input for the new owner before its first synchronous render.
         pendingPromptRef.current = prompt;
         pendingSendMotionRef.current = submission?.sendMotionOrigin;
         pendingAttachmentsRef.current = attachments ?? [];
         pendingGatewayPromptRef.current = gatewayPrompt;
-        promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, tempSessionId);
-        mcpAppTabs.promote(HOME_DISPLAY_SESSION_KEY, tempSessionId);
-        promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
+        pendingInitialGoalRef.current = initialGoal
+          ? { sessionId: targetSessionId, objective: initialGoal }
+          : null;
+        promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, targetSessionId);
+        mcpAppTabs.promote(HOME_DISPLAY_SESSION_KEY, targetSessionId);
+        promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, targetSessionId);
         browserPanelRefs.current.forEach(panel =>
-          panel.promoteRecordingSession(HOME_DISPLAY_SESSION_KEY, tempSessionId),
+          panel.promoteRecordingSession(HOME_DISPLAY_SESSION_KEY, targetSessionId),
         );
-        promotePendingBrowserTabs(HOME_DISPLAY_SESSION_KEY, tempSessionId);
-        dispatch(setCurrentSession(tempSession));
-        dispatch(setPlanMode({ sessionId: tempSessionId, enabled: startInPlanMode }));
-        dispatch(setStreaming(true));
-      });
-      debugLog('[CoworkView] handleStartSession:', {
-        prompt: prompt.slice(0, 60),
-        wrapperRefExists: !!chatWrapperRef.current,
-        tempSessionId: tempSessionId,
-      });
+        promotePendingBrowserTabs(HOME_DISPLAY_SESSION_KEY, targetSessionId);
+      };
 
-      // Clear active skills after starting so they don't persist to the next session.
-      dispatch(clearActiveSkills());
+      if (!worktree) {
+        // Local workspace state and Redux selection must reach the same commit.
+        // An intermediate empty display state hides the native workspace surface.
+        flushSync(() => {
+          prepareHomePromotion(tempSessionId);
+          dispatch(setCurrentSession(tempSession));
+          dispatch(setPlanMode({ sessionId: tempSessionId, enabled: startInPlanMode }));
+          dispatch(setStreaming(true));
+        });
+        dispatch(clearActiveSkills());
+      }
 
-      // Start the actual session immediately with fallback title
-      const {
-        session: startedSession,
-        error: startError,
-        cancelled: startCancelled,
-        acceptedRunId,
-      } = await coworkService.startSession(
-        {
-          prompt,
-          appWorkspaceRequestId,
-          gatewayPrompt,
-          title: fallbackTitle,
-          cwd: config.workingDirectory || undefined,
-          activeSkillIds: sessionSkillIds,
-          agentId: currentAgentId,
-          modelRef,
-          attachments,
-          clientTurnId,
-          startedAt: now,
-          planMode: startInPlanMode,
-          worktree: worktree === true,
-        },
-        {
-          dispatchInitialTurn: async (request, isTransportCancelled) => {
-            if (
-              isPendingStartCancelled() ||
-              isTransportCancelled() ||
-              request.clientTurnId !== clientTurnId
-            ) {
-              throw Object.assign(new Error(i18nService.t('coworkInitialDispatchCancelled')), {
-                requestSent: false,
-              });
-            }
-            const deadline = Date.now() + 10_000;
-            while (Date.now() < deadline) {
-              if (isPendingStartCancelled() || isTransportCancelled())
-                throw Object.assign(new Error(i18nService.t('coworkInitialDispatchCancelled')), {
-                  requestSent: false,
-                });
-              if (chatWrapperRef.current?.isInitialDispatchReady(request.sessionKey)) {
-                if (appWorkspaceRequestId) {
-                  try {
-                    if (!(await mcpAppTabs.prepareContext()))
-                      throw new Error('App context is unavailable');
-                  } catch {
-                    throw Object.assign(new Error(i18nService.t('mcpAppsContextPrepareFailed')), {
-                      requestSent: false,
-                    });
-                  }
+      const attemptStart = async (attemptId: string) => {
+        if (pendingStartRef.current?.requestId === requestId) {
+          pendingStartRef.current.clientTurnId = attemptId;
+        }
+        if (worktree) setWorktreePreparing(true);
+        try {
+          return await coworkService.startSession(
+            {
+              prompt,
+              appWorkspaceRequestId,
+              gatewayPrompt,
+              title: fallbackTitle,
+              cwd: workingDirectory || undefined,
+              activeSkillIds: sessionSkillIds,
+              agentId: currentAgentId,
+              modelRef,
+              attachments,
+              clientTurnId: attemptId,
+              startedAt: now,
+              planMode: startInPlanMode,
+              worktree: worktree === true,
+            },
+            {
+              ...(worktree ? { isCurrent: () => !isPendingStartCancelled() } : {}),
+              dispatchInitialTurn: async (request, isTransportCancelled) => {
+                if (
+                  isPendingStartCancelled() ||
+                  isTransportCancelled() ||
+                  request.clientTurnId !== attemptId
+                ) {
+                  throw Object.assign(new Error(i18nService.t('coworkInitialDispatchCancelled')), {
+                    requestSent: false,
+                  });
+                }
+                const deadline = Date.now() + 10_000;
+                while (Date.now() < deadline) {
                   if (isPendingStartCancelled() || isTransportCancelled())
                     throw Object.assign(
                       new Error(i18nService.t('coworkInitialDispatchCancelled')),
@@ -1306,43 +1336,106 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         requestSent: false,
                       },
                     );
+                  if (chatWrapperRef.current?.isInitialDispatchReady(request.sessionKey)) {
+                    if (appWorkspaceRequestId) {
+                      try {
+                        if (!(await mcpAppTabs.prepareContext()))
+                          throw new Error('App context is unavailable');
+                      } catch {
+                        throw Object.assign(
+                          new Error(i18nService.t('mcpAppsContextPrepareFailed')),
+                          {
+                            requestSent: false,
+                          },
+                        );
+                      }
+                      if (isPendingStartCancelled() || isTransportCancelled())
+                        throw Object.assign(
+                          new Error(i18nService.t('coworkInitialDispatchCancelled')),
+                          {
+                            requestSent: false,
+                          },
+                        );
+                    }
+                    return chatWrapperRef.current!.dispatchInitialTurn(
+                      request.params,
+                      () => isPendingStartCancelled() || isTransportCancelled(),
+                    );
+                  }
+                  await new Promise(resolve => setTimeout(resolve, 30));
                 }
-                return chatWrapperRef.current!.dispatchInitialTurn(
-                  request.params,
-                  () => isPendingStartCancelled() || isTransportCancelled(),
+                throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
+                  requestSent: false,
+                });
+              },
+              beforeSessionSelected: session => {
+                if (pendingStartRef.current?.requestId === requestId)
+                  pendingStartRef.current.canonicalSessionId = session.id;
+                if (worktree) {
+                  prepareHomePromotion(session.id);
+                  dispatch(clearActiveSkills());
+                  return;
+                }
+                promoteDisplaySession(tempSessionId, session.id);
+                homeApps.promote(tempSessionId, session.id);
+                mcpAppTabs.promote(tempSessionId, session.id);
+                summaryVisibility.promote(tempSessionId, session.id);
+                promoteBrowserPanelTabs(tempSessionId, session.id);
+                browserPanelRefs.current.forEach(panel =>
+                  panel.promoteRecordingSession(tempSessionId, session.id),
                 );
-              }
-              await new Promise(resolve => setTimeout(resolve, 30));
-            }
-            throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
-              requestSent: false,
-            });
-          },
-          beforeSessionSelected: session => {
-            if (pendingStartRef.current?.requestId === requestId)
-              pendingStartRef.current.canonicalSessionId = session.id;
-            promoteDisplaySession(tempSessionId, session.id);
-            homeApps.promote(tempSessionId, session.id);
-            mcpAppTabs.promote(tempSessionId, session.id);
-            summaryVisibility.promote(tempSessionId, session.id);
-            promoteBrowserPanelTabs(tempSessionId, session.id);
-            browserPanelRefs.current.forEach(panel =>
-              panel.promoteRecordingSession(tempSessionId, session.id),
-            );
-            promotePendingBrowserTabs(tempSessionId, session.id);
-            const sourceAgentId = currentAgentId?.trim() || 'main';
-            const targetAgentId = session.agentId?.trim() || sourceAgentId;
-            chatWrapperRef.current?.registerSessionPromotion(
-              `agent:${sourceAgentId}:justdo:${tempSessionId}`,
-              session.nativeSessionKey ||
-                session.external?.sessionKey ||
-                `agent:${targetAgentId}:justdo:${session.id}`,
-            );
-          },
-        },
-      );
+                promotePendingBrowserTabs(tempSessionId, session.id);
+                const sourceAgentId = currentAgentId?.trim() || 'main';
+                const targetAgentId = session.agentId?.trim() || sourceAgentId;
+                chatWrapperRef.current?.registerSessionPromotion(
+                  `agent:${sourceAgentId}:justdo:${tempSessionId}`,
+                  session.nativeSessionKey ||
+                    session.external?.sessionKey ||
+                    `agent:${targetAgentId}:justdo:${session.id}`,
+                );
+              },
+            },
+          );
+        } finally {
+          if (worktree) setWorktreePreparing(false);
+        }
+      };
+
+      let startResult = await attemptStart(clientTurnId);
+      if (worktree && startResult.worktreeInitialCommit) {
+        if (isPendingStartCancelled()) {
+          dismissWorktreeInitialCommit(startResult.worktreeInitialCommit.id);
+          return false;
+        }
+        if (pendingStartRef.current?.requestId === requestId)
+          pendingStartRef.current.clientTurnId = undefined;
+        const committed = await requestWorktreeInitialCommit(startResult.worktreeInitialCommit);
+        if (!committed && !isPendingStartCancelled()) promptInputRef.current?.focus();
+        if (!committed || isPendingStartCancelled()) return false;
+        clientTurnId = newClientTurnId();
+        startResult = await attemptStart(clientTurnId);
+        if (startResult.worktreeInitialCommit) {
+          dismissWorktreeInitialCommit(startResult.worktreeInitialCommit.id);
+          window.dispatchEvent(
+            new CustomEvent('app:showToast', {
+              detail: i18nService.t('worktreeStartPreparationFailed'),
+            }),
+          );
+          return false;
+        }
+      }
+      const {
+        session: startedSession,
+        error: startError,
+        cancelled: startCancelled,
+        acceptedRunId,
+      } = startResult;
 
       if (!startedSession && (startError || startCancelled)) {
+        if (worktree && !pendingStartRef.current?.canonicalSessionId) {
+          cancelledStartStopped = true;
+          return false;
+        }
         if (appWorkspaceRequestId && !pendingStartRef.current?.canonicalSessionId) {
           flushSync(() => {
             homeApps.rollback(tempSessionId);
@@ -1420,6 +1513,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       }
       return Boolean(startedSession);
     } finally {
+      stopWatchingHome?.();
       resolveStartSettled(cancelledStartStopped);
       if (pendingStartRef.current?.requestId === requestId) {
         pendingStartRef.current = null;
@@ -1429,20 +1523,24 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   };
 
   const handleStopSession = async () => {
-    if (!currentSession) return false;
     if (
       pendingStartRef.current &&
-      (currentSession.id === pendingStartRef.current.temporarySessionId ||
-        currentSession.id === pendingStartRef.current.canonicalSessionId)
+      ((!currentSession && pendingStartRef.current.worktree) ||
+        (currentSession &&
+          (currentSession.id === pendingStartRef.current.temporarySessionId ||
+            currentSession.id === pendingStartRef.current.canonicalSessionId)))
     ) {
       const pendingStart = pendingStartRef.current;
       pendingStart.cancelled = true;
       pendingStart.cancellationAction = 'stop';
+      if (pendingStart.worktree && !pendingStart.canonicalSessionId)
+        finishWorktreeInitialCommit(false);
       // Main knows the canonical session before chat.send acknowledges it. Send
       // cancellation by operation identity even if that acknowledgement is lost.
       if (!pendingStart.clientTurnId) return pendingStart.settled;
       return coworkService.cancelSessionStart(pendingStart.clientTurnId);
     }
+    if (!currentSession) return false;
     const targetSessionKey = currentGatewaySessionKey;
     const targetSendingRunId = chatWrapperRef.current?.getSendingRunId() ?? null;
     const timings = sessionRunTimings[currentSession.id];
@@ -3896,6 +3994,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       homeConversationHeader,
       greetingKey,
       promptInputRef,
+      worktreeInitialCommitDialog,
+      worktreePreparing,
       handleStartSession,
       handleStopSession,
       isStreaming,

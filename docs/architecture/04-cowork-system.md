@@ -53,6 +53,8 @@ sequenceDiagram
 
 主窗口 HTTP(S) 聊天首轮显式请求 Renderer 运输，由 Main 完成配置、权限、原生会话与运行身份准备后，只委托同一窗口当前文档的 `chat.send`；Main 继续持有执行、取消与恢复状态。提交前的同 URL 重载也撤销原窗口文档 lease。Renderer 先注册临时/原生会话提升，再等待当前连接可用，避免首轮流落入临时会话。后台调用保留 Main 发送通路，不公告可渲染 capability。
 
+桌面首页 Worktree 首发在原生检出准备期间保留首页草稿和页面。一次性发送委托到达后，Renderer 先切换到带已确认检出目录的产品会话，再使用该会话的聊天连接发送。仓库无提交时，只有明确拒绝且回读确认会话不存在才提供[初始提交确认](../features/workspace/worktree.md#用户入口)。确认成功后才用新的首发操作身份重新准备检出。
+
 运输回执只收一次；失联、窗口退出或已发出的超时保留结果不确定状态，禁止改由 Main 补发或自动重试。未发送失败明确标记 `requestSent:false`；当前会话失败后清理发送占位和 streaming，不抢回用户已切走的会话。原生停止控制回执 `{ok:true,aborted,runIds}` 不创建执行 run，单独结束请求；Goal start 仍要求完整原生 structured receipt。
 
 handler 用 clientTurnId 管理 pending start。用户在等待配置或启动期间取消，应退出准入，不创建一个稍后偷偷开始的任务。session 已建立时取消转为 Router stop。迟到取消只有在回执仍为当前运行时才生效，不能终止下一 turn。

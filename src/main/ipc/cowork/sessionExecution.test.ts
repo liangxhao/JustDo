@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
 import fs from 'fs';
@@ -7,6 +8,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { appendBehaviorPluginPrompt, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugins/host/mainBehaviorParticipants';
 import { SessionStartIpc } from '../../../shared/cowork/sessionStart';
+import {
+  WorktreeInitialCommitIpc,
+  type WorktreeInitialCommitOffer,
+} from '../../../shared/cowork/worktreeInitialCommit';
+import { t } from '../../core/i18n';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 
@@ -258,9 +264,17 @@ describe('explicit first-message model selection', () => {
 });
 
 describe('worktree first-message admission', () => {
-  const setup = () => {
+  const setup = (rendererDispatch = false) => {
     const created = session('ask');
     const root = path.join(temporaryDirectory, 'native-worktrees', 'task-1');
+    const frame = { url: 'http://127.0.0.1:43127/' };
+    const sender = Object.assign(new EventEmitter(), {
+      mainFrame: frame,
+      getURL: () => frame.url,
+      isDestroyed: () => false,
+    });
+    const window = { webContents: sender, isDestroyed: () => false };
+    const event = { sender, senderFrame: frame };
     let resolveCreation!: (value: unknown) => void;
     const nativeCreation = new Promise(resolve => {
       resolveCreation = resolve;
@@ -269,7 +283,7 @@ describe('worktree first-message admission', () => {
       method === 'sessions.create' ? nativeCreation : Promise.resolve({ ok: true, deleted: true }),
     );
     const store = {
-      getConfig: () => ({ workingDirectory: created.cwd, permissionMode: 'ask' }),
+      getConfig: () => ({ workingDirectory: workspaceRoot, permissionMode: 'ask' }),
       getAgent: () => ({ enabled: true, model: '' }),
       createSession: () => created,
       getSession: () => created,
@@ -287,10 +301,12 @@ describe('worktree first-message admission', () => {
         options.onAccepted();
       },
     );
+    const stopSession = vi.fn().mockResolvedValue(undefined);
     registerCoworkSessionExecutionHandlers({
+      getMainWindow: () => window as never,
       ensureEngineRunning: vi.fn().mockResolvedValue({ phase: 'running' }),
       getCoworkStore: () => store as unknown as CoworkStore,
-      getCoworkEngineRouter: () => ({ startSession }) as unknown as CoworkEngineRouter,
+      getCoworkEngineRouter: () => ({ startSession, stopSession }) as unknown as CoworkEngineRouter,
       waitForConfigUpdates: async () => {},
       getEngineNotReadyResponse: vi.fn(),
       requestGateway: requestGateway as <T>(method: string, params?: unknown) => Promise<T>,
@@ -304,15 +320,21 @@ describe('worktree first-message admission', () => {
       });
     const start = () =>
       handlers.get('cowork:session:start')!(
-        {},
+        event,
         {
           prompt: 'work independently',
           worktree: true,
+          rendererDispatch,
           clientTurnId: 'worktree-client-1',
         },
-      ) as Promise<unknown>;
-    return { start, resolve, requestGateway, store, startSession, root };
+      ) as Promise<{ worktreeInitialCommit?: WorktreeInitialCommitOffer }>;
+    return { start, resolve, requestGateway, store, startSession, root, event };
   };
+
+  const rejectUnbornRepository = () => Object.assign(
+    new Error(`git checkout has no commits:  ${workspaceRoot}. Create an initial commit, then retry.`),
+    { gatewayCode: 'INVALID_REQUEST' },
+  );
 
   test('waits for worktree preparation and sends the first message in the confirmed checkout', async () => {
     const fixture = setup();
@@ -328,6 +350,90 @@ describe('worktree first-message admission', () => {
     );
   });
 
+  test('explains how to proceed when the selected repository has no commits', async () => {
+    const fixture = setup();
+    fixture.requestGateway
+      .mockRejectedValueOnce(rejectUnbornRepository())
+      .mockResolvedValueOnce({ session: null });
+
+    await expect(fixture.start()).resolves.toMatchObject({
+      success: false,
+      error: t('worktreeRepositoryNoCommits'),
+    });
+    expect(fixture.store.deleteSession).toHaveBeenCalledWith('session-1');
+    expect(fixture.startSession).not.toHaveBeenCalled();
+  });
+
+  test('uses the confirmed initial commit as the checkout base without a remote', async () => {
+    const fixture = setup(true);
+    const git = (...args: string[]) => execFileSync('git', ['-C', workspaceRoot, ...args], {
+      encoding: 'utf8',
+    }).trim();
+    fs.mkdirSync(workspaceRoot);
+    git('init', '--quiet', '--template=');
+    fs.writeFileSync(path.join(workspaceRoot, 'include.txt'), 'included');
+    fs.writeFileSync(path.join(workspaceRoot, 'later.txt'), 'later');
+    fixture.requestGateway
+      .mockRejectedValueOnce(rejectUnbornRepository())
+      .mockResolvedValueOnce({ session: null });
+
+    const result = await fixture.start();
+    expect(result).toMatchObject({ success: false, worktreeInitialCommit: { files: [
+      { path: 'include.txt', staged: false }, { path: 'later.txt', staged: false },
+    ] } });
+    expect(git('for-each-ref', 'refs/heads')).toBe('');
+    const input = { id: result.worktreeInitialCommit!.id, paths: ['include.txt'] };
+    const confirm = handlers.get(WorktreeInitialCommitIpc.Confirm)!;
+    await expect(confirm({ ...fixture.event, senderFrame: {} }, input)).resolves.toMatchObject({ success: false });
+    await expect(confirm(fixture.event, { ...input, paths: ['../outside.txt'] })).resolves.toMatchObject({ success: false });
+    expect(git('for-each-ref', 'refs/heads')).toBe('');
+
+    await expect(confirm(fixture.event, input)).resolves.toEqual({ success: true });
+    expect(git('ls-tree', '-r', '--name-only', 'HEAD')).toBe('include.txt');
+    await expect(confirm(fixture.event, input)).resolves.toMatchObject({ success: false });
+    expect(fixture.startSession).not.toHaveBeenCalled();
+
+    fixture.resolve();
+    await expect(fixture.start()).resolves.toMatchObject({ success: true });
+    expect(fixture.requestGateway).toHaveBeenLastCalledWith('sessions.create', expect.objectContaining({
+      cwd: workspaceRoot,
+      worktree: true,
+      worktreeBaseRef: git('rev-parse', 'HEAD'),
+    }));
+  });
+
+  test('does not offer a commit when the original native creation cannot be reconciled', async () => {
+    const fixture = setup(true);
+    fixture.requestGateway
+      .mockRejectedValueOnce(rejectUnbornRepository())
+      .mockRejectedValueOnce(new Error('Disconnected while describing the session'));
+
+    await expect(fixture.start()).resolves.toEqual({
+      success: false,
+      error: t('worktreeCreateUnconfirmed'),
+    });
+    expect(fixture.store.deleteSession).not.toHaveBeenCalled();
+    expect(fixture.startSession).not.toHaveBeenCalled();
+  });
+
+  test('invalidates the commit offer when its owner cancels the confirmation', async () => {
+    const fixture = setup(true);
+    fs.mkdirSync(workspaceRoot);
+    execFileSync('git', ['init', '--quiet', '--template=', workspaceRoot]);
+    fixture.requestGateway
+      .mockRejectedValueOnce(rejectUnbornRepository())
+      .mockResolvedValueOnce({ session: null });
+    const { worktreeInitialCommit } = await fixture.start();
+    expect(worktreeInitialCommit).toBeDefined();
+    handlers.get(WorktreeInitialCommitIpc.Dismiss)!(fixture.event, worktreeInitialCommit!.id);
+
+    await expect(handlers.get(WorktreeInitialCommitIpc.Confirm)!(fixture.event, {
+      id: worktreeInitialCommit!.id,
+      paths: [],
+    })).resolves.toMatchObject({ success: false });
+    expect(fixture.event.sender.listenerCount('did-start-navigation')).toBe(0);
+  });
+
   test('cleans a cancelled native creation without submitting a message', async () => {
     const fixture = setup();
     const pending = fixture.start();
@@ -341,6 +447,34 @@ describe('worktree first-message admission', () => {
     });
     expect(fixture.store.deleteSession).toHaveBeenCalledWith('session-1');
     expect(fixture.startSession).not.toHaveBeenCalled();
+  });
+
+  test('discards a confirmed checkout when cancelled before the renderer handoff', async () => {
+    const fixture = setup(true);
+    let finishPreparation!: () => void;
+    fixture.startSession.mockImplementationOnce((_id, _prompt, options) =>
+      new Promise<void>(resolve => {
+        finishPreparation = () => {
+          const handoff = (options as unknown as {
+            dispatchChatSend: (params: Record<string, unknown>, prepared: { sessionKey: string }) => unknown;
+          }).dispatchChatSend;
+          expect(() => handoff({}, { sessionKey: 'agent:main:justdo:session-1' }))
+            .toThrow(t('coworkInitialDispatchCancelled'));
+          resolve();
+        };
+      }),
+    );
+    const pending = fixture.start();
+    fixture.resolve();
+    await vi.waitFor(() => expect(fixture.startSession).toHaveBeenCalledOnce());
+    await handlers.get(SessionStartIpc.Cancel)!(fixture.event, { clientTurnId: 'worktree-client-1' });
+
+    await expect(pending).resolves.toEqual({ success: false, cancelled: true });
+    expect(fixture.requestGateway).toHaveBeenCalledWith('sessions.delete', {
+      key: 'agent:main:justdo:session-1',
+      deleteTranscript: true,
+    });
+    finishPreparation();
   });
 });
 

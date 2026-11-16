@@ -12,6 +12,7 @@ import {
 import { SessionWorkspaceFailure, type SetSessionWorkspaceInput, type SetSessionWorkspaceResult } from '@shared/cowork/sessionWorkspace';
 import type { CoworkSubagentConversationIdentity } from '@shared/cowork/subagentDetails';
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
+import type { WorktreeInitialCommitOffer } from '@shared/cowork/worktreeInitialCommit';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import type { OpenClawModelsListResult } from '@shared/openclaw/models';
 import type { PermissionMode } from '@shared/security/approvals';
@@ -72,6 +73,7 @@ import { listenInitialSessionDispatch } from './nativeSessionDispatch';
 
 type StartSessionHooks = {
   beforeSessionSelected?: (session: CoworkSession) => void;
+  isCurrent?: () => boolean;
   dispatchInitialTurn?: (
     request: NativeSessionDispatchRequest,
     isCancelled: () => boolean,
@@ -773,6 +775,7 @@ export class CoworkService {
     error?: string;
     cancelled?: boolean;
     acceptedRunId?: string;
+    worktreeInitialCommit?: WorktreeInitialCommitOffer;
   }> {
     const cowork = window.electron?.cowork;
     if (!cowork) {
@@ -780,9 +783,8 @@ export class CoworkService {
       return { session: null, error: 'Cowork API not available' };
     }
 
-    store.dispatch(setStreaming(true));
-
     const temporarySessionId = store.getState().cowork.currentSession?.id;
+    const waitsOnHome = options.worktree && hooks.dispatchInitialTurn && !temporarySessionId;
     const pendingTemporarySessionId = temporarySessionId?.startsWith('temp-')
       ? temporarySessionId
       : undefined;
@@ -801,6 +803,10 @@ export class CoworkService {
     };
     let dispatchedSessionId: string | undefined;
     const nativeStart: InitialNativeStart = { cancelled: false, deleted: false };
+    const isStartCurrent = () =>
+      !nativeStart.cancelled &&
+      store.getState().cowork.currentSession?.id === temporarySessionId &&
+      (hooks.isCurrent?.() ?? true);
     const stopDispatch =
       hooks.dispatchInitialTurn &&
       options.clientTurnId &&
@@ -808,10 +814,7 @@ export class CoworkService {
       typeof cowork.respondNativeSessionDispatch === 'function' &&
       /^https?:$/.test(window.location.protocol)
         ? listenInitialSessionDispatch(cowork, options.clientTurnId, async request => {
-            if (
-              nativeStart.cancelled ||
-              store.getState().cowork.currentSession?.id !== temporarySessionId
-            ) {
+            if (!isStartCurrent()) {
               throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
                 requestSent: false,
               });
@@ -827,9 +830,9 @@ export class CoworkService {
             if (
               !row.success ||
               !row.session ||
-              nativeStart.cancelled ||
-              store.getState().cowork.currentSession?.id !== temporarySessionId ||
-              row.session.id !== request.sessionId
+              !isStartCurrent() ||
+              row.session.id !== request.sessionId ||
+              (options.worktree && row.session.nativeSessionKey !== request.sessionKey)
             ) {
               throw Object.assign(new Error(i18nService.t('coworkInitialDispatchUnavailable')), {
                 requestSent: false,
@@ -845,6 +848,7 @@ export class CoworkService {
               this.markSessionInProgress(preparedSession.id);
               provisionalActivityVersion = this.runtimeActivityVersions.get(preparedSession.id);
               store.dispatch(addSession({ session: preparedSession, select: true }));
+              if (waitsOnHome) store.dispatch(setStreaming(true));
               store.dispatch(
                 setPlanModeState({
                   sessionId: preparedSession.id,
@@ -867,6 +871,12 @@ export class CoworkService {
             }
           })
         : undefined;
+    if (options.worktree && hooks.dispatchInitialTurn && !stopDispatch) {
+      const error = i18nService.t('coworkInitialDispatchUnavailable');
+      window.dispatchEvent(new CustomEvent('app:showToast', { detail: error }));
+      return { session: null, error };
+    }
+    if (!waitsOnHome) store.dispatch(setStreaming(true));
     if (stopDispatch && options.clientTurnId)
       this.initialNativeStarts.set(options.clientTurnId, nativeStart);
     try {
@@ -913,7 +923,8 @@ export class CoworkService {
         };
         const select =
           store.getState().cowork.currentSession?.id ===
-          (dispatchedSessionId ?? temporarySessionId);
+            (dispatchedSessionId ?? temporarySessionId) &&
+          (!waitsOnHome || dispatchedSessionId !== undefined || isStartCurrent());
         const publishSession = () => store.dispatch(addSession({ session: runningSession, select }));
         if (select && !dispatchedSessionId) {
           publishPromotedSession(runningSession, publishSession);
@@ -954,7 +965,7 @@ export class CoworkService {
         this.temporarySessionPermissionModes.delete(pendingTemporarySessionId);
       }
 
-      if (options.worktree) {
+      if (options.worktree && !result.worktreeInitialCommit) {
         // Failed or cancelled preparation can retain native recovery evidence.
         // Refresh navigation so that entry remains reachable from the session list.
         await this.loadSessions().catch(() => undefined);
@@ -965,7 +976,7 @@ export class CoworkService {
       }
 
       // Show a user-visible error when session start fails
-      if (result.error) {
+      if (result.error && !result.worktreeInitialCommit) {
         const errorContent =
           result.code === 'ENGINE_NOT_READY'
             ? i18nService.t('coworkErrorEngineNotReady')
@@ -974,6 +985,7 @@ export class CoworkService {
       }
 
       if (
+        (!waitsOnHome || dispatchedSessionId !== undefined) &&
         store.getState().cowork.currentSession?.id === (dispatchedSessionId ?? temporarySessionId)
       ) {
         // A failed handoff response can still have reached Gateway. Only the
@@ -985,8 +997,14 @@ export class CoworkService {
           ),
         );
       }
-      if (!result.cancelled) console.error('Failed to start session:', result.error);
-      return { session: null, error: result.error, cancelled: result.cancelled };
+      if (!result.cancelled && !result.worktreeInitialCommit)
+        console.error('Failed to start session:', result.error);
+      return {
+        session: null,
+        error: result.error,
+        cancelled: result.cancelled,
+        ...(result.worktreeInitialCommit ? { worktreeInitialCommit: result.worktreeInitialCommit } : {}),
+      };
     } finally {
       stopDispatch?.();
       if (pendingTemporarySessionId) {
