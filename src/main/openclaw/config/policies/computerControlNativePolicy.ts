@@ -1,6 +1,7 @@
 import { spawn } from 'child_process';
 
 import { OpenClawToolName } from '../../../../shared/plugins/nativeIds';
+import { getElectronNodeRuntimePath } from '../../runtime/launch/electronNodeRuntime';
 
 const OUTPUT_PREFIX = 'JUSTDO_COMPUTER_POLICY=';
 const POLICY_TIMEOUT_MS = 10_000;
@@ -37,9 +38,8 @@ process.stdout.write('${OUTPUT_PREFIX}' + JSON.stringify(allowed));
 
 type PolicyRunner = (runtimeRoot: string, input: string) => Promise<string>;
 
-const runNativePolicy: PolicyRunner = async (runtimeRoot, input) => {
-  const { getElectronNodeRuntimePath } = await import('../../runtime/launch/electronNodeRuntime');
-  return new Promise((resolve, reject) => {
+const runNativePolicy: PolicyRunner = (runtimeRoot, input) =>
+  new Promise((resolve, reject) => {
     const child = spawn(
       getElectronNodeRuntimePath(),
       ['--input-type=module', '-e', POLICY_SCRIPT, runtimeRoot],
@@ -73,7 +73,6 @@ const runNativePolicy: PolicyRunner = async (runtimeRoot, input) => {
     child.on('close', code => finish(code !== 0));
     child.stdin.end(input);
   });
-};
 
 /** Project only the global settings choice; native execution still enforces all session policies. */
 export async function evaluateComputerControlNativePolicy(
