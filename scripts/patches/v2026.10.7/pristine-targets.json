@@ -351,6 +351,14 @@
       "targets": [
         "dist/workspace-skill-loader-sfXVTUiF.mjs"
       ]
+    },
+    {
+      "file": "038-subagent-model-inventory.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/spawn-thread-binding-CKE2AseF.mjs"
+      ]
     }
   ],
   "targets": [

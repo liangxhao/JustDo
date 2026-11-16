@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036) and project skill precedence (037). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 35 patches and preserves the remaining numbers. All current verifiers reject the pristine target, and all transformations apply and verify on their actual source owners. [pristine-targets.json](pristine-targets.json) records 81 exact pristine patch target hashes bound to the locked npm archive.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037) and subagent model inventory admission (038). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 36 patches and preserves the remaining numbers. All current verifiers reject the pristine target, and all transformations apply and verify on their actual source owners. [pristine-targets.json](pristine-targets.json) records 81 exact pristine patch target hashes bound to the locked npm archive.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -29,7 +29,7 @@ The parent, native-contract and provider/plugin agents independently cross-revie
 
 ## Capability gaps and removal conditions
 
-The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage. The number 005 identifies the retired capability. 034, 036 and 037 are later independently removable fixes.
+The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage. The number 005 identifies the retired capability. 034 and 036–038 are later independently removable fixes.
 
 | Patch                                                                                            | Old ID | Retained capability / target gap                                                                                                                                      | Remove when                                                                                                                                    |
 | ------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -68,6 +68,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [034-commentary-block-ownership.cjs](034-commentary-block-ownership.cjs)                       | —      | declare whole-message commentary snapshot ownership for scoped generic delivery, preserving complete native text filtering.                                         | native delivery exposes an equivalent explicit cumulative commentary range across updates, mixed phases and terminal publication.              |
 | [036-acp-completion-lineage.cjs](036-acp-completion-lineage.cjs) | — | persist the structural spawn envelope for ordinary top-level ACP children before dispatch, so exact completion handoffs retain requester tools. | native ACP creation persists the same envelope independently of optional nested admission checks. |
 | [037-project-skill-precedence.cjs](037-project-skill-precedence.cjs) | — | select the admitted execution project's file skill when it shares a name with an assistant skill. | native skill resolution supports execution project precedence while preserving separate assistant and execution roots. |
+| [038-subagent-model-inventory.cjs](038-subagent-model-inventory.cjs) | — | verify the target model of a new subagent outside the parent turn's plugin generation. | native subagent model preflight succeeds after retirement of the parent inventory while preserving exact caller and model checks. |
 
 ## Locked target source owners
 
@@ -110,6 +111,7 @@ The following paths were returned by a clean application on the pristine target.
 | 034 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
 | 036 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
 | 037 | `dist/workspace-skill-loader-sfXVTUiF.mjs` |
+| 038 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
 
 ## Test ownership
 
@@ -154,6 +156,7 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 034 | `commentary-block-ownership.test.ts`, `reasoning-completions-semantic.test.ts`, Renderer `justdo-chat.streaming.test.ts` |
 | 036 | `acp-completion-lineage.test.ts` |
 | 037 | `project-skill-precedence.test.ts`, `tests/openclaw/runtime/project-skill-precedence-contract.test.ts` |
+| 038 | `subagent-model-inventory.test.ts` |
 
 ### 033: plugin directory publication and retained installed files
 
@@ -327,6 +330,26 @@ runtime. It advances the native snapshot revision explicitly and checks that the
 sandbox preparation copies the winning instructions and support file. The broader
 patch checks passed 170 of 171 tests. The existing 029 line-budget assertion failed
 with 821 lines against a limit below 800.
+
+### Subagent model inventory admission (038)
+
+The locked `sessions_spawn` path calls `prepareModelChoice` before creating the child session. A
+target workspace without an exact published model owner acquires a read-only owner. Native
+metadata preparation tries to retain the caller's scoped plugin cache before selecting the
+inventory for the target. If the parent turn is still running after its cache has retired, this
+retain fails and the native tool reports that it could not verify the selected model.
+
+The reproduction enters the actual model preflight in a captured parent plugin generation
+after retiring its cache. A configured model in a separate target workspace fails under the
+old scope and resolves through the same native preflight outside that scope.
+
+Model preparation and its cache handles are private to the native tool. Neither the host nor
+the Runtime Services SDK can rebind the cache before the tool prepares the child. The patch
+uses native `runOutsidePluginRuntimeGenerationScope` only for the read-only model check. The
+explicit configuration, target and workspace still go through exact native validation, and
+the separate parent model lease and Gateway caller stay in scope. The rest of spawn uses the
+original parent context. Remove this patch when the pristine preflight passes the retirement
+reproduction with unchanged model and caller checks.
 
 ## Validation boundary
 

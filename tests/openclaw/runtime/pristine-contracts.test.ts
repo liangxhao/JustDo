@@ -95,6 +95,7 @@ const EXPECTED_PATCH_FILES = [
   '034-commentary-block-ownership.cjs',
   '036-acp-completion-lineage.cjs',
   '037-project-skill-precedence.cjs',
+  '038-subagent-model-inventory.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [
