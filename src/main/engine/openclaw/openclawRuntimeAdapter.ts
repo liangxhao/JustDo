@@ -127,6 +127,12 @@ import {
   isManagedSessionKey,
   parseManagedSessionKey,
 } from '../../openclaw/sessions/openclawSessionKeys';
+import {
+  isNativeDashboardSessionKey,
+  isVisibleNativeChildSession,
+  readNativeSessionPermissionMode,
+  readNativeSessionWorkspace,
+} from '../../openclaw/sessions/visibleChildSession';
 import { resolveRawApiConfig } from '../../providers/providerApiConfig';
 import { isRecord } from '../gateway/helpers';
 import {
@@ -625,6 +631,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     const originalSessionCwd = session.cwd;
     const originalSessionPermissionMode = session.permissionMode;
     const originalNativeSessionKey = session.nativeSessionKey;
+    const originalNativeParentSessionId = session.nativeParentSessionId;
     const originalBindingKey = session.historyBinding?.sessionKey;
     const originalBindingSessionId = session.historyBinding?.nativeSessionId;
     const originalBranchCreationPending = session.branchCreationPending;
@@ -645,6 +652,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         current.cwd === originalSessionCwd &&
         current.permissionMode === originalSessionPermissionMode &&
         current.nativeSessionKey === originalNativeSessionKey &&
+        current.nativeParentSessionId === originalNativeParentSessionId &&
         current.historyBinding?.sessionKey === originalBindingKey &&
         current.historyBinding?.nativeSessionId === originalBindingSessionId &&
         current.branchCreationPending === originalBranchCreationPending
@@ -715,31 +723,34 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         throw new Error('The native session key does not match its persisted binding.');
       }
       const described = await this.requireGatewayClient().request<{
-        session?: {
-          sessionId?: unknown;
-          sessionRoot?: unknown;
-          spawnedCwd?: unknown;
-          spawnedWorkspaceDir?: unknown;
-          worktree?: unknown;
-          permissionMode?: unknown;
-        } | null;
+        session?: Record<string, unknown> | null;
       }>('sessions.describe', { key: sessionKey });
       assertPreparationCurrent();
       const entry = described.session;
-      const nativeRoot = entry?.sessionRoot ?? entry?.spawnedCwd ?? entry?.spawnedWorkspaceDir;
+      const nativeRoot = entry && readNativeSessionWorkspace(entry);
       const worktreeId = (entry?.worktree as { id?: unknown } | null | undefined)?.id;
+      const isWorktree = entry?.worktree != null;
+      const lifecycleRevision = entry?.lifecycleRevision;
+      const parent = !isWorktree && originalNativeParentSessionId
+        ? this.store.getSession(originalNativeParentSessionId)
+        : null;
+      const parentKey = parent && (
+        parent.nativeSessionKey || parent.external?.sessionKey || this.toSessionKey(parent.id, parent.agentId)
+      );
+      const hasExpectedBinding = isWorktree
+        ? typeof worktreeId === 'string' && worktreeId.length > 0
+        : !!entry && !!parentKey && entry.key === sessionKey && entry.parentSessionKey === parentKey &&
+          isVisibleNativeChildSession(entry, session.agentId) &&
+          readNativeSessionPermissionMode(entry.permissionMode) !== undefined;
       if (
         typeof entry?.sessionId !== 'string' ||
         !entry.sessionId.trim() ||
-        !entry.worktree ||
-        typeof entry.worktree !== 'object' ||
-        typeof worktreeId !== 'string' ||
-        !worktreeId ||
+        !hasExpectedBinding ||
         typeof nativeRoot !== 'string' ||
         !path.isAbsolute(nativeRoot) ||
         !areWorkspacePathsEquivalent(nativeRoot, workspaceRoot)
       ) {
-        throw new Error('The native worktree session is unavailable or its workspace changed.');
+        throw new Error(t('nativeBoundSessionUnavailable'));
       }
       if (entry.permissionMode !== nativePermissionMode) {
         const patched = await this.requireGatewayClient().request<{
@@ -750,6 +761,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           permissionMode: nativePermissionMode,
           expectedSessionId: entry.sessionId,
           expectedPermissionMode: entry.permissionMode ?? null,
+          ...(typeof lifecycleRevision === 'string' ? { expectedLifecycleRevision: lifecycleRevision } : {}),
         });
         assertPreparationCurrent();
         const patchedWorktreeId = (patched.entry?.worktree as { id?: unknown } | null | undefined)
@@ -757,16 +769,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         if (
           patched.key !== sessionKey ||
           patched.entry?.sessionId !== entry.sessionId ||
-          patchedWorktreeId !== worktreeId
+          (typeof lifecycleRevision === 'string' && patched.entry.lifecycleRevision !== lifecycleRevision) ||
+          patchedWorktreeId !== worktreeId ||
+          (entry.worktree == null && patched.entry.worktree != null)
         ) {
-          throw new Error(t('worktreePermissionIdentityChanged'));
+          throw new Error(t('nativeBoundSessionPermissionIdentityChanged'));
         }
-        const patchedRoot =
-          patched.entry.sessionRoot ??
-          patched.entry.spawnedCwd ??
-          patched.entry.spawnedWorkspaceDir;
         this.assertPreparedSessionEntry(
-          { ...patched.entry, sessionRoot: patchedRoot },
+          { ...patched.entry, sessionRoot: readNativeSessionWorkspace(patched.entry) },
           nativePermissionMode,
           workspaceRoot,
         );
@@ -963,6 +973,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.stoppedSessions.delete(sessionId);
     const sessionKey =
       current?.sessionKey ??
+      session.nativeSessionKey ??
       buildManagedSessionKey(sessionId, session.agentId || DEFAULT_MANAGED_AGENT_ID);
     this.ensureActiveTurn(sessionId, sessionKey, runId);
     if (existing?.runId === runId) {
@@ -2578,9 +2589,27 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.rememberTerminalRun(turn.runId);
   }
 
+  private isDirectVisibleChildTurn(sessionId: string, event: NormalizedAgentEvent): boolean {
+    const session = this.store.getSession(sessionId);
+    if (
+      !session?.nativeParentSessionId ||
+      !isNativeDashboardSessionKey(event.sessionKey, session.agentId) ||
+      session.nativeSessionKey !== event.sessionKey ||
+      !event.sessionId ||
+      this.preparedNativeSessionIds.get(sessionId) !== event.sessionId
+    ) return false;
+    // Dashboard events can retain the earlier spawn's display lineage. The
+    // exact product receipt identifies a directly submitted turn in this child.
+    return this.store.getLatestSessionRun(sessionId)?.rootRunId === event.runId;
+  }
+
   private observeRunTerminal(event: NormalizedAgentEvent, admitted = false): void {
-    if (event.deliveryEvent !== 'agent' || event.spawnedBy || !event.sessionKey || !event.sessionId)
+    if (event.deliveryEvent !== 'agent' || !event.sessionKey || !event.sessionId)
       return;
+    if (event.spawnedBy) {
+      const sessionId = this.resolveSessionIdBySessionKey(event.sessionKey);
+      if (!sessionId || !this.isDirectVisibleChildTurn(sessionId, event)) return;
+    }
     const active = [...this.activeTurns.values()].find(turn => turn.runId === event.runId);
     const binding =
       admitted && active
@@ -3067,6 +3096,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     agentId?: string,
     persistedSessionKeys: string[] = [],
     workspaceRoots: string[] = [],
+    nativeAlreadyDeleted = false,
   ): void {
     this.cancelAutomaticErrorRetry(sessionId);
     this.automaticErrorRetryHost.forgetPresentation(sessionId);
@@ -3112,8 +3142,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         });
       }
     }
-    // Delete remote sessions
-    this.deleteOpenClawSessionByKeysWithRetry(sessionId, removedKeys).catch(() => {});
+    if (!nativeAlreadyDeleted)
+      this.deleteOpenClawSessionByKeysWithRetry(sessionId, removedKeys).catch(() => {});
   }
 
   private async deleteOpenClawSessionByKeysWithRetry(
@@ -4145,6 +4175,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       },
       rememberTerminalTurn: { get: () => this.rememberTerminalTurn.bind(this) },
       observeRunTerminal: { get: () => this.observeRunTerminal.bind(this) },
+      isDirectVisibleChildTurn: { get: () => this.isDirectVisibleChildTurn.bind(this) },
       forwardGoalLifecycle: { get: () => this.forwardGoalLifecycle.bind(this) },
       deferRetryError: { get: () => this.deferRetryError.bind(this) },
       verifyRetryChatFailure: { get: () => this.verifyRetryChatFailure.bind(this) },

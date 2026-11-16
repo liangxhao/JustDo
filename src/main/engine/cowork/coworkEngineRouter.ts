@@ -112,8 +112,9 @@ export class CoworkEngineRouter extends EventEmitter implements CoworkRuntime {
     agentId?: string,
     sessionKeys?: string[],
     workspaceRoots?: string[],
+    nativeAlreadyDeleted?: boolean,
   ): void {
-    this.runtime.onSessionDeleted?.(sessionId, agentId, sessionKeys, workspaceRoots);
+    this.runtime.onSessionDeleted?.(sessionId, agentId, sessionKeys, workspaceRoots, nativeAlreadyDeleted);
   }
 
   async generateTitle(

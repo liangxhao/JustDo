@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { CoworkSubagentDetailsIpc } from '../../../shared/cowork/subagentDetails';
 import { SwarmIpc } from '../../../shared/cowork/swarm';
+import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawRuntimeAdapter } from '../../engine';
 const mocks = vi.hoisted(() => ({ handle: vi.fn() }));
 vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }));
@@ -45,4 +46,55 @@ it('rejects invalid task operations without sending a native mutation', async ()
     error: 'Unknown subagent operation',
   });
   expect(request).not.toHaveBeenCalled();
+});
+
+it('resolves the original visible child for the parent drawer and rejects a stale child identity', async () => {
+  const parent = { id: 'parent', agentId: 'main', nativeSessionKey: 'agent:main:justdo:parent' };
+  const child = {
+    id: 'child', agentId: 'main', cwd: process.cwd(),
+    nativeSessionKey: 'agent:main:dashboard:child', nativeParentSessionId: parent.id,
+  };
+  const request = vi.fn().mockResolvedValue({ session: {
+    key: child.nativeSessionKey,
+    sessionId: 'physical-child',
+    parentSessionKey: parent.nativeSessionKey,
+    createdVia: 'spawn',
+    spawnDepth: 1,
+    sessionRoot: child.cwd,
+  } });
+  const client = { request };
+  const runtime = {
+    getGatewayClient: () => client,
+    getGatewayClientGeneration: () => 1,
+    getSessionKeysForSession: () => [parent.nativeSessionKey],
+  } as unknown as OpenClawRuntimeAdapter;
+  let mapped = false;
+  const getStore = () => ({
+    getSession: (id: string) => id === parent.id ? parent : null,
+    getSessionByNativeKey: (key: string) => mapped && key === child.nativeSessionKey ? child : null,
+  }) as unknown as CoworkStore;
+  const discoverNativeChildSessions = vi.fn(async () => { mapped = true; });
+  registerCoworkSubtaskHandlers({
+    getRuntime: () => runtime,
+    hasSession: id => id === parent.id,
+    conversation: { isAllowedSender: () => true, getStore, discoverNativeChildSessions },
+  });
+  const handler = mocks.handle.mock.calls.find(
+    call => call[0] === CoworkSubagentDetailsIpc.GetConversation,
+  )![1];
+
+  await expect(handler({}, parent.id, child.nativeSessionKey, 'physical-child')).resolves.toEqual({
+    success: true,
+    target: {
+      productSessionId: child.id,
+      parentProductSessionId: parent.id,
+      sessionKey: child.nativeSessionKey,
+      sessionId: 'physical-child',
+      agentId: 'main',
+      workingDirectory: child.cwd,
+    },
+  });
+  await expect(handler({}, parent.id, child.nativeSessionKey, 'stale-child')).resolves.toMatchObject({ success: false });
+  await expect(handler({}, parent.id, 'agent:main:subagent:hidden', 'hidden')).resolves.toEqual({ success: true });
+  expect(discoverNativeChildSessions).toHaveBeenCalledOnce();
 });

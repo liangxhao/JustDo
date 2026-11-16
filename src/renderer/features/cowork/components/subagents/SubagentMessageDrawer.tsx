@@ -1,9 +1,14 @@
 import { DocumentDuplicateIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type CoworkSubagentConversationTarget,
+  isNativeDashboardSessionKey,
+} from '@shared/cowork/subagentDetails';
+import React, { useCallback, useEffect, useId, useRef, useState } from 'react';
 
 import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
 import { connectToGateway } from '@/features/cowork/components/chat/JustDoChatWrapper';
+import CoworkPromptInput from '@/features/cowork/components/composer/CoworkPromptInput';
 import {
   mergeSubtaskSnapshots,
   resolveSubtaskElapsedMs,
@@ -13,6 +18,7 @@ import {
 } from '@/features/cowork/components/subagents/subtaskPresentation';
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
 import { i18nService } from '@/services/i18n';
+import TrashIcon from '@/shared/components/icons/TrashIcon';
 import Modal from '@/shared/components/ui/Modal';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
@@ -20,6 +26,7 @@ import { startSubagentGatewayConnection } from '../shared/subagentGatewayConnect
 import { reconcileSubagentLabel } from './subagentLabel';
 import { ACTIVE_SUBAGENT_POLL_INTERVAL_MS, isActiveSubagentStatus } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
+import { useSubagentConversation } from './useSubagentConversation';
 
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
@@ -58,6 +65,9 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const [retryHistoryUnconfirmed, setRetryHistoryUnconfirmed] = useState(false);
   const [hasActiveChildTurn, setHasActiveChildTurn] = useState(false);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CoworkSubagentConversationTarget>();
+  const [deleteFailed, setDeleteFailed] = useState(false);
+  const deleteHeadingId = useId();
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
   const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
   const [detailStatsFailed, setDetailStatsFailed] = useState(false);
@@ -77,7 +87,22 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   subagentRef.current = subagent;
   const subagentSessionKey = subagent?.sessionKey;
   const subagentRuntime = subagent?.runtime;
-  const shouldPollStatus = isActiveSubagentStatus(displaySubagent?.status) || hasActiveChildTurn;
+  const isDashboardConversation = isNativeDashboardSessionKey(subagentSessionKey);
+  const childRunning = isActiveSubagentStatus(displaySubagent?.status);
+  const shouldPollStatus = childRunning || hasActiveChildTurn;
+  const { conversation, send, sendDisabled, sendError, remove, deleting, deleteDisabled } =
+    useSubagentConversation({ controller, parentSessionId, sessionKey: subagentSessionKey,
+      isObscured, childRunning });
+  const showDeleteConfirmation = !isObscured && deleteTarget && conversation &&
+    deleteTarget.productSessionId === conversation.productSessionId &&
+    deleteTarget.sessionId === conversation.sessionId &&
+    deleteTarget.lifecycleRevision === conversation.lifecycleRevision;
+  const pollingParentSessionId = conversation?.parentProductSessionId ?? parentSessionId;
+
+  useEffect(() => {
+    setDeleteTarget(undefined);
+    setDeleteFailed(false);
+  }, [isObscured, parentSessionId, subagentSessionKey]);
 
   useEffect(() => {
     setDisplaySubagent(subagent);
@@ -96,7 +121,9 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
     }
 
     const nextController = new ChatController({
-      expectInitialHistory: true,
+      // Dashboard children use the ordinary user-message history format.
+      // Only delegated worker history waits for the special originating task.
+      expectInitialHistory: !isDashboardConversation,
       expectInitialUserMessage: subagentRuntime === 'acp',
     });
     nextController.state.sessionKey = subagentSessionKey;
@@ -227,10 +254,10 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       stopConnection();
       setController(current => (current === nextController ? null : current));
     };
-  }, [subagentRuntime, subagentSessionKey]);
+  }, [isDashboardConversation, subagentRuntime, subagentSessionKey]);
 
   useEffect(() => {
-    if (!parentSessionId || !subagentSessionKey) return;
+    if (!pollingParentSessionId || !subagentSessionKey) return;
     let cancelled = false;
     let refreshInFlight = false;
 
@@ -240,7 +267,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       const lifecycleRequestSequence = ++lifecycleRequestSequenceRef.current;
       try {
         const result = await window.electron.cowork.getSubTaskStatus(
-          parentSessionId,
+          pollingParentSessionId,
           hasActiveChildTurn,
         );
         if (cancelled || !result.success) return;
@@ -278,7 +305,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
       cancelled = true;
       if (timer !== undefined) window.clearInterval(timer);
     };
-  }, [hasActiveChildTurn, parentSessionId, shouldPollStatus, subagent?.id, subagentSessionKey]);
+  }, [hasActiveChildTurn, pollingParentSessionId, shouldPollStatus, subagent?.id, subagentSessionKey]);
 
   useEffect(() => {
     if (!isInfoOpen || !isActiveSubagentStatus(displaySubagent?.status)) return;
@@ -512,7 +539,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
           embedded
             ? 'inset-0 min-h-0 min-w-0'
             : 'right-0 top-2 bottom-4 z-[60] rounded-l-xl border border-r-0 border-border shadow-2xl'
-        } ${isObscured ? 'invisible' : ''}`}
+        } ${isObscured ? 'invisible' : ''} ${isDashboardConversation ? '[--chat-content-width-progress:0]' : ''}`}
         style={embedded ? undefined : { width: drawerWidth }}
         aria-hidden={isObscured || undefined}
       >
@@ -536,6 +563,21 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
             </h2>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            {conversation && (
+              <button
+                type="button"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary hover:bg-surface-raised disabled:opacity-50"
+                aria-label={i18nService.t('deleteSession')}
+                title={i18nService.t('deleteSession')}
+                disabled={deleteDisabled}
+                onClick={() => {
+                  setDeleteFailed(false);
+                  setDeleteTarget(conversation);
+                }}
+              >
+                <TrashIcon className="h-4 w-4" />
+              </button>
+            )}
             <button
               type="button"
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground"
@@ -575,9 +617,86 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
               )}
             </div>
           )}
-          <ChatMessageDisplay className="flex-1 min-h-0" controller={controller} fullWidth />
+          <ChatMessageDisplay
+            className="flex-1 min-h-0"
+            controller={controller?.state.sessionKey === subagentSessionKey ? controller : null}
+            productSessionId={conversation?.productSessionId}
+            workingDirectory={conversation?.workingDirectory}
+            fullWidth={!isDashboardConversation}
+          />
         </div>
+        {conversation && conversation.canSend !== false && (
+          <div className="cowork-composer-viewport shrink-0 pb-4 pt-2">
+            <div className="cowork-content-width mx-auto min-w-0">
+              {sendError && (
+                <p className="mb-2 text-sm text-red-600 dark:text-red-400" role="alert">
+                  {sendError}
+                </p>
+              )}
+              <CoworkPromptInput
+                mode="side-chat"
+                sessionId={conversation.productSessionId}
+                draftKeyOverride={`subagent:${conversation.productSessionId}`}
+                modelAgentId={conversation.agentId}
+                workingDirectory={conversation.workingDirectory}
+                onSubmit={send}
+                disabled={sendDisabled || Boolean(showDeleteConfirmation)}
+                placeholder={i18nService.t('coworkContinuePlaceholder')}
+              />
+              <p className="mt-1.5 px-1 text-center text-[11px] font-light leading-4 text-muted">
+                {i18nService.t('aiGeneratedDisclaimer')}
+              </p>
+            </div>
+            <div className="cowork-composer-scrollbar-gutter" aria-hidden="true" />
+          </div>
+        )}
       </aside>
+
+      {showDeleteConfirmation && (
+        <Modal
+          onClose={() => setDeleteTarget(undefined)}
+          closeOnBackdrop={!deleting}
+          className="mx-4 w-full max-w-sm overflow-hidden rounded-2xl bg-surface shadow-xl"
+          overlayClassName="fixed inset-0 z-[100] flex items-center justify-center bg-black/50"
+        >
+          <div role="dialog" aria-labelledby={deleteHeadingId} aria-modal="true">
+            <div className="space-y-2 px-5 py-4">
+              <h2 id={deleteHeadingId} className="text-base font-semibold text-foreground">
+                {i18nService.t('deleteTaskConfirmTitle')}
+              </h2>
+              <p className="text-sm text-secondary">{i18nService.t('deleteTaskConfirmMessage')}</p>
+              {deleteFailed && (
+                <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                  {i18nService.t('subtaskDeleteFailed')}
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-border px-5 py-4">
+              <button
+                type="button"
+                className="rounded-lg px-4 py-2 text-sm text-secondary hover:bg-surface-raised"
+                onClick={() => setDeleteTarget(undefined)}
+                disabled={deleting}
+              >
+                {i18nService.t('cancel')}
+              </button>
+              <button
+                type="button"
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+                onClick={async () => {
+                  setDeleteFailed(false);
+                  const result = await remove();
+                  if (result === 'deleted') onClose();
+                  if (result === 'failed') setDeleteFailed(true);
+                }}
+                disabled={deleteDisabled}
+              >
+                {i18nService.t('deleteSession')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       <Modal
         isOpen={isInfoOpen}

@@ -400,7 +400,7 @@ cowork_sessions 保存 title、status、pinned、cwd、execution_mode、permissi
 
 普通已有会话更改工作目录复用 `cwd` 字段，不新增表或复制历史；原生确认空闲及
 产品身份复核后保存期望值，后续消息／新终端的准备负责应用原生权限根。修改目录
-不刷新活动时间，不迁移文件或助手角色目录。Worktree、外部来源、插件托管及未处理
+不刷新活动时间，不迁移文件或助手角色目录。原生绑定、外部来源、插件托管及未处理
 计划等限制与并发准入见[会话权限](../features/execution/openclaw-permission-management.md#3-工作目录是权限的一部分)。
 
 `updated_at` 表示最近对话活动时间。Main 在广播运行时活动事件前将时间单调写入会话索引，
@@ -417,7 +417,7 @@ Main 也按事件时间更新活动。该投影先通过 `sessions.describe` 核
 
 读取只接受 NULL／缺省的桌面来源和当前声明的 Chrome 来源。其他非空或空字符串来源不降级为桌面会话：按 ID 读取返回不可用，目录、摘要及搜索统一过滤；按原生 key 命中此类既有映射时明确拒绝，避免原生采用流程据此重建普通会话。此边界不提供旧来源别名、不迁移或删除原行及执行回执，也不改变外部客户端另表保存的 origin。
 
-原生可见 worktree 子会话被发现后，产品在 `cowork_sessions` 中增加一条导航记录。`native_session_key` 唯一绑定原生会话，`native_parent_session_id` 保留产品父会话关系；`cwd` 是原生实际执行目录。两列和原生 key 唯一索引由当前完整 schema 声明。发现和绑定在一个 SQLite 事务中完成，重启后按原生 key 去重。产品不复制 transcript 或 worktree 快照；OpenClaw 仍是会话内容与检出目录的权威。父会话存在产品侧原生子会话时，不允许先删除父会话。
+原生可见子会话经 Gateway 核对后，产品在 `cowork_sessions` 中增加一条执行映射。`native_session_key` 唯一绑定原生会话，`native_parent_session_id` 保留产品父会话关系，`cwd` 记录实际工作目录。普通目录和 Worktree 复用上述会话字段及原生 key 唯一索引。创建产品记录与绑定在一个 SQLite 事务中完成，重启后按原生 key 去重。桌面会话目录、摘要和搜索读取以 `native_parent_session_id` 排除已有及新建的子会话映射，内部资源保护和执行身份查找仍可读取它们。会话历史和托管检出由 OpenClaw 管理。删除父会话时，只有 Gateway 明确确认已经不存在的子会话才会清除本地映射，其余已绑定子会话须先在详情页处理。
 
 用户勾选 Worktree 创建的主会话复用上述原生绑定，`native_parent_session_id` 为 NULL，`cwd` 在 Gateway 确认检出目录后更新。显示偏好 `showWorktreeCheckbox` 存在 `cowork_config` 中，缺省为 false；它控制入口可见性，不自动开启新任务的 worktree。
 

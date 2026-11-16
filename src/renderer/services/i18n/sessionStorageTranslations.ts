@@ -89,7 +89,7 @@ export const sessionStorageTranslations = {
       '已读取归档设置，但尚未确认原生配置全部生效。可以编辑并保存设置；确认生效前不能手动执行归档检查。',
     storageLoading: '正在读取会话存储…',
     storageScope:
-      '仅统计原生会话存储，不含浏览器缓存、项目和附件文件。记录数不等于侧栏会话数；归档后磁盘占用不一定立即减少。',
+      '此处显示会话记录占用的空间，浏览器缓存、项目和附件不计入。记录数可能与侧栏会话数不同。归档后，磁盘空间可能需要一段时间才会释放。',
     storageTotal: '合计',
     storageDatabase: '数据库',
     storageWal: '临时写入文件（WAL）',
@@ -225,7 +225,7 @@ export const sessionStorageTranslations = {
       'Archive settings were read, but application of the native configuration is not yet confirmed. You can edit and save settings; manual archive checks remain unavailable until confirmed.',
     storageLoading: 'Loading session storage…',
     storageScope:
-      'Native session storage only; excludes browser caches, projects and attachment files. Transcript counts differ from sidebar sessions. Archiving may not immediately reduce disk usage.',
+      'This shows disk usage for conversation records. Browser caches, project files, and attachments are outside this total. The record count may differ from the number of conversations in the sidebar. Archiving may take time to free disk space.',
     storageTotal: 'Total',
     storageDatabase: 'Database',
     storageWal: 'Write-ahead log (WAL)',

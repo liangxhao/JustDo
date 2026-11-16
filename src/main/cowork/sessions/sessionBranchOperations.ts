@@ -106,7 +106,7 @@ export async function copyCoworkSession(
     return { success: false, errorCode: SessionCopyErrorCode.SourceUnavailable, error: t('coworkBranchCreationPending') };
   }
   if (source.nativeSessionKey && !source.historyBinding) {
-    return { success: false, errorCode: SessionCopyErrorCode.SourceRestricted, error: t('worktreeCopyUnavailable') };
+    return { success: false, errorCode: SessionCopyErrorCode.SourceRestricted, error: t('nativeBoundSessionCopyUnavailable') };
   }
   if (isManagedSession?.(sourceSessionId)) {
     return { success: false, errorCode: SessionCopyErrorCode.SourceRestricted, error: 'collaborationCopyUnavailable' };
@@ -285,7 +285,7 @@ export async function forkCoworkSession(
   if (source.branchCreationPending)
     return { success: false, error: t('coworkBranchCreationPending') };
   if (source.nativeSessionKey && !source.historyBinding)
-    return { success: false, error: t('worktreeCopyUnavailable') };
+    return { success: false, error: t('nativeBoundSessionCopyUnavailable') };
   if (!requestGateway) {
     return { success: false, error: 'OpenClaw Gateway session fork is unavailable.' };
   }

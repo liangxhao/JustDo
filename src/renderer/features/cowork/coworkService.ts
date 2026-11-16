@@ -10,6 +10,7 @@ import {
   type SessionRunUnknownInput,
 } from '@shared/cowork/sessionRun';
 import { SessionWorkspaceFailure, type SetSessionWorkspaceInput, type SetSessionWorkspaceResult } from '@shared/cowork/sessionWorkspace';
+import type { CoworkSubagentConversationIdentity } from '@shared/cowork/subagentDetails';
 import { isGatewayToolFailureNotice } from '@shared/cowork/toolFailureNotice';
 import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internalRunError';
 import type { OpenClawModelsListResult } from '@shared/openclaw/models';
@@ -1034,7 +1035,7 @@ export class CoworkService {
     }
   }
 
-  async deleteSession(sessionId: string): Promise<boolean> {
+  async deleteSession(sessionId: string, expected?: CoworkSubagentConversationIdentity): Promise<boolean> {
     const cowork = window.electron?.cowork;
     if (!cowork) return false;
 
@@ -1042,7 +1043,7 @@ export class CoworkService {
       ([, pending]) => pending.sessionId === sessionId,
     );
     const removeSession = async () => {
-      const result = await cowork.deleteSession(sessionId);
+      const result = await (expected ? cowork.deleteSession(sessionId, expected) : cowork.deleteSession(sessionId));
       if (result.success) {
         store.dispatch(deleteSessionAction(sessionId));
         return true;
@@ -1225,6 +1226,9 @@ export class CoworkService {
 
     const result = await cowork.getSession(sessionId);
     if (options.canSelect?.() === false) return null;
+    // A child conversation is opened from its parent's subagent details.
+    // Selecting its product row here would add it back to the sidebar.
+    if (result.success && result.session?.nativeParentSessionId) return null;
     // Superseded failures are as stale as superseded successful reads.
     if (requestId !== this.latestLoadSessionRequestId)
       return result.success ? (result.session ?? null) : null;

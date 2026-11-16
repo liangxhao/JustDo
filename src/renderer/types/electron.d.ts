@@ -183,6 +183,7 @@ interface CoworkSession {
   pinned: boolean;
   groupId?: string | null;
   nativeSessionKey?: string;
+  nativeParentSessionId?: string;
   historyBinding?: import('../../shared/app/startup/history').HistorySessionBinding;
   cwd: string;
   executionMode: 'local' | 'sandbox';
@@ -1061,7 +1062,10 @@ interface IElectronAPI {
       response: import('../../shared/cowork/nativeSessionDispatch').NativeSessionDispatchResponse,
     ) => Promise<{ success: boolean }>;
     stopSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
-    deleteSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+    deleteSession: (
+      sessionId: string,
+      expected?: import('../../shared/cowork/subagentDetails').CoworkSubagentConversationIdentity,
+    ) => Promise<{ success: boolean; error?: string }>;
     copySession: (
       input: import('../../shared/cowork/sessionCopy').CopyCoworkSessionInput,
     ) => Promise<{
@@ -1327,6 +1331,11 @@ interface IElectronAPI {
       sessionKey: string,
       taskId?: string,
     ) => Promise<CoworkSubagentDetailsResult>;
+    getSubagentConversation: (
+      parentSessionId: string,
+      sessionKey: string,
+      sessionId: string,
+    ) => Promise<import('../../shared/cowork/subagentDetails').CoworkSubagentConversationResult>;
     listSubTaskDescendants: (sessionId: string) => Promise<CoworkSubagentDescendantsResult>;
     listSubTaskChildren: (
       sessionId: string,

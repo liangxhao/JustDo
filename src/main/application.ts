@@ -2051,7 +2051,7 @@ if (agentBridgeArgv) {
       getCoworkEngineService().requestGateway<T>(method, params),
   });
 
-  const setSessionWorkspace = registerCoworkSessionHandlers({
+  const { setSessionWorkspace, discoverNativeChildSessions } = registerCoworkSessionHandlers({
     isAllowedWorkspaceSender: event =>
       !!mainWindow &&
       !mainWindow.isDestroyed() &&
@@ -2100,6 +2100,13 @@ if (agentBridgeArgv) {
   registerCoworkSubtaskHandlers({
     getRuntime: getOpenClawRuntimeAdapter,
     hasSession: sessionId => Boolean(getCoworkStore().getSession(sessionId)),
+    conversation: {
+      getStore: getCoworkStore,
+      discoverNativeChildSessions,
+      isAllowedSender: event =>
+        !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents &&
+        event.senderFrame === event.sender.mainFrame,
+    },
   });
   registerAppPluginHandlers(
     getAppPlugins,
@@ -2945,6 +2952,7 @@ if (agentBridgeArgv) {
       });
     });
     coworkEngineRouter.on('taskChanged', event => {
+      if (event.visibleChildDiscovered) void discoverNativeChildSessions();
       BrowserWindow.getAllWindows().forEach(window => {
         if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
           window.webContents.send(CoworkSubagentDetailsIpc.Changed, event);

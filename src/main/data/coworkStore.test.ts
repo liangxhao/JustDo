@@ -730,6 +730,26 @@ test('retains native worktree identity and its own permissions across metadata r
   expect(reloaded.listSessions()).toHaveLength(2);
 });
 
+test('excludes existing child bindings from desktop lists and keeps them addressable internally', () => {
+  const parent = store.createSession('Parent', '/project', 'local', [], 'main', 'ask');
+  const childKey = 'agent:main:dashboard:child';
+  const child = store.adoptNativeSession(childKey, parent, 'Child', '/project', 'ask');
+  const reloaded = new CoworkStore(db);
+  const desktop = { excludeNativeChildren: true };
+  const ids = [parent.id, child.id];
+
+  expect(reloaded.listSessionDirectory('main', desktop).map(entry => entry.id)).toEqual([parent.id]);
+  expect(reloaded.listSessions('main', desktop).map(entry => entry.id)).toEqual([parent.id]);
+  expect(reloaded.readSessionSummaries(ids, desktop).map(entry => entry.id)).toEqual([parent.id]);
+  expect(reloaded.listSessionSearchSummaries().map(entry => entry.id)).toEqual([parent.id]);
+  expect(reloaded.listSessionDirectory().map(entry => entry.id)).toEqual(expect.arrayContaining(ids));
+  expect(reloaded.getSessionByNativeKey(childKey)).toMatchObject({
+    id: child.id,
+    nativeParentSessionId: parent.id,
+  });
+  expect(reloaded.listNativeChildBindings(parent.id)).toEqual([{ id: child.id, sessionKey: childKey }]);
+});
+
 test('hides the worktree checkbox by default and persists only its visibility preference', () => {
   expect(store.getConfig().showWorktreeCheckbox).toBe(false);
   store.setConfig({ showWorktreeCheckbox: true });

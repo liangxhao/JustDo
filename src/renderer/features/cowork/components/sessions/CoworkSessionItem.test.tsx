@@ -183,7 +183,7 @@ describe('CoworkSessionItem context menu session actions', () => {
     const { onCopy } = renderSessionItem({ worktree: true });
     const copyItem = screen.getByRole('menuitem', { name: 'Copy current session' });
     expect(copyItem.hasAttribute('disabled')).toBe(true);
-    expect(copyItem.getAttribute('title')).toBe(i18nService.t('worktreeCopyUnavailable'));
+    expect(copyItem.getAttribute('title')).toBe(i18nService.t('nativeBoundSessionCopyUnavailable'));
     expect(
       screen.getByRole('menuitem', { name: 'Export conversation' }).hasAttribute('disabled'),
     ).toBe(false);

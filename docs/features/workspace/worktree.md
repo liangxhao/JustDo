@@ -6,7 +6,7 @@
 
 “设置 → Worktree”提供托管清单、恢复、移除、清理以及创建与存储设置。可开启“显示 Worktree 勾选框”，在新会话输入框展示本次创建选项；每次新会话默认不勾选。勾选后 Main 经 `sessions.create(worktree: true)` 创建原生会话，确认实际检出根后才准备执行。设置面板不负责日常任务创建。
 
-模型也可通过原生 `sessions_spawn(..., visible: true, worktree: true)` 创建可返回的独立子会话。产品只接纳与父会话同一助手、可见且权限可表达的原生 worktree 子会话；跨助手子会话仍归原生管理，不冒充已接入侧边栏。普通 shell `git worktree add` 不进入托管注册表，本面板不声称列出或恢复这类目录。
+模型创建[原生可见子会话](../assistants/profiles-and-subagents.md#原生-subagent)时可同时设置 `worktree: true`，让子会话在独立检出目录执行。Worktree 设置面板按原生托管注册表显示和操作检出；通过 shell 运行普通 `git worktree add` 创建的目录由 Git 管理。
 
 ## 身份与执行目录
 
@@ -23,7 +23,7 @@ flowchart LR
 
 创建前先绑定稳定原生 session key，避免接收结果未知时丢失核对入口。创建回执必须包含一致的 key、session ID、权限、worktree ID、绝对 sessionRoot 与检出路径；确认后产品 `cwd` 使用实际检出目录。失败时查询原身份：明确不存在才清理产品记录，查询失败或原生保留检出时留下可检查的错误会话，不盲目创建第二个 checkout。
 
-继续已绑定的会话时重新核对身份和实际目录，并同步产品选择的原生权限，不创建替代会话。项目归属与实际执行根分别处理；审批、文件预览、Review 及执行不能使用源仓库路径代替检出根。可见子会话沿用原生 guarded/workspace/full；未声明权限按 ask 接入，read-only 等无法表达的模式不接纳。
+继续已绑定的 Worktree 会话时重新核对原生会话身份、检出身份和实际目录，并同步产品选择的原生权限。项目归属与实际执行根分别处理；审批、文件预览、Review 及执行使用实际检出根。原生子会话的通用权限接入规则见[执行引擎](../../architecture/05-agent-engine.md)。
 
 Worktree 会话暂不支持复制/分叉：普通消息 fork 不继承检出所有权，复用旧目录会让副本受原会话删除影响。消息与角色文件仍由原生接口管理，不复制 transcript 或移动项目角色规则。
 

@@ -35,12 +35,13 @@ interface ProjectionOptions {
   agentId?: string;
   sessionIds?: string[];
   summaries?: boolean;
+  excludeNativeChildren?: boolean;
 }
 
 /** A bounded number of SQL queries, independent of the number of sessions returned. */
 const readProjection = (
   db: Database.Database,
-  { agentId, sessionIds, summaries = false }: ProjectionOptions,
+  { agentId, sessionIds, summaries = false, excludeNativeChildren = false }: ProjectionOptions,
 ): SessionProjectionRow[] => {
   if (sessionIds?.length === 0) return [];
   // The production schema owns both tables. Small store fixtures may omit them.
@@ -58,6 +59,7 @@ const readProjection = (
   const history = tables.has('history_session_bindings');
   const predicates: string[] = [];
   const parameters: string[] = [];
+  if (excludeNativeChildren) predicates.push('session.native_parent_session_id IS NULL');
   if (agentId) {
     predicates.push('session.agent_id = ?');
     parameters.push(agentId);
@@ -133,8 +135,9 @@ const mapDirectoryEntry = (row: SessionProjectionRow): SessionDirectoryEntry => 
 export const readSessionDirectory = (
   db: Database.Database,
   agentId?: string,
+  options?: Pick<ProjectionOptions, 'excludeNativeChildren'>,
 ): SessionDirectoryEntry[] =>
-  readProjection(db, { agentId }).filter(isVisible).map(mapDirectoryEntry);
+  readProjection(db, { agentId, ...options }).filter(isVisible).map(mapDirectoryEntry);
 
 export const readSessionSummaryProjection = (
   db: Database.Database,

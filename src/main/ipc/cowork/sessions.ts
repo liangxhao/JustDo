@@ -24,18 +24,18 @@ import {
   type SessionRunUnknownInput,
 } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
+import type { CoworkSubagentConversationIdentity } from '../../../shared/cowork/subagentDetails';
 import { ExternalSessionSource } from '../../../shared/integrations/externalSession';
 import {
   isPermissionMode,
   type PermissionMode,
 } from '../../../shared/security/approvals';
 import { t } from '../../core/i18n';
-import { createNativeWorktreeDiscovery } from '../../cowork/sessions/nativeWorktreeDiscovery';
+import { createNativeChildSessionDiscovery } from '../../cowork/sessions/nativeChildSessionDiscovery';
 import { copyCoworkSession, forkCoworkSession, type SessionBranchOperationDependencies } from '../../cowork/sessions/sessionBranchOperations';
 import { deleteBoundNativeSession } from '../../cowork/sessions/sessionDeletion';
-import type { CoworkStore } from '../../data/coworkStore';
+import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
-import type { SessionWorkspaceUpdater } from '../../engine/cowork/sessionWorkspace';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
 import {
@@ -86,7 +86,7 @@ export const registerCoworkSessionHandlers = ({
   workspaceAppSessions,
   onSessionsChanged,
   getSessionPlugins,
-}: SessionHandlerDependencies): SessionWorkspaceUpdater => {
+}: SessionHandlerDependencies) => {
   registerAutomaticErrorRetryHandlers({
     isAllowedSender: event => isAllowedWorkspaceSender?.(event) === true,
     getStore: getCoworkStore, getRouter: getCoworkEngineRouter,
@@ -98,10 +98,11 @@ export const registerCoworkSessionHandlers = ({
     requestGateway,
     isManagedSession: sessionId => getSessionPlugins?.().isManaged(sessionId),
   };
-  const discoverNativeWorktrees = createNativeWorktreeDiscovery({
+  const deletingSessionSets = new Set<ReadonlySet<string>>();
+  const discoverNativeChildSessions = createNativeChildSessionDiscovery({
     getCoworkStore,
     requestGateway,
-    onSessionsChanged,
+    isParentDeleting: sessionId => [...deletingSessionSets].some(ids => ids.has(sessionId)),
   });
   registerMcpAppHandlers({
     getCoworkStore,
@@ -844,53 +845,95 @@ export const registerCoworkSessionHandlers = ({
     },
   );
 
-  ipcMain.handle('cowork:session:delete', async (_event, sessionId: string) => {
+  const completeSessionDeletion = (
+    store: CoworkStore,
+    sessionId: string,
+    persistedSession: CoworkSession | null,
+    nativeAlreadyDeleted = false,
+  ): void => {
+    const planWorkspaceRoots = store
+      .listPlanHandoffs(sessionId)
+      .map(handoff => handoff.artifact.workspaceRoot)
+      .filter((root): root is string => typeof root === 'string');
+    if (persistedSession?.cwd) planWorkspaceRoots.push(persistedSession.cwd);
+    store.deleteSession(sessionId);
+    idleConfirmations.delete(sessionId);
+    terminalOutcomes.delete(sessionId);
+    finalizedOutcomes.delete(sessionId);
+    revisions.delete(sessionId);
+    unknownAdmissions.delete(sessionId);
+    getSessionPlugins?.().confirmDeleted([sessionId]);
+    try {
+      getCoworkEngineRouter().onSessionDeleted(
+        sessionId,
+        persistedSession?.agentId || 'main',
+        persistedSession?.nativeSessionKey ? [persistedSession.nativeSessionKey] : [],
+        planWorkspaceRoots,
+        ...(nativeAlreadyDeleted ? [true] as const : []),
+      );
+    } catch {
+      // The persisted deletion succeeded; cache cleanup is best effort.
+    }
+  };
+
+  const reconcileDeletedChildren = async (
+    store: CoworkStore,
+    parentId: string,
+    deletion: Set<string>,
+  ): Promise<void> => {
+    for (const { id, sessionKey } of store.listNativeChildBindings(parentId)) {
+      const blocked = 'Delete independent child sessions before deleting their parent.';
+      if (!requestGateway || !sessionKey || deletion.has(id)) throw new Error(blocked);
+      deletion.add(id);
+      await reconcileDeletedChildren(store, id, deletion);
+      const described = await requestGateway<{ session?: unknown }>('sessions.describe', {
+        key: sessionKey,
+      });
+      if (described.session !== null) throw new Error(blocked);
+      const child = store.getSession(id);
+      if (!child) continue;
+      if (child.nativeSessionKey !== sessionKey || child.nativeParentSessionId !== parentId)
+        throw new Error(blocked);
+      completeSessionDeletion(store, id, child, true);
+    }
+  };
+
+  ipcMain.handle('cowork:session:delete', async (event, sessionId: string, expected?: CoworkSubagentConversationIdentity) => {
     let release: (() => void) | undefined;
+    const deletion = new Set([sessionId]);
+    deletingSessionSets.add(deletion);
     try {
       release = getSessionPlugins?.().acquireDeletion([sessionId]);
-      if (getCoworkStore().hasNativeChildSessions(sessionId)) {
-        throw new Error('Delete independent child sessions before deleting this session.');
-      }
-      if (await getSessionPlugins?.().deleteManaged(sessionId)) return { success: true };
-      await getCoworkEngineRouter().stopSession(sessionId, { bestEffort: true });
       const store = getCoworkStore();
-      idleConfirmations.delete(sessionId);
-      terminalOutcomes.delete(sessionId);
-      finalizedOutcomes.delete(sessionId);
-      revisions.delete(sessionId);
+      if (expected !== undefined) {
+        const child = store.getSession(sessionId);
+        if (!isAllowedWorkspaceSender?.(event) || !child?.nativeParentSessionId || child.historyBinding ||
+          !expected || typeof expected.sessionKey !== 'string' || child.nativeSessionKey !== expected.sessionKey ||
+          typeof expected.sessionId !== 'string' || !expected.sessionId.trim() ||
+          (expected.lifecycleRevision !== undefined && typeof expected.lifecycleRevision !== 'string')) {
+          throw new Error('Invalid child conversation for deletion.');
+        }
+      }
+      await reconcileDeletedChildren(store, sessionId, deletion);
+      if (!expected) {
+        if (await getSessionPlugins?.().deleteManaged(sessionId)) return { success: true };
+        await getCoworkEngineRouter().stopSession(sessionId, { bestEffort: true });
+      }
       const persistedSession = store.getSession(sessionId);
-      const agentId = persistedSession?.agentId || 'main';
+      if (expected && persistedSession?.nativeSessionKey !== expected.sessionKey) {
+        throw new Error('The conversation changed before deletion.');
+      }
       if (persistedSession?.nativeSessionKey) {
-        if (
-          !persistedSession.historyBinding &&
-          store.listSessions().some(summary => {
+        await deleteBoundNativeSession(persistedSession, requestGateway, () => {
+          const workspaceInUse = store.listSessions().some(summary => {
             if (summary.id === sessionId) return false;
             const other = store.getSession(summary.id);
             return other && isWorkspacePathWithin(other.cwd, persistedSession.cwd);
-          })
-        ) {
-          throw new Error(t('worktreeSharedWorkspaceDeleteBlocked'));
-        }
-        await deleteBoundNativeSession(persistedSession, requestGateway);
+          });
+          if (workspaceInUse) throw new Error(t('worktreeSharedWorkspaceDeleteBlocked'));
+        }, expected);
       }
-      unknownAdmissions.delete(sessionId);
-      const planWorkspaceRoots = store
-        .listPlanHandoffs(sessionId)
-        .map(handoff => handoff.artifact.workspaceRoot)
-        .filter((root): root is string => typeof root === 'string');
-      if (persistedSession?.cwd) planWorkspaceRoots.push(persistedSession.cwd);
-      store.deleteSession(sessionId);
-      getSessionPlugins?.().confirmDeleted([sessionId]);
-      try {
-        getCoworkEngineRouter().onSessionDeleted(
-          sessionId,
-          agentId,
-          persistedSession?.nativeSessionKey ? [persistedSession.nativeSessionKey] : [],
-          planWorkspaceRoots,
-        );
-      } catch {
-        // The persisted deletion succeeded; cache cleanup is best effort.
-      }
+      completeSessionDeletion(store, sessionId, persistedSession, !!persistedSession?.nativeParentSessionId);
       return { success: true };
     } catch (error) {
       return {
@@ -898,6 +941,7 @@ export const registerCoworkSessionHandlers = ({
         error: error instanceof Error ? error.message : 'Failed to delete session',
       };
     } finally {
+      deletingSessionSets.delete(deletion);
       release?.();
     }
   });
@@ -930,7 +974,10 @@ export const registerCoworkSessionHandlers = ({
     const deletedSessionIds: string[] = [];
     const errors: string[] = [];
     let release: (() => void) | undefined;
+    let deletion: Set<string> | undefined;
     try {
+      deletion = new Set(sessionIds);
+      deletingSessionSets.add(deletion);
       release = getSessionPlugins?.().acquireDeletion(sessionIds);
       if (
         sessionIds.some(id => {
@@ -941,16 +988,11 @@ export const registerCoworkSessionHandlers = ({
         return {
           success: false,
           deletedSessionIds,
-          error: 'Delete native worktree sessions individually so Gateway cleanup can be verified.',
+          error: t('nativeBoundSessionDeleteIndividually'),
         };
       }
-      if (sessionIds.some(id => getCoworkStore().hasNativeChildSessions?.(id))) {
-        return {
-          success: false,
-          deletedSessionIds,
-          error: 'Delete independent child sessions before deleting their parent.',
-        };
-      }
+      const store = getCoworkStore();
+      for (const id of new Set(sessionIds)) await reconcileDeletedChildren(store, id, deletion);
       const standalone: string[] = [];
       const processed = new Set<string>();
       await getSessionPlugins?.().prepareDelete(sessionIds);
@@ -974,7 +1016,6 @@ export const registerCoworkSessionHandlers = ({
           ...(errors.length ? { error: errors[0] } : {}),
         };
       const router = getCoworkEngineRouter();
-      const store = getCoworkStore();
       const agentIds = new Map(
         sessionIds.map(sessionId => [sessionId, store.getSession(sessionId)?.agentId || 'main']),
       );
@@ -1035,6 +1076,7 @@ export const registerCoworkSessionHandlers = ({
         deletedSessionIds,
       };
     } finally {
+      if (deletion) deletingSessionSets.delete(deletion);
       release?.();
     }
   });
@@ -1121,8 +1163,8 @@ export const registerCoworkSessionHandlers = ({
 
   ipcMain.handle('cowork:session:list', async (_event, agentId?: string) => {
     try {
-      await discoverNativeWorktrees();
-      return { success: true, sessions: getCoworkStore().listSessions(agentId) };
+      await discoverNativeChildSessions();
+      return { success: true, sessions: getCoworkStore().listSessions(agentId, { excludeNativeChildren: true }) };
     } catch (error) {
       return {
         success: false,
@@ -1138,8 +1180,10 @@ export const registerCoworkSessionHandlers = ({
         (typeof rawAgentId !== 'string' || !rawAgentId.trim() || rawAgentId.length > 512)
       )
         throw new Error('Agent ID must be a non-empty bounded string.');
-      const entries = getCoworkStore().listSessionDirectory(rawAgentId as string | undefined);
-      void discoverNativeWorktrees();
+      const entries = getCoworkStore().listSessionDirectory(rawAgentId as string | undefined, {
+        excludeNativeChildren: true,
+      });
+      void discoverNativeChildSessions();
       return { success: true, entries };
     } catch (error) {
       return {
@@ -1159,7 +1203,9 @@ export const registerCoworkSessionHandlers = ({
         throw new Error(
           `Session IDs must be a string array with at most ${SESSION_SUMMARY_BATCH_LIMIT} entries.`,
         );
-      const sessions = getCoworkStore().readSessionSummaries([...new Set(rawIds as string[])]);
+      const sessions = getCoworkStore().readSessionSummaries([...new Set(rawIds as string[])], {
+        excludeNativeChildren: true,
+      });
       return { success: true, sessions };
     } catch (error) {
       return {
@@ -1283,5 +1329,5 @@ export const registerCoworkSessionHandlers = ({
       }
     },
   );
-  return setSessionWorkspace;
+  return { setSessionWorkspace, discoverNativeChildSessions };
 };

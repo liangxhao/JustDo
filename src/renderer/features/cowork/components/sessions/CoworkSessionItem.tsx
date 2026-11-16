@@ -473,7 +473,7 @@ const CoworkSessionItem: React.FC<CoworkSessionItemProps> = ({
               disabled: isRuntimeRunning || (!!session.nativeSessionKey && !session.historyBinding),
               title:
                 session.nativeSessionKey && !session.historyBinding
-                  ? i18nService.t('worktreeCopyUnavailable')
+                  ? i18nService.t('nativeBoundSessionCopyUnavailable')
                   : isRuntimeRunning
                     ? i18nService.t('coworkCopyWaitForCompletion')
                     : undefined,

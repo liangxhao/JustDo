@@ -273,7 +273,7 @@ export const agentTeamTranslations = {
     teamPermission_full: '完全访问',
     teamExport: '导出',
     teamDelete: '删除',
-    teamDeleteConfirm: '删除整个讨论及成员的原生会话历史？正在执行的讨论会先停止。',
+    teamDeleteConfirm: '删除这场讨论和为它单独创建的成员聊天记录？如果讨论仍在进行，会先停止。',
     teamYou: 'You',
     teamDiscussionDispatcher: '群聊调度',
     teamQuote: '引用',
@@ -305,7 +305,7 @@ export const agentTeamTranslations = {
     teamDiscussionNotFound: '讨论不存在。',
     teamDiscussionBusy: '讨论仍有未结束的操作，请稍后重试。',
     teamDiscussionRequestConflict: '这次提交的内容发生了变化，请核对原提交状态。',
-    teamDiscussionSessionChanged: '成员的原生会话已变化，请新建讨论以免使用错误的历史。',
+    teamDiscussionSessionChanged: '有成员的聊天会话已变更，请新建讨论后再试。',
     teamDiscussionStaleRevision: '讨论配置已更新，请重新打开讨论。',
     teamDiscussionOutcomeUnknown: '尚未确认提交结果。将继续查询状态，不会重复执行。',
     teamDiscussionCommandsUnavailable: '群组讨论不支持会话控制命令，请使用界面操作。',
@@ -616,7 +616,7 @@ export const agentTeamTranslations = {
     teamExport: 'Export',
     teamDelete: 'Delete',
     teamDeleteConfirm:
-      'Delete this discussion and its members’ native session history? Active work will be stopped first.',
+      'Delete this discussion and the member chat histories created for it? If the discussion is still running, it will stop first.',
     teamYou: 'You',
     teamDiscussionDispatcher: 'Group discussion dispatcher',
     teamQuote: 'Quote',
@@ -651,8 +651,7 @@ export const agentTeamTranslations = {
     teamDiscussionNotFound: 'Discussion not found.',
     teamDiscussionBusy: 'An operation is still active. Try again shortly.',
     teamDiscussionRequestConflict: 'This submission changed. Check the original request’s status.',
-    teamDiscussionSessionChanged:
-      'A member’s native session changed. Create a new discussion to avoid using the wrong history.',
+    teamDiscussionSessionChanged: 'A member’s conversation changed. Start a new discussion to continue.',
     teamDiscussionStaleRevision: 'Discussion settings changed. Reopen the discussion.',
     teamDiscussionOutcomeUnknown:
       'Submission is not yet confirmed. Checking status without executing again.',

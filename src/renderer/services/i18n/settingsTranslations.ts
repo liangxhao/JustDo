@@ -56,8 +56,7 @@ export const settingsTranslations = {
     worktreeSettingsError_unavailable: '无法确认设置操作结果。请检查服务连接并重新读取设置。',
     worktreeSettingsError_busy: '另一项 Worktree 设置正在保存，请稍后重试。',
     worktreeSettingsError_unknown: '无法确认 Worktree 设置，请重新读取后检查。',
-    worktreeCopyUnavailable:
-      'Worktree 会话暂不支持复制或分叉，请在源项目中创建新的 Worktree 会话。',
+    nativeBoundSessionCopyUnavailable: '此会话暂不支持复制或创建分支。',
     worktreeShowCheckbox: '显示 Worktree 勾选框',
     worktreeShowCheckboxDescription:
       '在新会话输入框中显示此选项，勾选后会在独立的 Git 工作目录中运行任务。需要已提交的 Git 仓库。',
@@ -1086,8 +1085,7 @@ export const settingsTranslations = {
     worktreeSettingsError_busy: 'Another Worktree settings save is in progress. Try again shortly.',
     worktreeSettingsError_unknown:
       'Worktree settings could not be confirmed. Reload and check the settings.',
-    worktreeCopyUnavailable:
-      'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',
+    nativeBoundSessionCopyUnavailable: 'This conversation can’t be copied or branched yet.',
     worktreeShowCheckbox: 'Show Worktree checkbox',
     worktreeShowCheckboxDescription:
       'Show this option in the new conversation composer. When checked, the task runs in a separate Git working directory. Requires a Git repository with a commit.',

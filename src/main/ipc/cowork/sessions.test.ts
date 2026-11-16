@@ -290,16 +290,24 @@ test('validates directory and summary inputs before reading product metadata', a
   expect(store.listSessionDirectory).not.toHaveBeenCalled();
   expect(store.readSessionSummaries).not.toHaveBeenCalled();
   await expect(directory(null, 'main')).resolves.toEqual({ success: true, entries: [] });
+  expect(store.listSessionDirectory).toHaveBeenCalledExactlyOnceWith('main', { excludeNativeChildren: true });
   await expect(summaries(null, ['one', 'one', 'two'])).resolves.toEqual({
     success: true,
     sessions: [],
   });
-  expect(store.readSessionSummaries).toHaveBeenCalledExactlyOnceWith(['one', 'two']);
+  expect(store.readSessionSummaries).toHaveBeenCalledExactlyOnceWith(['one', 'two'], { excludeNativeChildren: true });
   await expect(search(null)).resolves.toEqual({ success: true, sessions: [] });
 });
 
-test('returns directory before Gateway discovery, coalesces concurrent discovery and notifies after adoption', async () => {
+test('returns the directory before Gateway discovery and keeps adopted children out of sidebar notifications', async () => {
   const parent = { id: 'parent', agentId: 'main', nativeSessionKey: 'agent:main:justdo:parent' };
+  const child = {
+    key: 'agent:main:dashboard:child',
+    sessionId: 'physical-child',
+    parentSessionKey: parent.nativeSessionKey,
+    createdVia: 'spawn',
+    spawnDepth: 1,
+  };
   let resolveNative!: (value: unknown) => void;
   const pendingNative = new Promise(resolve => {
     resolveNative = resolve;
@@ -307,7 +315,7 @@ test('returns directory before Gateway discovery, coalesces concurrent discovery
   const requestGateway = vi.fn(async (method: string) =>
     method === 'sessions.list'
       ? pendingNative
-      : { session: { worktree: { id: 'tree' }, spawnedCwd: 'E:\\repo\\child' } },
+      : { session: { ...child, sessionRoot: 'E:\\repo', permissionMode: 'guarded' } },
   );
   const onSessionsChanged = vi.fn();
   let adopted = false;
@@ -335,18 +343,10 @@ test('returns directory before Gateway discovery, coalesces concurrent discovery
   await handler(null);
   expect(requestGateway).toHaveBeenCalledTimes(1);
   expect(onSessionsChanged).not.toHaveBeenCalled();
-  resolveNative({
-    sessions: [
-      {
-        key: 'agent:main:subagent:child',
-        parentSessionKey: parent.nativeSessionKey,
-        worktree: { id: 'tree' },
-      },
-    ],
-  });
-  await vi.waitFor(() => expect(onSessionsChanged).toHaveBeenCalledOnce());
-  expect(store.getSession).toHaveBeenCalledExactlyOnceWith('parent');
-  expect(store.adoptNativeSession).toHaveBeenCalledOnce();
+  resolveNative({ sessions: [child] });
+  await vi.waitFor(() => expect(store.adoptNativeSession).toHaveBeenCalledOnce());
+  expect(store.adoptNativeSession).toHaveBeenCalledExactlyOnceWith(child.key, parent, child.key, 'E:\\repo', 'ask');
+  expect(onSessionsChanged).not.toHaveBeenCalled();
 });
 
 test('validates search scopes before Gateway access and preserves message identity in IPC results', async () => {
@@ -436,23 +436,23 @@ test.each([
         },
       ),
     };
-    const childKey = 'agent:main:subagent:child';
+    const childKey = 'agent:main:dashboard:child';
+    const child = {
+      key: childKey,
+      sessionId: 'physical-child',
+      parentSessionKey: 'agent:main:justdo:parent',
+      createdVia: 'spawn',
+      spawnDepth: 1,
+      worktree: { id: 'tree' },
+    };
     const requestGateway = vi.fn(async (method: string) =>
       method === 'sessions.list'
-        ? {
-            sessions: [
-              {
-                key: childKey,
-                parentSessionKey: 'agent:main:justdo:parent',
-                worktree: { id: 'tree' },
-              },
-            ],
-          }
+        ? { sessions: [child] }
         : {
             session: {
+              ...child,
               spawnedCwd: 'E:\\repo\\child',
               label: 'Isolated task',
-              worktree: { id: 'tree' },
               permissionMode: nativeMode,
             },
           },
@@ -489,20 +489,20 @@ test('does not broaden an unsupported native read-only worktree permission durin
     getSessionByNativeKey: () => null,
     adoptNativeSession,
   };
+  const child = {
+    key: 'agent:main:dashboard:child',
+    sessionId: 'physical-child',
+    parentSessionKey: 'agent:main:justdo:parent',
+    createdVia: 'spawn',
+    spawnDepth: 1,
+    worktree: { id: 'tree' },
+  };
   const requestGateway = vi.fn(async (method: string) =>
     method === 'sessions.list'
-      ? {
-          sessions: [
-            {
-              key: 'agent:main:subagent:child',
-              parentSessionKey: 'agent:main:justdo:parent',
-              worktree: { id: 'tree' },
-            },
-          ],
-        }
+      ? { sessions: [child] }
       : {
           session: {
-            worktree: { id: 'tree' },
+            ...child,
             spawnedCwd: 'E:\\repo\\child',
             permissionMode: 'read-only',
           },
@@ -640,7 +640,7 @@ test.each([CoworkSessionCopyIpc.Copy, CoworkSessionForkIpc.Fork])(
 test('deleting imported history fences the native identity without deleting a shared project', async () => {
   const key = 'agent:main:justdo:old';
   const store = {
-    hasNativeChildSessions: () => false,
+    listNativeChildBindings: () => [],
     getSession: (id: string) => ({
       id,
       cwd: 'E:\\repo',
@@ -671,31 +671,41 @@ test('deleting imported history fences the native identity without deleting a sh
   expect(store.deleteSession).toHaveBeenCalledWith('history');
 });
 
-test('keeps a native session visible when Gateway preserves its worktree on deletion', async () => {
+test.each([false, true])('handles a preserved worktree after deleting a session (child drawer: %s)', async fromDrawer => {
   const nativeSessionKey = 'agent:main:subagent:child';
+  const expected = { sessionKey: nativeSessionKey, sessionId: 'physical-child', lifecycleRevision: 'revision' };
   const store = {
-    hasNativeChildSessions: () => false,
-    getSession: () => ({ id: 'child', agentId: 'main', cwd: 'E:\\repo\\child', nativeSessionKey }),
+    listNativeChildBindings: () => [],
+    getSession: () => ({ id: 'child', agentId: 'main', cwd: 'E:\\repo\\child', nativeSessionKey,
+      ...(fromDrawer ? { nativeParentSessionId: 'parent' } : {}) }),
     listSessions: () => [{ id: 'child' }],
     listPlanHandoffs: () => [],
     deleteSession: vi.fn(),
   };
-  const requestGateway = vi.fn().mockResolvedValue({ worktreePreserved: { id: 'tree-1' } });
+  const requestGateway = vi.fn()
+    .mockResolvedValueOnce({ session: {
+      key: nativeSessionKey, sessionId: expected.sessionId, lifecycleRevision: expected.lifecycleRevision,
+      worktree: { id: 'tree-1' },
+    } })
+    .mockResolvedValueOnce({ deleted: true, worktreePreserved: { id: 'tree-1' } });
   registerCoworkSessionHandlers({
     getCoworkStore: () => store as unknown as CoworkStore,
     getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
+    isAllowedWorkspaceSender: () => true,
     requestGateway,
   });
   const handler = mocks.handle.mock.calls.find(
     ([name]) => name === 'cowork:session:delete',
   )![1] as IpcHandler;
-  await expect(handler(null, 'child')).resolves.toMatchObject({ success: false });
+  await expect(handler(null, 'child', fromDrawer ? expected : undefined)).resolves.toMatchObject({ success: fromDrawer });
   expect(requestGateway).toHaveBeenCalledWith('sessions.delete', {
     key: nativeSessionKey,
+    expectedSessionId: 'physical-child',
+    expectedLifecycleRevision: expected.lifecycleRevision,
     deleteTranscript: true,
   });
-  expect(store.deleteSession).not.toHaveBeenCalled();
+  expect(store.deleteSession).toHaveBeenCalledTimes(fromDrawer ? 1 : 0);
 });
 
 test('batch deletion removes only confirmed imported histories and retains a replaced native binding', async () => {
@@ -715,7 +725,7 @@ test('batch deletion removes only confirmed imported histories and retains a rep
   });
   const store = {
     getSession: session,
-    hasNativeChildSessions: () => false,
+    listNativeChildBindings: () => [],
     listPlanHandoffs: () => [],
     deleteSessions: vi.fn(),
   };
@@ -798,7 +808,7 @@ test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(
           nativeSessionKey: key,
           historyBinding: { sessionKey: key, nativeSessionId: 'original' },
         }),
-        hasNativeChildSessions: () => false,
+        listNativeChildBindings: () => [],
         listPlanHandoffs: () => [],
         deleteSession: vi.fn(),
         deleteSessions: vi.fn(),
@@ -828,7 +838,7 @@ test.each(['', '\\packages\\api'])(
   'does not delete an owned worktree while another conversation uses its workspace (%s)',
   async suffix => {
     const store = {
-      hasNativeChildSessions: () => false,
+      listNativeChildBindings: () => [],
       getSession: (id: string) => ({
         id,
         cwd: `E:\\repo\\child${id === 'other' ? suffix : ''}`,
@@ -837,7 +847,9 @@ test.each(['', '\\packages\\api'])(
       listSessions: () => [{ id: 'child' }, { id: 'other' }],
       deleteSession: vi.fn(),
     };
-    const requestGateway = vi.fn();
+    const requestGateway = vi.fn().mockResolvedValue({
+      session: { sessionId: 'physical-child', worktree: { id: 'tree' } },
+    });
     registerCoworkSessionHandlers({
       getCoworkStore: () => store as unknown as CoworkStore,
       getCoworkEngineRouter: () => ({ stopSession: vi.fn() }) as unknown as CoworkEngineRouter,
@@ -848,10 +860,82 @@ test.each(['', '\\packages\\api'])(
       ([name]) => name === 'cowork:session:delete',
     )![1] as IpcHandler;
     await expect(handler(null, 'child')).resolves.toMatchObject({ success: false });
-    expect(requestGateway).not.toHaveBeenCalled();
+    expect(requestGateway.mock.calls).toEqual([
+      ['sessions.describe', { key: 'agent:main:subagent:child' }],
+    ]);
     expect(store.deleteSession).not.toHaveBeenCalled();
   },
 );
+
+test('deletes a native child that shares its parent workspace without deleting the parent', async () => {
+  const key = 'agent:main:dashboard:child';
+  const expected = { sessionKey: key, sessionId: 'physical-child', lifecycleRevision: 'child-revision' };
+  const store = {
+    listNativeChildBindings: () => [],
+    getSession: (id: string) => ({
+      id,
+      agentId: 'main',
+      cwd: 'E:\\repo',
+      ...(id === 'child' ? { nativeSessionKey: key, nativeParentSessionId: 'parent' } : {}),
+    }),
+    listSessions: () => [{ id: 'child' }, { id: 'parent' }],
+    listPlanHandoffs: () => [],
+    deleteSession: vi.fn(),
+  };
+  const onSessionDeleted = vi.fn();
+  const requestGateway = vi.fn(async (method: string) => method === 'sessions.describe'
+    ? { session: { key, sessionId: expected.sessionId, lifecycleRevision: expected.lifecycleRevision } }
+    : {});
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ onSessionDeleted }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    isAllowedWorkspaceSender: () => true,
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:delete',
+  )![1] as IpcHandler;
+
+  await expect(handler(null, 'child', expected)).resolves.toEqual({ success: true });
+  expect(requestGateway).toHaveBeenCalledWith('sessions.delete', {
+    key,
+    expectedSessionId: 'physical-child',
+    expectedLifecycleRevision: 'child-revision',
+    deleteTranscript: true,
+  });
+  expect(store.deleteSession.mock.calls).toEqual([['child']]);
+  expect(onSessionDeleted).toHaveBeenCalledExactlyOnceWith('child', 'main', [key], ['E:\\repo'], true);
+});
+
+test('rejects child deletion before stopping when the displayed conversation has been reset', async () => {
+  const key = 'agent:main:dashboard:child';
+  const store = {
+    listNativeChildBindings: () => [],
+    getSession: () => ({ id: 'child', nativeSessionKey: key, nativeParentSessionId: 'parent' }),
+    deleteSession: vi.fn(),
+  };
+  const stopSession = vi.fn();
+  const requestGateway = vi.fn().mockResolvedValue({
+    session: { key, sessionId: 'physical-child', lifecycleRevision: 'new-revision' },
+  });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    isAllowedWorkspaceSender: () => true,
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(
+    ([name]) => name === 'cowork:session:delete',
+  )![1] as IpcHandler;
+
+  await expect(handler(null, 'child', { sessionKey: key, sessionId: 'physical-child', lifecycleRevision: 'old-revision' }))
+    .resolves.toMatchObject({ success: false });
+  expect(stopSession).not.toHaveBeenCalled();
+  expect(requestGateway).toHaveBeenCalledExactlyOnceWith('sessions.describe', { key });
+  expect(store.deleteSession).not.toHaveBeenCalled();
+});
 
 test('reports successful task deletions even when another task needs a retry', async () => {
   const deleteTask = vi.fn(async (id: string) => {
@@ -859,7 +943,7 @@ test('reports successful task deletions even when another task needs a retry', a
     return true;
   });
   registerCoworkSessionHandlers({
-    getCoworkStore: () => ({}) as CoworkStore,
+    getCoworkStore: () => ({ listNativeChildBindings: () => [] }) as unknown as CoworkStore,
     getCoworkEngineRouter: () => ({}) as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
     getCollaboration: () =>
@@ -889,6 +973,7 @@ test('keeps a group-only source in a batch delete while its execution is unresol
   });
   const store = {
     getSession: (id: string) => ({ id, agentId: 'main', cwd: '/project' }),
+    listNativeChildBindings: () => [],
     listPlanHandoffs: () => [],
     deleteSessions: vi.fn(),
   };
@@ -948,7 +1033,7 @@ test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(
     });
     const store = {
       getSession: (id: string) => ({ id, agentId: 'main', cwd: '/project' }),
-      hasNativeChildSessions: () => false,
+      listNativeChildBindings: () => [],
       listPlanHandoffs: () => [],
       beginSessionRun,
       deleteSession,
@@ -1006,7 +1091,10 @@ test('releases the batch deletion lease when preflight rejects a native child', 
   const stopSession = vi.fn();
   registerCoworkSessionHandlers({
     getCoworkStore: () =>
-      ({ getSession: () => ({}), hasNativeChildSessions: () => true }) as unknown as CoworkStore,
+      ({
+        getSession: () => ({}),
+        listNativeChildBindings: () => [{ id: 'child', sessionKey: 'agent:main:dashboard:child' }],
+      }) as unknown as CoworkStore,
     getCoworkEngineRouter: () => ({ stopSession }) as unknown as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn(),
     getCollaboration: () =>
@@ -1024,6 +1112,46 @@ test('releases the batch deletion lease when preflight rejects a native child', 
   expect(release).toHaveBeenCalledOnce();
   expect(deleteTask).not.toHaveBeenCalled();
   expect(stopSession).not.toHaveBeenCalled();
+});
+
+test.each([
+  { channel: 'cowork:session:delete', nativeChild: null },
+  { channel: 'cowork:session:deleteBatch', nativeChild: null },
+  { channel: 'cowork:session:deleteBatch', nativeChild: { sessionId: 'current-child' } },
+])('$channel reconciles a missing child before removing its parent', async ({ channel, nativeChild }) => {
+  const key = 'agent:main:dashboard:child';
+  const child = { id: 'child', nativeSessionKey: key, nativeParentSessionId: 'parent' };
+  const store = {
+    getSession: (id: string) => id === child.id ? child : { id },
+    listNativeChildBindings: (id: string) => id === 'parent' ? [{ id: child.id, sessionKey: key }] : [],
+    listPlanHandoffs: () => [],
+    deleteSession: vi.fn(),
+    deleteSessions: vi.fn(),
+  };
+  const router = { stopSession: vi.fn(), onSessionDeleted: vi.fn() };
+  const requestGateway = vi.fn().mockResolvedValue({ session: nativeChild });
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store as unknown as CoworkStore,
+    getCoworkEngineRouter: () => router as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+    requestGateway,
+  });
+  const handler = mocks.handle.mock.calls.find(([name]) => name === channel)![1] as IpcHandler;
+
+  const batch = channel.endsWith('deleteBatch');
+  await expect(handler(null, batch ? ['parent'] : 'parent')).resolves.toMatchObject({
+    success: nativeChild === null,
+  });
+  expect(requestGateway).toHaveBeenCalledExactlyOnceWith('sessions.describe', { key });
+  if (nativeChild === null) {
+    expect(router.onSessionDeleted).toHaveBeenCalledWith('child', 'main', [key], [], true);
+    expect(store.deleteSession.mock.calls).toEqual(batch ? [['child']] : [['child'], ['parent']]);
+    if (batch) expect(store.deleteSessions).toHaveBeenCalledExactlyOnceWith(['parent']);
+  } else {
+    expect(router.stopSession).not.toHaveBeenCalled();
+    expect(store.deleteSession).not.toHaveBeenCalled();
+    expect(store.deleteSessions).not.toHaveBeenCalled();
+  }
 });
 
 test.each(['cowork:session:delete', 'cowork:session:deleteBatch'])(

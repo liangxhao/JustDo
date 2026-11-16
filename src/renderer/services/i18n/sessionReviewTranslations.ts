@@ -68,7 +68,7 @@ export const sessionReviewTranslations = {
     reviewError_identity: '会话已改变或不可用，请重新打开审阅。',
     reviewError_invalid: '请选择有效的比较范围或提交。',
     reviewError_file: '无法打开或复制文件。文件可能已变化、不在授权工作区内或位于远程。',
-    reviewUnavailable_unknown_session: '原生会话不存在或尚未创建。',
+    reviewUnavailable_unknown_session: '找不到此会话，暂时无法查看变更。',
     reviewUnavailable_not_git: '当前工作区不是 Git 仓库。',
     reviewUnavailable_unknown_commit: '找不到此提交，请检查提交引用。',
     reviewUnavailable_workspace_stopped: '远程工作区已停止。',
@@ -152,7 +152,7 @@ export const sessionReviewTranslations = {
     reviewError_invalid: 'Choose a valid scope or commit.',
     reviewError_file:
       'Unable to open or copy the file. It may have changed, be outside the authorized workspace, or be remote.',
-    reviewUnavailable_unknown_session: 'The native session does not exist yet.',
+    reviewUnavailable_unknown_session: 'This conversation could not be found, so its changes are unavailable.',
     reviewUnavailable_not_git: 'This workspace is not a Git repository.',
     reviewUnavailable_unknown_commit: 'Commit not found. Check the commit reference.',
     reviewUnavailable_workspace_stopped: 'The remote workspace is stopped.',

@@ -143,6 +143,7 @@ import {
 import { SlashCommandIpc } from '../../shared/cowork/slashCommands';
 import {
   type CoworkSubagentAction,
+  type CoworkSubagentConversationIdentity,
   CoworkSubagentDetailsIpc,
   type CoworkSubtaskChangedEvent,
 } from '../../shared/cowork/subagentDetails';
@@ -884,7 +885,8 @@ contextBridge.exposeInMainWorld('electron', {
     cancelSessionStart: (input: CancelSessionStartInput) =>
       ipcRenderer.invoke(SessionStartIpc.Cancel, input),
     stopSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:stop', sessionId),
-    deleteSession: (sessionId: string) => ipcRenderer.invoke('cowork:session:delete', sessionId),
+    deleteSession: (sessionId: string, expected?: CoworkSubagentConversationIdentity) =>
+      ipcRenderer.invoke('cowork:session:delete', sessionId, ...(expected ? [expected] : [])),
     copySession: (input: CopyCoworkSessionInput) =>
       ipcRenderer.invoke(CoworkSessionCopyIpc.Copy, input),
     forkSession: (input: ForkCoworkSessionInput) =>
@@ -1075,6 +1077,8 @@ contextBridge.exposeInMainWorld('electron', {
     getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
     getSubTaskDetails: (sessionKey: string, taskId?: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey, taskId),
+    getSubagentConversation: (parentSessionId: string, sessionKey: string, sessionId: string) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.GetConversation, parentSessionId, sessionKey, sessionId),
     listSubTaskDescendants: (sessionId: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.ListDescendants, sessionId),
     listSubTaskChildren: (sessionId: string, parentTaskId?: string, cursor?: string) =>

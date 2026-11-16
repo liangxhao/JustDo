@@ -485,17 +485,17 @@ Goal 重放核对、会话用量和标题身份也使用同一目标的 `session
 若无法核对当前 run，保留原执行及未知回执，不清成空闲或重新发送。标题查询只读且有界，
 源身份或连接代次改变即丢弃结果；这些点查不替代后台恢复或侧栏目录本身的职责。
 
-可见 worktree 子会话由模型经原生 `sessions_spawn` 创建。产品会话列表读取 Gateway 原生会话，按 `parentSessionKey` / `spawnedBy` 与受管父会话关联，并持久绑定原生 session key。
+Main 从 Gateway 会话目录发现模型经原生 `sessions_spawn` 创建的可见子会话。原生会话变更通知触发内部映射发现。接入以 Gateway 的创建来源、可见会话身份及同一助手的受管父会话为依据，经原生详情核对后持久绑定原生 session key。子智能体详情使用该映射续聊，主会话列表只投影独立会话。
 
-继续该会话时 Adapter 用 `sessions.describe` 核对 sessionId、worktree 元数据与实际目录（`sessionRoot`、`spawnedCwd` 或 `spawnedWorkspaceDir`），不再调用 `sessions.create`；Renderer 历史使用同一原生 key。
+继续已绑定的会话时，Adapter 用 `sessions.describe` 核对原生会话身份和实际目录（`sessionRoot`、`spawnedCwd` 或 `spawnedWorkspaceDir`）。存在 Worktree 时还核对检出元数据。普通聊天的发送和历史读取复用同一个原生 key。
 
 设置页 Worktree 面板调用 `worktrees.list/restore/remove/gc` 管理原生登记的记录，不能管理模型通过 shell 自建的普通 Git worktree。
 
 原生 `worktrees.gc` 先返回后台任务回执。Main 在同一 Gateway 代次内仅按原任务 ID 观察，`completed` 才报告完成；断线或超时保留未知结果，不能重新提交替代清理。完整行为与验证边界见[Worktree](../features/workspace/worktree.md#恢复删除与清理)。
 
-原生绑定的权限变化通过 `sessions.patch` 同步，并使用 `expectedSessionId` / `expectedPermissionMode` 防止写入已替换的会话或覆盖查询后的权限变化；回执必须确认同一检出、权限和实际目录。采用子会话时保留原生 guarded/workspace/full 模式，未声明模式时使用 ask；无法表示的 read-only 模式不接入产品会话。事件关联先查询持久原生 key，保证首次打开之前和重启后仍可映射生命周期、问题和计划事件。
+原生绑定的权限变化通过 `sessions.patch` 同步，核对 `expectedSessionId`、`expectedPermissionMode` 及原生提供的 `expectedLifecycleRevision`。回执须确认同一会话、权限和实际目录，Worktree 会话还须确认同一检出。采用子会话时保留原生 guarded/workspace/full 模式，未声明模式时使用 ask。事件通过持久原生 key 关联会话。原生事件携带旧委派归属时，续聊终态仍须匹配当前连接已准备的会话身份和产品提交记录中的原生运行 ID。
 
-设置移除保护必须读取完整会话目录，而不是会话摘要；任何仍被产品会话引用的检出均不允许移除，保护范围包含检出内的子目录。Worktree 会话暂不支持复制/分叉，避免副本共享原检出却没有托管所有权；删除所属会话前也必须先删除使用该检出或其子目录的其他会话。
+原生绑定的会话使用已确认的原生工作目录，复制和分叉入口暂不开放，删除须单独确认原生回执。Worktree 检出移除保护读取完整会话目录，引用范围包括检出内的子目录。删除所属 Worktree 会话前须处理引用该检出的其他会话；普通工作目录可以由多个会话共用。
 
 设置中的 `showWorktreeCheckbox` 默认关闭，仅控制新会话输入框右上角的 Worktree 选项是否显示。显示后每次新会话默认不勾选，既有会话和侧边提问不提供该选项。勾选时 Main 先绑定产品会话的原生 key，再调用无初始消息的 `sessions.create(worktree: true)`，校验原生权限、检出身份与实际目录后更新产品 `cwd`，最后才提交首轮消息。创建结果不确定时保留原生绑定与错误状态，避免重新分配目录；准备过程中取消不会发送首轮消息，创建完成后使用原生会话删除接口回收；只有明确的删除回执才能移除产品记录，清理失败时保留检查入口。明确的创建失败经原生查询确认会话不存在后移除产品记录。
 
@@ -603,7 +603,7 @@ Gateway 只读核对 `sessions.describe.goalContinuation.lastAccepted` 与当前
 
 Plan-mode 通过原生 session extension、turn hook、工具和 scoped RPC 实现。Main 持久化计划文件及 handoff，批准后用原生 reset 建立实施上下文；这是产品交接，不是另一套原生恢复状态机。
 
-子任务查询分页读取 `sessions.list({ archived:'all' })`，按返回记录的 `spawnedBy` 精确筛选，并通过 `sessions.describe` 核对详情；`sessions.changed` 使产品快照失效。原生请求的 `spawnedBy` 过滤使用有保留期限的控制关系，不能用于完整历史发现，否则已结束子会话会被遗漏。OpenClaw 从 v2026.9.8 起已移除旧任务账本与 `tasks.*` RPC，原生会话投影统一拥有委派执行与控制归属。
+子任务查询分页读取 `sessions.list({ archived:'all' })`，并通过 `sessions.describe` 核对详情。普通子任务使用 `spawnedBy`。带有受信创建来源的可见子会话使用持久 `parentSessionKey` 组织详情导航，使其在控制关系到期后仍可打开。`sessions.changed` 使产品快照失效。OpenClaw 的原生会话投影拥有委派执行与控制归属。
 
 原生仍负责 admission、队列、required-child join 与完成通知。平级协作发送使用原生 sessions_send，产品只负责任务范围和回执。SubAgent 与平级协作有独立生命周期；上游 `agents team create` 是角色预设与原生委派配置，不能直接替代产品 room。跨助手原生委派须同时设计目标授权与助手创建、禁用、软删除的同步；当前不自动将受管 roster 扩展为 `subagents.allowAgents`。
 
@@ -620,7 +620,7 @@ admission 检查，也必须在启动前的原生会话写入中保存深度、�
 
 当前原生会话投影提供生命周期、耗时、运行身份与累计用量；旧任务摘要中的 execution、deliveryStatus 和 diffStat 已不属于此读取契约，界面不伪造等待原因、交付状态或变更统计。结果交付仍由原生执行系统管理，执行结束不意味着父任务已消费结果。完整读取替换成员集合；暂时不完整时只保留已核验快照，并保持刷新代次隔离，防止旧请求覆盖更新结果。
 
-精确操作必须经过产品会话与原生 `spawnedBy` 控制树归属核对，最多沿 64 层父身份查询并检测循环；导航关系 `parentSessionKey` 不用于授权。取消对已核验的子会话调用 `sessions.abort({ key, clearQueued: true })`。原生未明确确认或连接中断时保留失败语义，不自动重新 spawn 或重跑工具。上游已移除的结果重投递/忽略按钮同步退役。
+委派取消必须经过产品会话与原生 `spawnedBy` 控制树归属核对，最多沿 64 层父身份查询并检测循环。已核验后调用 `sessions.abort({ key, clearQueued: true })`。可见子会话的续聊核对产品映射、受信创建关系、物理会话 ID 和当前连接，通过普通权限准备与发送流程准入。原生未明确确认或连接中断时保留失败语义，不自动重新 spawn 或重跑工具。上游已移除的结果重投递/忽略按钮同步退役。
 
 嵌套浏览按需请求单层，每页 50 条；多层导航保留稳定原生 session key，游标绑定父层 keys 与 offset。根任务 `getSubTaskStatus` 轮询仍分页遍历全部直接子会话；原生单次投影已包含状态与用量，无需逐条 tasks.get 或二次生命周期拼接。大型历史根列表仍有完整扫描成本。子树浏览和精确操作不创建第二套调度器。
 

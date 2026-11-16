@@ -1,21 +1,25 @@
-import { ipcMain } from 'electron';
+import { ipcMain, type IpcMainInvokeEvent } from 'electron';
 
 import {
   type CoworkSubagentAction,
   type CoworkSubagentChildrenResult,
   type CoworkSubagentControlResult,
+  type CoworkSubagentConversationResult,
   type CoworkSubagentDescendantsResult,
   CoworkSubagentDetailsIpc,
   type CoworkSubagentDetailsResult,
 } from '../../../shared/cowork/subagentDetails';
 import { SwarmIpc, type SwarmSnapshotResult } from '../../../shared/cowork/swarm';
+import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawRuntimeAdapter } from '../../engine';
+import { areWorkspacePathsEquivalent } from '../../engine/openclaw/runtimeAdapterSupport';
 import {
   controlGatewaySubagent,
   type GatewaySubagent,
   getGatewaySubagentDetails,
   listGatewaySubagentChildren,
   listGatewaySubagentDescendants,
+  requireGatewaySubagentForBrowsing,
 } from '../../engine/openclaw/subagentGateway';
 import { readSwarmSnapshot } from '../../engine/openclaw/swarmGateway';
 import {
@@ -23,11 +27,22 @@ import {
   type GatewaySessionUsageLoader,
   requestGatewaySessionUsage,
 } from '../../openclaw/sessions/openclawSessionDetails';
+import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
+import {
+  isNativeDashboardSessionKey,
+  isVisibleNativeChildSession,
+  readNativeSessionWorkspace,
+} from '../../openclaw/sessions/visibleChildSession';
 
 interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
   hasSession: (sessionId: string) => boolean;
   getGatewaySessionUsage?: GatewaySessionUsageLoader;
+  conversation?: {
+    isAllowedSender: (event: IpcMainInvokeEvent) => boolean;
+    getStore: () => CoworkStore;
+    discoverNativeChildSessions: () => Promise<void>;
+  };
 }
 
 export const loadCoworkSubagentDetails = async (
@@ -91,6 +106,7 @@ export const registerCoworkSubtaskHandlers = ({
   getRuntime,
   getGatewaySessionUsage,
   hasSession,
+  conversation,
 }: Dependencies): void => {
   const resolveOwnedRoot = (sessionId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId.trim() || !hasSession(sessionId))
@@ -100,6 +116,70 @@ export const registerCoworkSubtaskHandlers = ({
     if (!runtime || !client) throw new Error('Gateway client not connected');
     return { runtime, client, keys: runtime.getSessionKeysForSession(sessionId) };
   };
+  ipcMain.handle(
+    CoworkSubagentDetailsIpc.GetConversation,
+    async (event, parentSessionId: unknown, sessionKey: unknown, sessionId: unknown): Promise<CoworkSubagentConversationResult> => {
+      try {
+        if (!conversation?.isAllowedSender(event)) throw new Error('Subagent conversation is unavailable');
+        if (typeof parentSessionId !== 'string' || !parentSessionId.trim() ||
+          typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('Invalid subagent conversation');
+        const store = conversation.getStore();
+        const root = store.getSession(parentSessionId);
+        if (!root) throw new Error('Product session was not found');
+        if (typeof sessionKey !== 'string') throw new Error('Invalid subagent conversation');
+        let child = store.getSessionByNativeKey(sessionKey);
+        const dashboard = isNativeDashboardSessionKey(sessionKey, root.agentId);
+        const legacyWorktree = sessionKey.startsWith(`agent:${root.agentId}:subagent:`) &&
+          child?.nativeParentSessionId;
+        if (!dashboard && !legacyWorktree) return { success: true };
+        const { client, keys, runtime } = resolveOwnedRoot(parentSessionId);
+        const generation = runtime.getGatewayClientGeneration();
+        const readChild = () => requireGatewaySubagentForBrowsing(client, keys, sessionKey);
+        let row = await readChild();
+        if (row.sessionId !== sessionId) throw new Error('Subagent conversation changed');
+        if (dashboard && !isVisibleNativeChildSession(row, root.agentId)) return { success: true };
+        if (!child) {
+          await conversation.discoverNativeChildSessions();
+          row = await readChild();
+          child = store.getSessionByNativeKey(sessionKey);
+        }
+        const currentRoot = store.getSession(parentSessionId);
+        if (getRuntime() !== runtime || runtime.getGatewayClient() !== client ||
+          runtime.getGatewayClientGeneration() !== generation ||
+          !currentRoot || currentRoot.agentId !== root.agentId ||
+          currentRoot.nativeSessionKey !== root.nativeSessionKey ||
+          currentRoot.external?.sessionKey !== root.external?.sessionKey ||
+          row.sessionId !== sessionId || (dashboard && !isVisibleNativeChildSession(row, root.agentId))) {
+          throw new Error('Subagent conversation changed');
+        }
+        const parent = child?.nativeParentSessionId && store.getSession(child.nativeParentSessionId);
+        const parentKey = parent && (parent.nativeSessionKey || parent.external?.sessionKey ||
+          buildManagedSessionKey(parent.id, parent.agentId));
+        const nativeParentKey = dashboard ? row.parentSessionKey : row.spawnedBy;
+        if (legacyWorktree && typeof (row.worktree as { id?: unknown } | undefined)?.id !== 'string') {
+          return { success: true };
+        }
+        const cwd = readNativeSessionWorkspace(row);
+        if (!child || !parent || child.agentId !== root.agentId || parentKey !== nativeParentKey ||
+          typeof cwd !== 'string' || !areWorkspacePathsEquivalent(cwd, child.cwd)) return { success: true };
+        return {
+          success: true,
+          target: {
+            productSessionId: child.id,
+            parentProductSessionId: parent.id,
+            sessionKey,
+            sessionId,
+            agentId: child.agentId,
+            workingDirectory: child.cwd,
+            ...(typeof row.lifecycleRevision === 'string' ? { lifecycleRevision: row.lifecycleRevision } : {}),
+            ...(!dashboard ? { canSend: false as const } : {}),
+          },
+        };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Subagent conversation is unavailable' };
+      }
+    },
+  );
   ipcMain.handle(
     SwarmIpc.Snapshot,
     async (_event, sessionId: unknown): Promise<SwarmSnapshotResult> => {

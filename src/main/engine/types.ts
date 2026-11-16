@@ -128,7 +128,7 @@ export interface CoworkRuntimeEvents {
   sessionDeleted: (sessionId: string) => void;
   cronChanged: (payload: unknown) => void;
   workboardChanged: (payload: unknown) => void;
-  taskChanged: (event: { sessionId?: string }) => void;
+  taskChanged: (event: { sessionId?: string; visibleChildDiscovered?: true }) => void;
 }
 
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
@@ -249,6 +249,7 @@ export interface CoworkRuntime {
     agentId?: string,
     sessionKeys?: string[],
     workspaceRoots?: string[],
+    nativeAlreadyDeleted?: boolean,
   ): void;
   /**
    * Generate a session title using the configured model.

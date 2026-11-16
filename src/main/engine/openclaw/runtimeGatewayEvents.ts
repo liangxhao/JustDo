@@ -23,6 +23,7 @@ import { coworkLog } from '../../cowork/coworkLogger';
 import type { CoworkSessionStatus, CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator, type GoalLifecycleEvent } from '../../openclaw/goals/goalContinuationCoordinator';
 import { SessionExecApprovalGrants } from '../../openclaw/permissions/sessionExecApprovalGrants';
+import { isVisibleNativeChildSession } from '../../openclaw/sessions/visibleChildSession';
 import { notifyNativeQuestionChanged } from '../../plugins/mcp/nativeQuestionEvents';
 import { isRecord } from '../gateway/helpers';
 import type { GatewayClientLike, GatewayEventFrame, SessionTurn } from '../gateway/types';
@@ -72,6 +73,7 @@ export interface RuntimeGatewayEventsContext {
   readonly confirmUnknownSessionRunAdmission: (sessionId: string, turn: SessionTurn) => void;
   readonly rememberTerminalTurn: (turn: SessionTurn) => void;
   readonly observeRunTerminal: (event: NormalizedAgentEvent, admitted?: boolean) => void;
+  readonly isDirectVisibleChildTurn: (sessionId: string, event: NormalizedAgentEvent) => boolean;
   readonly cleanupSessionTurn: (sessionId: string) => void;
   readonly store: CoworkStore;
   readonly terminalLifecycleSessionIds: Set<string>;
@@ -377,7 +379,11 @@ export function handleAgentEvent(
   if (!sessionId && sessionKey) {
     sessionId = this.resolveSessionIdBySessionKey(sessionKey);
   }
-  if (!sessionId || event.spawnedBy || this.isAnnounceRunId(runId)) return;
+  if (
+    !sessionId ||
+    this.isAnnounceRunId(runId) ||
+    (event.spawnedBy && !this.isDirectVisibleChildTurn(sessionId, event))
+  ) return;
 
   // Chat final can retire Main before the whole-run terminal arrives. Only
   // the Goal admission record may accept that exact trailing event.
@@ -603,25 +609,29 @@ export function handleSessionsChangedEvent(
     ...this.subagentStatusRefreshes.keys(),
   ]))
     this.invalidateSubagentStatusSnapshot(id);
-  this.emit('taskChanged', {});
   const source = isRecord(payload.session) ? payload.session : payload;
   const sessionKey =
     (typeof source.key === 'string' && source.key.trim()) ||
     (typeof payload.sessionKey === 'string' && payload.sessionKey.trim()) ||
     (typeof payload.key === 'string' && payload.key.trim()) ||
     '';
+  const sessionId = sessionKey ? this.resolveSessionIdBySessionKey(sessionKey) : null;
+  const visibleChildDiscovered =
+    !sessionId && typeof source.parentSessionKey === 'string' &&
+    typeof payload.agentId === 'string' &&
+    isVisibleNativeChildSession(source, payload.agentId) &&
+    this.resolveSessionIdBySessionKey(source.parentSessionKey);
+  this.emit('taskChanged', visibleChildDiscovered ? { visibleChildDiscovered: true } : {});
   if (!sessionKey) return;
   const reason = typeof payload.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
   if (reason === 'delete' || reason === 'reset' || reason === 'new') {
     this.sessionExecApprovalGrants.clearSession(sessionKey);
-    const resetSessionId = this.resolveSessionIdBySessionKey(sessionKey);
-    if (resetSessionId) {
-      this.sessionActivityChecks.delete(resetSessionId);
-      this.clearCompactionInFlight(resetSessionId);
-      this.goalContinuationCoordinator.clearSession(resetSessionId);
+    if (sessionId) {
+      this.sessionActivityChecks.delete(sessionId);
+      this.clearCompactionInFlight(sessionId);
+      this.goalContinuationCoordinator.clearSession(sessionId);
     }
   }
-  const sessionId = this.resolveSessionIdBySessionKey(sessionKey);
   if (!sessionId) return;
 
   for (const window of BrowserWindow.getAllWindows()) {

@@ -79,11 +79,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     windowsSandboxPrepMetadataUnavailable:
       '准备工具已完成，但沙盒仍无法读取系统盘目录属性。请刷新沙盒状态重新检查。',
     worktreeSelectionInvalid: 'Worktree 选择无效。',
-    worktreeCopyUnavailable:
-      'Worktree 会话暂不支持复制或分叉。请在源项目中创建新的 Worktree 会话。',
+    nativeBoundSessionCopyUnavailable: '此会话暂不支持复制或创建分支。',
+    nativeBoundSessionDeleteIndividually: '请逐个删除所选会话，以便确认删除结果。',
+    nativeBoundSessionUnavailable: '此会话不可用，或工作目录已变更。',
+    nativeBoundSessionPermissionIdentityChanged: '同步权限时无法确认原会话。',
     worktreeSharedWorkspaceDeleteBlocked:
       '其他会话仍在使用这个 Worktree，请先删除这些会话后再移除其所属会话。',
-    worktreePermissionIdentityChanged: '权限同步时无法确认原 Worktree 会话，操作已停止。',
     worktreeCreateUnavailable: 'Worktree 创建服务暂不可用。',
     worktreeCreateUnconfirmed: '未能确认 Worktree 创建结果，请检查设置中的 Worktree 列表。',
     worktreeCleanupUnconfirmed:
@@ -311,12 +312,12 @@ const translations: Record<LanguageType, Record<string, string>> = {
     windowsSandboxPrepMetadataUnavailable:
       'The MXC helper completed, but the sandbox still cannot read system-drive metadata. Refresh the sandbox status to retry the check.',
     worktreeSelectionInvalid: 'Invalid Worktree selection.',
-    worktreeCopyUnavailable:
-      'Copying or forking Worktree conversations is not supported yet. Create a new Worktree conversation from the source project.',
+    nativeBoundSessionCopyUnavailable: 'This conversation can’t be copied or branched yet.',
+    nativeBoundSessionDeleteIndividually: 'Delete the selected conversations one at a time so each deletion can be confirmed.',
+    nativeBoundSessionUnavailable: 'This conversation is unavailable or its workspace has changed.',
+    nativeBoundSessionPermissionIdentityChanged: 'Could not verify the original conversation during permission sync.',
     worktreeSharedWorkspaceDeleteBlocked:
       'Other conversations still use this Worktree. Delete those conversations before deleting its owning conversation.',
-    worktreePermissionIdentityChanged:
-      'Could not confirm the original Worktree conversation during permission synchronization. The operation was stopped.',
     worktreeCreateUnavailable: 'Worktree creation is currently unavailable.',
     worktreeCleanupUnconfirmed:
       'The previous Worktree cleanup is unconfirmed. Checking again only queries that task; it does not submit another cleanup.',

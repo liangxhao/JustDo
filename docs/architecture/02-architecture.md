@@ -94,7 +94,7 @@ Main 的 `core/` 分为 app、window、network、runtime、filesystem、developm
 随领域实现维护。`main/ipc/cowork/sessions.ts` 保留通道注册、输入归一化与验证，
 以及既有发送／停止协调状态；领域提取不建立第二份会话或执行状态。
 
-原生工作树会话发现同属 `main/cowork/sessions/`，IPC 注册时创建唯一的发现器，
+原生可见子会话发现同属 `main/cowork/sessions/`，IPC 注册时创建唯一的发现器，
 并发扫描与尾随重扫继续由该实例协调。差异读取、文件归属及路径授权归
 `main/cowork/review/sessionReviewService.ts`；IPC 保留窗口来源准入并注入系统编辑器
 选择能力，领域服务不反向依赖 IPC 或 shell 处理器。

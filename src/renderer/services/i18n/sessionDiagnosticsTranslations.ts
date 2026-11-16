@@ -140,7 +140,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsHistoryReason_no_run:
       'No application run record is available to delimit the scan. Session logs may still provide clues.',
     diagnosticsHistoryReason_no_binding:
-      'The native session binding is missing. Check whether the conversation still exists under its original assistant.',
+      'Could not locate this conversation’s history. Check whether the conversation still appears under its original assistant.',
     diagnosticsHistoryReason_canceled: 'Collection was canceled; this is not a complete scan.',
     diagnosticsHistoryReason_timeout:
       'The history request timed out. Retry after the runtime becomes responsive.',
@@ -149,7 +149,7 @@ export const sessionDiagnosticsTranslations = {
     diagnosticsHistoryReason_page_limit:
       'The bounded history scan reached its pagination limit. Older failures may not be included.',
     diagnosticsHistoryReason_history_changed:
-      'The history or native session binding changed. Discarded excerpts must be collected again.',
+      'The conversation or its history changed. Collect the affected excerpts again.',
     diagnosticsHistory_scanned:
       'Read {count} stored conversation records; checking failures within this run’s time range.',
     diagnosticsHistory_partial:
@@ -634,14 +634,15 @@ export const sessionDiagnosticsTranslations = {
       '运行服务未连接，仍可查看本地日志；重新连接后刷新，以读取会话证据。',
     diagnosticsHistoryReason_no_run:
       '没有可用于限定扫描范围的应用运行记录，仍可从会话日志中查找线索。',
-    diagnosticsHistoryReason_no_binding: '缺少原生会话绑定，请检查会话是否仍存在于原来的助手下。',
+    diagnosticsHistoryReason_no_binding:
+      '无法定位此会话的历史记录。请在原助手的会话列表中确认该会话是否还在。',
     diagnosticsHistoryReason_canceled: '采集已取消，当前结果不是完整扫描。',
     diagnosticsHistoryReason_timeout: '会话历史请求超时，请在运行服务恢复响应后重试。',
     diagnosticsHistoryReason_read_failed:
       '会话历史请求或返回格式校验失败，请检查运行服务连接后重试。',
     diagnosticsHistoryReason_page_limit: '已达到历史分页扫描上限，更早的失败可能未包含在报告中。',
     diagnosticsHistoryReason_history_changed:
-      '历史记录或原生会话绑定发生变化，已丢弃的节选需要重新采集。',
+      '会话或历史记录已变更。请重新采集受影响的片段。',
     diagnosticsHistory_scanned: '已读取 {count} 条会话存储记录，检查本轮时间范围内的失败结果。',
     diagnosticsHistory_partial: '已读取 {count} 条会话存储记录；历史扫描尚不完整。',
     diagnosticsHistory_unavailable: '未能读取会话历史；连接运行服务后刷新重试。',

@@ -464,6 +464,41 @@ test.each([
   });
 });
 
+test('settles only the direct follow-up when a visible child still reports its spawn lineage', () => {
+  const { store, session } = createEmptyStore();
+  const sessionKey = 'agent:main:dashboard:child';
+  const sessionId = 'native-child';
+  const runId = 'direct-followup';
+  Object.assign(session, { nativeSessionKey: sessionKey, nativeParentSessionId: 'parent' });
+  Object.assign(store, {
+    getSessionByNativeKey: (key: string) => key === sessionKey ? session : null,
+    getLatestSessionRun: () => ({ rootRunId: runId }),
+  });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const internals = adapter as unknown as {
+    preparedNativeSessionIds: Map<string, string>;
+    handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
+  };
+  internals.preparedNativeSessionIds.set(session.id, sessionId);
+  const identity = {
+    sessionKey, sessionId, spawnedBy: 'agent:main:justdo:parent', lifecycleGeneration: 'epoch',
+  };
+  const emitLifecycle = (eventRunId: string, seq: number, data: Record<string, unknown>) =>
+    internals.handleGatewayEvent({
+      event: 'agent', payload: { ...identity, runId: eventRunId, seq, stream: 'lifecycle', data },
+    });
+
+  emitLifecycle('delegated-run', 1, { phase: 'start' });
+  emitLifecycle('delegated-run', 2, { phase: 'end', executionSettled: true });
+  emitLifecycle(runId, 1, { phase: 'start' });
+  emitLifecycle(runId, 2, { phase: 'error', executionSettled: true, error: 'model request failed' });
+
+  expect(adapter.getRunTerminalReceipt('delegated-run')).toBeNull();
+  expect(adapter.getRunTerminalReceipt(runId)).toMatchObject({
+    sessionKey, sessionId, status: 'failed', executionSettled: true,
+  });
+});
+
 test.each(['empty', 'stopping', 'unknown'] as const)(
   'marks a locally rejected %s submission as unsent without releasing earlier execution guards',
   async reason => {
@@ -1626,8 +1661,12 @@ test.each([{ status: 'timeout' }])(
   },
 );
 
-test('retains cancelled unknown admission across no-active stops and later aborts only its run', async () => {
+test.each([
+  { binding: undefined, key: 'agent:main:justdo:session-1' },
+  { binding: 'agent:main:dashboard:child', key: 'agent:main:dashboard:child' },
+])('retains cancelled unknown admission and later aborts only its run in $key', async ({ binding, key }) => {
   const { store, session } = createEmptyStore();
+  if (binding) Object.assign(session, { nativeSessionKey: binding, nativeParentSessionId: 'parent' });
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const internals = adapter as unknown as StopTestAdapter & {
     unknownSessionRuns: Map<string, { runId: string; cancelled: boolean }>;
@@ -1655,7 +1694,7 @@ test('retains cancelled unknown admission across no-active stops and later abort
   terminal = true;
   await internals.reconcileDisconnectedTurn(session.id);
   expect(request).toHaveBeenCalledWith('sessions.abort', {
-    key: 'agent:main:justdo:session-1',
+    key,
     runId: 'unknown-run',
   });
   expect(request.mock.calls.filter(([method]) => method === 'sessions.abort')).toHaveLength(1);

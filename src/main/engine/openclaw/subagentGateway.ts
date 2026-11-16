@@ -4,6 +4,7 @@ import {
   type CoworkSubagentControlResult,
   type CoworkSubagentDetailTask,
 } from '../../../shared/cowork/subagentDetails';
+import { isVisibleNativeChildSession } from '../../openclaw/sessions/visibleChildSession';
 import type { GatewayClientLike } from '../gateway/types';
 import {
   OPENCLAW_COMPACT_SESSION_ROW_MODE,
@@ -95,11 +96,16 @@ const STATUS_MAP: Record<string, SubagentStatus> = {
   timeout: 'timeout',
 };
 type SessionRow = Record<string, unknown>;
-const parentKey = (row: SessionRow): string | undefined => optionalString(row.spawnedBy);
-const isDelegated = (row: SessionRow): boolean => Boolean(parentKey(row));
-const fromSession = (row: SessionRow): GatewaySubagent | null => {
+const controlParentKey = (row: SessionRow): string | undefined => optionalString(row.spawnedBy);
+const browseParentKey = (row: SessionRow): string | undefined => {
+  const agentId = optionalString(row.key)?.split(':', 3)[1];
+  return agentId && isVisibleNativeChildSession(row, agentId)
+    ? optionalString(row.parentSessionKey)
+    : controlParentKey(row);
+};
+const fromSession = (row: SessionRow, parentKey = browseParentKey(row)): GatewaySubagent | null => {
   const key = optionalString(row.key);
-  if (!key || !isDelegated(row)) return null;
+  if (!key || !parentKey) return null;
   const label =
     optionalString(row.label) ??
     optionalString(row.displayName) ??
@@ -130,7 +136,7 @@ const fromSession = (row: SessionRow): GatewaySubagent | null => {
       key.includes(':acp:')
         ? 'acp'
         : 'subagent',
-    parentTaskId: parentKey(row),
+    parentTaskId: parentKey,
     swarmGroupId: optionalString(row.swarmGroupId),
     agentId: optionalString(row.agentId),
     runId: active ? optionalString(activeRunIds[0]) : optionalString(row.lastRunId),
@@ -152,6 +158,7 @@ const readPage = async (
   offset = 0,
   limit = SESSION_PAGE_SIZE,
   rowMode?: 'compact',
+  parentOf = controlParentKey,
 ) => {
   // The native spawnedBy query uses expiring control links and can omit completed
   // children whose durable row still has spawnedBy. Read native rows and match
@@ -166,7 +173,7 @@ const readPage = async (
       throw new Error('OpenClaw sessions.list cursor did not advance');
     }
     const sessions = spawnedBy
-      ? page.sessions.filter(row => parentKey(row) === spawnedBy)
+      ? page.sessions.filter(row => parentOf(row) === spawnedBy)
       : page.sessions;
     if (sessions.length || !page.hasMore) return { ...page, sessions };
     offset = page.nextOffset!;
@@ -236,28 +243,41 @@ export const getGatewaySubagentDetails = async (
   const row = await describe(client, taskId);
   return row ? fromSession(row) : null;
 };
+const requireSubagentRow = async (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  taskId: string,
+  parentOf: (row: SessionRow) => string | undefined,
+): Promise<SessionRow> => {
+  if (!taskId.trim() || !rootKeys.length || rootKeys.includes(taskId))
+    throw new Error('Subagent task does not belong to this session');
+  const row = await describe(client, taskId);
+  if (!row || !parentOf(row)) throw new Error('Subagent task was not found');
+  const visited = new Set([taskId]);
+  let parent = parentOf(row);
+  while (parent && visited.size <= 64) {
+    if (rootKeys.includes(parent)) return row;
+    if (visited.has(parent)) throw new Error('Invalid subagent ancestry');
+    visited.add(parent);
+    const ancestor = await describe(client, parent);
+    parent = ancestor ? parentOf(ancestor) : undefined;
+  }
+  throw new Error('Subagent task does not belong to this session');
+};
 export const requireGatewaySubagentOwnership = async (
   client: GatewayRequestClient,
   rootKeys: string[],
   taskId: string,
 ): Promise<GatewaySubagent> => {
-  if (!taskId.trim() || !rootKeys.length || rootKeys.includes(taskId))
-    throw new Error('Subagent task does not belong to this session');
-  const row = await describe(client, taskId);
-  const target = row && fromSession(row);
-  if (!target) throw new Error('Subagent task was not found');
-  const visited = new Set([taskId]);
-  let parent = parentKey(row!);
-  while (parent && visited.size <= 64) {
-    if (rootKeys.includes(parent)) return target;
-    if (visited.has(parent)) throw new Error('Invalid subagent ancestry');
-    visited.add(parent);
-    const ancestor = await describe(client, parent);
-    if (!ancestor || !isDelegated(ancestor)) break;
-    parent = parentKey(ancestor);
-  }
-  throw new Error('Subagent task does not belong to this session');
+  const row = await requireSubagentRow(client, rootKeys, taskId, controlParentKey);
+  return fromSession(row, controlParentKey(row))!;
 };
+
+export const requireGatewaySubagentForBrowsing = (
+  client: GatewayRequestClient,
+  rootKeys: string[],
+  taskId: string,
+): Promise<SessionRow> => requireSubagentRow(client, rootKeys, taskId, browseParentKey);
 export const listGatewaySubagentDescendants = async (
   client: GatewayRequestClient,
   rootKeys: string[],
@@ -270,7 +290,7 @@ export const listGatewaySubagentDescendants = async (
   while (queue.length) {
     const parent = queue.shift()!;
     for (const row of rows) {
-      if (parentKey(row) !== parent) continue;
+      if (browseParentKey(row) !== parent) continue;
       const child = fromSession(row);
       if (!child || visited.has(child.sessionKey)) continue;
       if (!child.sessionId)
@@ -288,11 +308,13 @@ export const listGatewaySubagentsWithMetadata = async (
   const subagents = new Map<string, GatewaySubagent>();
   let sessionListComplete = true;
   const parents = new Set(options.parentKeys);
+  const parentOf = options.requireComplete ? controlParentKey : browseParentKey;
   if (parents.size) {
     try {
       for (const row of await listSessions(options.client)) {
-        if (!parents.has(parentKey(row) ?? '')) continue;
-        const child = fromSession(row);
+        const parentKey = parentOf(row);
+        if (!parentKey || !parents.has(parentKey)) continue;
+        const child = fromSession(row, parentKey);
         if (child) subagents.set(child.id, child);
       }
     } catch (error) {
@@ -322,9 +344,8 @@ export const listGatewaySubagentChildren = async (
   parentTaskId?: string,
   cursor?: string,
 ): Promise<{ subagents: GatewaySubagent[]; nextCursor?: string }> => {
-  const keys = parentTaskId
-    ? [(await requireGatewaySubagentOwnership(client, rootKeys, parentTaskId)).sessionKey]
-    : [...new Set(rootKeys)];
+  if (parentTaskId) await requireGatewaySubagentForBrowsing(client, rootKeys, parentTaskId);
+  const keys = parentTaskId ? [parentTaskId] : [...new Set(rootKeys)];
   let index = 0,
     offset = 0;
   if (cursor !== undefined) {
@@ -344,13 +365,11 @@ export const listGatewaySubagentChildren = async (
     offset = page.offset as number;
   }
   if (!keys.length) return { subagents: [] };
-  const page = await readPage(client, keys[index], offset, 50);
-  const subagents = page.sessions
-    .filter(row => parentKey(row) === keys[index])
-    .flatMap(row => {
-      const child = fromSession(row);
-      return child ? [child] : [];
-    });
+  const page = await readPage(client, keys[index], offset, 50, undefined, browseParentKey);
+  const subagents = page.sessions.flatMap(row => {
+    const child = fromSession(row);
+    return child ? [child] : [];
+  });
   const nextIndex = page.hasMore ? index : index + 1;
   return {
     subagents,
@@ -376,7 +395,8 @@ export const controlGatewaySubagent = async (
   // The native key-only abort clears followup queues, but has no caller-supplied
   // sessionId fence. Recheck the leaf after ancestry reads and reject a reset,
   // ownership transfer or replacement run before issuing the native operation.
-  const current = await getGatewaySubagentDetails(client, target.sessionKey);
+  const row = await describe(client, target.sessionKey);
+  const current = row && controlParentKey(row) ? fromSession(row, controlParentKey(row)) : null;
   if (
     !current ||
     !target.sessionId ||

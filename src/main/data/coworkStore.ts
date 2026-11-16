@@ -861,9 +861,9 @@ export class CoworkStore {
     }
   }
 
-  hasNativeChildSessions(parentSessionId: string): boolean {
-    return !!this.getOne<{ id: string }>(
-      'SELECT id FROM cowork_sessions WHERE native_parent_session_id = ? LIMIT 1',
+  listNativeChildBindings(parentSessionId: string): { id: string; sessionKey: string | null }[] {
+    return this.getAll<{ id: string; sessionKey: string | null }>(
+      'SELECT id, native_session_key AS sessionKey FROM cowork_sessions WHERE native_parent_session_id = ?',
       [parentSessionId],
     );
   }
@@ -988,8 +988,8 @@ export class CoworkStore {
     this.db.prepare('UPDATE cowork_sessions SET pinned = ? WHERE id = ?').run(pinned ? 1 : 0, id);
   }
 
-  listSessions(agentId?: string): CoworkSessionSummary[] {
-    return readSessionSummaryProjection(this.db, { agentId });
+  listSessions(agentId?: string, options?: { excludeNativeChildren?: boolean }): CoworkSessionSummary[] {
+    return readSessionSummaryProjection(this.db, { agentId, ...options });
   }
 
   /** Workspaces that product records still address, including historical plan artifacts. */
@@ -1002,21 +1002,24 @@ export class CoworkStore {
     return [...new Set([this.getConfig().workingDirectory, ...rows.map(row => row.directory)])];
   }
 
-  listSessionDirectory(agentId?: string): SessionDirectoryEntry[] {
-    return readSessionDirectory(this.db, agentId);
+  listSessionDirectory(agentId?: string, options?: { excludeNativeChildren?: boolean }): SessionDirectoryEntry[] {
+    return readSessionDirectory(this.db, agentId, options);
   }
 
-  readSessionSummaries(sessionIds: string[]): CoworkSessionSummary[] {
+  readSessionSummaries(
+    sessionIds: string[],
+    options?: { excludeNativeChildren?: boolean },
+  ): CoworkSessionSummary[] {
     if (sessionIds.length > SESSION_SUMMARY_BATCH_LIMIT) {
       throw new Error(
         `At most ${SESSION_SUMMARY_BATCH_LIMIT} session summaries can be read at once.`,
       );
     }
-    return readSessionSummaryProjection(this.db, { sessionIds: [...new Set(sessionIds)] });
+    return readSessionSummaryProjection(this.db, { sessionIds: [...new Set(sessionIds)], ...options });
   }
 
   listSessionSearchSummaries(): CoworkSessionSummary[] {
-    return readSessionSummaryProjection(this.db);
+    return readSessionSummaryProjection(this.db, { excludeNativeChildren: true });
   }
 
   /** Adopt the same current defaults as a new conversation once, before first use. */

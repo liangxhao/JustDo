@@ -64,6 +64,27 @@ test('authorizes nested children through exact native control ancestry', async (
   expect(request).toHaveBeenLastCalledWith('sessions.describe', { key: middle });
 });
 
+test('keeps a visible spawn navigable after its control link expires', async () => {
+  const visible = {
+    key: 'agent:main:dashboard:visible',
+    sessionId: 'visible-id',
+    parentSessionKey: root,
+    createdVia: 'spawn',
+    spawnDepth: 1,
+    status: 'done',
+  };
+  const fork = { ...visible, key: 'agent:main:dashboard:fork', createdVia: 'fork', spawnDepth: 0 };
+  const request = vi.fn(async (method: string) =>
+    method === 'sessions.list' ? { sessions: [visible, fork] } : { session: visible },
+  );
+
+  await expect(listGatewaySubagentChildren(client(request), [root])).resolves.toMatchObject({
+    subagents: [{ id: visible.key, sessionId: visible.sessionId, parentTaskId: root }],
+  });
+  await expect(controlGatewaySubagent(client(request), [root], visible.key, 'cancel')).rejects.toThrow();
+  expect(request).not.toHaveBeenCalledWith('sessions.abort', expect.anything());
+});
+
 test.each([
   { spawnedBy: 'unrelated' },
   { spawnedBy: child },

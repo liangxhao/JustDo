@@ -1,8 +1,17 @@
 import type { SessionDetailStats } from './sessionDetails';
 
+const DASHBOARD_SESSION_KEY = /^agent:([^:]+):dashboard:([^:]+)$/;
+
+export function isNativeDashboardSessionKey(key: unknown, agentId?: string): key is string {
+  const match = typeof key === 'string' ? DASHBOARD_SESSION_KEY.exec(key) : null;
+  return !!match && (agentId === undefined || match[1] === agentId) &&
+    !match[2].startsWith('incognito-');
+}
+
 export const CoworkSubagentDetailsIpc = {
   Status: 'cowork:subTask:status',
   Get: 'cowork:subTask:details',
+  GetConversation: 'cowork:subTask:conversation',
   ListDescendants: 'cowork:subTask:listDescendants',
   Changed: 'cowork:subTask:changed',
   ListChildren: 'cowork:subTask:listChildren',
@@ -47,6 +56,24 @@ export interface CoworkSubagentDetailTask {
 
 export type CoworkSubagentDetailsResult =
   | { success: true; stats?: SessionDetailStats; subagent?: CoworkSubagentDetailTask }
+  | { success: false; error: string };
+
+export interface CoworkSubagentConversationIdentity {
+  sessionKey: string;
+  sessionId: string;
+  lifecycleRevision?: string;
+}
+
+export interface CoworkSubagentConversationTarget extends CoworkSubagentConversationIdentity {
+  productSessionId: string;
+  parentProductSessionId: string;
+  agentId: string;
+  workingDirectory: string;
+  canSend?: false;
+}
+
+export type CoworkSubagentConversationResult =
+  | { success: true; target?: CoworkSubagentConversationTarget }
   | { success: false; error: string };
 
 export interface CoworkSubagentDescendant {

@@ -38,6 +38,19 @@ test('preserves the optimistic session without looking up its temporary ID', asy
   expect(log).not.toHaveBeenCalled();
 });
 
+test('does not select a child conversation from a previously saved sidebar ID', async () => {
+  const parent = session('parent');
+  store.dispatch(setCurrentSession(parent));
+  const child = { ...session('visible-child'), nativeParentSessionId: parent.id };
+  bridge(vi.fn().mockResolvedValue({ success: true, session: child }));
+  const onSelected = vi.fn();
+
+  await expect(coworkService.loadSession(child.id, { onSelected })).resolves.toBeNull();
+  expect(store.getState().cowork.currentSession?.id).toBe(parent.id);
+  expect(store.getState().cowork.sessions.some(entry => entry.id === child.id)).toBe(false);
+  expect(onSelected).not.toHaveBeenCalled();
+});
+
 test.each([
   { success: false, error: 'Session not found.' },
   { success: true, session: null },

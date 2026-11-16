@@ -212,6 +212,29 @@ test.each(['create', 'delete', 'lifecycle'])(
   },
 );
 
+test('invalidates the sidebar when a visible child first appears in a native send snapshot', () => {
+  const { store, session } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const onTaskChanged = vi.fn();
+  adapter.on('taskChanged', onTaskChanged);
+
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: {
+      reason: 'send',
+      agentId: 'main',
+      session: {
+        key: 'agent:main:dashboard:child',
+        createdVia: 'spawn',
+        spawnDepth: 1,
+        parentSessionKey: `agent:main:justdo:${session.id}`,
+      },
+    },
+  });
+
+  expect(onTaskChanged).toHaveBeenCalledWith({ visibleChildDiscovered: true });
+});
+
 test('preserves retryable state when native descendant cancellation is incomplete', async () => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});

@@ -306,6 +306,50 @@ test('rejects worktree preparation when native permission synchronization did no
   );
 });
 
+test('prepares a visible child conversation in its original native session without a worktree', async () => {
+  const { store, session } = createEmptyStore();
+  const parentSessionKey = 'agent:main:justdo:parent';
+  const key = 'agent:main:dashboard:child';
+  Object.assign(session, { nativeSessionKey: key, nativeParentSessionId: 'parent' });
+  const parent = { ...session, id: 'parent', nativeSessionKey: parentSessionKey };
+  const getSession = store.getSession;
+  store.getSession = id => (id === parent.id ? parent : getSession(id));
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const entry = {
+    key,
+    sessionId: 'native-child-id',
+    lifecycleRevision: 'child-revision',
+    parentSessionKey,
+    createdVia: 'spawn',
+    spawnDepth: 1,
+    sessionRoot: session.cwd,
+    permissionMode: 'full',
+  };
+  const request = vi.fn(async (method: string) =>
+    method === 'sessions.describe'
+      ? { session: entry }
+      : { key, entry: { ...entry, permissionMode: 'guarded' } },
+  );
+  const internals = getSessionPreparationInternals(adapter);
+  internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request };
+  internals.ensureGatewayClientReady = vi.fn().mockResolvedValue(undefined);
+
+  await expect(adapter.prepareSession(session.id, { permissionMode: 'ask' })).resolves.toEqual({
+    sessionKey: key,
+    gatewaySessionId: 'native-child-id',
+  });
+  expect(request.mock.calls).toEqual([
+    ['sessions.describe', { key }],
+    ['sessions.patch', {
+      key,
+      permissionMode: 'guarded',
+      expectedSessionId: 'native-child-id',
+      expectedPermissionMode: 'full',
+      expectedLifecycleRevision: 'child-revision',
+    }],
+  ]);
+});
+
 test('rejects a session response that did not persist the permission mode', async () => {
   ensureProjectGitRepository.mockClear();
   const { store } = createEmptyStore();
