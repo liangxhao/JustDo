@@ -2,15 +2,18 @@ import type { ScheduledTaskRun } from '@shared/scheduledTask/types';
 import React, { useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import RunSessionModal from '@/features/scheduled-tasks/components/RunSessionModal';
 import {
   formatDateTime,
   formatDuration,
   getStatusLabelKey,
+  isMemoryDreamingTask,
 } from '@/features/scheduled-tasks/components/utils';
 import { scheduledTaskService } from '@/features/scheduled-tasks/scheduledTaskService';
 import { i18nService } from '@/services/i18n';
 import { RootState } from '@/store';
+
+import RunDetailsModal from './RunDetailsModal';
+import RunSessionModal from './RunSessionModal';
 
 interface TaskRunHistoryProps {
   taskId: string;
@@ -36,10 +39,11 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
   loadError,
   onRetry,
 }) => {
-  const runningAtMs = useSelector(
-    (state: RootState) =>
-      state.scheduledTask.tasks.find(task => task.id === taskId)?.state.runningAtMs ?? null,
+  const task = useSelector((state: RootState) =>
+    state.scheduledTask.tasks.find(candidate => candidate.id === taskId),
   );
+  const runningAtMs = task?.state.runningAtMs ?? null;
+  const showRunDetails = Boolean(task && isMemoryDreamingTask(task));
   const isRunning = runningAtMs !== null && Number.isFinite(runningAtMs);
   const hasMore = useSelector(
     (state: RootState) => state.scheduledTask.runsHasMore[taskId] ?? false,
@@ -47,7 +51,7 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
   const nextOffset = useSelector(
     (state: RootState) => state.scheduledTask.runsNextOffset[taskId] ?? null,
   );
-  const [viewingRun, setViewingRun] = useState<ScheduledTaskRun | null>(null);
+  const [viewing, setViewing] = useState<{ run: ScheduledTaskRun; details: boolean } | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
 
   const handleLoadMore = async () => {
@@ -110,13 +114,17 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
                   {run.durationMs !== null && (
                     <span className="text-xs text-secondary">{formatDuration(run.durationMs)}</span>
                   )}
-                  {run.status !== 'skipped' && run.sessionKey && (
+                  {(showRunDetails || (run.status !== 'skipped' && run.sessionKey)) && (
                     <button
                       type="button"
-                      onClick={() => setViewingRun(run)}
+                      onClick={() => setViewing({ run, details: showRunDetails })}
                       className="text-xs text-primary hover:text-primary-hover transition-colors"
                     >
-                      {i18nService.t('scheduledTasksViewSession')}
+                      {i18nService.t(
+                        showRunDetails
+                          ? 'scheduledTasksResultsRunDetails'
+                          : 'scheduledTasksViewSession',
+                      )}
                     </button>
                   )}
                 </div>
@@ -160,9 +168,17 @@ const TaskRunHistory: React.FC<TaskRunHistoryProps> = ({
           {i18nService.t(loadingMore ? 'loading' : 'scheduledTasksLoadMore')}
         </button>
       )}
-      {viewingRun && (
-        <RunSessionModal run={viewingRun} title={taskName} onClose={() => setViewingRun(null)} />
-      )}
+      {viewing &&
+        (viewing.details ? (
+          <RunDetailsModal
+            run={viewing.run}
+            title={taskName ?? i18nService.t('scheduledTasksMemoryDreamingName')}
+            memoryDreaming
+            onClose={() => setViewing(null)}
+          />
+        ) : (
+          <RunSessionModal run={viewing.run} title={taskName} onClose={() => setViewing(null)} />
+        ))}
     </div>
   );
 };

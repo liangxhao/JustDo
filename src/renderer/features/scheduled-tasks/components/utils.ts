@@ -21,9 +21,13 @@ const WEEKDAY_KEYS = [
 ] as const;
 
 const MEMORY_DREAMING_TRIGGER = '__openclaw_memory_core_short_term_promotion_dream__';
+const MEMORY_DREAMING_DECLARATION_KEY = 'memory-core:memory-dreaming-promotion';
 
-export function isMemoryDreamingTask(task: Pick<ScheduledTask, 'management' | 'payload'>): boolean {
+export function isMemoryDreamingTask(
+  task: Pick<ScheduledTask, 'management' | 'payload' | 'declarationKey'>,
+): boolean {
   if (task.management !== 'managed') return false;
+  if (task.declarationKey) return task.declarationKey === MEMORY_DREAMING_DECLARATION_KEY;
   if (task.payload.kind === 'agentTurn') {
     return task.payload.message.trim() === MEMORY_DREAMING_TRIGGER;
   }

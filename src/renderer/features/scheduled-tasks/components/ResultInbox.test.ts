@@ -119,7 +119,7 @@ describe('ResultInbox task presentation', () => {
   });
 });
 
-function renderReceipt(overrides: Partial<ScheduledTaskResult> = {}) {
+function renderReceipt(overrides: Partial<ScheduledTaskResult> = {}, tasks: ScheduledTask[] = []) {
   i18nService.setLanguage('zh', { persist: false });
   const initial = scheduledTaskReducer(undefined, { type: '@@init' });
   const receipt: ScheduledTaskResult = {
@@ -148,7 +148,7 @@ function renderReceipt(overrides: Partial<ScheduledTaskResult> = {}) {
       scheduledTask: scheduledTaskReducer,
       agent: () => ({ agents: [] }),
     },
-    preloadedState: { scheduledTask: { ...initial, results: [receipt] } },
+    preloadedState: { scheduledTask: { ...initial, results: [receipt], tasks } },
   });
   return {
     ...render(createElement(Provider, { store, children: createElement(ResultInbox) })),
@@ -179,6 +179,8 @@ test('opens one run-details dialog beside the session button without reading the
   fireEvent.click(detailsButton);
   const dialog = screen.getByRole('dialog', { name: '运行详情' });
   expect(screen.getAllByRole('dialog')).toHaveLength(1);
+  expect(within(dialog).getByText('执行成功')).toBeTruthy();
+  expect(within(dialog).queryByRole('heading', { name: '新增长期记忆' })).toBeNull();
   expect(within(dialog).getAllByText('实际模型: internal/report')).toHaveLength(1);
   expect(within(dialog).getByText('Token 用量: 总计 42')).toBeTruthy();
   expect(within(dialog).getByText('整体完成: 已完成')).toBeTruthy();
@@ -186,6 +188,53 @@ test('opens one run-details dialog beside the session button without reading the
   expect(dialog.querySelector('details')).toBeNull();
   expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
   expect(resolveSession).not.toHaveBeenCalled();
+});
+
+test('opens saved memory maintenance details from the result card without querying chat', () => {
+  const resolveSession = vi.fn();
+  vi.stubGlobal('electron', { scheduledTasks: { resolveSession } });
+  try {
+    const task = {
+      id: 'memory-task',
+      name: 'Memory Dreaming Promotion',
+      description: '',
+      enabled: true,
+      schedule: { kind: 'cron', expr: '0 3 * * *' },
+      payload: { kind: 'agentTurn', message: 'Run memory maintenance' },
+      sessionTarget: 'isolated',
+      sessionKey: null,
+      wakeMode: 'now',
+      agentId: null,
+      delivery: { mode: 'none' },
+      management: 'managed',
+      declarationKey: 'memory-core:memory-dreaming-promotion',
+      state: {
+        nextRunAtMs: null,
+        lastRunAtMs: null,
+        lastStatus: 'success',
+        lastDurationMs: null,
+        lastError: null,
+        runningAtMs: null,
+        consecutiveErrors: 0,
+      },
+      createdAt: '',
+      updatedAt: '',
+    } satisfies ScheduledTask;
+    renderReceipt({ taskId: task.id, summary: 'NO_REPLY', systemManaged: true }, [task]);
+
+    expect(
+      screen.queryByRole('button', { name: i18nService.t('scheduledTasksResultsViewFull') }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole('heading', { name: '长期记忆整理' }));
+    const dialog = screen.getByRole('dialog', { name: '运行详情' });
+    expect(within(dialog).getByText('整理流程已完成')).toBeTruthy();
+    expect(within(dialog).getByText(/本次运行未记录新增条数/)).toBeTruthy();
+    expect(within(dialog).getByText('整体完成: 已完成')).toBeTruthy();
+    expect(resolveSession).not.toHaveBeenCalled();
+    expect(scheduledTaskService.markResultRead).not.toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });
 
 test('shows error information and diagnostics once inside the run-details dialog', () => {

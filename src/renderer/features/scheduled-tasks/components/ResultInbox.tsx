@@ -29,7 +29,12 @@ import type { RootState } from '@/store';
 
 import ResultSummary from './ResultSummary';
 import RunDetailsModal from './RunDetailsModal';
-import { formatDateTime, getTaskAgentLabel, getTaskDisplayName } from './utils';
+import {
+  formatDateTime,
+  getTaskAgentLabel,
+  getTaskDisplayName,
+  isMemoryDreamingTask,
+} from './utils';
 
 function formatDuration(durationMs: number | null): string {
   if (durationMs === null || !Number.isFinite(durationMs) || durationMs < 0) return '—';
@@ -149,6 +154,7 @@ const ResultInbox: React.FC = () => {
   const deleteTriggerRef = useRef<HTMLButtonElement | null>(null);
   const settingsRef = useRef<HTMLDivElement | null>(null);
   const detailsResult = results.find(result => result.id === detailsResultId);
+  const detailsTask = detailsResult && tasks.find(task => task.id === detailsResult.taskId);
   useEffect(() => {
     if (detailsResultId && !detailsResult) setDetailsResultId(null);
   }, [detailsResultId, detailsResult]);
@@ -232,6 +238,11 @@ const ResultInbox: React.FC = () => {
     setDetailsResultId(null);
     void scheduledTaskService.markResultRead(result.id);
     if (result.status !== 'skipped' && result.sessionKey) setViewingResult(result);
+  };
+
+  const openRunDetails = (result: ScheduledTaskResult) => {
+    setViewingResult(null);
+    setDetailsResultId(result.id);
   };
 
   const confirmDeleteResult = async () => {
@@ -546,6 +557,14 @@ const ResultInbox: React.FC = () => {
                         result.readAt === null && result.systemManaged !== true && !routine;
                       const title = getResultTitle(result);
                       const agentLabel = getResultAgentLabel(result);
+                      const task = tasks.find(task => task.id === result.taskId);
+                      const detailsOnly = task && isMemoryDreamingTask(task);
+                      const hasSession = result.status !== 'skipped' && Boolean(result.sessionKey);
+                      const openCard = detailsOnly
+                        ? openRunDetails
+                        : hasSession
+                          ? openResult
+                          : null;
                       return (
                         <div key={result.id} className="result-inbox-row">
                           <div className="result-inbox-rail">
@@ -570,15 +589,10 @@ const ResultInbox: React.FC = () => {
                             />
                           </div>
                           <article
-                            className={`result-inbox-card rounded-xl border border-border-subtle bg-surface transition-colors ${result.status !== 'skipped' && result.sessionKey ? 'cursor-pointer hover:border-border' : ''}`}
-                            onClick={() => {
-                              if (
-                                !selectingResults &&
-                                result.status !== 'skipped' &&
-                                result.sessionKey
-                              )
-                                openResult(result);
-                            }}
+                            className={`result-inbox-card rounded-xl border border-border-subtle bg-surface transition-colors ${openCard ? 'cursor-pointer hover:border-border' : ''}`}
+                            onClick={
+                              openCard && !selectingResults ? () => openCard(result) : undefined
+                            }
                           >
                             <div className="result-inbox-card-header">
                               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
@@ -649,48 +663,49 @@ const ResultInbox: React.FC = () => {
                                 className="result-inbox-actions"
                                 onClick={event => event.stopPropagation()}
                               >
-                                {result.status !== 'skipped' && result.sessionKey ? (
-                                  <button
-                                    type="button"
-                                    className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
-                                    aria-label={t(
-                                      unavailableRunIds.has(result.id)
-                                        ? 'scheduledTasksResultsSessionLoadFailed'
-                                        : 'scheduledTasksResultsViewFull',
-                                    )}
-                                    title={t(
-                                      unavailableRunIds.has(result.id)
-                                        ? 'scheduledTasksResultsSessionLoadFailed'
-                                        : 'scheduledTasksResultsViewFull',
-                                    )}
-                                    onClick={event => {
-                                      event.stopPropagation();
-                                      openResult(result);
-                                    }}
-                                  >
-                                    {unavailableRunIds.has(result.id) ? (
+                                {!detailsOnly &&
+                                  (hasSession ? (
+                                    <button
+                                      type="button"
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
+                                      aria-label={t(
+                                        unavailableRunIds.has(result.id)
+                                          ? 'scheduledTasksResultsSessionLoadFailed'
+                                          : 'scheduledTasksResultsViewFull',
+                                      )}
+                                      title={t(
+                                        unavailableRunIds.has(result.id)
+                                          ? 'scheduledTasksResultsSessionLoadFailed'
+                                          : 'scheduledTasksResultsViewFull',
+                                      )}
+                                      onClick={event => {
+                                        event.stopPropagation();
+                                        openResult(result);
+                                      }}
+                                    >
+                                      {unavailableRunIds.has(result.id) ? (
+                                        <EyeSlashIcon className="h-4 w-4" />
+                                      ) : (
+                                        <EyeIcon className="h-4 w-4" />
+                                      )}
+                                    </button>
+                                  ) : (
+                                    <span
+                                      className="inline-flex h-7 w-7 items-center justify-center text-secondary/50"
+                                      aria-label={t(
+                                        result.status === 'skipped'
+                                          ? 'scheduledTasksResultsSessionSkipped'
+                                          : 'scheduledTasksResultsSessionUnavailable',
+                                      )}
+                                      title={t(
+                                        result.status === 'skipped'
+                                          ? 'scheduledTasksResultsSessionSkipped'
+                                          : 'scheduledTasksResultsSessionUnavailable',
+                                      )}
+                                    >
                                       <EyeSlashIcon className="h-4 w-4" />
-                                    ) : (
-                                      <EyeIcon className="h-4 w-4" />
-                                    )}
-                                  </button>
-                                ) : (
-                                  <span
-                                    className="inline-flex h-7 w-7 items-center justify-center text-secondary/50"
-                                    aria-label={t(
-                                      result.status === 'skipped'
-                                        ? 'scheduledTasksResultsSessionSkipped'
-                                        : 'scheduledTasksResultsSessionUnavailable',
-                                    )}
-                                    title={t(
-                                      result.status === 'skipped'
-                                        ? 'scheduledTasksResultsSessionSkipped'
-                                        : 'scheduledTasksResultsSessionUnavailable',
-                                    )}
-                                  >
-                                    <EyeSlashIcon className="h-4 w-4" />
-                                  </span>
-                                )}
+                                    </span>
+                                  ))}
                                 <button
                                   type="button"
                                   className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-primary"
@@ -699,8 +714,7 @@ const ResultInbox: React.FC = () => {
                                   onClick={event => {
                                     event.stopPropagation();
                                     event.currentTarget.focus();
-                                    setViewingResult(null);
-                                    setDetailsResultId(result.id);
+                                    openRunDetails(result);
                                   }}
                                 >
                                   <DocumentTextIcon className="h-4 w-4" />
@@ -760,6 +774,7 @@ const ResultInbox: React.FC = () => {
         <RunDetailsModal
           run={detailsResult}
           title={getResultTitle(detailsResult)}
+          memoryDreaming={detailsTask && isMemoryDreamingTask(detailsTask)}
           onClose={() => setDetailsResultId(null)}
         />
       )}

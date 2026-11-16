@@ -3,7 +3,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { TaskStatus } from '@shared/scheduledTask/constants';
 import type { ScheduledTask, ScheduledTaskRun } from '@shared/scheduledTask/types';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { Provider, useSelector } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
@@ -174,6 +174,60 @@ test('keeps the active row outside native history pagination', () => {
 
   expect(scheduledTaskService.loadRuns).toHaveBeenCalledWith(task.id, 50, 75);
   expect(historyStore.getState().scheduledTask.runs[task.id]).toEqual([completedRun]);
+});
+
+test('shows memory maintenance receipts whether or not the run has a session', () => {
+  const historyStore = createHistoryStore([
+    {
+      ...task,
+      management: 'managed',
+      declarationKey: 'memory-core:memory-dreaming-promotion',
+      state: { ...task.state, runningAtMs: null },
+    },
+  ]);
+  historyStore.dispatch(
+    setRuns({
+      taskId: task.id,
+      runs: [
+        {
+          ...completedRun,
+          summary: 'NO_REPLY',
+          completionStatus: 'succeeded',
+          model: 'internal/memory',
+        },
+        {
+          ...completedRun,
+          id: 'skipped-run',
+          status: TaskStatus.Skipped,
+          sessionKey: null,
+          sessionId: null,
+        },
+      ],
+      hasMore: false,
+      nextOffset: null,
+    }),
+  );
+  render(historyView(historyStore));
+
+  expect(screen.queryByRole('button', { name: '查看完整结果' })).toBeNull();
+  const openDetails = screen.getAllByRole('button', { name: '运行详情' });
+  expect(openDetails).toHaveLength(2);
+  fireEvent.click(openDetails[0]);
+  const completed = within(screen.getByRole('dialog', { name: '运行详情' }));
+  expect(completed.getByText('长期记忆整理')).toBeTruthy();
+  expect(completed.getByText('整理流程已完成')).toBeTruthy();
+  expect(completed.getByRole('heading', { name: '新增长期记忆' })).toBeTruthy();
+  expect(completed.getByText('本次运行未记录新增条数。只有符合条件的素材才会保存。')).toBeTruthy();
+  expect(completed.getByText('开始时间')).toBeTruthy();
+  expect(completed.getByText('整体完成: 已完成')).toBeTruthy();
+  expect(completed.getByText('实际模型: internal/memory')).toBeTruthy();
+  expect(completed.queryByText('未能读取完整会话')).toBeNull();
+
+  fireEvent.click(completed.getByRole('button', { name: '关闭' }));
+  fireEvent.click(openDetails[1]);
+  const skipped = within(screen.getByRole('dialog', { name: '运行详情' }));
+  expect(skipped.getByText('已跳过')).toBeTruthy();
+  expect(skipped.queryByRole('heading', { name: '新增长期记忆' })).toBeNull();
 });
 
 test('does not infer active execution from another task or lastStatus alone', () => {

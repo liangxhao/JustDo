@@ -1,4 +1,5 @@
 import { XMarkIcon } from '@heroicons/react/24/outline';
+import { TaskCompletionStatus, TaskStatus } from '@shared/scheduledTask/constants';
 import type { ScheduledTaskRun } from '@shared/scheduledTask/types';
 import { useEffect, useId, useRef } from 'react';
 
@@ -11,13 +12,20 @@ import { formatDateTime, formatDuration, getStatusLabelKey, getStatusTone } from
 export default function RunDetailsModal({
   run,
   title,
+  memoryDreaming = false,
   onClose,
 }: {
   run: ScheduledTaskRun;
   title: string;
+  memoryDreaming?: boolean;
   onClose: () => void;
 }) {
   const t = i18nService.t.bind(i18nService);
+  const showMemoryOutcome = memoryDreaming && run.status === TaskStatus.Success;
+  const statusLabel =
+    showMemoryOutcome && run.completionStatus === TaskCompletionStatus.Succeeded
+      ? 'scheduledTasksMemoryDreamingRunCompleted'
+      : getStatusLabelKey(run.status);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -90,9 +98,17 @@ export default function RunDetailsModal({
           tabIndex={0}
           className="min-h-0 space-y-5 overflow-y-auto px-5 py-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40"
         >
-          <p className={`text-sm font-medium ${getStatusTone(run.status)}`}>
-            {t(getStatusLabelKey(run.status))}
-          </p>
+          <p className={`text-sm font-medium ${getStatusTone(run.status)}`}>{t(statusLabel)}</p>
+          {showMemoryOutcome && (
+            <section className="space-y-1 rounded-xl bg-surface-raised/60 p-4 text-sm">
+              <h3 className="font-medium text-foreground">
+                {t('scheduledTasksMemoryDreamingOutcomeLabel')}
+              </h3>
+              <p className="text-secondary">
+                {t('scheduledTasksMemoryDreamingOutcomeUnavailable')}
+              </p>
+            </section>
+          )}
           <dl className="grid gap-4 rounded-xl bg-surface-raised/60 p-4 text-sm sm:grid-cols-3">
             <div>
               <dt className="text-xs text-secondary">{t('scheduledTasksRunStartedAt')}</dt>

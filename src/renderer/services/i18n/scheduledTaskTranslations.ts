@@ -209,6 +209,10 @@ export const scheduledTaskTranslations = {
     cronDetailsTechnicalInfo: '技术信息',
     scheduledTasksMemoryDreamingName: '长期记忆整理',
     scheduledTasksMemoryDreamingDescription: '整理近期对话，将反复出现的重要信息沉淀为长期记忆。',
+    scheduledTasksMemoryDreamingRunCompleted: '整理流程已完成',
+    scheduledTasksMemoryDreamingOutcomeLabel: '新增长期记忆',
+    scheduledTasksMemoryDreamingOutcomeUnavailable:
+      '本次运行未记录新增条数。只有符合条件的素材才会保存。',
     scheduledTasksManagedBackgroundType: '系统后台任务',
     scheduledTasksManagedBackgroundDelivery: '不发送通知',
     scheduledTasksMemoryDreamingManagedHint:
@@ -594,6 +598,10 @@ export const scheduledTaskTranslations = {
     scheduledTasksMemoryDreamingName: 'Long-term memory maintenance',
     scheduledTasksMemoryDreamingDescription:
       'Reviews recent conversations and promotes recurring important information into long-term memory.',
+    scheduledTasksMemoryDreamingRunCompleted: 'Memory maintenance completed',
+    scheduledTasksMemoryDreamingOutcomeLabel: 'New long-term memories',
+    scheduledTasksMemoryDreamingOutcomeUnavailable:
+      'This run did not record how many memories were added. Only eligible material is saved.',
     scheduledTasksManagedBackgroundType: 'System background task',
     scheduledTasksManagedBackgroundDelivery: 'No notifications',
     scheduledTasksMemoryDreamingManagedHint:
