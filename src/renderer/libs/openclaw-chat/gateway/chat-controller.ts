@@ -55,8 +55,8 @@ import { type ChatControllerProgressContext } from './execution/chat-controller-
 import * as chatControllerRecovery from './execution/chat-controller-recovery';
 import { type ChatControllerRecoveryContext } from './execution/chat-controller-recovery';
 import { findPersistedChatFinal } from './execution/chat-final-source';
+import type { ActiveToolHistoryOptions, ChatControllerHistoryContext } from './history/chat-controller-history';
 import * as chatControllerHistory from './history/chat-controller-history';
-import { type ChatControllerHistoryContext } from './history/chat-controller-history';
 import { McpAppSession } from './mcp-app/mcp-app-session';
 export type {
   ChatContextUsageSnapshot,
@@ -1023,10 +1023,7 @@ export class ChatController {
    */
   private hydrateActiveToolItemsFromHistory(
     messages: unknown[],
-    options: {
-      backfillMissingSessionsYield?: boolean;
-      backfillMissingToolsFromAppend?: boolean;
-    } = {},
+    options: ActiveToolHistoryOptions = {},
   ): boolean {
     return chatControllerHistory.hydrateActiveToolItemsFromHistory.call(
       this.chatControllerHistoryContext,

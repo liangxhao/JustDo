@@ -1,4 +1,10 @@
 import {
+  readArtifactImageMime,
+  readTranscriptImageArtifactId,
+  type TranscriptImageArtifact,
+} from '@shared/openclaw/artifacts';
+
+import {
   type QuestionResult,
   readQuestionResult,
 } from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
@@ -10,6 +16,7 @@ export interface ToolPresentation {
   questionResult?: QuestionResult;
   title?: string;
   media?: TranscriptMedia[];
+  imageArtifacts?: readonly TranscriptImageArtifact[];
   fileDiff?: string;
   fileRead?: { kind: 'text' | 'truncated' | 'image' | 'not_found'; content?: string };
   parentToolCallId?: string;
@@ -47,6 +54,9 @@ export function readToolPresentation(source: Record<string, unknown>): ToolPrese
   const media = [...getTranscriptMedia(source), ...getTranscriptMedia(result)];
   const content = source.content ?? result.content;
   if (Array.isArray(content)) {
+    const images = new Map<string, TranscriptImageArtifact>();
+    const messageSeq = typeof marker.seq === 'number' &&
+      Number.isSafeInteger(marker.seq) && marker.seq > 0 ? marker.seq : undefined;
     for (const item of content) {
       const part = record(item);
       if (
@@ -60,8 +70,24 @@ export function readToolPresentation(source: Record<string, unknown>): ToolPrese
           mimeType: part.mimeType,
           kind: String(part.type),
         });
+        continue;
       }
+      const artifactId = part.type === 'image' ? readTranscriptImageArtifactId(part.artifactId) : undefined;
+      if (!artifactId || images.has(artifactId)) continue;
+      const imageSource = record(part.source);
+      const mimeType = readArtifactImageMime(
+        part.mimeType ?? part.media_type ?? imageSource.media_type ?? imageSource.mimeType,
+      );
+      const label = [part.title, part.fileName, part.alt]
+        .find((value): value is string => typeof value === 'string' && Boolean(value.trim()));
+      images.set(artifactId, {
+        id: artifactId,
+        ...(messageSeq !== undefined ? { messageSeq } : {}),
+        ...(mimeType ? { mimeType } : {}),
+        ...(label ? { label: label.trim().slice(0, 160) } : {}),
+      });
     }
+    if (images.size) projection.imageArtifacts = [...images.values()];
   }
   if (media.length)
     projection.media = media.filter(

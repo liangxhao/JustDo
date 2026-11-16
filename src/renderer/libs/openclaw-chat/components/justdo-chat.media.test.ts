@@ -8,6 +8,7 @@ import { ChatController } from '../gateway/chat-controller';
 import { beginAssistantTurn, createChatTranscriptState } from '../model/chat-transcript-state';
 import type { JustDoChatElement } from './justdo-chat';
 import type { MessageMedia } from './message/message-media';
+import { materializeDisclosureContents } from './timeline/disclosure-content';
 
 const sessionKey = 'agent:main:media-session';
 const source = `/api/chat/media/outgoing/${encodeURIComponent(sessionKey)}/11111111-1111-4111-8111-111111111111/full`;
@@ -93,4 +94,69 @@ test('passes the active native session to media in live tool details', async () 
   }));
   expect(chat.shadowRoot!.querySelector<MessageMedia>('justdo-message-media')?.sessionKey)
     .toBe(sessionKey);
+});
+
+test('renders the original SVG in the expanded process without opening tool parameters', async () => {
+  const artifactId = 'artifact_transcript_image_fixture';
+  const mimeType = 'image/svg+xml';
+  const data = btoa('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><rect width="20" height="10"/></svg>');
+  const request = vi.fn().mockResolvedValue({
+    artifact: { id: artifactId, type: 'image', mimeType, sessionKey, messageSeq: 3 },
+    encoding: 'base64',
+    data,
+  });
+  const controller = new ChatController();
+  controllers.push(controller);
+  Object.assign(controller.state, {
+    sessionKey,
+    currentSessionId: 'image-session-id',
+    connected: true,
+    client: { request, generation: 1, stop: vi.fn() },
+    hello: { features: { methods: ['artifacts.download'] } },
+  });
+  (controller as unknown as {
+    setCurrentSessionMessages(messages: unknown[], options: { resetLoadedHistory: boolean }): void;
+  }).setCurrentSessionMessages([
+    { role: 'user', content: 'Check sales', __openclaw: { id: 'request', seq: 1 } },
+    { role: 'assistant', content: [
+      { type: 'toolCall', id: 'trial', name: 'sales_chart', arguments: { quarter: 2 } },
+    ], __openclaw: { id: 'call', seq: 2 } },
+    { role: 'toolResult', toolCallId: 'trial', toolName: 'sales_chart', content: [
+      { type: 'text', text: 'Chart ready' },
+      { type: 'image', artifactId, mimeType, omitted: true },
+    ], __openclaw: { id: 'result', seq: 3 } },
+    { role: 'assistant', content: 'Sales increased.', __openclaw: { id: 'answer', seq: 4 } },
+  ], { resetLoadedHistory: true });
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.controller = controller;
+  document.body.append(chat);
+  await chat.updateComplete;
+
+  const root = chat.shadowRoot!;
+  const process = root.querySelector<HTMLDetailsElement>('.completed-process')!;
+  expect(process.open).toBe(false);
+  materializeDisclosureContents(root);
+  await Promise.resolve();
+  expect(request).not.toHaveBeenCalled();
+  expect(process.querySelector('img.chat-bubble__image')).toBeNull();
+
+  process.querySelector('summary')!.click();
+  await vi.waitFor(() => {
+    expect(process.querySelector('img.chat-bubble__image')?.getAttribute('src'))
+      .toBe(`data:${mimeType};base64,${data}`);
+  });
+  expect(request).toHaveBeenCalledExactlyOnceWith(
+    'artifacts.download',
+    { sessionKey, artifactId },
+    { signal: expect.any(AbortSignal), timeoutMs: 30_000 },
+  );
+  const tool = process.querySelector<HTMLDetailsElement>('details.process-summary__tool')!;
+  expect(tool.open).toBe(false);
+  expect(tool.querySelector('summary')?.textContent).not.toContain('quarter');
+  expect(tool.nextElementSibling?.querySelector('img.chat-bubble__image')).not.toBeNull();
+  expect(root.querySelector('[data-entry-id="answer"]')?.closest('.completed-process')).toBeNull();
+  tool.querySelector('summary')!.click();
+  expect(tool.open).toBe(true);
+  const output = tool.querySelector<HTMLElement & { text: string }>('justdo-tool-output');
+  expect(output?.text).toContain('"quarter": 2');
 });

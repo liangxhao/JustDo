@@ -1,4 +1,5 @@
 import '../tools/tool-output';
+import '../tools/tool-image';
 import '../native-widget/anchor';
 import '../mcp-app/view';
 import './terminal-error-message';
@@ -20,6 +21,7 @@ import {
 } from '../../../../../../plugins/extensions/ask-user-question/browser/presentation';
 import { parseQuestions } from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
 import { isTranscriptImage } from '../../attachments';
+import type { ToolImageArtifactReader } from '../../gateway/history/tool-image-artifacts';
 import type { ThinkingItem, ToolItem } from '../../model/chat-transcript-state';
 import { formatActiveTurnDuration } from '../../model/timeline/active-turn-footer';
 import {
@@ -679,6 +681,24 @@ function waitingStatusLabel(status: WaitingStatusProjection): string {
   return i18nService.t(waitingStatusKeys[status.kind]);
 }
 
+function renderToolImages(tool: ToolItem, readImage?: ToolImageArtifactReader) {
+  const images = tool.presentation?.imageArtifacts;
+  if (!readImage || !images?.length) return nothing;
+  return html`
+    <div class="process-tool-images">
+      ${repeat(images, image => image.id, image => html`
+        <tool-image-artifact .artifact=${image} .readImage=${readImage}></tool-image-artifact>
+      `)}
+    </div>
+  `;
+}
+
+function renderToolInputPreview(tool: ToolItem, readImage?: ToolImageArtifactReader) {
+  if (readImage && tool.presentation?.imageArtifacts?.length) return nothing;
+  const preview = toolSummary(tool);
+  return html`<span class="process-summary__tool-input" title=${preview}>${preview}</span>`;
+}
+
 function renderProcessItem(
   process: ThinkingItem | ToolItem,
   depths: ReadonlyMap<ToolItem, number>,
@@ -686,6 +706,7 @@ function renderProcessItem(
   onEditDiffModeChange?: EditDiffModeChangeHandler,
   renderThinking?: ThinkingContentRenderer,
   sessionKey?: string,
+  readToolImage?: ToolImageArtifactReader,
 ): TemplateResult {
   return html`
     <div role="listitem"
@@ -737,9 +758,7 @@ function renderProcessItem(
                     >${resolveToolDisplay(process.name).title}</strong
                   >
                   ${renderSpawnedAgentLink(process)}
-                  <span class="process-summary__tool-input" title=${toolSummary(process)}
-                    >${toolSummary(process)}</span
-                  >
+                  ${renderToolInputPreview(process, readToolImage)}
                 </summary>
                 <div class="process-disclosure-content">
                   ${renderToolDetail(
@@ -750,6 +769,7 @@ function renderProcessItem(
                   )}
                 </div>
               </details>
+              ${renderToolImages(process, readToolImage)}
             `
       }
     </div>
@@ -766,7 +786,13 @@ export function renderTimelineItem(
   speech?: TimelineSpeechOptions,
   assistantAvatar?: TemplateResult,
   renderThinking?: ThinkingContentRenderer,
-  contentOptions?: { workingDirectory?: string; onOpenFile?: OpenMessageFileLink; sessionKey?: string },
+  contentOptions?: {
+    workingDirectory?: string;
+    onOpenFile?: OpenMessageFileLink;
+    sessionKey?: string;
+    readToolImage?: ToolImageArtifactReader;
+    withinCompletedProcess?: boolean;
+  },
   renderProcessItems?: (render: (item: ThinkingItem | ToolItem) => unknown) => unknown,
 ): TemplateResult {
   if (item.kind === 'mcp-app') {
@@ -887,14 +913,13 @@ export function renderTimelineItem(
                 >${resolveToolDisplay(tool.name).title}</strong
               >
               ${renderSpawnedAgentLink(tool)}
-              <span class="process-summary__tool-input" title=${toolSummary(tool)}
-                >${toolSummary(tool)}</span
-              >
+              ${renderToolInputPreview(tool, contentOptions?.readToolImage)}
             </summary>
             <div class="process-disclosure-content">
               ${renderToolDetail(tool, editDiffModes.get(tool.id) ?? 'unified', onEditDiffModeChange, contentOptions?.sessionKey)}
             </div>
           </details>
+          ${renderToolImages(tool, contentOptions?.readToolImage)}
         </section>
       `,
       showAvatar,
@@ -908,17 +933,19 @@ export function renderTimelineItem(
     const depths = toolNesting(
       item.items.filter((entry): entry is ToolItem => entry.type === 'tool'),
     );
+    const renderProcess = (process: ThinkingItem | ToolItem) => renderProcessItem(
+      process, depths, editDiffModes, onEditDiffModeChange, renderThinking,
+      contentOptions?.sessionKey, contentOptions?.readToolImage,
+    );
     const renderContents = () =>
       html` <div class="process-summary__items" role="list">
-        ${renderProcessItems?.(process =>
-          renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking, contentOptions?.sessionKey),
-        ) ?? repeat(
-          item.items,
-          process => process.id,
-          process =>
-            renderProcessItem(process, depths, editDiffModes, onEditDiffModeChange, renderThinking, contentOptions?.sessionKey),
-        )}
+        ${renderProcessItems?.(renderProcess) ?? repeat(item.items, process => process.id, renderProcess)}
       </div>`;
+    // The surrounding completed process already supplies the disclosure for these images.
+    if (contentOptions?.withinCompletedProcess && contentOptions.readToolImage &&
+        item.items.some(process => process.type === 'tool' && process.presentation?.imageArtifacts?.length)) {
+      return renderAssistantTimelineRow(renderContents(), showAvatar, '', 'assistant', assistantAvatar);
+    }
     return renderAssistantTimelineRow(
       html`
         <details class="process-summary-group" ?open=${expanded}>

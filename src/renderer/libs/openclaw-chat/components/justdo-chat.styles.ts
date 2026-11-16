@@ -3180,6 +3180,28 @@ export const chatStyles = [
     .process-summary__tool {
       min-width: 0;
     }
+    .process-tool-images {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-block-start: 6px;
+    }
+    .process-tool-images > tool-image-artifact {
+      display: block;
+      flex: 0 1 320px;
+      min-width: 0;
+      min-height: 24px;
+      max-width: 100%;
+      color: var(--justdo-chat-muted, #64748b);
+    }
+    .process-tool-images .chat-bubble__images {
+      grid-template-columns: minmax(0, 1fr);
+      justify-items: start;
+    }
+    .process-tool-images .chat-bubble__image {
+      max-width: 100%;
+      max-height: 240px;
+    }
     .process-summary__tool-title {
       display: flex;
       min-width: 0;

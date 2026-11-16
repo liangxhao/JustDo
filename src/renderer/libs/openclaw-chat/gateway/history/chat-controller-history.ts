@@ -62,6 +62,7 @@ import {
   precedingSegmentsByToolCallId,
   readExplicitMessageRunId,
   readLatestOpenClawMessageSeq,
+  readOpenClawMessageSeq,
   readStringList,
   RewindEditorDraft,
   sliceActiveSubagentHistoryPrefix,
@@ -70,6 +71,13 @@ import {
 } from '../chat-controller-support';
 import { refreshNativePendingInputs } from '../input/chat-pending-inputs';
 import { HistoryPreparationTimeoutError, readHistoryAfterPreparation } from './history-preparation';
+
+export interface ActiveToolHistoryOptions {
+  backfillMissingSessionsYield?: boolean;
+  backfillMissingToolsFromAppend?: boolean;
+  committedImageRunId?: string;
+}
+
 export interface ChatControllerHistoryContext {
   readonly currentMessageHistory: ChunkedMessageHistory;
   readonly state: ChatState;
@@ -159,7 +167,7 @@ export interface ChatControllerHistoryContext {
   ) => void;
   readonly hydrateActiveToolItemsFromHistory: (
     messages: unknown[],
-    options?: { backfillMissingSessionsYield?: boolean; backfillMissingToolsFromAppend?: boolean },
+    options?: ActiveToolHistoryOptions,
   ) => boolean;
   readonly publishActiveToolHistoryRepair: () => void;
   readonly applyInFlightRunSnapshot: (
@@ -226,10 +234,7 @@ export function setCurrentSessionMessages(
 export function hydrateActiveToolItemsFromHistory(
   this: ChatControllerHistoryContext,
   messages: unknown[],
-  options: {
-    backfillMissingSessionsYield?: boolean;
-    backfillMissingToolsFromAppend?: boolean;
-  } = {},
+  options: ActiveToolHistoryOptions = {},
 ): boolean {
   const activeTurn = this.state.transcript.activeTurn;
   if (!activeTurn) return false;
@@ -255,8 +260,20 @@ export function hydrateActiveToolItemsFromHistory(
   );
   const authoritativeSegmentsByToolId = precedingSegmentsByToolCallId(activeRunMessages);
   const authoritativeToolResultIds = toolResultCallIds(activeRunMessages);
+  const ownedImageSequences = new Set(activeRunMessages.flatMap(message => {
+    const runId = options.backfillMissingToolsFromAppend
+      ? options.committedImageRunId
+      : readExplicitMessageRunId(message);
+    const seq = readOpenClawMessageSeq(message);
+    return runId === activeTurn.runId && seq !== null ? [seq] : [];
+  }));
   let changed = false;
   for (const [toolCallId, persistedTool] of persistedTools) {
+    const persistedImages = persistedTool.presentation?.imageArtifacts;
+    const imageArtifacts = authoritativeToolResultIds.has(toolCallId) &&
+      persistedImages?.every(image => image.messageSeq !== undefined && ownedImageSequences.has(image.messageSeq))
+      ? persistedImages
+      : undefined;
     let liveTool = activeTurn.toolById.get(toolCallId);
     if (!liveTool) {
       const timestampMatchesActiveTurn =
@@ -276,6 +293,9 @@ export function hydrateActiveToolItemsFromHistory(
       const startedAt = persistedTool.startedAt > 0 ? persistedTool.startedAt : now;
       liveTool = {
         ...persistedTool,
+        ...(persistedImages && !imageArtifacts
+          ? { presentation: { ...persistedTool.presentation, imageArtifacts: undefined } }
+          : {}),
         id: this.transcriptDependencies.createId('history-tool'),
         runId: activeTurn.runId,
         firstSeq: activeTurn.lastAgentSeq,
@@ -326,6 +346,16 @@ export function hydrateActiveToolItemsFromHistory(
         ...liveTool.presentation,
         questionResult: persistedTool.presentation.questionResult,
       };
+      changed = true;
+    }
+    const liveImages = liveTool.presentation?.imageArtifacts;
+    if (imageArtifacts &&
+        (liveImages?.length !== imageArtifacts.length || imageArtifacts.some((image, index) => {
+          const live = liveImages[index];
+          return image.id !== live.id || image.messageSeq !== live.messageSeq ||
+            image.mimeType !== live.mimeType || image.label !== live.label;
+        }))) {
+      liveTool.presentation = { ...liveTool.presentation, imageArtifacts };
       changed = true;
     }
     const canApplyPersistedTerminalStatus =

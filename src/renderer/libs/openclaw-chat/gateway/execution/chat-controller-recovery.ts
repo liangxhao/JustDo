@@ -9,6 +9,7 @@ import { isInternalManagedSubagentHandoffError } from '@shared/openclaw/internal
 import { readModelRef } from '@shared/providers/modelRef';
 
 import type { GatewayEventFrame } from '@/libs/openclaw-chat/gateway/client';
+import type { ActiveToolHistoryOptions } from '@/libs/openclaw-chat/gateway/history/chat-controller-history';
 import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import {
   type AssistantTurn,
@@ -215,7 +216,7 @@ export interface ChatControllerRecoveryContext {
   readonly admitExpectedInitialHistoryMessage: (message: unknown) => boolean;
   readonly hydrateActiveToolItemsFromHistory: (
     messages: unknown[],
-    options?: { backfillMissingSessionsYield?: boolean; backfillMissingToolsFromAppend?: boolean },
+    options?: ActiveToolHistoryOptions,
   ) => boolean;
   readonly publishActiveToolHistoryRepair: () => void;
   readonly rememberRunModel: (message: unknown, runId?: string | null, terminal?: boolean) => void;
@@ -1498,6 +1499,9 @@ export function handleTimelineEvent(
       this.hydrateActiveToolItemsFromHistory([payload.message], {
         backfillMissingSessionsYield: true,
         backfillMissingToolsFromAppend: true,
+        ...(eventSessionKey && eventSessionId && eventSessionId === activeSessionId
+          ? { committedImageRunId: explicitMessageRunId }
+          : {}),
       });
     if (repairedActiveTail) this.publishActiveToolHistoryRepair();
     const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);

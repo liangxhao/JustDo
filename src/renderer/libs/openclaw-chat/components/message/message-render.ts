@@ -629,6 +629,7 @@ export function renderMessageImages(
   images: RenderableAttachment[],
   assistant = false,
   workingDirectory?: string,
+  onImageError?: (src: string) => void,
 ): TemplateResult | typeof nothing {
   if (images.length === 0) return nothing;
   return html`
@@ -648,6 +649,7 @@ export function renderMessageImages(
               title=${`${image.label} · ${i18nService.t('coworkImageOpenPreviewHint')}`}
               draggable="false"
               @contextmenu=${(event: Event) => void showImageContextMenu(event, sourceUrl)}
+              @error=${onImageError ? () => onImageError(sourceUrl) : nothing}
             />
           `,
         );

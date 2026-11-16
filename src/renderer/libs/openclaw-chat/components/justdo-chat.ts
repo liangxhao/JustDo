@@ -8,6 +8,7 @@
  */
 import { AutomaticErrorRetryPhase } from '@shared/cowork/automaticErrorRetry';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import { ArtifactRpcMethod } from '@shared/openclaw/artifacts';
 import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
 import { McpAppEvent } from '@shared/plugins/mcpApps';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
@@ -135,6 +136,10 @@ import { i18nService } from '@/services/i18n';
 import { isDomHTMLElement } from '@/shared/dom/ownerDocument';
 
 import { readCompleteHistoryMessage } from '../gateway/history/chat-history-protocol';
+import {
+  createToolImageArtifactReader,
+  type ToolImageArtifactReader,
+} from '../gateway/history/tool-image-artifacts';
 import { resolveFullToolOutput } from '../model/tools/tool-presentation';
 import { chatStyles } from './justdo-chat.styles';
 import { renderMessageDiagram } from './markdown/mermaidRenderer';
@@ -477,6 +482,7 @@ export class JustDoChatElement extends LitElement {
 
   /** ChatController reference (preferred — connects directly to gateway) */
   private _controller: ChatController | null = null;
+  private toolImageReaderScope?: { isCurrent: () => boolean; read: ToolImageArtifactReader };
   private _controllerUnsubscribe: (() => void) | null = null;
   private _streamUnsubscribe: (() => void) | null = null;
   private pendingInputReadFailureScope: readonly unknown[] = [];
@@ -507,6 +513,7 @@ export class JustDoChatElement extends LitElement {
 
   set controller(ctrl: ChatController | null) {
     if (this._controller === ctrl) return;
+    this.toolImageReaderScope = undefined;
     this.historyOwnerRevision += 1;
     this.processResolution = null;
     this.processSummarySessionIdentity = null;
@@ -2357,6 +2364,32 @@ export class JustDoChatElement extends LitElement {
     return this._controller?.state.sessionKey ?? this.activeTurn?.sessionKey ?? '';
   }
 
+  private readToolImages(): ToolImageArtifactReader | undefined {
+    if (this.toolImageReaderScope?.isCurrent()) return this.toolImageReaderScope.read;
+    this.toolImageReaderScope = undefined;
+    const controller = this._controller;
+    if (!controller?.state.connected) return;
+    const { client, sessionKey, currentSessionId, hello, transcript } = controller.state;
+    if (!client || !sessionKey || !currentSessionId ||
+        !hello?.features?.methods?.includes(ArtifactRpcMethod.DOWNLOAD)) return;
+    const generation = client.generation;
+    const historyGeneration = transcript.historyGeneration;
+    const isCurrent = () =>
+      this.isConnected &&
+      this.toolImageReaderScope?.read === read &&
+      this._controller === controller &&
+      controller.state.connected &&
+      controller.state.client === client &&
+      client.generation === generation &&
+      controller.state.hello === hello &&
+      controller.state.sessionKey === sessionKey &&
+      controller.state.currentSessionId === currentSessionId &&
+      controller.state.transcript.historyGeneration === historyGeneration;
+    const read: ToolImageArtifactReader = createToolImageArtifactReader(client, sessionKey, isCurrent);
+    this.toolImageReaderScope = { isCurrent, read };
+    return read;
+  }
+
   private renderPersistedRows(rows: readonly VisibleTimelineRow[]) {
     this.historyPresentationRows = rows;
     const renderedRows = this.historyRenderScheduler.select(
@@ -2369,6 +2402,7 @@ export class JustDoChatElement extends LitElement {
         renderedRows,
         this.persistedRenderRevision,
         this.mediaSessionKey,
+        this.readToolImages(),
         this.userMessageHistoryActionsAvailable,
         this.actionableUserEntryId,
         this.forkEligibilityMessages,
@@ -2465,6 +2499,7 @@ export class JustDoChatElement extends LitElement {
     item: VisibleTimelineItem,
     showAvatar: boolean,
     showFooter: boolean,
+    withinCompletedProcess = false,
   ): TemplateResult | typeof nothing {
     if (item.kind === 'compaction') {
       return item.item.message
@@ -2493,7 +2528,7 @@ export class JustDoChatElement extends LitElement {
         onRender: this.completedProcessMotion.ref(item, expanded),
         assistantAvatar: this.assistantAvatar,
         renderItem: (child, childShowsAvatar) =>
-          this.renderVisibleTimelineItem(child, childShowsAvatar, false),
+          this.renderVisibleTimelineItem(child, childShowsAvatar, false, true),
         renderItems: render => this.renderHistoryViewport(
           `completed:${item.key}`,
           item.items,
@@ -2680,6 +2715,8 @@ export class JustDoChatElement extends LitElement {
         workingDirectory: this.workingDirectory,
         onOpenFile: this.onOpenFile,
         sessionKey: this.mediaSessionKey,
+        readToolImage: this.readToolImages(),
+        withinCompletedProcess,
       },
       item.kind === 'process-summary'
         ? render => this.renderHistoryViewport(

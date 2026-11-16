@@ -92,6 +92,59 @@ test('hydrates a question answer from authenticated history into its existing li
   controller.disconnect();
 });
 
+test('enriches an existing live tool with the image from its native committed result', () => {
+  const sessionKey = 'agent:main:chart-history';
+  const sessionId = 'native-chart-session';
+  const runId = 'chart-run';
+  const toolCallId = 'chart-call';
+  const image = {
+    type: 'image', artifactId: 'artifact_transcript_image_chart', mimeType: 'image/png', omitted: true,
+  };
+  const controller = new ChatController();
+  controller.state.client = { request: vi.fn().mockResolvedValue({ messages: [], sessionId }), stop: vi.fn() } as never;
+  controller.state.connected = true;
+  controller.state.sessionKey = sessionKey;
+  controller.state.currentSessionId = sessionId;
+  const handleEvent = (controller as unknown as {
+    handleEvent(event: { event: string; payload: unknown }): void;
+  }).handleEvent.bind(controller);
+  handleEvent({ event: 'agent', payload: { sessionKey, sessionId, runId, seq: 1, stream: 'lifecycle', data: { phase: 'start' } } });
+  handleEvent({ event: 'agent', payload: { sessionKey, sessionId, runId, seq: 2, stream: 'tool', data: { phase: 'start', name: 'sales_chart', toolCallId } } });
+  const tool = controller.state.transcript.activeTurn?.toolById.get(toolCallId);
+  expect(tool).toBeDefined();
+  expect(tool?.presentation?.imageArtifacts).toBeUndefined();
+
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey, sessionId, messageSeq: 1,
+      message: {
+        role: 'toolResult', toolCallId, toolName: 'sales_chart',
+        content: [{ ...image, artifactId: 'artifact_transcript_image_old' }],
+        __openclaw: { id: 'old-chart-result', seq: 1 },
+      },
+    },
+  });
+  expect(tool?.presentation?.imageArtifacts).toBeUndefined();
+
+  handleEvent({
+    event: 'session.message',
+    payload: {
+      sessionKey, sessionId, runId, messageSeq: 2,
+      message: {
+        role: 'toolResult', toolCallId, toolName: 'sales_chart', content: [image],
+        __openclaw: { id: 'chart-result', seq: 2 },
+      },
+    },
+  });
+
+  expect(controller.state.transcript.activeTurn?.toolById.get(toolCallId)).toBe(tool);
+  expect(tool?.presentation?.imageArtifacts).toEqual([
+    { id: image.artifactId, mimeType: image.mimeType, messageSeq: 2 },
+  ]);
+  controller.disconnect();
+});
+
 test('loads earlier peer history when live events arrive before the initial snapshot', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(1000);
