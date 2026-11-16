@@ -53,6 +53,9 @@ async function mount(options: Record<string, unknown> = {}, initial = {}, regist
   };
   let listener = (_message: any) => {};
   let registration: any;
+  let tabWindowId = 4;
+  let onDetached = (_id: number) => {};
+  let onAttached = (_id: number) => {};
   const sendMessage = vi.fn(async (message: any): Promise<any> => {
     if (message.type === Message.Register) {
       registration = message;
@@ -104,8 +107,23 @@ async function mount(options: Record<string, unknown> = {}, initial = {}, regist
           removeListener: vi.fn(),
         },
       },
-      windows: { getCurrent: async () => ({ id: 4 }) },
+      tabs: {
+        get: async () => ({ windowId: tabWindowId }),
+        onDetached: {
+          addListener: handler => {
+            onDetached = handler;
+          },
+          removeListener: vi.fn(),
+        },
+        onAttached: {
+          addListener: handler => {
+            onAttached = handler;
+          },
+          removeListener: vi.fn(),
+        },
+      },
     },
+    tabId: 7,
     readComposer: () => composer,
     installComposer,
     confirm,
@@ -128,10 +146,16 @@ async function mount(options: Record<string, unknown> = {}, initial = {}, regist
     installComposer,
     confirm,
     settled,
+    moveToWindow: (id: number, notify = false) => {
+      if (notify) onDetached(7);
+      tabWindowId = id;
+      if (notify) onAttached(7);
+    },
     emit: (response: any) =>
       listener({
         type: Message.Event,
         panelInstanceId: registration.panelInstanceId,
+        tabId: 7,
         windowId: 4,
         ...response,
       }),
@@ -150,7 +174,7 @@ describe('website launch panel', () => {
     const panel = createWebLaunchPanel({
       document,
       chrome: {
-        windows: { getCurrent: async () => ({ id: 4 }) },
+        tabs: { get: async () => ({ windowId: 4 }) },
         runtime: {
           sendMessage: (message: Record<string, unknown>) => {
             if (message.type === Message.Register) {
@@ -169,6 +193,7 @@ describe('website launch panel', () => {
           },
         },
       },
+      tabId: 7,
       readComposer: () => ({ prompt: '', ready: false }),
       installComposer: vi.fn(),
     });
@@ -177,6 +202,7 @@ describe('website launch panel', () => {
     listener({
       type: Message.Event,
       panelInstanceId: registration.panelInstanceId,
+      tabId: 7,
       windowId: 4,
       connectionPending: {
         pendingId: 'newer',
@@ -270,6 +296,60 @@ describe('website launch panel', () => {
       document.querySelector('#webLaunchControls details:not([hidden]) summary')?.textContent,
     ).toBe('Website-provided context');
     expect(document.querySelector('#webLaunchControls p:not([hidden])')).toBeNull();
+  });
+
+  it('releases an old website draft as ordinary text when its tab moves to another window', async () => {
+    const { panel, composer, sendMessage, moveToWindow } = await mount();
+    expect(panel.inputAssociated()).toBe(true);
+    moveToWindow(9);
+    const reply = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation(async message => {
+      if (message.type === Message.State && message.windowId === 4)
+        return { ok: false, code: 'FORBIDDEN' };
+      if (message.type === Message.Register && message.windowId === 9)
+        return { ok: true, connectionPending: null };
+      return reply(message);
+    });
+
+    await panel.publishState(true);
+    expect(calls(sendMessage, Message.Register).at(-1)).toMatchObject({ tabId: 7, windowId: 9 });
+    expect(panel.inputAssociated()).toBe(false);
+    expect(composer.prompt).toBe('Website prompt');
+    expect(document.getElementById('error')?.textContent).toContain('ordinary draft');
+    expect(calls(sendMessage, Message.Submit)).toEqual([]);
+  });
+
+  it('does not leave a pending website send ready to repeat after moving its tab', async () => {
+    const { panel, composer, input, sendMessage, moveToWindow, emit } = await mount();
+    const reply = sendMessage.getMockImplementation()!;
+    let finishSubmit!: (value: unknown) => void;
+    sendMessage.mockImplementation(async message => {
+      if (message.type === Message.Submit) {
+        return new Promise(resolve => {
+          finishSubmit = resolve;
+        });
+      }
+      if (message.type === Message.State && message.windowId === 4)
+        return { ok: false, code: 'FORBIDDEN' };
+      if (message.type === Message.Register && message.windowId === 9)
+        return { ok: true, connectionPending: null };
+      return reply(message);
+    });
+    const submitting = panel.submit();
+    await vi.waitFor(() => expect(finishSubmit).toBeDefined());
+    moveToWindow(9, true);
+    emit({ windowId: 4, envelope: input });
+    await vi.waitFor(() =>
+      expect(calls(sendMessage, Message.Register).at(-1)).toMatchObject({ tabId: 7, windowId: 9 }),
+    );
+    expect(composer.prompt).toBe('');
+    expect(panel.inputAssociated()).toBe(false);
+
+    composer.prompt = 'New ordinary draft';
+    finishSubmit(await reply({ type: Message.Submit }));
+    await submitting;
+    expect(composer.prompt).toBe('New ordinary draft');
+    expect(calls(sendMessage, Message.Submit)).toHaveLength(1);
   });
 
   it.each([

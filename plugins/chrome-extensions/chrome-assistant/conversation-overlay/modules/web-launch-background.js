@@ -2,6 +2,7 @@ import { WebLaunchMethod, WebLaunchSendMode } from '../../contracts/webLaunch.ts
 import { AppServerClient } from './conversation-client.js';
 import { ensureAppServer } from './app-server-background.js';
 import { createWebLaunchConnections } from './web-launch-connections.js';
+import { openTabSidePanel, tabIdFromSidePanelUrl } from './tab-side-panel.js';
 import {
   WEB_RUNTIME,
   exactOrigin,
@@ -26,6 +27,8 @@ const scriptId = origin =>
 const terminal = receipt =>
   receipt?.execution.executionSettled === true ||
   ['rejected', 'cancelled', 'expired'].includes(receipt?.request.status);
+const samePanelTab = (left, right) =>
+  left?.tabId === right.tabId && left?.windowId === right.windowId;
 
 export function createWebLaunchBackground({
   chromeApi = chrome,
@@ -38,6 +41,9 @@ export function createWebLaunchBackground({
   const cancelled = new Set();
   const preparing = new Set();
   const retirements = new Map();
+  const releaseSlot = (windowId, requestId) => {
+    if (slots.get(windowId) === requestId) slots.delete(windowId);
+  };
   const cancelKey = (message, sender) =>
     `${sender.documentId}/${message.documentNonce}/${message.requestId}`;
   let state;
@@ -160,7 +166,7 @@ export function createWebLaunchBackground({
             delete record.input;
           state.requests[record.requestId] = record;
         });
-        if (terminal(response.receipt)) slots.delete(record.source.windowId);
+        if (terminal(response.receipt)) releaseSlot(record.source.windowId, record.requestId);
         notifyPanel(record);
       }
       return result;
@@ -303,6 +309,10 @@ export function createWebLaunchBackground({
       { documentId: doc.source.documentId },
     );
   }
+  function panelFor(source) {
+    const panel = panels.get(source.tabId);
+    return samePanelTab(panel, source) ? panel : undefined;
+  }
   function envelope(record) {
     const { response, input } = record;
     if (!response?.internal) return null;
@@ -326,28 +336,33 @@ export function createWebLaunchBackground({
       composeRevision: metadata.composeRevision,
       receipt: response.receipt,
       restored: Boolean(
-        record.presentedPanelId &&
-        record.presentedPanelId !== panels.get(record.source.windowId)?.id,
+        record.presentedPanelId && record.presentedPanelId !== panelFor(record.source)?.id,
       ),
     };
   }
-  function notifyPanel(record) {
-    const panel = panels.get(record.source.windowId);
+  function panelEvent(source, fields) {
+    const panel = panelFor(source);
     if (!panel) return;
     void chromeApi.runtime
       .sendMessage({
         type: 'web-launch:panel:event',
         panelInstanceId: panel.id,
-        windowId: record.source.windowId,
-        envelope: ['cancelled', 'expired', 'rejected'].includes(
-          record.response?.receipt.request.status,
-        )
-          ? undefined
-          : envelope(record),
-        receipt: record.response?.receipt,
-        internal: record.response?.internal,
+        tabId: panel.tabId,
+        windowId: panel.windowId,
+        ...fields,
       })
       .catch(() => {});
+  }
+  function notifyPanel(record) {
+    panelEvent(record.source, {
+      envelope: ['cancelled', 'expired', 'rejected'].includes(
+        record.response?.receipt.request.status,
+      )
+        ? undefined
+        : envelope(record),
+      receipt: record.response?.receipt,
+      internal: record.response?.internal,
+    });
   }
   async function accept(record, response, doc) {
     if (!response?.receipt || !response.internal) throw { code: 'CONNECTION_UNAVAILABLE' };
@@ -372,7 +387,7 @@ export function createWebLaunchBackground({
         revoked: doc.revoked,
       };
     });
-    if (terminal(response.receipt)) slots.delete(record.source.windowId);
+    if (terminal(response.receipt)) releaseSlot(record.source.windowId, record.requestId);
     if (
       !cancelled.has(`${record.source.documentId}/${record.documentNonce}/${record.requestId}`) ||
       terminal(response.receipt)
@@ -408,8 +423,8 @@ export function createWebLaunchBackground({
     if (!hasWebsiteLaunchGrant(policy) || doc.revoked || !(await documentActive(doc)))
       throw { code: 'SITE_NOT_ALLOWED' };
     if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
-    const panel = panels.get(sender.tab.windowId) ?? state.panels[String(sender.tab.windowId)];
-    if (panel?.busy) throw { code: 'COMPOSER_BUSY' };
+    const panel = panelFor(doc.source) ?? state.panels[String(doc.source.tabId)];
+    if (samePanelTab(panel, doc.source) && panel.busy) throw { code: 'COMPOSER_BUSY' };
     const input = normalizeInput(message.input);
     const record = {
       requestId: message.requestId,
@@ -559,68 +574,72 @@ export function createWebLaunchBackground({
     hasCachedWebsiteGrant,
     store: action => transaction(() => action((state.connections ??= {}))),
     windowBusy: windowId => slots.has(windowId),
-    notify: (windowId, connectionPending) => {
-      const panel = panels.get(windowId);
-      if (panel)
-        void chromeApi.runtime
-          .sendMessage({
-            type: 'web-launch:panel:event',
-            panelInstanceId: panel.id,
-            windowId,
-            connectionPending,
-          })
-          .catch(() => {});
-    },
+    notify: (source, connectionPending) => panelEvent(source, { connectionPending }),
   });
+  function panelTab(message, sender) {
+    const tabId = tabIdFromSidePanelUrl(sender.url, chromeApi);
+    if (
+      tabId === null ||
+      tabId !== message.tabId ||
+      sender.tab ||
+      !Number.isSafeInteger(message.windowId) ||
+      !validIdentifier(message.panelInstanceId)
+    )
+      throw { code: 'FORBIDDEN' };
+    return tabId;
+  }
+  function registeredPanel(message, sender) {
+    const panel = panels.get(panelTab(message, sender));
+    if (
+      !samePanelTab(panel, message) ||
+      panel.id !== message.panelInstanceId ||
+      (panel.documentId && panel.documentId !== sender.documentId)
+    )
+      throw { code: 'FORBIDDEN' };
+    return panel;
+  }
   async function trustedMessage(message, sender) {
     if (message.type === 'web-launch:connection:decide') {
-      const panel = panels.get(message.windowId);
-      if (
-        new URL(sender.url).pathname !== '/sidepanel.html' ||
-        panel?.id !== message.panelInstanceId
-      )
-        throw { code: 'FORBIDDEN' };
+      registeredPanel(message, sender);
       return connections.decide(message);
     }
     if (message.type === 'web-launch:panel:register') {
       const panel = {
+        tabId: panelTab(message, sender),
         id: message.panelInstanceId,
+        ...(validIdentifier(sender.documentId) ? { documentId: sender.documentId } : {}),
         busy: message.composerBusy === true,
         windowId: message.windowId,
       };
-      if (!validIdentifier(panel.id) || !Number.isSafeInteger(panel.windowId))
-        throw { code: 'INVALID_REQUEST' };
-      if (!panels.has(panel.windowId) && panels.size >= 128) throw { code: 'CAPACITY_EXCEEDED' };
-      panels.set(panel.windowId, panel);
-      await transaction(() => {
-        state.panels[String(panel.windowId)] = panel;
+      const records = await transaction(async () => {
+        const tab = await chromeApi.tabs.get(panel.tabId).catch(() => null);
+        if (tab?.windowId !== panel.windowId) throw { code: 'FORBIDDEN' };
+        state.panels[String(panel.tabId)] = panel;
+        return Object.values(state.requests).filter(record => samePanelTab(panel, record.source));
       });
-      const records = await transaction(() =>
-        Object.values(state.requests).filter(record => record.source.windowId === panel.windowId),
-      );
+      panels.set(panel.tabId, panel);
       const active = records.find(record => !terminal(record.response?.receipt));
       return {
         ok: true,
         envelope: active ? envelope(active) : undefined,
         observations: records.map(record => record.response).filter(Boolean),
-        connectionPending: await connections.current(panel.windowId),
+        connectionPending: await connections.current(panel),
       };
     }
     if (message.type === 'web-launch:panel:state') {
-      const panel = panels.get(message.windowId);
-      if (panel?.id !== message.panelInstanceId) throw { code: 'FORBIDDEN' };
+      const panel = registeredPanel(message, sender);
       panel.busy = message.composerBusy === true;
       await transaction(() => {
-        state.panels[String(panel.windowId)] = panel;
+        state.panels[String(panel.tabId)] = panel;
         if (message.launchId) {
           const record = Object.values(state.requests).find(
-            item => item.launchId === message.launchId && item.source.windowId === panel.windowId,
+            item => item.launchId === message.launchId && samePanelTab(panel, item.source),
           );
           if (record) record.presentedPanelId = panel.id;
         }
       });
       void refreshObservations().catch(() => {});
-      void connections.refresh(panel.windowId).catch(() => {});
+      void connections.refresh(panel).catch(() => {});
       return { ok: true };
     }
     if (message.type === 'web-launch:sites:list') {
@@ -660,6 +679,15 @@ export function createWebLaunchBackground({
     if (message.type === 'web-launch:launch:abandon') {
       if (!validIdentifier(message.launchId) || message.confirm !== true)
         throw { code: 'INVALID_REQUEST' };
+      if (new URL(sender.url).pathname !== '/options.html') {
+        const panel = registeredPanel(message, sender);
+        const owned = await transaction(() =>
+          Object.values(state.requests).some(
+            record => record.launchId === message.launchId && samePanelTab(panel, record.source),
+          ),
+        );
+        if (!owned) throw { code: 'UNKNOWN_REQUEST' };
+      }
       const result = await client.request(WebLaunchMethod.Abandon, {
         launchId: message.launchId,
         confirm: true,
@@ -673,7 +701,7 @@ export function createWebLaunchBackground({
       await transaction(() => {
         for (const record of Object.values(state.requests)) {
           if (record.launchId !== message.launchId) continue;
-          slots.delete(record.source.windowId);
+          releaseSlot(record.source.windowId, record.requestId);
           delete state.requests[record.requestId];
           if (state.documents[record.documentKey])
             Object.assign(state.documents[record.documentKey], {
@@ -689,26 +717,21 @@ export function createWebLaunchBackground({
       });
       return { ok: true, ...result };
     }
-    if (message.type === 'web-launch:launch:stop') {
-      if (!validIdentifier(message.launchId)) throw { code: 'INVALID_REQUEST' };
-      return {
-        ok: true,
-        ...(await client.request(WebLaunchMethod.Stop, { launchId: message.launchId })),
-      };
-    }
     const methods = {
       'web-launch:launch:submit': WebLaunchMethod.Submit,
       'web-launch:launch:revise': WebLaunchMethod.Revise,
       'web-launch:launch:cancel': WebLaunchMethod.Cancel,
       'web-launch:launch:stop': WebLaunchMethod.Stop,
-      'web-launch:launch:abandon': WebLaunchMethod.Abandon,
     };
     const method = methods[message.type];
     if (!method) throw { code: 'INVALID_REQUEST' };
-    const { type, panelInstanceId, windowId, reason, ...params } = message;
+    const panel = registeredPanel(message, sender);
+    const { type, panelInstanceId, tabId, windowId, reason, ...params } = message;
     const record = await transaction(() =>
       structuredClone(
-        Object.values(state.requests).find(item => item.launchId === params.launchId),
+        Object.values(state.requests).find(
+          item => item.launchId === params.launchId && samePanelTab(panel, item.source),
+        ),
       ),
     );
     if (!record) throw { code: 'UNKNOWN_REQUEST' };
@@ -820,16 +843,16 @@ export function createWebLaunchBackground({
             .consume(message, sender)
             .then(admission => prepare(message, sender, Promise.resolve(), admission))
             .catch(error => {
-              if (!error.prepareUncertain) slots.delete(sender.tab.windowId);
+              if (!error.prepareUncertain) releaseSlot(sender.tab.windowId, message.requestId);
               throw error;
             })
             .finally(() => preparing.delete(pendingKey)),
         );
       let opened;
       try {
-        opened = chromeApi.sidePanel.open({ tabId: sender.tab.id });
+        opened = openTabSidePanel(chromeApi, sender.tab.id);
       } catch (error) {
-        slots.delete(sender.tab.windowId);
+        releaseSlot(sender.tab.windowId, message.requestId);
         preparing.delete(pendingKey);
         reply({ ok: false, code: 'FORBIDDEN' });
         return false;
@@ -837,7 +860,7 @@ export function createWebLaunchBackground({
       return done(
         prepare(message, sender, opened)
           .catch(error => {
-            if (!error.prepareUncertain) slots.delete(sender.tab.windowId);
+            if (!error.prepareUncertain) releaseSlot(sender.tab.windowId, message.requestId);
             throw error;
           })
           .finally(() => preparing.delete(pendingKey)),
@@ -859,14 +882,19 @@ export function createWebLaunchBackground({
     reply({ ok: false, code: 'INVALID_REQUEST' });
     return false;
   }
-  const invalidateTab = (tabId, soft = false) => {
+  const invalidateTab = (tabId, { soft = false, removePanel = false } = {}) => {
     connections.invalidateTab(tabId);
+    if (removePanel) panels.delete(tabId);
     for (const doc of documents.values())
       if (doc.source.tabId === tabId) {
         doc.revoked = true;
         doc.deliveryRevision += 1;
       }
     const retiring = transaction(() => {
+      if (removePanel) {
+        panels.delete(tabId);
+        delete state.panels[String(tabId)];
+      }
       return Object.entries(state.documents)
         .filter(([, value]) => value.source.tabId === tabId)
         .map(([key, value]) => {
@@ -893,17 +921,25 @@ export function createWebLaunchBackground({
       })
       .catch(() => {});
   };
-  chromeApi.tabs.onRemoved?.addListener(tabId => invalidateTab(tabId));
+  chromeApi.tabs.onRemoved?.addListener(tabId => invalidateTab(tabId, { removePanel: true }));
+  chromeApi.tabs.onDetached?.addListener(tabId =>
+    invalidateTab(tabId, { soft: true, removePanel: true }),
+  );
+  chromeApi.tabs.onReplaced?.addListener((_addedTabId, removedTabId) =>
+    invalidateTab(removedTabId, { removePanel: true }),
+  );
   chromeApi.tabs.onUpdated?.addListener((tabId, change) => {
     if (change.status === 'loading' || change.url)
-      invalidateTab(tabId, Boolean(change.url && change.status !== 'loading'));
+      invalidateTab(tabId, { soft: Boolean(change.url && change.status !== 'loading') });
   });
   chromeApi.windows?.onRemoved?.addListener(windowId => {
-    panels.delete(windowId);
+    for (const panel of panels.values())
+      if (panel.windowId === windowId) panels.delete(panel.tabId);
     slots.delete(windowId);
     void transaction(() => {
       delete state.windows[String(windowId)];
-      delete state.panels[String(windowId)];
+      for (const [key, panel] of Object.entries(state.panels))
+        if (panel.windowId === windowId) delete state.panels[key];
       return [
         ...new Set(
           Object.values(state.documents)
@@ -912,7 +948,14 @@ export function createWebLaunchBackground({
         ),
       ];
     })
-      .then(tabs => tabs.forEach(tabId => invalidateTab(tabId)))
+      .then(tabs =>
+        Promise.all(
+          tabs.map(async tabId => {
+            const tab = await chromeApi.tabs.get(tabId).catch(() => null);
+            if (!tab || tab.windowId === windowId) invalidateTab(tabId, { removePanel: true });
+          }),
+        ),
+      )
       .catch(() => {});
   });
   chromeApi.permissions.onRemoved?.addListener(() => {

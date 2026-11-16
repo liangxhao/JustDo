@@ -21,8 +21,9 @@ const source = {
 const panel = {
   id: extensionId,
   frameId: 0,
-  url: `chrome-extension://${extensionId}/sidepanel.html`,
+  url: `chrome-extension://${extensionId}/sidepanel.html?tabId=7`,
 };
+const panelScope = { panelInstanceId: 'panel-1', tabId: 7, windowId: 3 };
 const input = { prompt: 'Frozen first click', mode: 'send', result: 'final' };
 
 describe('first website connection', () => {
@@ -55,15 +56,13 @@ describe('first website connection', () => {
   const registerPanel = () =>
     invoke({
       type: 'web-launch:panel:register',
-      panelInstanceId: 'panel-1',
-      windowId: 3,
+      ...panelScope,
       composerBusy: false,
     });
   const decision = (value: any, decision = 'allow', extra = {}) =>
     invoke({
       type: 'web-launch:connection:decide',
-      panelInstanceId: 'panel-1',
-      windowId: 3,
+      ...panelScope,
       pendingId: value.pendingId,
       expectedRevision: value.revision,
       decision,
@@ -122,6 +121,7 @@ describe('first website connection', () => {
     api = {
       runtime: {
         id: extensionId,
+        getURL: (path: string) => `chrome-extension://${extensionId}/${path}`,
         getManifest: () => ({ version: '1' }),
         sendMessage: vi.fn(async () => ({})),
         onMessage: {
@@ -130,7 +130,7 @@ describe('first website connection', () => {
         },
       },
       storage: { session: area, local: area },
-      sidePanel: { open: vi.fn(() => Promise.resolve()) },
+      sidePanel: { open: vi.fn(() => Promise.resolve()), setOptions: vi.fn(async () => {}) },
       permissions: {
         contains: vi.fn(async () => permitted),
         request: vi.fn(() => {
@@ -471,15 +471,20 @@ describe('first website connection', () => {
     expect(api.scripting.executeScript.mock.calls.some(([details]) => details.files)).toBe(false);
   });
 
-  it('accepts decisions only from the currently registered side panel in the pending window', async () => {
+  it('exposes consent and accepts decisions only from its registered tab within the same window', async () => {
     const pending = (await request()).connectionPending;
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ...panelScope,
+        connectionPending: expect.objectContaining({ pendingId: pending.pendingId }),
+      }),
+    );
     const message = {
       type: 'web-launch:connection:decide',
       pendingId: pending.pendingId,
       expectedRevision: pending.revision,
       decision: 'allow',
-      windowId: 3,
-      panelInstanceId: 'panel-1',
+      ...panelScope,
     };
     for (const sender of [
       { ...panel, url: `chrome-extension://${extensionId}/options.html` },
@@ -490,12 +495,15 @@ describe('first website connection', () => {
       ok: false,
       code: 'FORBIDDEN',
     });
-    await invoke({
-      type: 'web-launch:panel:register',
-      panelInstanceId: 'another-panel',
-      windowId: 4,
-    });
-    expect(await invoke({ ...message, panelInstanceId: 'another-panel', windowId: 4 })).toEqual({
+    const otherPanel = {
+      ...panel,
+      url: `chrome-extension://${extensionId}/sidepanel.html?tabId=8`,
+    };
+    const otherScope = { ...panelScope, panelInstanceId: 'another-panel', tabId: 8 };
+    expect(
+      await invoke({ type: 'web-launch:panel:register', ...otherScope }, otherPanel),
+    ).toMatchObject({ ok: true, connectionPending: null });
+    expect(await invoke({ ...message, ...otherScope }, otherPanel)).toEqual({
       ok: false,
       code: 'FORBIDDEN',
     });
@@ -614,8 +622,7 @@ describe('first website connection', () => {
     client.request.mockImplementation(original);
     await invoke({
       type: 'web-launch:panel:state',
-      panelInstanceId: 'panel-1',
-      windowId: 3,
+      ...panelScope,
       composerBusy: false,
     });
     await vi.waitFor(async () =>
@@ -662,7 +669,7 @@ describe('first website connection', () => {
     policies = [];
     siteRevision = 2;
     await invoke({ type: 'web-launch:sites:list' });
-    await invoke({ type: 'web-launch:panel:state', panelInstanceId: 'panel-1', windowId: 3 });
+    await invoke({ type: 'web-launch:panel:state', ...panelScope });
     await vi.waitFor(() => expect(states).toContain('expired'));
     await vi.waitFor(() =>
       expect(

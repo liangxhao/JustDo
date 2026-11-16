@@ -389,7 +389,7 @@ main {
 .code-copy-status { min-width: 0; color: var(--chat-muted); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 .message-copy-status.error,
 .code-copy-status.error,
-[data-copy-state='failed'] + .message-copy-status { margin: 0; padding: 0; border: 0; background: transparent; color: var(--chat-error); }
+.message-actions [data-copy-state='failed'] ~ .message-copy-status { margin: 0; padding: 0; border: 0; background: transparent; color: var(--chat-error); }
 .code-block-header:has([data-copy-state='failed']) .code-copy-status { color: var(--chat-error); }
 .message.user {
   width: fit-content;
@@ -414,33 +414,19 @@ main {
   padding: 0;
   background: transparent;
 }
-.assistant-heading {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 10px;
-  color: var(--chat-muted);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 20px;
-}
-.assistant-heading svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.assistant-mark { width: 14px; color: var(--chat-text); font-size: 15px; text-align: center; }
 .assistant-content { font-size: 15px; line-height: 1.65; }
 .assistant-content > div + div { margin-top: 12px; }
 .assistant-content > div > :first-child { margin-top: 0; }
 .assistant-content > div > :last-child { margin-bottom: 0; }
-.message-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-height: 28px; margin-top: 14px; }
+.message-actions { display: flex; align-items: center; gap: 6px; min-height: 28px; margin-top: 14px; }
 .message-actions[hidden] { display: none; }
 .message-copy[hidden],
 .message-metadata[hidden] { display: none; }
 .message-actions .message-copy { margin-left: -6px; }
 .message-metadata {
   display: flex;
-  flex: 1 1 0;
   min-width: 0;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
   color: var(--chat-muted);
   font-size: 11px;
@@ -578,6 +564,12 @@ main {
 .process-tool-title::-webkit-details-marker {
   display: none;
 }
+.process-tool-title > strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .disclosure-chevron {
   display: inline-grid;
   width: 10px;
@@ -673,6 +665,7 @@ summary:focus-visible,
   background: var(--chat-warning);
 }
 .process-tool-input {
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   color: var(--chat-muted);
@@ -697,7 +690,10 @@ summary:focus-visible,
 .process-tool pre {
   max-height: 240px;
   margin: 0;
+  padding: 8px 10px;
   overflow: auto;
+  border-radius: 8px;
+  background: var(--chat-surface);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   color: var(--chat-text);

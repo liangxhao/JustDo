@@ -56,7 +56,7 @@ describe('side panel answer and code copying', () => {
     };
     renderer.render([entry, answer('Different answer', 'other')], 'one');
     expect(messageCopyText(entry)).toBe('**First answer**\n\nLast paragraph');
-    expect(messages.querySelector('.assistant-heading')?.textContent).toContain(t('assistant'));
+    expect(copy().getAttribute('aria-label')).toBe(t('copyAnswer'));
     copy().click();
     await vi.waitFor(() => expect(status().textContent).toBe(t('copied')));
     expect(writeText).toHaveBeenCalledExactlyOnceWith('**First answer**\n\nLast paragraph');

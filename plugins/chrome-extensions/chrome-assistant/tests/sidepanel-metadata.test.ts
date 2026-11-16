@@ -36,7 +36,11 @@ describe('side panel native message metadata', () => {
       { id: 'native', type: 'agentMessage', text: 'Native **answer**', display },
     ] }] });
     renderer.render(entries, 'one');
-    const time = messages.querySelector<HTMLTimeElement>('.message-time')!;
+    const message = messages.querySelector('.message.assistant')!;
+    expect(message.firstElementChild).toBe(message.querySelector('.assistant-content'));
+    const metadata = message.querySelector('.message-metadata')!;
+    expect(metadata.previousElementSibling).toBe(message.querySelector('.message-copy'));
+    const time = metadata.querySelector('time')!;
     expect(time.dateTime).toBe('2026-11-10T10:30:45.000Z');
     expect(time.textContent).toMatch(/^\d{2}:\d{2}$/);
     expect(time.title).toContain('2026');

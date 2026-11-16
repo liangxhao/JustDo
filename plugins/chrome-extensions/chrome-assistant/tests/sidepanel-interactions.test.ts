@@ -60,6 +60,7 @@ const deferred = <T>() => {
 };
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const extensionUrl = (path: string) => `chrome-extension://test-extension/${path}`;
 const question = { requestId: 'ask_one', questions: [{ id: 'target', question: 'Where?',
   options: [{ id: 'dev', label: 'Development' }, { id: 'prod', label: 'Production' }] }],
   waitPolicy: { mode: 'required' } };
@@ -99,7 +100,15 @@ async function selectThread(id: string) {
   await flush();
 }
 
-describe('sidepanel working directory and question integration', () => {
+function sendPromptWithPageContext() {
+  element<HTMLInputElement>('includePage').checked = true;
+  const prompt = element<HTMLTextAreaElement>('prompt');
+  prompt.value = 'Summarize the page';
+  prompt.dispatchEvent(new Event('input'));
+  element<HTMLButtonElement>('send').click();
+}
+
+describe('side panel interactions', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
@@ -108,6 +117,7 @@ describe('sidepanel working directory and question integration', () => {
   });
   afterEach(() => {
     window.dispatchEvent(new Event('unload'));
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -252,15 +262,17 @@ describe('sidepanel working directory and question integration', () => {
       return { ok: true };
     });
     let receive = (_message: Record<string, unknown>) => {};
+    vi.spyOn(document, 'URL', 'get').mockReturnValue(extensionUrl('sidepanel.html?tabId=31'));
     vi.stubGlobal('chrome', {
       runtime: {
+        getURL: extensionUrl,
         sendMessage: webRequest,
         onMessage: {
           addListener: (listener: typeof receive) => { receive = listener; },
           removeListener: vi.fn(),
         },
       },
-      windows: { getCurrent: async () => ({ id: 4 }) },
+      tabs: { get: async () => ({ id: 31, windowId: 4 }) },
     });
 
     await mount();
@@ -313,6 +325,121 @@ describe('sidepanel working directory and question integration', () => {
     await flush();
     expect(webRequest.mock.calls.filter(([request]) => request.type === 'web-launch:launch:submit')).toHaveLength(1);
     expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start' || method === 'turn/interrupt')).toHaveLength(0);
+  });
+
+  it.each(['switch', 'reload'] as const)(
+    'never collects a sibling tab and revalidates the captured page on %s',
+    async action => {
+      const tab = { id: 31, windowId: 4, title: 'Orders', url: 'https://orders.invalid/' };
+      const sibling = { id: 32, windowId: 4, title: 'Private', url: 'https://private.invalid/' };
+      let activeTab = tab;
+      const text = { title: tab.title, url: tab.url, selectedText: '', pageText: 'Order 31' };
+      const permission = deferred<boolean>();
+      const page = deferred<Array<{ documentId: string; result: typeof text }>>();
+      let activeDocumentId = 'initial-document';
+      const executeScript = vi.fn<() => Promise<Array<{ documentId: string; result: typeof text | string }>>>(async () =>
+        [{ documentId: activeDocumentId, result: tab.url }],
+      )
+        .mockImplementationOnce(() => page.promise);
+      const query = vi.fn(async () => [activeTab]);
+      vi.spyOn(document, 'URL', 'get').mockReturnValue(extensionUrl('sidepanel.html?tabId=31'));
+      vi.stubGlobal('chrome', {
+        runtime: { getURL: extensionUrl },
+        permissions: { request: vi.fn(() => permission.promise) },
+        scripting: { executeScript },
+        tabs: {
+          get: vi.fn(async (tabId: number) => tabId === tab.id ? tab : sibling),
+          query,
+        },
+      });
+      await mount();
+      const startedThread = { thread: { id: 'created', cwd: 'E:/selected folder', name: 'Created' } };
+      const preparingThread = deferred<typeof startedThread>();
+      if (action === 'reload') mock.request.mockImplementationOnce(() => preparingThread.promise);
+      else await selectThread('one');
+      sendPromptWithPageContext();
+
+      activeTab = sibling;
+      permission.resolve(true);
+      await vi.waitFor(() => expect(executeScript).toHaveBeenCalledWith(
+        expect.objectContaining({ target: { tabId: tab.id } }),
+      ));
+      page.resolve([{ documentId: 'initial-document', result: text }]);
+      if (action === 'reload') {
+        await vi.waitFor(() => expect(mock.request).toHaveBeenCalledWith('thread/start', expect.anything()));
+        // The tab retained its URL while the first product thread was being started.
+        activeDocumentId = 'reloaded-document';
+        preparingThread.resolve(startedThread);
+      }
+
+      const turn = () => mock.request.mock.calls.find(([method]) => method === 'turn/start')?.[1];
+      await vi.waitFor(() => expect(turn()).toMatchObject({ threadId: action === 'reload' ? 'created' : 'one' }));
+      expect(query).not.toHaveBeenCalled();
+      expect(executeScript.mock.calls).toHaveLength(2);
+      expect(executeScript).toHaveBeenLastCalledWith(expect.objectContaining({ target: { tabId: tab.id } }));
+      if (action === 'reload') expect(turn().chrome).not.toHaveProperty('pageContext');
+      else expect(turn().chrome.pageContext).toEqual(text);
+    },
+  );
+
+  it('sends the bound restricted page title and URL when scripting is blocked', async () => {
+    const tab = { id: 31, windowId: 4, title: 'Downloads', url: 'chrome://downloads/' };
+    vi.spyOn(document, 'URL', 'get').mockReturnValue(extensionUrl('sidepanel.html?tabId=31'));
+    vi.stubGlobal('chrome', {
+      runtime: { getURL: extensionUrl },
+      permissions: { request: vi.fn().mockResolvedValue(false) },
+      scripting: { executeScript: vi.fn().mockRejectedValue(new Error('Restricted Chrome page')) },
+      tabs: { get: vi.fn().mockResolvedValue(tab) },
+    });
+    await mount();
+    await selectThread('one');
+    sendPromptWithPageContext();
+
+    await vi.waitFor(() => expect(mock.request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      threadId: 'one',
+      chrome: expect.objectContaining({
+        pageContext: { title: tab.title, url: tab.url, pageText: '', selectedText: '' },
+      }),
+    })));
+  });
+
+  it('collects visible main text and selection within the outgoing context limits', async () => {
+    const tab = { id: 31, windowId: 4, title: 'Orders', url: window.location.href };
+    const requestPermission = vi.fn().mockResolvedValue(true);
+    const executeScript = vi.fn(async ({ func }: { func: () => unknown }) => [
+      { documentId: 'current-document', result: func() },
+    ]);
+    vi.spyOn(document, 'URL', 'get').mockReturnValue(extensionUrl('sidepanel.html?tabId=31'));
+    vi.stubGlobal('chrome', {
+      runtime: { getURL: extensionUrl },
+      permissions: { request: requestPermission },
+      scripting: { executeScript },
+      tabs: { get: vi.fn().mockResolvedValue(tab) },
+    });
+    await mount();
+    await selectThread('one');
+    document.title = tab.title;
+    const heading = 'Orders queue\n\n';
+    const main = element('messages');
+    main.innerText = 'Orders\t  queue\n\n\n' + 'x'.repeat(24000);
+    const selection = 's'.repeat(16000);
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => selection + 'outside the selection limit',
+    } as Selection);
+    sendPromptWithPageContext();
+
+    expect(requestPermission).toHaveBeenCalledWith({ origins: ['http://*/*', 'https://*/*'] });
+    await vi.waitFor(() => expect(mock.request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      threadId: 'one',
+      chrome: expect.objectContaining({
+        pageContext: {
+          title: tab.title,
+          url: tab.url,
+          pageText: heading + 'x'.repeat(24000 - heading.length),
+          selectedText: selection,
+        },
+      }),
+    })));
   });
 
   it('preserves an explicit lower permission when refreshing an unsent ordinary draft', async () => {

@@ -58,6 +58,7 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/app-server-background.js',
   'modules/relay-bootstrap.js',
   'modules/conversation-client.js',
+  'modules/tab-side-panel.js',
   'modules/web-launch-security.js',
   'modules/web-launch-background.js',
   'modules/web-launch-connections.js',
@@ -155,8 +156,10 @@ function applyBackgroundOverlay(value) {
     'import { createPopupMessageHandler } from "./modules/popup-background.js";\n' +
       'import { handleAppServerMessage } from "./modules/app-server-background.js";\n' +
       'import { requestLocalBootstrap } from "./modules/relay-bootstrap.js";\n' +
+      'import { initializeTabSidePanel } from "./modules/tab-side-panel.js";\n' +
       'import { createWebLaunchBackground } from "./modules/web-launch-background.js";\n' +
       'import { trustedExtensionPage } from "./modules/web-launch-security.js";\n' +
+      'initializeTabSidePanel(chrome);\n' +
       'const webLaunchBackground = createWebLaunchBackground();',
     'background import',
   );
@@ -165,13 +168,6 @@ function applyBackgroundOverlay(value) {
     '  error: { text: "!", color: "#B91C1C" },',
     '  error: { text: "", color: "#000000" },',
     'hide toolbar error badge',
-  );
-  result = replaceIntegrationAnchor(
-    result,
-    'const RELAY_AUTH_TIMEOUT_MS = 10_000;',
-    'const RELAY_AUTH_TIMEOUT_MS = 10_000;\n\n' +
-      'void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });',
-    'side panel behavior',
   );
   result = replaceIntegrationAnchor(
     result,
@@ -223,7 +219,7 @@ function applyManifestOverlay(value) {
     'sidePanel',
   ].filter((permission, index, permissions) => permissions.indexOf(permission) === index);
   delete manifest.action.default_popup;
-  manifest.side_panel = { default_path: 'sidepanel.html' };
+  delete manifest.side_panel;
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
@@ -373,6 +369,7 @@ function verifyChromeExtension(extensionDir, options = {}) {
     'sidepanel.js',
     path.join('modules', 'app-server-background.js'),
     path.join('modules', 'conversation-client.js'),
+    path.join('modules', 'tab-side-panel.js'),
     path.join('modules', 'relay-core.js'),
     path.join('modules', 'relay-auth-v2.js'),
     path.join('modules', 'relay-connection.js'),
@@ -404,8 +401,8 @@ function verifyChromeExtension(extensionDir, options = {}) {
   ) {
     throw new Error('Chrome extension website bootstrap must accept only HTTP(S) websites.');
   }
-  if (manifest.side_panel?.default_path !== 'sidepanel.html') {
-    throw new Error('Chrome extension side chat entry is missing.');
+  if (manifest.side_panel !== undefined) {
+    throw new Error('Chrome extension side chat must use tab-specific panel options.');
   }
   const extensionId = [
     ...crypto

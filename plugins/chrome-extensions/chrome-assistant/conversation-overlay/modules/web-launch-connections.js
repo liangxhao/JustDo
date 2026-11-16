@@ -1,4 +1,5 @@
 import { WebLaunchMethod } from '../../contracts/webLaunch.ts';
+import { openTabSidePanel } from './tab-side-panel.js';
 import {
   WEB_CONNECTION,
   WEB_RUNTIME,
@@ -27,6 +28,8 @@ const sameSource = (value, sender) =>
   value.source.documentId === sender.documentId &&
   value.source.tabId === sender.tab.id &&
   value.source.windowId === sender.tab.windowId;
+const inPanelTab = (value, { tabId, windowId }) =>
+  value.source.tabId === tabId && value.source.windowId === windowId;
 const metadata = value =>
   value
     ? {
@@ -86,15 +89,15 @@ export function createWebLaunchConnections({
       action(value);
       return structuredClone(value);
     });
-    notify(result.source.windowId, metadata(result));
+    notify(result.source, metadata(result));
     return result;
   }
-  async function current(windowId) {
+  async function current(panel) {
     return store(values => {
       collect(values);
       const value = Object.values(values)
         .reverse()
-        .filter(item => item.source.windowId === windowId)
+        .filter(item => inPanelTab(item, panel))
         .sort((a, b) => b.createdAt - a.createdAt)[0];
       return metadata(value);
     });
@@ -147,16 +150,17 @@ export function createWebLaunchConnections({
     )
       throw { code: 'EXPIRED' };
   }
-  async function refresh(windowId) {
-    const prior = refreshes.get(windowId);
+  async function refresh(panel) {
+    const key = `${panel.windowId}/${panel.tabId}`;
+    const prior = refreshes.get(key);
     if (prior && now() - prior.at < 5000) return;
-    refreshes.set(windowId, { at: now() });
+    refreshes.set(key, { at: now() });
     if (refreshes.size > 128) refreshes.delete(refreshes.keys().next().value);
     const value = await store(values =>
       structuredClone(
         Object.values(values).find(
           item =>
-            item.source.windowId === windowId &&
+            inPanelTab(item, panel) &&
             item.status === Status.Awaiting &&
             item.sitesRevision === undefined &&
             !expired(item),
@@ -191,13 +195,14 @@ export function createWebLaunchConnections({
             'decision',
             'reason',
             'panelInstanceId',
+            'tabId',
             'windowId',
           ].includes(key),
       )
     )
       throw { code: 'INVALID_REQUEST' };
     let value = await change(message.pendingId, item => {
-      if (item.source.windowId !== message.windowId) throw { code: 'FORBIDDEN' };
+      if (!inPanelTab(item, message)) throw { code: 'FORBIDDEN' };
       if (message.decision === 'deny') {
         if (item.claimed) throw { code: 'TOO_LATE' };
         if (message.expectedRevision > item.revision || !live(item)) throw { code: 'EXPIRED' };
@@ -361,7 +366,7 @@ export function createWebLaunchConnections({
     const epoch = tabEpoch.get(sender.tab.id) ?? 0;
     let opened;
     try {
-      opened = chromeApi.sidePanel.open({ tabId: sender.tab.id });
+      opened = openTabSidePanel(chromeApi, sender.tab.id);
     } catch {
       provisional.delete(sender.tab.windowId);
       reply({ ok: false, code: 'PANEL_OPEN_FAILED' });
@@ -429,7 +434,7 @@ export function createWebLaunchConnections({
             return structuredClone(value);
           });
           if ((tabEpoch.get(sender.tab.id) ?? 0) !== epoch) throw { code: 'EXPIRED' };
-          notify(value.source.windowId, metadata(value));
+          notify(value.source, metadata(value));
           if (value.status === Status.Awaiting && value.sitesRevision === undefined) {
             try {
               const policies = await readSites();
@@ -471,14 +476,14 @@ export function createWebLaunchConnections({
       delete item.input;
       return structuredClone(item);
     });
-    notify(value.source.windowId, metadata(value));
+    notify(value.source, metadata(value));
     return { connectionOnly: true, expectedPolicyRevision: value.policyRevision };
   }
   function invalidateTab(tabId) {
     tabEpoch.set(tabId, (tabEpoch.get(tabId) ?? 0) + 1);
     if (tabEpoch.size > 256) tabEpoch.delete(tabEpoch.keys().next().value);
     void store(values => {
-      const windows = [];
+      const sources = [];
       for (const value of Object.values(values))
         if (value.source.tabId === tabId && live(value)) {
           retire(value.pendingId);
@@ -486,12 +491,12 @@ export function createWebLaunchConnections({
           value.revision += 1;
           value.requiresAction = false;
           delete value.input;
-          windows.push(value.source.windowId);
+          sources.push(value.source);
         }
-      return windows;
+      return sources;
     })
-      .then(windows =>
-        Promise.all(windows.map(async windowId => notify(windowId, await current(windowId)))),
+      .then(sources =>
+        Promise.all(sources.map(async source => notify(source, await current(source)))),
       )
       .catch(() => {});
   }

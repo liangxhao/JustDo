@@ -17,6 +17,11 @@ const trusted = {
   frameId: 0,
   url: `chrome-extension://${extensionId}/options.html`,
 };
+const panelSender = (tabId: number) => ({
+  ...trusted,
+  url: `chrome-extension://${extensionId}/sidepanel.html?tabId=${tabId}`,
+});
+const panelScope = { tabId: 7, windowId: 3, panelInstanceId: 'panel-1' };
 const launch = {
   type: 'web-launch:document:launch',
   documentNonce: 'document-nonce',
@@ -68,11 +73,13 @@ describe('web launch background', () => {
     api = {
       runtime: {
         id: extensionId,
+        getURL: (path: string) => `chrome-extension://${extensionId}/${path}`,
         getManifest: () => ({ version: '1.0' }),
         sendMessage: vi.fn(async () => ({})),
       },
       storage: { session, local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) } },
       sidePanel: {
+        setOptions: vi.fn(async () => {}),
         open: vi.fn(() => {
           order.push('open');
           return Promise.resolve();
@@ -147,6 +154,59 @@ describe('web launch background', () => {
     });
   });
 
+  it('routes launch state and controls to the originating tab while retaining window admission', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const register = { type: 'web-launch:panel:register', ...panelScope };
+    const otherPanel = { tabId: 8, windowId: 3, panelInstanceId: 'another-panel' };
+    await invoke(controller, register, panelSender(7));
+    const otherRegistration = { ...register, ...otherPanel, composerBusy: true };
+    expect(await invoke(controller, otherRegistration, panelSender(7))).toEqual({
+      ok: false,
+      code: 'FORBIDDEN',
+    });
+    expect(await invoke(controller, otherRegistration, panelSender(8))).toMatchObject({ ok: true });
+
+    expect(await invoke(controller, launch)).toMatchObject({ ok: true });
+    expect(api.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        ...panelScope,
+        envelope: expect.objectContaining({ prompt: 'hello', launchId: 'launch-1' }),
+      }),
+    );
+    expect(await invoke(controller, otherRegistration, panelSender(8))).toMatchObject({
+      ok: true,
+      envelope: undefined,
+      observations: [],
+    });
+    const stop = { type: 'web-launch:launch:stop', launchId: 'launch-1' };
+    expect(await invoke(controller, { ...stop, ...otherPanel }, panelSender(8))).toEqual({
+      ok: false,
+      code: 'UNKNOWN_REQUEST',
+    });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Stop, expect.anything());
+    expect(await invoke(controller, { ...stop, ...panelScope }, panelSender(7))).toMatchObject({
+      ok: true,
+    });
+    expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.Stop, { launchId: 'launch-1' });
+    expect(
+      await invoke(
+        controller,
+        { ...launch, requestId: 'request-2' },
+        {
+          ...sender,
+          documentId: 'document-2',
+          tab: { ...sender.tab, id: 8 },
+        },
+      ),
+    ).toEqual({ ok: false, code: 'WINDOW_BUSY' });
+
+    api.tabs.onRemoved.addListener.mock.calls[0][0](7);
+    expect(await invoke(controller, { ...stop, ...panelScope }, panelSender(7))).toEqual({
+      ok: false,
+      code: 'FORBIDDEN',
+    });
+  });
+
   it('only accepts trusted sending preferences and presents the effective mode from Main', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     const preference = {
@@ -181,11 +241,10 @@ describe('web launch background', () => {
     reply.internal.requiresResultConsent = false;
     expect(await invoke(controller, launch)).toMatchObject({ ok: true });
 
-    const panel = { ...trusted, url: `chrome-extension://${extensionId}/sidepanel.html` };
     const result = await invoke(
       controller,
-      { type: 'web-launch:panel:register', panelInstanceId: 'panel-1', windowId: 3 },
-      panel,
+      { type: 'web-launch:panel:register', ...panelScope },
+      panelSender(7),
     );
     expect(result.envelope).toMatchObject({ mode: 'send', automaticSendAllowed: true });
     expect(client.request).toHaveBeenCalledWith(
@@ -377,22 +436,20 @@ describe('web launch background', () => {
       controller,
       {
         type: 'web-launch:panel:register',
-        panelInstanceId: 'panel-1',
-        windowId: 3,
+        ...panelScope,
         composerBusy: false,
       },
-      trusted,
+      panelSender(7),
     );
     await invoke(
       controller,
       {
         type: 'web-launch:panel:state',
-        panelInstanceId: 'panel-1',
-        windowId: 3,
+        ...panelScope,
         composerBusy: false,
         launchId: 'launch-1',
       },
-      trusted,
+      panelSender(7),
     );
     await vi.waitFor(() =>
       expect(api.runtime.sendMessage).toHaveBeenCalledWith(
@@ -407,11 +464,11 @@ describe('web launch background', () => {
       controller,
       {
         type: 'web-launch:panel:register',
+        ...panelScope,
         panelInstanceId: 'panel-2',
-        windowId: 3,
         composerBusy: false,
       },
-      trusted,
+      panelSender(7),
     );
     expect(reopened.envelope).toMatchObject({
       prompt: '',
@@ -557,18 +614,21 @@ describe('web launch background', () => {
     const first = createWebLaunchBackground({ chromeApi: api, client });
     await invoke(first, launch);
     const second = createWebLaunchBackground({ chromeApi: api, client });
+    const panel = panelSender(7);
+    await invoke(second, { type: 'web-launch:panel:register', ...panelScope }, panel);
     api.tabs.sendMessage.mockRejectedValue(new Error('No document'));
     const response = await invoke(
       second,
       {
         type: 'web-launch:launch:submit',
+        ...panelScope,
         launchId: 'launch-1',
         composeRevision: 1,
         input: { prompt: 'hello', permissionMode: 'ask' },
         submission: 'confirmed',
         shareResult: false,
       },
-      trusted,
+      panel,
     );
     expect(response).toEqual({ ok: false, code: 'EXPIRED' });
     expect(client.request.mock.calls.some(([method]) => method === WebLaunchMethod.Submit)).toBe(
@@ -593,11 +653,10 @@ describe('web launch background', () => {
       controller,
       {
         type: 'web-launch:panel:register',
-        panelInstanceId: 'panel-1',
-        windowId: 3,
+        ...panelScope,
         composerBusy: false,
       },
-      trusted,
+      panelSender(7),
     );
     const pending = invoke(controller, launch);
     await vi.waitFor(() => expect(release!).toBeTypeOf('function'));

@@ -19,6 +19,7 @@ const noop = () => {};
 export function createWebLaunchPanel({
   document,
   chrome = globalThis.chrome,
+  tabId,
   readComposer,
   installComposer,
   refreshThread = async () => {},
@@ -30,7 +31,13 @@ export function createWebLaunchPanel({
   confirm = message => globalThis.confirm(message),
 }) {
   const root = document.getElementById('webLaunchControls');
-  if (!root || !chrome?.runtime?.sendMessage || !chrome?.windows?.getCurrent) {
+  if (
+    !root ||
+    !Number.isSafeInteger(tabId) ||
+    tabId < 0 ||
+    !chrome?.runtime?.sendMessage ||
+    !chrome?.tabs?.get
+  ) {
     return {
       inputAssociated: () => false,
       ownsThread: () => false,
@@ -60,6 +67,8 @@ export function createWebLaunchPanel({
   let installing = false;
   let inputReleased = false;
   let initialized = false;
+  let registering = false;
+  let tabScopeRevision = 0;
   let modelChanged = false;
   let actionPending = false;
   let stopPending = '';
@@ -172,6 +181,7 @@ export function createWebLaunchPanel({
     const result = await chrome.runtime.sendMessage({
       type,
       panelInstanceId,
+      tabId,
       windowId,
       ...params,
     });
@@ -269,7 +279,7 @@ export function createWebLaunchPanel({
     render();
   }
   async function publishState(force = false) {
-    if (disposed || windowId === undefined) return;
+    if (disposed || registering || windowId === undefined) return;
     const composer = readComposer();
     try {
       const state = {
@@ -346,10 +356,11 @@ export function createWebLaunchPanel({
     });
     render();
     await refreshThread(envelope.threadId);
-    installing = false;
     if (current?.launchId !== envelope.launchId || disposed) return;
+    installing = false;
     render();
     await publishState();
+    if (current?.launchId !== envelope.launchId || disposed) return;
     clearTimeout(expiryTimer);
     expiryTimer = setTimeout(
       () => {
@@ -568,6 +579,7 @@ export function createWebLaunchPanel({
     if (
       message?.type !== WebLaunchPanelMessage.Event ||
       message.panelInstanceId !== panelInstanceId ||
+      message.tabId !== tabId ||
       message.windowId !== windowId ||
       disposed
     )
@@ -582,12 +594,61 @@ export function createWebLaunchPanel({
     else if (message.code) fail(message.code, message.launchId ?? null);
   };
   chrome.runtime.onMessage?.addListener(listener);
+  function leaveWindow() {
+    connection.accept(null);
+    clearTimeout(expiryTimer);
+    if (inputAssociated()) {
+      const attempted = current.lastSubmittedPrompt;
+      if (attempted !== undefined) {
+        if (selected() && readComposer().prompt === attempted)
+          installComposer({ clearPrompt: true });
+        onError(t('unknownSend'));
+      } else if (!submitted()) {
+        onError(t('webLaunchMovedDraft'));
+      }
+    }
+    current = null;
+    receipt = null;
+    cancellation = null;
+    installing = false;
+    initialized = false;
+    render();
+  }
+  function onTabDetached(id) {
+    if (id !== tabId) return;
+    tabScopeRevision += 1;
+    windowId = undefined;
+    registering = false;
+    leaveWindow();
+  }
+  function onTabAttached(id) {
+    if (id === tabId) void register();
+  }
+  chrome.tabs.onDetached?.addListener(onTabDetached);
+  chrome.tabs.onAttached?.addListener(onTabAttached);
+
   async function register() {
-    const initialConnectionVersion = connectionVersion;
+    if (registering || disposed) return;
+    registering = true;
+    const scopeRevision = tabScopeRevision;
+    let registered = false;
+    let initialConnectionVersion = connectionVersion;
     try {
-      const window = await chrome.windows.getCurrent();
-      if (disposed) return;
-      windowId = window.id;
+      const tab = await chrome.tabs.get(tabId);
+      if (
+        disposed ||
+        scopeRevision !== tabScopeRevision ||
+        !Number.isSafeInteger(tab?.windowId) ||
+        tab.windowId < 0
+      )
+        return;
+      const nextWindowId = tab.windowId;
+      if (windowId !== undefined && windowId !== nextWindowId) {
+        leaveWindow();
+        initialConnectionVersion = connectionVersion;
+      }
+      windowId = nextWindowId;
+      lastState = '';
       const composer = readComposer();
       const result = await request(WebLaunchPanelMessage.Register, {
         composerBusy: Boolean(
@@ -597,7 +658,16 @@ export function createWebLaunchPanel({
           composer.busy,
         ),
       });
+      // The tab can move to another window while registration is in flight.
+      const registeredTab = disposed ? undefined : await chrome.tabs.get(tabId);
+      if (
+        disposed ||
+        scopeRevision !== tabScopeRevision ||
+        registeredTab?.windowId !== nextWindowId
+      )
+        return;
       initialized = true;
+      registered = true;
       if (
         connectionVersion === initialConnectionVersion &&
         Object.hasOwn(result, 'connectionPending')
@@ -611,10 +681,18 @@ export function createWebLaunchPanel({
       }
     } catch {
       /* Ordinary extension chat remains available when this bridge is unavailable. */
+    } finally {
+      if (scopeRevision === tabScopeRevision) {
+        registering = false;
+        if (registered) void publishState();
+      }
     }
   }
   void register();
-  const heartbeat = setInterval(() => void publishState(true), 3000);
+  const heartbeat = setInterval(() => {
+    if (windowId === undefined) void register();
+    else void publishState(true);
+  }, 3000);
   return {
     inputAssociated,
     ownsThread,
@@ -646,6 +724,8 @@ export function createWebLaunchPanel({
       clearTimeout(expiryTimer);
       clearInterval(heartbeat);
       chrome.runtime.onMessage?.removeListener(listener);
+      chrome.tabs.onDetached?.removeListener(onTabDetached);
+      chrome.tabs.onAttached?.removeListener(onTabAttached);
       connection.dispose();
     },
   };

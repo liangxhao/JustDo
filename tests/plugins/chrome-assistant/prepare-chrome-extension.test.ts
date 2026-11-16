@@ -6,6 +6,12 @@ import vm from 'node:vm';
 
 import { describe, expect, test, vi } from 'vitest';
 
+import {
+  initializeTabSidePanel,
+  openTabSidePanel,
+  tabIdFromSidePanelUrl,
+} from '../../../plugins/chrome-extensions/chrome-assistant/conversation-overlay/modules/tab-side-panel.js';
+
 const { prepareChromeExtension, verifyChromeExtension } =
   require('../../../plugins/chrome-extensions/chrome-assistant/scripts/prepare.cjs') as {
     prepareChromeExtension: (options: {
@@ -240,6 +246,7 @@ describe('Chrome extension preparation', () => {
         expect.arrayContaining(['activeTab', 'nativeMessaging', 'scripting', 'sidePanel']),
       );
       expect(manifest.action).not.toHaveProperty('default_popup');
+      expect(manifest).not.toHaveProperty('side_panel');
       expect(manifest.host_permissions).toEqual(['http://127.0.0.1/*']);
       expect(manifest.optional_host_permissions).toEqual(['http://*/*', 'https://*/*']);
       expect(manifest.externally_connectable).toEqual({
@@ -250,8 +257,9 @@ describe('Chrome extension preparation', () => {
         'webLaunchBackground.handleExternalMessage(msg, sender, reply)',
       );
       expect(fs.readFileSync(path.join(second.outputDir, 'background.js'), 'utf8')).toContain(
-        'openPanelOnActionClick: true',
+        'initializeTabSidePanel(chrome)',
       );
+      expect(fs.existsSync(path.join(second.outputDir, 'modules/tab-side-panel.js'))).toBe(true);
       expect(fs.readFileSync(path.join(second.outputDir, 'sidepanel.js'), 'utf8')).toContain(
         'chrome.runtime.openOptionsPage()',
       );
@@ -296,6 +304,83 @@ describe('Chrome extension preparation', () => {
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }
+  });
+
+  test('provisions contextual side panels and opens an unconfigured toolbar tab within its click', async () => {
+    const onInstalled = vi.fn();
+    const onStartup = vi.fn();
+    const onCreated = vi.fn();
+    const onReplaced = vi.fn();
+    const onClicked = vi.fn();
+    const setOptions = vi.fn(
+      async (_options: { tabId: number; path: string; enabled: boolean }) => {},
+    );
+    const open = vi.fn(async (_options: { tabId: number }) => {});
+    const setPanelBehavior = vi.fn(async () => {});
+    const chromeApi = {
+      runtime: {
+        onInstalled: { addListener: onInstalled },
+        onStartup: { addListener: onStartup },
+      },
+      tabs: {
+        query: async () => [{ id: 4 }],
+        onCreated: { addListener: onCreated },
+        onReplaced: { addListener: onReplaced },
+      },
+      action: { onClicked: { addListener: onClicked } },
+      sidePanel: { setOptions, open, setPanelBehavior },
+    };
+
+    initializeTabSidePanel(chromeApi);
+    expect(setPanelBehavior).toHaveBeenCalledWith({ openPanelOnActionClick: true });
+    onStartup.mock.calls[0][0]();
+    onCreated.mock.calls[0][0]({ id: 5 });
+    onReplaced.mock.calls[0][0](6, 4);
+    await Promise.resolve();
+    expect(setOptions.mock.calls.map(([options]) => options)).toEqual([
+      { tabId: 5, path: 'sidepanel.html?tabId=5', enabled: true },
+      { tabId: 6, path: 'sidepanel.html?tabId=6', enabled: true },
+      { tabId: 4, path: 'sidepanel.html?tabId=4', enabled: true },
+    ]);
+    expect(open).not.toHaveBeenCalled();
+
+    let finishSettingOptions!: () => void;
+    setOptions.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishSettingOptions = resolve;
+        }),
+    );
+    onClicked.mock.calls[0][0]({ id: 7 });
+    expect(setOptions).toHaveBeenLastCalledWith({
+      tabId: 7,
+      path: 'sidepanel.html?tabId=7',
+      enabled: true,
+    });
+    expect(open).toHaveBeenCalledExactlyOnceWith({ tabId: 7 });
+    expect(setOptions.mock.invocationCallOrder.at(-1)).toBeLessThan(
+      open.mock.invocationCallOrder[0],
+    );
+    finishSettingOptions();
+  });
+
+  test('rejects malformed panel identities and invalid tab targets', async () => {
+    const base = 'chrome-extension://installed';
+    const chromeApi = { runtime: { getURL: (file: string) => `${base}/${file}` } };
+    expect(tabIdFromSidePanelUrl(`${base}/sidepanel.html?tabId=7`, chromeApi)).toBe(7);
+    for (const invalidUrl of [
+      `${base}/sidepanel.html`,
+      `${base}/sidepanel.html?tabId=07`,
+      `${base}/sidepanel.html?tabId=7&tabId=8`,
+      `${base}/sidepanel.html?tabId=7#fragment`,
+      `${base}/options.html?tabId=7`,
+      'chrome-extension://other/sidepanel.html?tabId=7',
+    ])
+      expect(tabIdFromSidePanelUrl(invalidUrl, chromeApi)).toBeNull();
+    const sidePanel = { setOptions: vi.fn(), open: vi.fn() };
+    await expect(openTabSidePanel({ sidePanel }, -1)).rejects.toThrow('Invalid side panel tab ID');
+    expect(sidePanel.setOptions).not.toHaveBeenCalled();
+    expect(sidePanel.open).not.toHaveBeenCalled();
   });
 
   test('loads the standalone website bundle on an HTTP site without secure-context crypto APIs', async () => {

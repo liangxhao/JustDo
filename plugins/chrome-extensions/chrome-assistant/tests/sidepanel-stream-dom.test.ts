@@ -75,6 +75,9 @@ describe('extension streaming DOM', () => {
       'plugins/chrome-extensions/chrome-assistant/conversation-overlay/sidepanel.html',
       'utf8',
     );
+    const decision = document.getElementById('decisionDialog') as HTMLDialogElement;
+    decision.showModal = () => { decision.open = true; };
+    decision.close = () => { decision.open = false; };
     const thread = {
       id: 'one',
       turns: [
@@ -261,6 +264,7 @@ describe('extension streaming DOM', () => {
       threadId: 'one', turnId, itemId: 'input', isBlocking: true,
       questions: [{ id: 'value', header: 'Private answer', question: 'Enter value', isSecret: true, options: null }],
     } }, { signal: new AbortController().signal });
+    await vi.waitFor(() => expect((document.getElementById('decisionDialog') as HTMLDialogElement).open).toBe(true));
     const secret = document.querySelector<HTMLInputElement>('#approvals input[type="password"]')!;
     secret.value = 'private-value';
     secret.dispatchEvent(new Event('input'));
@@ -1108,7 +1112,7 @@ describe('extension streaming DOM', () => {
         return Promise.resolve({
           data: [
             { id: 'one', status: { type: 'idle' } },
-            { id: 'two', status: { type: 'active' } },
+            { id: 'two', name: 'Order check', status: { type: 'active' } },
           ],
         });
       if (method === 'thread/resume') return Promise.resolve({ thread: { id: 'two', turns: [] } });
@@ -1123,7 +1127,10 @@ describe('extension streaming DOM', () => {
     emit(1, 'thinking', { text: 'Considering' }, 'two');
     expect(document.querySelectorAll('.message.user')).toHaveLength(1);
     resolveTurn({ turn: { id: submittedTurnId, nativeRunId: 'run-1' } });
-    await vi.waitFor(() => expect(select.disabled).toBe(false));
+    await vi.waitFor(() => {
+      expect(select.disabled).toBe(false);
+      expect(select.selectedOptions[0]?.textContent).toBe('Order check');
+    });
     expect(document.querySelectorAll('.message.user')).toHaveLength(1);
     expect(document.querySelector('.process-live')).not.toBeNull();
     mock.notify('chrome/thread/updated', {

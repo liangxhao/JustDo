@@ -1,6 +1,5 @@
 const translations = {
   en: {
-    assistant: 'Assistant',
     messageTime: 'Message time',
     responseModel: 'Response model',
     copyAnswer: 'Copy answer',
@@ -90,6 +89,7 @@ const translations = {
     webLaunchError_COMPOSE_CONFLICT:
       'The input changed. Wait for it to be confirmed before sending.',
     webLaunchError_EXPIRED: 'This website request expired. Use Continue as ordinary chat to keep its text.',
+    webLaunchMovedDraft: 'This tab moved to another window. The website message is now an ordinary draft.',
     webLaunchError_CANCELLED: 'This website request was cancelled. Use Continue as ordinary chat to keep any draft text.',
     webLaunchError_CONTEXT_TOO_LARGE: 'The context is too large. Shorten it before sending.',
     webLaunchError_NATIVE_UNAVAILABLE:
@@ -145,7 +145,6 @@ const translations = {
     defaultModel: 'Default model',
     selectModel: 'Select model',
     untitled: 'Untitled conversation',
-    working: 'working',
     thinking: 'Thinking',
     tool: 'Tool',
     input: 'Input',
@@ -210,7 +209,6 @@ const translations = {
       'This conversation can access files outside the task folder and run host commands without approval. Enable full access?',
   },
   zh: {
-    assistant: '助手',
     messageTime: '消息时间',
     responseModel: '回复模型',
     copyAnswer: '复制回答',
@@ -279,6 +277,7 @@ const translations = {
     webLaunchError_EXECUTION_INTERRUPTED: '此次执行已停止。',
     webLaunchError_COMPOSE_CONFLICT: '输入已更改，请等待核验完成后发送。',
     webLaunchError_EXPIRED: '此网页请求已过期。选择「继续普通聊天」可保留文字。',
+    webLaunchMovedDraft: '此标签页已移到另一个窗口，网页消息已保留为普通草稿。',
     webLaunchError_CANCELLED: '此网页请求已取消。选择「继续普通聊天」可保留草稿文字。',
     webLaunchError_CONTEXT_TOO_LARGE: '上下文过长，请缩短后发送。',
     webLaunchError_NATIVE_UNAVAILABLE: '消息未发送。请检查桌面连接后，核对并手动发送草稿。',
@@ -330,7 +329,6 @@ const translations = {
     defaultModel: '默认模型',
     selectModel: '选择模型',
     untitled: '未命名会话',
-    working: '处理中',
     thinking: '思考',
     tool: '工具',
     input: '输入',

@@ -1,5 +1,6 @@
 import { initializeAppearance } from './modules/appearance.js';
 import { AppServerClient } from './modules/conversation-client.js';
+import { tabIdFromSidePanelUrl } from './modules/tab-side-panel.js';
 import { createWebLaunchPanel } from './modules/web-launch-panel.js';
 import {
   chromeDisplayThread,
@@ -25,6 +26,8 @@ import {
 void initializeAppearance();
 localizeSidePanel(document);
 
+const boundTabId = tabIdFromSidePanelUrl(document.URL, globalThis.chrome);
+const contextTabs = globalThis.chrome?.tabs;
 const sessionSelect = document.getElementById('session');
 const messages = document.getElementById('messages');
 const prompt = document.getElementById('prompt');
@@ -80,6 +83,7 @@ let choosingWorkspace = false;
 let questionGeneration = 0;
 let questionsReady = false;
 let refreshingQuestions = false;
+let pageContextGeneration = 0;
 
 const questions = createQuestionPanel(document.getElementById('questions'), {
   respond: async (threadId, requestId, response) => {
@@ -473,8 +477,7 @@ async function refreshSessions(preferredSessionId, generation) {
   for (const entry of result.data ?? []) {
     const option = document.createElement('option');
     option.value = entry.id;
-    const title = entry.name ?? entry.preview ?? t('untitled');
-    option.textContent = entry.status?.type === 'active' ? `${title} · ${t('working')}` : title;
+    option.textContent = entry.name ?? entry.preview ?? t('untitled');
     sessionSelect.append(option);
   }
   if ([...sessionSelect.options].some(option => option.value === current)) {
@@ -765,37 +768,98 @@ async function addAttachments(files) {
   }
 }
 
-async function collectPageContext() {
-  if (!includePage.checked) return undefined;
+function invalidatePageContext(tabId) {
+  if (tabId === boundTabId) pageContextGeneration += 1;
+}
+
+function onBoundTabUpdated(tabId, change) {
+  if (change.status === 'loading' || typeof change.url === 'string') invalidatePageContext(tabId);
+}
+
+async function readBoundTab(generation, previousTab) {
+  if (boundTabId === null || generation !== pageContextGeneration) return undefined;
+  try {
+    const tab = await contextTabs.get(boundTabId);
+    if (
+      generation === pageContextGeneration &&
+      tab?.id === boundTabId &&
+      !tab.pendingUrl &&
+      (!previousTab ||
+        (tab.windowId === previousTab.windowId && (!previousTab.url || tab.url === previousTab.url)))
+    ) {
+      return tab;
+    }
+  } catch {
+    // The tab may have closed before optional context could be collected.
+  }
+  return undefined;
+}
+
+async function collectPageContext(generation) {
+  if (boundTabId === null) return undefined;
+  // Start the identity read without delaying the permission prompt past the click gesture.
+  const tabBeforePermission = readBoundTab(generation);
   try {
     await chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'] });
   } catch {
     // The title and URL remain available if the user declines page-text access.
   }
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return undefined;
-  let selectedText = '';
-  let pageText = '';
+  const previousTab = await tabBeforePermission;
+  const tab = previousTab && (await readBoundTab(generation, previousTab));
+  if (!tab) return undefined;
+  let snapshot;
+  let documentId;
   try {
     const [result] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: boundTabId },
       func: () => ({
+        title: document.title,
+        url: globalThis.location.href,
         selectedText: globalThis.getSelection?.()?.toString() ?? '',
         pageText: (document.querySelector('main')?.innerText || document.body?.innerText || '')
           .replace(/[\t ]+/gu, ' ')
           .replace(/\n{3,}/gu, '\n\n'),
       }),
     });
-    selectedText =
-      typeof result?.result?.selectedText === 'string'
-        ? result.result.selectedText.slice(0, 16000)
-        : '';
-    pageText =
-      typeof result?.result?.pageText === 'string' ? result.result.pageText.slice(0, 24000) : '';
+    if (result?.documentId && result.result) {
+      snapshot = result.result;
+      documentId = result.documentId;
+    }
   } catch {
     // Restricted browser pages still contribute their visible title and URL.
   }
-  return { title: tab.title ?? '', url: tab.url ?? '', selectedText, pageText };
+  if (generation !== pageContextGeneration || (snapshot && tab.url && snapshot.url !== tab.url))
+    return undefined;
+  return {
+    tab,
+    documentId,
+    context: {
+      title: snapshot?.title ?? tab.title ?? '',
+      url: snapshot?.url ?? tab.url ?? '',
+      selectedText:
+        typeof snapshot?.selectedText === 'string' ? snapshot.selectedText.slice(0, 16000) : '',
+      pageText: typeof snapshot?.pageText === 'string' ? snapshot.pageText.slice(0, 24000) : '',
+    },
+  };
+}
+
+async function pageContextForTurn(generation, snapshot) {
+  if (!(await readBoundTab(generation, snapshot.tab))) return undefined;
+  if (snapshot.documentId) {
+    try {
+      // Recheck the active document of this tab even when it reloads to the same URL.
+      const [current] = await chrome.scripting.executeScript({
+        target: { tabId: boundTabId },
+        injectImmediately: true,
+        func: () => globalThis.location.href,
+      });
+      if (current?.documentId !== snapshot.documentId || current.result !== snapshot.context.url)
+        return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return snapshot.context;
 }
 
 async function submit() {
@@ -823,8 +887,12 @@ async function submit() {
   }));
   const modelRef = modelSelect.value;
   const permissionMode = permissionSelect.value;
-  const explicitPermissionMode = selectedDraftPermission(sessionSelect.value);
+  const selectedThreadId = sessionSelect.value;
+  const explicitPermissionMode = selectedDraftPermission(selectedThreadId);
+  const selectedWorkspace = draftWorkspaceSelection;
+  const selectedDraftId = draftId;
   const includePageContext = includePage.checked;
+  const contextGeneration = pageContextGeneration;
   let createdThreadId = '';
   let preparedThreadId = '';
   let turnRequestStarted = false;
@@ -833,18 +901,18 @@ async function submit() {
   sendingStartedAt = Date.now();
   updateComposerDisabledState();
   clearError();
-  showPendingUserMessage(sessionSelect.value, message);
+  showPendingUserMessage(selectedThreadId, message);
   if (prompt.value.trim() === message) prompt.value = '';
   prompt.style.height = 'auto';
   try {
-    const pageContext = includePageContext ? await collectPageContext() : undefined;
-    let threadId = sessionSelect.value;
+    const pageSnapshot = includePageContext ? await collectPageContext(contextGeneration) : undefined;
+    let threadId = selectedThreadId;
     if (!threadId) {
       const started = await client.request('thread/start', {
-        ...(draftWorkspaceSelection ? { cwd: draftWorkspaceSelection.cwd } : {}),
+        ...(selectedWorkspace ? { cwd: selectedWorkspace.cwd } : {}),
         chrome: {
           title: message.split(/\r?\n/u)[0] || attachments[0]?.name || t('untitled'),
-          ...(draftWorkspaceSelection ? { workspaceSelectionToken: draftWorkspaceSelection.selectionToken, draftId } : {}),
+          ...(selectedWorkspace ? { workspaceSelectionToken: selectedWorkspace.selectionToken, draftId: selectedDraftId } : {}),
         },
       });
       threadId = started.thread.id;
@@ -862,6 +930,9 @@ async function submit() {
       webLaunchPanel?.updateSelection();
     }
     preparedThreadId = threadId;
+    const pageContext = pageSnapshot
+      ? await pageContextForTurn(contextGeneration, pageSnapshot)
+      : undefined;
     submissionScopeThreadId = threadId;
     streamView(threadId).start(message, {
       role: 'user',
@@ -894,7 +965,7 @@ async function submit() {
         ...(attachments.some(attachment => !attachment.mimeType.startsWith('image/'))
           ? { attachments: attachments.filter(attachment => !attachment.mimeType.startsWith('image/')) } : {}),
         permissionMode,
-        ...(pageContext ? { pageContext } : {}),
+        ...(pageContext && contextGeneration === pageContextGeneration ? { pageContext } : {}),
       },
     };
     pendingSubmissions.set(threadId, {
@@ -914,7 +985,7 @@ async function submit() {
     clearAttachments();
     await refreshAll(threadId);
   } catch (error) {
-    const threadId = preparedThreadId || createdThreadId || sessionSelect.value;
+    const threadId = preparedThreadId || createdThreadId || selectedThreadId;
     if (turnRequestStarted && error?.requestSent !== false) {
       approvals.cancelTurn(threadId, clientTurnId);
       const pending = pendingSubmissions.get(threadId);
@@ -1057,7 +1128,18 @@ settingsButton.addEventListener('click', () => chrome.runtime.openOptionsPage())
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshAll();
 });
+if (boundTabId !== null) {
+  contextTabs?.onUpdated?.addListener(onBoundTabUpdated);
+  contextTabs?.onDetached?.addListener(invalidatePageContext);
+  contextTabs?.onRemoved?.addListener(invalidatePageContext);
+}
 window.addEventListener('unload', () => {
+  if (boundTabId !== null) {
+    invalidatePageContext(boundTabId);
+    contextTabs?.onUpdated?.removeListener(onBoundTabUpdated);
+    contextTabs?.onDetached?.removeListener(invalidatePageContext);
+    contextTabs?.onRemoved?.removeListener(invalidatePageContext);
+  }
   addMenu.dispose();
   decisionObserver.disconnect();
   if (decisionDialog.open) decisionDialog.close();
@@ -1069,10 +1151,11 @@ window.addEventListener('unload', () => {
   activityView.dispose();
   messageRenderer.dispose();
   if (streamRenderTimer !== null) clearTimeout(streamRenderTimer);
-});
+}, { once: true });
 
 webLaunchPanel = createWebLaunchPanel({
   document,
+  tabId: boundTabId,
   readComposer: () => ({
     prompt: prompt.value,
     threadId: sessionSelect.value,

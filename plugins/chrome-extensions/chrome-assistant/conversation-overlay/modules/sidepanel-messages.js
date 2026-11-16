@@ -344,7 +344,9 @@ export function createMessageRenderer(
     status.className = `process-tool-status ${normalizedStatus}`;
     status.setAttribute('aria-label', t(normalizedStatus));
     status.title = t(normalizedStatus);
-    tool.querySelector('summary strong').textContent = process.title;
+    const name = tool.querySelector('summary > strong');
+    name.textContent = process.title;
+    name.title = name.textContent;
     const input = tool.querySelector('.process-tool-input');
     input.textContent =
       normalizedStatus === 'running' && process.progressText
@@ -520,15 +522,6 @@ export function createMessageRenderer(
     node.className = 'message assistant';
     let content = node.querySelector(':scope > .assistant-content');
     if (!content) {
-      const heading = document.createElement('div');
-      heading.className = 'assistant-heading';
-      const mark = document.createElement('span');
-      mark.className = 'assistant-mark';
-      mark.setAttribute('aria-hidden', 'true');
-      mark.textContent = '✦';
-      const label = document.createElement('span');
-      label.textContent = t('assistant');
-      heading.append(mark, label);
       content = document.createElement('div');
       content.className = 'assistant-content markdown-content';
       const actions = document.createElement('div');
@@ -550,8 +543,8 @@ export function createMessageRenderer(
       const time = document.createElement('time');
       time.className = 'message-time';
       metadata.append(model, time);
-      actions.append(copy, status, metadata);
-      node.append(heading, content, actions);
+      actions.append(copy, metadata, status);
+      node.append(content, actions);
     }
     // Footer enrichment must preserve body selection and in-flight copy feedback.
     const signature = JSON.stringify({ role: entry.role, text: entry.text, rawMessage: entry.rawMessage });

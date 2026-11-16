@@ -6,7 +6,12 @@ import {
   validDocumentSender,
 } from '../conversation-overlay/modules/web-launch-security.js';
 
-const api = { runtime: { id: 'extension-id' } };
+const api = {
+  runtime: {
+    id: 'extension-id',
+    getURL: (path: string) => `chrome-extension://extension-id/${path}`,
+  },
+};
 const sender = {
   id: 'extension-id',
   frameId: 0,
@@ -26,6 +31,18 @@ describe('web launch trust boundaries', () => {
         api,
       ),
     ).toBe(true);
+    expect(
+      trustedExtensionPage(
+        { id: 'extension-id', url: 'chrome-extension://extension-id/sidepanel.html?tabId=7' },
+        api,
+      ),
+    ).toBe(true);
+    expect(
+      trustedExtensionPage(
+        { id: 'extension-id', url: 'chrome-extension://extension-id/sidepanel.html?tabId=7&x=1' },
+        api,
+      ),
+    ).toBe(false);
     expect(
       trustedExtensionPage(
         { id: 'extension-id', url: 'chrome-extension://extension-id/unknown.html' },

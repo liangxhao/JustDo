@@ -3,6 +3,7 @@ import {
   WebLaunchLimits,
   canonicalWebLaunchInput,
 } from '../../contracts/webLaunch.ts';
+import { tabIdFromSidePanelUrl } from './tab-side-panel.js';
 
 export const WEB_BRIDGE = 'browser-conversation-bridge-v1';
 export const WEB_RUNTIME = 'web-launch:document:';
@@ -85,7 +86,7 @@ export function trustedExtensionPage(sender, chromeApi = chrome) {
       url.protocol === 'chrome-extension:' &&
       url.hostname === chromeApi.runtime.id &&
       ['/sidepanel.html', '/options.html', '/popup.html'].includes(url.pathname) &&
-      !url.search &&
+      (!url.search || tabIdFromSidePanelUrl(sender.url, chromeApi) !== null) &&
       (sender.frameId === undefined || sender.frameId === 0)
     );
   } catch {
