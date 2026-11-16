@@ -329,7 +329,7 @@ Native manifest 只允许固定公钥派生的扩展 ID。app-server 校验 capa
 
 `chrome-extension:prepare` 从该包生成 `build/chrome-extension/chrome-extension/`，安装包继续交付到 `resources/chrome-extension/chrome-extension/`，显示名称从产品元数据注入，扩展 ID 与配对身份保持既有值。详见[构建与发布](integration.md#构建与发布)。
 
-产品组装保留锁定上游的 `manifest.version`，不将应用发布版本注入扩展 `version_name`。桌面“扩展版本”仅读取实际组装产物的 `manifest.version`，用户可在 Chrome 扩展管理页 → 详情 → 版本查看已安装版本并核对。应用版本与扩展版本分别维护；版本号不参与协议兼容判定，版本相同也不能代替连接验证，桌面不据此推断已安装扩展版本。
+扩展发布版本在 `scripts/prepare.cjs` 的 `CHROME_EXTENSION_VERSION` 中独立维护，组装时写入产物的 `manifest.version`。桌面“扩展版本”仅读取实际组装产物的 `manifest.version`，用户可在 Chrome 扩展管理页 → 详情 → 版本查看已安装版本并核对。版本号不参与协议兼容判定，版本相同也不能代替连接验证，桌面不据此推断已安装扩展版本。
 
 日常 UI 修改在 conversation-overlay，relay 基线由锁定 OpenClaw 版本更新，构建接缝单独审查。回归包括 Native host 未安装、实例未运行、禁止启动与重启、旧 rendezvous、非法 Origin/token、初始化前调用、流与历史重合、停止、超限附件和页面上下文分离。
 

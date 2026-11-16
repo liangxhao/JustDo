@@ -8,6 +8,7 @@ const esbuild = require('esbuild');
 const ICON_SIZES = [16, 32, 48, 128];
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const PRODUCT_NAME_TOKEN = '__PRODUCT_NAME__';
+const CHROME_EXTENSION_VERSION = '2.4.0';
 const CHROME_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 const CHROME_EXTENSION_PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskQFUZFtJ36I7FXfGPJj+twgXrJgQDKju1ZFrXBQo+UgapYI3c+kcVgBbq+nNbivgYHHV30B/5iI7AxJcJSa1xxa5h34AzKrmg5CoFjdykj3qWZUyDLtueEiJVIKSKLZTdpphy6yqE8IIu7b5l5ZhRwFBio17S+Fo+M/oRzearW+qxYWioIrdF4qRu7KSdKYSHE1grVLI1PCl0g04rY22ITyuBLup13NlJM8w2I20O+Alk4Pe/uO2nxBnaKwB+LrDgQ7U8P6/AO5D/hN+xNVQLgS/gMhEf+W7WpQXjpCadi8xOdpb5YlKXfQtcg9jvDzbSvqNaWIqKlPup54R8hR0wIDAQAB';
@@ -201,6 +202,7 @@ function applyBackgroundOverlay(value) {
 
 function applyManifestOverlay(value) {
   const manifest = JSON.parse(value);
+  manifest.version = CHROME_EXTENSION_VERSION;
   manifest.name = PRODUCT_NAME_TOKEN;
   manifest.action.default_title = PRODUCT_NAME_TOKEN;
   manifest.description = manifest.description.replaceAll('OpenClaw', PRODUCT_NAME_TOKEN);
@@ -353,9 +355,6 @@ function verifyChromeExtension(extensionDir, options = {}) {
   const manifest = JSON.parse(manifestText);
   if (manifest.name !== productName || manifest.action?.default_title !== productName) {
     throw new Error('Chrome extension identity must match package.json productName.');
-  }
-  if (manifest.version !== '2.3.0') {
-    throw new Error(`Unsupported OpenClaw Chrome extension version: ${manifest.version}.`);
   }
 
   for (const relativePath of [
