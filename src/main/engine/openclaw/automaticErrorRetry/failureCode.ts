@@ -1,6 +1,8 @@
-import type { GatewayClientLike } from '../../gateway/types';
+import type { GatewayClientLike, NativeRunTerminalReceipt } from '../../gateway/types';
 import type { AutomaticErrorRetryBinding, AutomaticErrorRetrySettledReceipt } from './coordinator';
-import { CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE } from './rules';
+import {
+  CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE, TRANSCRIPT_PROJECTION_REBUILDING_CODE,
+} from './rules';
 import { logSessionReaderRecovery } from './sessionReaderRecoveryLog';
 
 export const AUTOMATIC_ERROR_RETRY_FAILURE_METHOD = 'runtimeServices.executionFailure';
@@ -22,10 +24,19 @@ export function isSessionReaderErrorHint(error: unknown): error is string {
     (SESSION_READER_CAUSES.includes(error) || SESSION_READER_REPORTS.includes(error));
 }
 
-/** Call only for an admitted, failed, whole-run terminal. Retain only the typed context signal. */
-export function readBlockedContextOverflow(
+/** Read failure signals from the admitted native whole-run event. */
+export function readNativeRetryFailureCode(
   data: Record<string, unknown>,
-): typeof CONTEXT_OVERFLOW_ERROR_CODE | undefined {
+  nativeSessionId: string,
+): NativeRunTerminalReceipt['observedFailureCode'] {
+  if (
+    data.phase === 'error' && data.executionSettled === true && data.aborted !== true &&
+    data.yielded !== true && !data.timeoutPhase &&
+    (data.stopReason === undefined || data.stopReason === 'error') &&
+    data.error === `Session transcript projection is rebuilding: ${nativeSessionId}`
+  ) {
+    return TRANSCRIPT_PROJECTION_REBUILDING_CODE;
+  }
   if (
     data.phase === 'error' && data.livenessState === 'blocked' &&
     record(data.errorObservation)?.failoverReason === CONTEXT_OVERFLOW_ERROR_CODE
@@ -49,6 +60,9 @@ export async function readAutomaticErrorRetryFailureCode(
       receipt.clientGeneration !== binding.clientGeneration) return null;
   if ('source' in receipt && (receipt.stopReason === 'timeout' || receipt.stopReason === 'restart' ||
       receipt.stopReason === 'superseded')) return null;
+  if (!('source' in receipt) && receipt.observedFailureCode === TRANSCRIPT_PROJECTION_REBUILDING_CODE) {
+    return TRANSCRIPT_PROJECTION_REBUILDING_CODE;
+  }
   const sessionReaderError = isSessionReaderErrorHint(receipt.error);
   const log = (check: Parameters<typeof logSessionReaderRecovery>[1]) => {
     if (sessionReaderError) logSessionReaderRecovery({ sessionId: binding.sessionId, runId: receipt.runId }, check);
@@ -79,6 +93,7 @@ export async function readAutomaticErrorRetryFailureCode(
   }
   if (typeof response.errorCode === 'string' && response.errorCode !== CONTEXT_OVERFLOW_ERROR_CODE &&
       response.errorCode !== SESSION_READER_FAILURE_CODE &&
+      response.errorCode !== TRANSCRIPT_PROJECTION_REBUILDING_CODE &&
       /^[A-Za-z0-9_.:-]{1,128}$/u.test(response.errorCode)) {
     log({ stage: 'execution_failure', outcome: 'different_failure' });
     return response.errorCode;

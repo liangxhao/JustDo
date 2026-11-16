@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NativeRunTerminalReceipt } from '../../gateway/types';
 import type { AutomaticErrorRetryBinding, AutomaticErrorRetrySettledReceipt } from './coordinator';
-import { readAutomaticErrorRetryFailureCode } from './failureCode';
-import { CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE } from './rules';
+import { readAutomaticErrorRetryFailureCode, readNativeRetryFailureCode } from './failureCode';
+import {
+  CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE, TRANSCRIPT_PROJECTION_REBUILDING_CODE,
+} from './rules';
 
 const binding: AutomaticErrorRetryBinding = {
   sessionId: 'app', sessionKey: 'agent:main:justdo:app', nativeSessionId: 'native',
@@ -59,6 +61,25 @@ describe('exact native retry error code reader', () => {
   it('requires a blocked lifecycle observation even when the transcript contains the overflow code', async () => {
     const request = vi.fn(async () => ({ ...observation, errorCode: CONTEXT_OVERFLOW_ERROR_CODE }));
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, receipt)).toBeNull();
+  });
+
+  it('recognizes rebuilding only from the exact native settled error for this session', async () => {
+    const error = `Session transcript projection is rebuilding: ${binding.nativeSessionId}`;
+    const terminal = { phase: 'error', executionSettled: true, error };
+    const read = (overrides = {}) => readNativeRetryFailureCode({ ...terminal, ...overrides }, binding.nativeSessionId);
+
+    expect(read()).toBe(TRANSCRIPT_PROJECTION_REBUILDING_CODE);
+    expect(read({ error: `${error}-other` })).toBeUndefined();
+    expect(read({ error: `Session transcript history window changed: ${binding.nativeSessionId}` })).toBeUndefined();
+    expect(read({ executionSettled: false })).toBeUndefined();
+    expect(read({ stopReason: 'superseded' })).toBeUndefined();
+
+    const request = vi.fn(async () => ({ ...observation, errorCode: TRANSCRIPT_PROJECTION_REBUILDING_CODE }));
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, {
+      ...receipt, error, observedFailureCode: read(),
+    })).toBe(TRANSCRIPT_PROJECTION_REBUILDING_CODE);
+    expect(request).not.toHaveBeenCalled();
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, { ...receipt, error })).toBeNull();
   });
 
   it('requires the native reader failure report and its exact saved user input on the current branch', async () => {

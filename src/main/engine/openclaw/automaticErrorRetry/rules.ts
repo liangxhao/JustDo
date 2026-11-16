@@ -8,6 +8,13 @@ export const REPEATED_TOOL_ERROR_CODE = 'openclaw_repeated_tool_error';
 export const CONTEXT_OVERFLOW_ERROR_CODE = 'context_overflow';
 export const SESSION_READER_FAILURE_CODE = 'session_reader_not_current';
 export const SESSION_READER_RETRY_RULE_ID = 'session-reader-not-current';
+export const TRANSCRIPT_PROJECTION_REBUILDING_CODE = 'session_transcript_projection_rebuilding';
+
+const CONTINUE_SAVED_INPUT_PROMPT = [
+  'Continue the task requested in the saved user message from the current conversation and workspace state.',
+  'Review completed work and verify the outcome of previous actions before deciding what needs to run next.',
+  'If you cannot continue, explain what is complete, what remains, and the blocker.',
+].join(' ');
 
 export const AUTOMATIC_ERROR_RETRY_RULES: readonly AutomaticErrorRetryRule[] = [
   {
@@ -33,11 +40,12 @@ export const AUTOMATIC_ERROR_RETRY_RULES: readonly AutomaticErrorRetryRule[] = [
   {
     id: SESSION_READER_RETRY_RULE_ID,
     errorCodes: [SESSION_READER_FAILURE_CODE],
-    fixedPrompt: [
-      'Continue the task requested in the saved user message from the current conversation and workspace state.',
-      'Review completed work and verify the outcome of previous actions before deciding what needs to run next.',
-      'If you cannot continue, explain what is complete, what remains, and the blocker.',
-    ].join(' '),
+    fixedPrompt: CONTINUE_SAVED_INPUT_PROMPT,
+  },
+  {
+    id: 'transcript-projection-rebuilding',
+    errorCodes: [TRANSCRIPT_PROJECTION_REBUILDING_CODE],
+    fixedPrompt: CONTINUE_SAVED_INPUT_PROMPT,
   },
 ];
 

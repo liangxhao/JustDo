@@ -14,7 +14,7 @@ import type { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter'
 import { prepareNativeSendBinding } from '../../engine/gateway/nativeSendAdmission';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
 import type { AutomaticErrorRetryBinding, AutomaticErrorRetrySettledReceipt } from '../../engine/openclaw/automaticErrorRetry/coordinator';
-import { readAutomaticErrorRetryFailureCode, readBlockedContextOverflow } from '../../engine/openclaw/automaticErrorRetry/failureCode';
+import { readAutomaticErrorRetryFailureCode, readNativeRetryFailureCode } from '../../engine/openclaw/automaticErrorRetry/failureCode';
 import { waitForAutomaticErrorRetry } from '../../engine/openclaw/automaticErrorRetry/retryDecision';
 import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 import type { OpenClawEngineStatus } from '../../openclaw/runtime/openclawEngineManager';
@@ -440,7 +440,7 @@ export function createExternalAgentExecution(
               lifecycleGeneration: nativeGeneration, agentSeq: event.agentSeq, executionSettled: true as const,
               status: 'failed' as const, endedAt: typeof event.data.endedAt === 'number' &&
                 Number.isFinite(event.data.endedAt) ? event.data.endedAt : event.timestamp,
-              error, observedFailureCode: readBlockedContextOverflow(event.data),
+              error, observedFailureCode: readNativeRetryFailureCode(event.data, identity.sessionId),
             }
           : undefined;
         terminal = {

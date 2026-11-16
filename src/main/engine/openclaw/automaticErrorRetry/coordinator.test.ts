@@ -11,7 +11,10 @@ import {
   type AutomaticErrorRetryLaunchResult,
   type AutomaticErrorRetryWaitReceipt,
 } from './coordinator';
-import { CONTEXT_OVERFLOW_ERROR_CODE, createAutomaticErrorRetryRuleIndex, REPEATED_TOOL_ERROR_CODE, SESSION_READER_FAILURE_CODE } from './rules';
+import {
+  CONTEXT_OVERFLOW_ERROR_CODE, createAutomaticErrorRetryRuleIndex, REPEATED_TOOL_ERROR_CODE,
+  SESSION_READER_FAILURE_CODE, TRANSCRIPT_PROJECTION_REBUILDING_CODE,
+} from './rules';
 
 vi.mock('node:timers/promises', async importOriginal => {
   const timers = await importOriginal<typeof import('node:timers/promises')>();
@@ -413,6 +416,7 @@ describe('automatic retry rule registry', () => {
   it('registers the supported native codes and rejects duplicate codes and IDs', () => {
     expect([...createAutomaticErrorRetryRuleIndex().keys()]).toEqual([
       REPEATED_TOOL_ERROR_CODE, CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE,
+      TRANSCRIPT_PROJECTION_REBUILDING_CODE,
     ]);
     expect(() => createAutomaticErrorRetryRuleIndex([
       { id: 'a', errorCodes: ['same'], fixedPrompt: 'a' }, { id: 'b', errorCodes: ['same'], fixedPrompt: 'b' },

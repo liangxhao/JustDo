@@ -117,5 +117,5 @@ export type NativeRunTerminalReceipt = {
   status: 'completed' | 'failed' | 'interrupted';
   endedAt: number;
   error?: string;
-  observedFailureCode?: 'context_overflow';
+  observedFailureCode?: 'context_overflow' | 'session_transcript_projection_rebuilding';
 };

@@ -1,6 +1,8 @@
 # 错误自动重试
 
-应用可在已登记的原生执行错误后，向同一聊天追加固定内部反馈，最多启动 n 次新运行。
+自动重试模拟用户在原会话发送「继续」。命中已登记的原生执行错误后，应用向同一聊天追加
+固定内部反馈，最多启动 n 次新运行。登记新错误时沿用现有重试等待、次数和发送准入。会话
+历史是否可读等执行条件由正常发送和执行流程处理。
 原生旧运行仍然失败；新运行有独立 run ID 和原生回执。不删除工具注册，不重放失败命令，
 不改写失败结果，不增加 OpenClaw runtime patch。
 
@@ -13,11 +15,13 @@
 等待结束后才分配后继运行身份并记入次数。
 
 规则只包含 `id`、`errorCodes`、`fixedPrompt`；重复 ID/错误码或空提示被拒绝。
-已登记连续相同工具失败 `openclaw_repeated_tool_error`、上下文溢出 `context_overflow`，以及
-会话读取许可失效 `session_reader_not_current`。规则共用同一续跑额度。
+已登记连续相同工具失败 `openclaw_repeated_tool_error`、上下文溢出 `context_overflow`、
+会话读取许可失效 `session_reader_not_current` 和会话历史索引重建
+`session_transcript_projection_rebuilding`。规则共用同一续跑额度。
 连续工具失败的反馈要求检查已有结果、修正参数或换用可用方法。
 上下文溢出的反馈要求从已保存的进度继续，先核对可能已有副作用的操作，并限制文件读取和
-命令回传的内容。读取许可失效的反馈从原会话中已保存的用户输入继续，先核对已有操作结果。
+命令回传的内容。读取许可失效和历史索引重建的反馈从原会话中已保存的用户输入继续，
+先核对已有操作结果。
 
 各规则复用同一个调度器和 Goal 交接。错误识别模块按来源核对原生失败证据。
 
@@ -30,7 +34,7 @@ Main 的执行实现集中在 `src/main/engine/openclaw/automaticErrorRetry/`，
 | `retryDecision.ts` | 共用错误规则核对和可取消的阶梯等待 |
 | `coordinator.ts` | 桌面和 Chrome 重试链、次数及原生前驱关联 |
 | `rules.ts` | 固定错误规则及规则索引验证 |
-| `failureCode.ts` | 经现有 Runtime Services 接口核对精确错误码 |
+| `failureCode.ts` | 核对原生生命周期、Runtime Services 错误码和所需的已保存输入 |
 | `host.ts` | 已准入桌面及 Chrome 来源、工作区/权限准备、条件发送和重试状态发布 |
 | `lifecycle.ts` | 已接纳的原生结果暂存、错误展示延后和业务 owner 交接 |
 | `historyPresentation.ts` | 无正文历史关联的显示恢复，不重建执行 |
@@ -83,6 +87,11 @@ Runtime Services 的只读 `runtimeServices.executionFailure`
 有精确的原生输入幂等键，并核对其后的 `run-failed-before-reply` 自定义回执确属失败 run，
 正文精确匹配这一种原生拒绝。发送前再次复核 `lastRunId`，避免旧错误接管较新的运行。
 错误气泡和助手正文均不能单独触发续跑。原始输入无需重新发送。
+
+历史索引重建以实时、精确的已结算原生失败为依据。其 `error` 必须是锁定版本的
+`Session transcript projection is rebuilding: <sessionId>`，且其中的物理会话 ID 与本轮相同。
+命中后直接进入共用的阶梯等待和续跑派发。会话历史的读取由 OpenClaw 在执行续跑时负责。
+后继运行也以同一错误结算时，只要仍有额度，就进入下一次续跑。
 
 发送前重新准备当前工作目录和权限，复核原始发送归属、key、SID、revision、客户端代次及
 活动运行。沿用现有 `agent` RPC，传入 `expectedExistingSessionId`、
@@ -151,6 +160,7 @@ MCP 资源由各自连接管理，后继运行重新建立与新原生运行的�
 测试覆盖规则与共用预算、旧设置、实际 Main 准备与错误延后、内部发送、拒绝/未知 ACK、
 停止与身份竞态、先终态后 ACK、`agent.wait`、Goal 单后继和计数，以及实际聊天组件的
 首次错误绘制、历史接管、工具/文件/部分正文保留和最终错误放开。
+历史索引重建的回归覆盖实时终态归类，以及连续同类失败使用完整的共用续跑额度。
 
 使用冻结运行包和本地合成模型执行真实 Gateway 端到端验证。连续相同工具失败用例覆盖
 Windows CLI、入站 ACP、通用 app-server 和 Chromium 中实际加载的 Chrome 侧栏。四个入口均

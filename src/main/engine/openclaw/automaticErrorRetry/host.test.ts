@@ -24,6 +24,7 @@ import type { BeginSessionRunInput, SessionRunState, SessionRunTiming } from '..
 import type { CoworkStore } from '../../../data/coworkStore';
 import type { GatewayClientLike, NativeRunTerminalReceipt } from '../../gateway/types';
 import { ExecutionSuccessorClaims } from '../executionSuccessorClaims';
+import { readNativeRetryFailureCode } from './failureCode';
 import { AutomaticErrorRetryHost } from './host';
 import { AUTOMATIC_ERROR_RETRY_RULES, CONTEXT_OVERFLOW_ERROR_CODE, REPEATED_TOOL_ERROR_CODE } from './rules';
 
@@ -285,6 +286,28 @@ describe('automatic error retry host transport', () => {
       await vi.waitFor(() => expect(f.unclaimed).toHaveBeenCalledOnce());
       expect(f.agentCalls()).toHaveLength(0);
     }
+  });
+
+  it('uses all three configured continuations for repeated settled projection failures without reading history', async () => {
+    const f = fixture(null);
+    await f.arm();
+    const error = `Session transcript projection is rebuilding: ${nativeSessionId}`;
+    const observedFailureCode = readNativeRetryFailureCode({ phase: 'error', executionSettled: true, error }, nativeSessionId);
+    const failure = (runId: string) => ({ ...terminal(runId), error, observedFailureCode });
+
+    let runId = rootRunId;
+    for (const attempt of [1, 2, 3]) {
+      expect(f.host.coordinator.observeSettled(failure(runId))).toBe(true);
+      await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledTimes(attempt));
+      const params = f.agentCalls()[attempt - 1]?.[1];
+      expect(params).toMatchObject({ expectedExistingSessionId: nativeSessionId, suppressPromptPersistence: true });
+      runId = params!.idempotencyKey as string;
+    }
+
+    expect(f.host.coordinator.observeSettled(failure(runId))).toBe(false);
+    expect(f.host.getPresentation(sessionId)).toMatchObject({ phase: AutomaticErrorRetryPhase.Failed, attempt: 3 });
+    expect(f.agentCalls()).toHaveLength(3);
+    expect(f.request.mock.calls.map(([method]) => method)).not.toContain('chat.history');
   });
 
   it('does not send when the business owner refuses technical adoption', async () => {

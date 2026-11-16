@@ -165,7 +165,7 @@ import type {
   GatewayRequestOptions,
 } from '../types';
 import type { AutomaticErrorRetryBinding, AutomaticErrorRetryWaitReceipt } from './automaticErrorRetry/coordinator';
-import { isSessionReaderErrorHint, readBlockedContextOverflow } from './automaticErrorRetry/failureCode';
+import { isSessionReaderErrorHint, readNativeRetryFailureCode } from './automaticErrorRetry/failureCode';
 import { AutomaticErrorRetryHost } from './automaticErrorRetry/host';
 import { AutomaticErrorRetryLifecycle } from './automaticErrorRetry/lifecycle';
 import { logSessionReaderRecovery } from './automaticErrorRetry/sessionReaderRecoveryLog';
@@ -2658,7 +2658,8 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       (timedOut ||
         event.data.status === 'error' ||
         (event.data.phase === 'error' && !isInternalManagedSubagentHandoffError(event.data.error)));
-    const observedFailureCode = failed && !timedOut ? readBlockedContextOverflow(event.data) : undefined;
+    const observedFailureCode = failed && !timedOut
+      ? readNativeRetryFailureCode(event.data, event.sessionId) : undefined;
     this.runTerminalReceipts.set(event.runId, {
       runId: event.runId,
       sessionKey: binding.sessionKey,
