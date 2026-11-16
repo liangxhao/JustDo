@@ -1,6 +1,7 @@
 import './SessionSummaryPanel.css';
 
 import { LinkIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import type { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import type { ProgressCard } from '@shared/openclaw/progressCard';
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
@@ -13,6 +14,7 @@ import { isDomNode, useOwnerDocument } from '@/shared/dom/ownerDocument';
 
 import SessionProgressCard, { type ProgressCardRunState } from '../../status/SessionProgressCard';
 import SubagentIcon from '../../subagents/SubagentIcon';
+import { subagentReadMessage } from '../../subagents/subagentReadMessage';
 import type { Subtask } from '../../subagents/subtaskPresentation';
 import { isActiveSubtask } from '../../subagents/subtaskPresentation';
 import type { SummaryResourceListKind } from '../tabs/displayTabIds';
@@ -38,6 +40,7 @@ interface Props {
     onRefresh: () => Promise<boolean>;
   };
   tasks: readonly Subtask[];
+  subtaskReadError?: SubagentReadFailure;
   resources: SessionSummaryResources | null;
   pluginEntries?: React.ReactNode;
   onClose: () => void;
@@ -148,7 +151,9 @@ export default function SessionSummaryPanel(props: Props) {
     ...status,
     label: i18nService.t(status.key).replace('{count}', String(status.count)),
   }));
-  const subagentsLabel = subagentStatuses.map(status => status.label).join(' ');
+  const subagentsLabel = props.subtaskReadError
+    ? subagentReadMessage(props.subtaskReadError)
+    : subagentStatuses.map(status => status.label).join(' ');
   const visibleSubagentStatuses = subagentStatuses.some(status => status.count > 0)
     ? subagentStatuses.filter(status => status.count > 0)
     : subagentStatuses;
@@ -214,7 +219,7 @@ export default function SessionSummaryPanel(props: Props) {
             onRefresh={props.progress.onRefresh}
           />
         )}
-        {props.tasks.length > 0 && (
+        {(props.tasks.length > 0 || props.subtaskReadError) && (
           <section>
             {heading('coworkSummarySubagents')}
             <button
@@ -229,14 +234,16 @@ export default function SessionSummaryPanel(props: Props) {
                 ))}
               </span>
               <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 leading-5 tabular-nums">
-                {visibleSubagentStatuses.map(status => (
-                  <span
-                    key={status.key}
-                    className={`whitespace-nowrap ${status.count ? status.className : 'text-muted'}`}
-                  >
-                    {status.label}
-                  </span>
-                ))}
+                {props.subtaskReadError
+                  ? subagentsLabel
+                  : visibleSubagentStatuses.map(status => (
+                      <span
+                        key={status.key}
+                        className={`whitespace-nowrap ${status.count ? status.className : 'text-muted'}`}
+                      >
+                        {status.label}
+                      </span>
+                    ))}
               </span>
             </button>
           </section>

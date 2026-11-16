@@ -6,9 +6,7 @@ import {
   getGatewaySubagentDetails,
   listGatewaySubagentDescendants,
   listGatewaySubagents,
-  listGatewaySubagentsWithMetadata,
   listPersistedGatewaySessions,
-  mergeGatewaySubagentSnapshots,
 } from './subagentGateway';
 const root = 'agent:main:justdo:parent';
 const child = 'agent:main:subagent:child';
@@ -206,13 +204,11 @@ test('lists completed Swarm children after native control-link filtering expires
       };
     return { sessions: [{ ...row, status: 'done', swarmGroupId: 'batch', archivedAt: 1 }] };
   });
-  const result = await listGatewaySubagentsWithMetadata({
+  const result = await listGatewaySubagents({
     client: client(request),
     parentKeys: [root, 'alias'],
   });
-  expect(result.sessionListComplete).toBe(true);
-  expect(result.subagents).toMatchObject([{ id: child, status: 'done', swarmGroupId: 'batch' }]);
-  expect(result.subagents).toHaveLength(1);
+  expect(result).toMatchObject([{ id: child, status: 'done', swarmGroupId: 'batch' }]);
   expect(request).toHaveBeenCalledTimes(2);
   expect(request.mock.calls.every(([, params]) => params.spawnedBy === undefined)).toBe(true);
 });
@@ -228,13 +224,6 @@ test.each([{ hasMore: true }, { hasMore: true, nextOffset: 0 }])(
   },
 );
 
-test('reports incomplete reads rather than claiming an empty native graph', async () => {
-  const request = vi.fn().mockRejectedValue(new Error('offline'));
-  expect(
-    await listGatewaySubagentsWithMetadata({ client: client(request), parentKeys: [root] }),
-  ).toEqual({ subagents: [], sessionListComplete: false });
-});
-
 test('discovers nested native descendants and rejects missing incarnation IDs', async () => {
   const grandchild = 'agent:main:subagent:grandchild';
   const request = vi.fn().mockResolvedValue({
@@ -248,17 +237,6 @@ test('discovers nested native descendants and rejects missing incarnation IDs', 
   await expect(listGatewaySubagentDescendants(client(request), [root])).rejects.toThrow(
     'Session ID unavailable',
   );
-});
-
-test('partial-read merging preserves newer lifecycle evidence', async () => {
-  const request = vi.fn().mockResolvedValue({ session: row });
-  const value = (await getGatewaySubagentDetails(client(request), child))!;
-  expect(
-    mergeGatewaySubagentSnapshots(
-      [{ ...value, updatedAt: 20, status: 'done', runId: 'finished' }],
-      [{ ...value, updatedAt: 10 }],
-    )[0],
-  ).toMatchObject({ status: 'done', runId: 'finished', updatedAt: 20 });
 });
 
 test.each([

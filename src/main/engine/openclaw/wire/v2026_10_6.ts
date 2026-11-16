@@ -23,38 +23,35 @@ const optionalNonNegativeInteger = (value: unknown, field: string): number | und
   return value as number;
 };
 
-export type OpenClawSessionRowV2026_10_6 = {
+type OpenClawSessionListRow = {
   key: string;
-  modelProvider?: string;
-  model?: string;
   [key: string]: unknown;
 };
 
-export type OpenClawSessionsListResultV2026_10_6 = {
-  sessions: OpenClawSessionRowV2026_10_6[];
+export type OpenClawSessionRowV2026_10_6 = OpenClawSessionListRow & {
+  modelProvider?: string;
+  model?: string;
+};
+
+type OpenClawSessionListPage<Row> = {
+  sessions: Row[];
   nextOffset?: number | null;
   hasMore?: boolean;
 };
 
-export const parseSessionsListResultV2026_10_6 = (
+export type OpenClawSessionsListResultV2026_10_6 = OpenClawSessionListPage<OpenClawSessionRowV2026_10_6>;
+
+export const parseSessionsListPageV2026_10_6 = (
   value: unknown,
-): OpenClawSessionsListResultV2026_10_6 => {
+): OpenClawSessionListPage<OpenClawSessionListRow> => {
   if (!isRecord(value) || !Array.isArray(value.sessions)) {
     throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.list returned an invalid payload`);
   }
   const sessions = value.sessions.map((entry, index) => {
-    if (!isRecord(entry) || typeof entry.key !== 'string' || entry.key.length === 0) {
+    if (!isRecord(entry) || typeof entry.key !== 'string' || !entry.key.trim()) {
       throw new Error(`${OPENCLAW_WIRE_VERSION} sessions.list sessions[${index}] is missing key`);
     }
-    return {
-      ...entry,
-      key: entry.key,
-      modelProvider: optionalString(
-        entry.modelProvider,
-        `sessions.list sessions[${index}].modelProvider`,
-      ),
-      model: optionalString(entry.model, `sessions.list sessions[${index}].model`),
-    };
+    return { ...entry, key: entry.key };
   });
   const nextOffset =
     value.nextOffset === null
@@ -67,6 +64,23 @@ export const parseSessionsListResultV2026_10_6 = (
     sessions,
     ...(nextOffset !== undefined ? { nextOffset } : {}),
     ...(typeof value.hasMore === 'boolean' ? { hasMore: value.hasMore } : {}),
+  };
+};
+
+export const parseSessionsListResultV2026_10_6 = (
+  value: unknown,
+): OpenClawSessionsListResultV2026_10_6 => {
+  const page = parseSessionsListPageV2026_10_6(value);
+  return {
+    ...page,
+    sessions: page.sessions.map((entry, index) => ({
+      ...entry,
+      modelProvider: optionalString(
+        entry.modelProvider,
+        `sessions.list sessions[${index}].modelProvider`,
+      ),
+      model: optionalString(entry.model, `sessions.list sessions[${index}].model`),
+    })),
   };
 };
 

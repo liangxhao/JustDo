@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -33,7 +34,7 @@ it('loads one native level on demand, preserves pages after errors, and blocks a
       subagents: [task, child, { ...task, id: 'ancestor' }],
       nextCursor: 'page2',
     })
-    .mockResolvedValueOnce({ success: false, error: 'offline' })
+    .mockResolvedValueOnce({ success: false, reason: SubagentReadFailure.Disconnected })
     .mockResolvedValueOnce({
       success: true,
       subagents: [child, { ...task, id: 'task-3', label: 'Three' }],
@@ -63,7 +64,7 @@ it('loads one native level on demand, preserves pages after errors, and blocks a
   expect(list).toHaveBeenLastCalledWith('root', 'task-1', 'page2');
 });
 
-it('retries a failed refresh from the first page and replaces obsolete children', async () => {
+it('retries an expired page from the first page and replaces obsolete children', async () => {
   i18nService.setLanguage('en', { persist: false });
   const list = vi
     .fn()
@@ -72,7 +73,7 @@ it('retries a failed refresh from the first page and replaces obsolete children'
       subagents: [{ ...task, id: 'old', label: 'Old' }],
       nextCursor: 'page2',
     })
-    .mockResolvedValueOnce({ success: false, error: 'offline' })
+    .mockResolvedValueOnce({ success: false, reason: SubagentReadFailure.PageExpired })
     .mockResolvedValueOnce({ success: true, subagents: [{ ...task, id: 'new', label: 'New' }] });
   Object.defineProperty(window, 'electron', {
     configurable: true,
@@ -81,8 +82,10 @@ it('retries a failed refresh from the first page and replaces obsolete children'
   render(<SubtaskChildren sessionId="root" task={task} ancestors={[]} onOpen={vi.fn()} />);
   fireEvent.click(screen.getByRole('button', { name: 'View child tasks' }));
   await screen.findByText('Old');
-  fireEvent.click(screen.getByRole('button', { name: i18nService.t('subtaskRefresh') }));
-  await screen.findByRole('alert');
+  fireEvent.click(screen.getByRole('button', { name: 'Load more child tasks' }));
+  expect((await screen.findByRole('alert')).textContent).toBe(
+    'This page of child tasks has expired. Retry to load from the first page.',
+  );
   expect(screen.getByText('Old')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: i18nService.t('sessionDetailsRetry') }));
   await screen.findByText('New');

@@ -28,7 +28,10 @@ import { notifyNativeQuestionChanged } from '../../plugins/mcp/nativeQuestionEve
 import { isRecord } from '../gateway/helpers';
 import type { GatewayClientLike, GatewayEventFrame, SessionTurn } from '../gateway/types';
 import { ERROR_TERMINAL_SESSION_STATUSES } from './runtimeAdapterSupport';
-import { invalidateTargetedSessionStatusChecks } from './runtimeSessionStatus';
+import {
+  invalidateTargetedSessionStatusChecks,
+  type SubagentStatusSnapshot,
+} from './runtimeSessionStatus';
 import { type GatewaySubagent } from './subagentGateway';
 export interface RuntimeGatewayEventsContext {
   readonly emit: (eventName: string | symbol, ...args: unknown[]) => boolean;
@@ -56,10 +59,8 @@ export interface RuntimeGatewayEventsContext {
   readonly handleSessionsChangedEvent: (payload: unknown) => void;
   readonly resolveSessionIdBySessionKey: (sessionKey: string) => string | null;
   readonly invalidateSubagentStatusSnapshot: (sessionId: string) => void;
-  readonly subagentStatusCache: Map<string, { expiresAt: number; subagents: GatewaySubagent[] }>;
-  readonly subagentDetailCache: Map<string, { expiresAt: number; subagents: GatewaySubagent[] }>;
+  readonly subagentStatusCache: Map<string, SubagentStatusSnapshot>;
   readonly subagentStatusRefreshes: Map<string, Promise<GatewaySubagent[]>>;
-  readonly invalidateSubagentStatus: (sessionId: string) => void;
   readonly sessionIdByRunId: Map<string, string>;
   readonly isRecentTerminalRun: (runId: string) => boolean;
   readonly isAnnounceRunId: (runId: string) => boolean;
@@ -596,6 +597,8 @@ export function handleSessionsChangedEvent(
   payload: unknown,
 ): void {
   if (!isRecord(payload)) return;
+  const reason = typeof payload.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
+  const subtaskProjectionChanged = reason !== 'activity-summary' || payload.catalogChanged === true;
   invalidateTargetedSessionStatusChecks(this.targetedSessionStatusChecks, payload);
   this.invalidateRuntimeSessionSnapshot();
   // Native registry changes can affect a parent absent from this event. Treat
@@ -603,12 +606,13 @@ export function handleSessionsChangedEvent(
   this.scheduleGoalRecovery(this.gatewayClientGeneration);
   // Session lineage is the native delegated-work owner in 2026.9.8. Creation,
   // deletion and ancestor changes can affect parents not present in this event.
-  for (const id of new Set([
-    ...this.subagentStatusCache.keys(),
-    ...this.subagentDetailCache.keys(),
-    ...this.subagentStatusRefreshes.keys(),
-  ]))
-    this.invalidateSubagentStatusSnapshot(id);
+  if (subtaskProjectionChanged) {
+    for (const id of new Set([
+      ...this.subagentStatusCache.keys(),
+      ...this.subagentStatusRefreshes.keys(),
+    ]))
+      this.invalidateSubagentStatusSnapshot(id);
+  }
   const source = isRecord(payload.session) ? payload.session : payload;
   const sessionKey =
     (typeof source.key === 'string' && source.key.trim()) ||
@@ -621,9 +625,10 @@ export function handleSessionsChangedEvent(
     typeof payload.agentId === 'string' &&
     isVisibleNativeChildSession(source, payload.agentId) &&
     this.resolveSessionIdBySessionKey(source.parentSessionKey);
-  this.emit('taskChanged', visibleChildDiscovered ? { visibleChildDiscovered: true } : {});
+  if (subtaskProjectionChanged || visibleChildDiscovered) {
+    this.emit('taskChanged', visibleChildDiscovered ? { visibleChildDiscovered: true } : {});
+  }
   if (!sessionKey) return;
-  const reason = typeof payload.reason === 'string' ? payload.reason.trim().toLowerCase() : '';
   if (reason === 'delete' || reason === 'reset' || reason === 'new') {
     this.sessionExecApprovalGrants.clearSession(sessionKey);
     if (sessionId) {

@@ -285,20 +285,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   }
   private readonly pendingPlanModeRequests = new Map<string, PlanModeRequest>();
   private readonly terminalAskUserIds = new Set<string>();
-  private readonly subagentStatusCache = new Map<
-    string,
-    {
-      expiresAt: number;
-      subagents: GatewaySubagent[];
-    }
-  >();
-  private readonly subagentDetailCache = new Map<
-    string,
-    {
-      expiresAt: number;
-      subagents: GatewaySubagent[];
-    }
-  >();
+  private readonly subagentStatusCache = new Map<string, runtimeSessionStatus.SubagentStatusSnapshot>();
   private readonly subagentStatusRefreshes = new Map<string, Promise<GatewaySubagent[]>>();
   private readonly subagentStatusGenerations = new Map<string, number>();
   private runtimeSessionSnapshot: (RuntimeSessionSnapshot & { expiresAt: number }) | null = null;
@@ -1273,7 +1260,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );
     if (failure) throw failure.reason;
-    this.invalidateSubagentStatus(sessionId);
+    this.invalidateSubagentStatusSnapshot(sessionId);
   }
 
   private async collectRunningSubagentSessionKeys(
@@ -3130,8 +3117,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     this.goalContinuationCoordinator.clearSession(sessionId);
     this.terminalLifecycleSessionIds.delete(sessionId);
     this.terminalLifecycleErrorSessionIds.delete(sessionId);
-    this.invalidateSubagentStatus(sessionId);
-    this.subagentStatusRefreshes.delete(sessionId);
+    this.invalidateSubagentStatusSnapshot(sessionId);
     for (const workspaceRoot of new Set(workspaceRoots.filter(path.isAbsolute))) {
       try {
         this.approvedPlanArtifactStore?.removeSessionArtifacts?.(workspaceRoot, sessionId);
@@ -3408,13 +3394,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   private invalidateSubagentStatusSnapshot(sessionId: string): void {
     return runtimeSessionStatus.invalidateSubagentStatusSnapshot.call(
-      this.runtimeSessionStatusContext,
-      sessionId,
-    );
-  }
-
-  private invalidateSubagentStatus(sessionId: string): void {
-    return runtimeSessionStatus.invalidateSubagentStatus.call(
       this.runtimeSessionStatusContext,
       sessionId,
     );
@@ -4063,7 +4042,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   // Resolve dependencies at call time so cancellation, session changes, and teardown stay authoritative.
   private readonly runtimeSessionStatusContext: RuntimeSessionStatusContext =
     createPropertyContext<RuntimeSessionStatusContext>({
-      invalidateSubagentStatus: { get: () => this.invalidateSubagentStatus.bind(this) },
       subagentStatusCache: { get: () => this.subagentStatusCache },
       subagentStatusRefreshes: { get: () => this.subagentStatusRefreshes },
       refreshSubagentStatuses: { get: () => this.refreshSubagentStatuses.bind(this) },
@@ -4074,7 +4052,6 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       targetedSessionStatusChecks: { get: () => this.targetedSessionStatusChecks },
       unknownSessionRuns: { get: () => this.unknownSessionRuns },
       subagentStatusGenerations: { get: () => this.subagentStatusGenerations },
-      subagentDetailCache: { get: () => this.subagentDetailCache },
       getSessionKeysForSession: { get: () => this.getSessionKeysForSession.bind(this) },
       store: { get: () => this.store },
       invalidateSubagentStatusSnapshot: {
@@ -4161,9 +4138,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         get: () => this.invalidateSubagentStatusSnapshot.bind(this),
       },
       subagentStatusCache: { get: () => this.subagentStatusCache },
-      subagentDetailCache: { get: () => this.subagentDetailCache },
       subagentStatusRefreshes: { get: () => this.subagentStatusRefreshes },
-      invalidateSubagentStatus: { get: () => this.invalidateSubagentStatus.bind(this) },
       sessionIdByRunId: { get: () => this.sessionIdByRunId },
       isRecentTerminalRun: { get: () => this.isRecentTerminalRun.bind(this) },
       isAnnounceRunId: { get: () => this.isAnnounceRunId.bind(this) },

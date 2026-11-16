@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import { type ProgressCard, ProgressCardStepStatus } from '@shared/openclaw/progressCard';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRef } from 'react';
@@ -314,6 +315,12 @@ it('keeps completed-only summaries compact and hides the section when no subagen
 
   rerender(<SessionSummaryPanel {...props} tasks={[]} />);
   expect(screen.queryByRole('heading', { name: 'Subagents' })).toBeNull();
+  expect(screen.queryByRole('button', { name: '0 running 0 completed 0 failed' })).toBeNull();
+  rerender(<SessionSummaryPanel {...props} tasks={[]} subtaskReadError={SubagentReadFailure.TimedOut} />);
+  fireEvent.click(screen.getByRole('button', {
+    name: 'The local session service took too long to respond. Try again.',
+  }));
+  expect(onOpenSubagents).toHaveBeenCalledTimes(2);
   expect(screen.queryByRole('button', { name: '0 running 0 completed 0 failed' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Swarm Workflow 2' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Source 0' })).toBeTruthy();

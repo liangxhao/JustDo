@@ -18,6 +18,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import { SubagentReadFailure } from '../../../shared/cowork/subagentDetails';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -461,6 +462,101 @@ test('does not repopulate child caches after product session deletion', async ()
   release();
   await pending;
   expect(internals.subagentStatusCache.has(session.id)).toBe(false);
+});
+
+test('reports a failed catalog page during refresh and uses the next complete read', async () => {
+  const request = vi.fn()
+    .mockResolvedValueOnce({ sessions: [nativeChild] })
+    .mockResolvedValueOnce({ sessions: [nativeChild], hasMore: true, nextOffset: 1 })
+    .mockResolvedValueOnce({ sessions: [{ model: 'unrelated' }] })
+    .mockResolvedValueOnce({
+      sessions: [{ ...nativeChild, activeRunIds: [], status: 'done', lastRunId: 'run-1' }],
+    });
+  const { adapter, session } = statusAdapter(request);
+
+  expect((await adapter.getSubagentStatuses(session.id)).subagents[0]?.status).toBe('running');
+  await expect(adapter.getSubagentStatuses(session.id, true)).rejects.toMatchObject({
+    reason: SubagentReadFailure.InvalidData,
+  });
+  expect((await adapter.getSubagentStatuses(session.id)).subagents[0]?.status).toBe('done');
+});
+
+test('browses running children even when optional model metadata is malformed', async () => {
+  const request = vi.fn().mockResolvedValue({ sessions: [
+    { key: 'agent:main:session:unrelated', model: {} },
+    { ...nativeChild, model: ['legacy'] },
+  ] });
+  const { adapter, session } = statusAdapter(request);
+
+  await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+    subagents: [{ sessionKey: nativeChild.key, status: 'running', model: undefined }],
+  });
+});
+
+test('restarts pagination after an authenticated plugin reload', async () => {
+  const refusal = Object.assign(
+    new Error('PluginInstanceUnavailableError: Plugin example was reloaded or disabled; use its current tools.'),
+    { gatewayCode: 'UNAVAILABLE' },
+  );
+  const request = vi.fn()
+    .mockResolvedValueOnce({ sessions: [nativeChild], hasMore: true, nextOffset: 1 })
+    .mockRejectedValueOnce(refusal)
+    .mockResolvedValueOnce({ sessions: [{ ...nativeChild, key: 'agent:main:subagent:replacement' }] });
+  const { adapter, session } = statusAdapter(request);
+  vi.spyOn(adapter, 'captureGatewayResponseContext').mockReturnValue({
+    isCurrent: () => true,
+    isResponseError: error => error === refusal,
+  });
+
+  await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
+    subagents: [{ sessionKey: 'agent:main:subagent:replacement' }],
+  });
+  expect(request.mock.calls.map(([, params]) => params.offset)).toEqual([0, 1, 0]);
+});
+
+test('does not retry a catalog read superseded during plugin reload recovery', async () => {
+  const refusal = Object.assign(
+    new Error('PluginInstanceUnavailableError: Plugin example was reloaded or disabled; use its current tools.'),
+    { gatewayCode: 'UNAVAILABLE' },
+  );
+  const request = vi.fn().mockRejectedValue(refusal);
+  const { adapter, session } = statusAdapter(request);
+  let markRefusalObserved!: () => void;
+  const refusalObserved = new Promise<void>(resolve => { markRefusalObserved = resolve; });
+  vi.spyOn(adapter, 'captureGatewayResponseContext').mockReturnValue({
+    isCurrent: () => true,
+    isResponseError: error => {
+      markRefusalObserved();
+      return error === refusal;
+    },
+  });
+
+  const read = expect(adapter.getSubagentStatuses(session.id)).rejects.toBe(refusal);
+  await refusalObserved;
+  adapter.handleGatewayEvent({ event: 'sessions.changed', payload: { reason: 'create' } });
+
+  await read;
+  expect(request).toHaveBeenCalledTimes(1);
+});
+
+test('keeps a child read current through activity summary updates', async () => {
+  let release!: (value: { sessions: typeof nativeChild[] }) => void;
+  const request = vi.fn(() => new Promise(resolve => { release = resolve; }));
+  const { adapter, session } = statusAdapter(request);
+  const onTaskChanged = vi.fn();
+  adapter.on('taskChanged', onTaskChanged);
+
+  const read = adapter.getSubagentStatuses(session.id);
+  adapter.handleGatewayEvent({
+    event: 'sessions.changed',
+    payload: { sessionKey: 'unrelated', reason: 'activity-summary' },
+  });
+  release({ sessions: [nativeChild] });
+
+  expect((await read).subagents[0]?.status).toBe('running');
+  expect((await adapter.getSubagentStatuses(session.id)).subagents[0]?.status).toBe('running');
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(onTaskChanged).not.toHaveBeenCalled();
 });
 
 test('an in-flight old snapshot cannot overwrite a newer sessions.changed refresh', async () => {

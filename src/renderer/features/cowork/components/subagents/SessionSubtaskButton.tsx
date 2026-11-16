@@ -1,4 +1,5 @@
 import { QueueListIcon } from '@heroicons/react/24/outline';
+import type { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import { useCallback, useId, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
@@ -19,19 +20,23 @@ export default function SessionSubtaskButton({
 }) {
   const ownerWindow = useOwnerWindow();
   const [tasks, setTasks] = useState<Subtask[]>([]);
-  const [open, setOpen] = useState(false);
+  const [loadError, setLoadError] = useState<SubagentReadFailure | null>(null);
+  const [panelVisible, setPanelVisible] = useState<boolean | null>(null);
+  const open = panelVisible === true;
   const anchor = useRef<HTMLButtonElement>(null);
   const panelId = useId();
+  // Once used, keep the trigger available for focus restoration even after an empty read.
+  const hasPanel = panelVisible !== null || tasks.length > 0 || loadError !== null;
   const close = useCallback(
     (restoreFocus = true) => {
-      setOpen(false);
+      setPanelVisible(false);
       if (restoreFocus) ownerWindow.requestAnimationFrame(() => anchor.current?.focus());
     },
     [ownerWindow],
   );
   return (
     <div className="relative shrink-0">
-      {tasks.length > 0 && (
+      {hasPanel && (
         <button
           ref={anchor}
           type="button"
@@ -40,20 +45,21 @@ export default function SessionSubtaskButton({
           aria-label={i18nService.t(open ? 'subtaskHide' : 'subtaskShow')}
           aria-expanded={open}
           aria-controls={panelId}
-          onClick={() => setOpen(value => !value)}
+          onClick={() => setPanelVisible(!open)}
         >
           <QueueListIcon className="h-[18px] w-[18px]" />
-          <span className="text-xs">{tasks.length}</span>
+          {tasks.length > 0 && <span className="text-xs">{tasks.length}</span>}
         </button>
       )}
       <SubtaskListPanel
         sessionId={sessionId}
         panelId={panelId}
         parentRunning={parentRunning}
-        isOpen={open && tasks.length > 0}
+        isOpen={open}
         anchorRef={anchor}
         onClose={close}
         onSubtasksChange={setTasks}
+        onLoadErrorChange={setLoadError}
         onOpenSubtask={task => {
           close(false);
           onOpenSubtask(task, sessionId);

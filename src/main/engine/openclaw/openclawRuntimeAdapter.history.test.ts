@@ -552,7 +552,7 @@ test('removes a deleted child after a complete native session read', async () =>
   }
 });
 
-test('retains history and retries promptly when a persisted history page fails', async () => {
+test('retries promptly when a periodic subagent catalog read fails', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const parentKey = 'agent:main:cowork:parent';
@@ -590,10 +590,9 @@ test('retains history and retries promptly when a persisted history page fails',
       subagents: [{ sessionKey: 'agent:main:subagent:old-child' }],
     });
     now.mockReturnValue(169_000);
-    await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
-      subagents: [{ sessionKey: 'agent:main:subagent:old-child' }],
-    });
-    now.mockReturnValue(178_000);
+    await expect(adapter.getSubagentStatuses(session.id)).rejects.toThrow(
+      'temporary persisted scan failure',
+    );
     await expect(adapter.getSubagentStatuses(session.id)).resolves.toMatchObject({
       subagents: [{ sessionKey: 'agent:main:subagent:old-child' }],
     });

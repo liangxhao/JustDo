@@ -11,6 +11,7 @@ export function isNativeDashboardSessionKey(key: unknown, agentId?: string): key
 export const CoworkSubagentDetailsIpc = {
   Status: 'cowork:subTask:status',
   Get: 'cowork:subTask:details',
+  FindChild: 'cowork:subTask:findChild',
   GetConversation: 'cowork:subTask:conversation',
   ListDescendants: 'cowork:subTask:listDescendants',
   Changed: 'cowork:subTask:changed',
@@ -53,6 +54,30 @@ export interface CoworkSubagentDetailTask {
   lastToolName?: string;
   toolUseCount?: number;
 }
+
+export const SubagentReadFailure = {
+  Disconnected: 'disconnected',
+  TimedOut: 'timed-out',
+  CatalogUpdating: 'catalog-updating',
+  InvalidData: 'invalid-data',
+  SessionUnavailable: 'session-unavailable',
+  PermissionDenied: 'permission-denied',
+  PageExpired: 'page-expired',
+  EngineRejected: 'engine-rejected',
+  Unexpected: 'unexpected',
+} as const;
+
+export type SubagentReadFailure = (typeof SubagentReadFailure)[keyof typeof SubagentReadFailure];
+
+type FailedSubagentRead = { success: false; reason: SubagentReadFailure };
+
+export type CoworkSubagentStatusResult =
+  | { success: true; subagents: CoworkSubagentDetailTask[] }
+  | FailedSubagentRead;
+
+export type CoworkSubagentFindChildResult =
+  | { success: true; subagent: CoworkSubagentDetailTask | null }
+  | FailedSubagentRead;
 
 export type CoworkSubagentDetailsResult =
   | { success: true; stats?: SessionDetailStats; subagent?: CoworkSubagentDetailTask }
@@ -107,7 +132,7 @@ export interface CoworkSubagentExecution {
 
 export type CoworkSubagentChildrenResult =
   | { success: true; subagents: CoworkSubagentDetailTask[]; nextCursor?: string }
-  | { success: false; error: string };
+  | FailedSubagentRead;
 
 export const CoworkSubagentActions = {
   Cancel: 'cancel',

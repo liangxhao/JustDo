@@ -1,8 +1,10 @@
 import { GoalExecutionPhase } from '../../../shared/cowork/sessionGoal';
+import { SubagentReadFailure } from '../../../shared/cowork/subagentDetails';
 import type { CoworkStore } from '../../data/coworkStore';
 import { GoalContinuationCoordinator } from '../../openclaw/goals/goalContinuationCoordinator';
 import { buildManagedSessionKey, isCustodySessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { invalidateSessionListRequests } from '../gateway/sessionListClient';
+import { isRetiredPluginReadError } from '../gateway/sessionReadRecovery';
 import type { GatewayClientLike, GatewayResponseContext } from '../gateway/types';
 import type { CoworkRuntimeStatusOptions } from '../types';
 import {
@@ -10,18 +12,21 @@ import {
   RUNTIME_STATUS_WARNING_INTERVAL_MS,
   RuntimeSessionSnapshot,
   SessionRuntimeStatus,
-  SUBAGENT_DETAIL_CACHE_TTL_MS,
   SUBAGENT_STATUS_CACHE_TTL_MS,
 } from './runtimeAdapterSupport';
-import {
-  type GatewaySubagent,
-  listGatewaySubagentsWithMetadata,
-  mergeGatewaySubagentSnapshots,
-} from './subagentGateway';
+import { type GatewaySubagent, listGatewaySubagents } from './subagentGateway';
+import { readSubagentProjection, SubagentReadError } from './subagentRead';
 import { OPENCLAW_COMPACT_SESSION_ROW_MODE } from './wire/v2026_10_6';
+
+export interface SubagentStatusSnapshot {
+  client: GatewayClientLike;
+  clientGeneration: number;
+  expiresAt: number;
+  subagents: GatewaySubagent[];
+}
+
 export interface RuntimeSessionStatusContext {
-  readonly invalidateSubagentStatus: (sessionId: string) => void;
-  readonly subagentStatusCache: Map<string, { expiresAt: number; subagents: GatewaySubagent[] }>;
+  readonly subagentStatusCache: Map<string, SubagentStatusSnapshot>;
   readonly subagentStatusRefreshes: Map<string, Promise<GatewaySubagent[]>>;
   readonly refreshSubagentStatuses: (sessionId: string) => Promise<GatewaySubagent[]>;
   readonly ensureGatewayClientReady: () => Promise<void>;
@@ -31,7 +36,6 @@ export interface RuntimeSessionStatusContext {
   readonly targetedSessionStatusChecks: Map<string, Set<symbol>>;
   readonly unknownSessionRuns: ReadonlyMap<string, unknown>;
   readonly subagentStatusGenerations: Map<string, number>;
-  readonly subagentDetailCache: Map<string, { expiresAt: number; subagents: GatewaySubagent[] }>;
   readonly getSessionKeysForSession: (sessionId: string) => string[];
   readonly store: CoworkStore;
   readonly invalidateSubagentStatusSnapshot: (sessionId: string) => void;
@@ -74,10 +78,15 @@ export async function getSubagentStatuses(
   if (!sessionId) return { subagents: [] };
   if (forceRefresh) {
     invalidateSessionListRequests(this.gatewayClient);
-    this.invalidateSubagentStatus(sessionId);
+    this.invalidateSubagentStatusSnapshot(sessionId);
   }
   const cached = this.subagentStatusCache.get(sessionId);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (
+    cached &&
+    cached.client === this.gatewayClient &&
+    cached.clientGeneration === this.gatewayClientGeneration &&
+    cached.expiresAt > Date.now()
+  ) {
     return { subagents: cached.subagents };
   }
 
@@ -102,33 +111,48 @@ export async function refreshSubagentStatuses(
   this: RuntimeSessionStatusContext,
   sessionId: string,
 ): Promise<GatewaySubagent[]> {
-  await this.ensureGatewayClientReady();
-  if (!this.gatewayClient) return [];
+  if (!this.gatewayClient) {
+    try {
+      await this.ensureGatewayClientReady();
+    } catch (error) {
+      if (this.gatewayClient) throw error;
+      throw new SubagentReadError(
+        SubagentReadFailure.Disconnected, 'Gateway client not connected', { cause: error },
+      );
+    }
+  }
+  const client = this.gatewayClient;
+  if (!client) throw new SubagentReadError(SubagentReadFailure.Disconnected, 'Gateway client not connected');
 
   const now = Date.now();
+  const clientGeneration = this.gatewayClientGeneration;
   const refreshGeneration = this.subagentStatusGenerations.get(sessionId) ?? 0;
-  const retained = this.subagentDetailCache.get(sessionId);
-  const listing = await listGatewaySubagentsWithMetadata({
-    client: this.gatewayClient,
-    parentKeys: this.getSessionKeysForSession(sessionId),
-  });
-  // A complete native session read replaces membership immediately. Keep prior
-  // rows only when the Gateway reports an incomplete read; never invent closure.
-  const subagents =
-    listing.sessionListComplete || !retained
-      ? listing.subagents
-      : mergeGatewaySubagentSnapshots(retained.subagents, listing.subagents);
+  const refreshCurrent = () =>
+    (this.subagentStatusGenerations.get(sessionId) ?? 0) === refreshGeneration;
+  const subagents = await readSubagentProjection(
+    client,
+    () => this.gatewayClient === client && this.gatewayClientGeneration === clientGeneration,
+    () => {
+      const response = refreshCurrent() ? this.captureGatewayResponseContext() : null;
+      return response && {
+        isCurrent: () => refreshCurrent() && response.isCurrent(),
+        isResponseError: response.isResponseError,
+      };
+    },
+    readClient => listGatewaySubagents({
+      client: readClient,
+      parentKeys: this.getSessionKeysForSession(sessionId),
+    }),
+  );
   if (
-    (this.subagentStatusGenerations.get(sessionId) ?? 0) !== refreshGeneration ||
+    !refreshCurrent() ||
     !this.store.getSession(sessionId)
   ) {
     return subagents;
   }
-  this.subagentDetailCache.set(sessionId, {
-    expiresAt: now + SUBAGENT_DETAIL_CACHE_TTL_MS,
-    subagents,
-  });
   this.subagentStatusCache.set(sessionId, {
+    client,
+    clientGeneration,
     expiresAt: now + SUBAGENT_STATUS_CACHE_TTL_MS,
     subagents,
   });
@@ -142,20 +166,12 @@ export function invalidateSubagentStatusSnapshot(
   this.subagentStatusCache.delete(sessionId);
   // Let the next caller start an authoritative read even if an older snapshot
   // is still in flight. The generation guard prevents that stale request from
-  // repopulating either cache when it eventually resolves.
+  // repopulating the cache when it eventually resolves.
   this.subagentStatusRefreshes.delete(sessionId);
   this.subagentStatusGenerations.set(
     sessionId,
     (this.subagentStatusGenerations.get(sessionId) ?? 0) + 1,
   );
-}
-
-export function invalidateSubagentStatus(
-  this: RuntimeSessionStatusContext,
-  sessionId: string,
-): void {
-  this.invalidateSubagentStatusSnapshot(sessionId);
-  this.subagentDetailCache.delete(sessionId);
 }
 
 export async function getSessionRuntimeStatus(
@@ -510,10 +526,7 @@ const SNAPSHOT_RECOVERY_DELAYS_MS = [250, 750, 1_500, 2_500] as const;
 const SNAPSHOT_RECOVERY_BUDGET_MS = 10_000;
 
 function isRetiredPluginResponse(error: unknown, getResponse: () => GatewayResponseContext | null): boolean {
-  if (!(error instanceof Error)) return false;
-  const { gatewayCode, code } = error as Error & { gatewayCode?: unknown; code?: unknown };
-  if ((gatewayCode ?? code) !== 'UNAVAILABLE' ||
-    !/^PluginInstanceUnavailableError: Plugin [^\s]{1,128} was reloaded or disabled; use its current tools\.$/.test(error.message)) return false;
+  if (!isRetiredPluginReadError(error)) return false;
   const response = getResponse();
   return response?.isCurrent() === true && response.isResponseError(error);
 }

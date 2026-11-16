@@ -8,19 +8,30 @@ import {
   type CoworkSubagentDescendantsResult,
   CoworkSubagentDetailsIpc,
   type CoworkSubagentDetailsResult,
+  type CoworkSubagentFindChildResult,
+  type CoworkSubagentStatusResult,
+  SubagentReadFailure,
 } from '../../../shared/cowork/subagentDetails';
 import { SwarmIpc, type SwarmSnapshotResult } from '../../../shared/cowork/swarm';
+import { redactLogText } from '../../core/logging/logRedaction';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawRuntimeAdapter } from '../../engine';
 import { areWorkspacePathsEquivalent } from '../../engine/openclaw/runtimeAdapterSupport';
 import {
   controlGatewaySubagent,
+  findGatewaySubagentChild,
+  type GatewayRequestClient,
   type GatewaySubagent,
   getGatewaySubagentDetails,
   listGatewaySubagentChildren,
   listGatewaySubagentDescendants,
   requireGatewaySubagentForBrowsing,
 } from '../../engine/openclaw/subagentGateway';
+import {
+  readSubagentProjection,
+  SubagentReadError,
+  subagentReadFailure,
+} from '../../engine/openclaw/subagentRead';
 import { readSwarmSnapshot } from '../../engine/openclaw/swarmGateway';
 import {
   buildGatewaySessionDetailStats,
@@ -44,6 +55,17 @@ interface Dependencies {
     discoverNativeChildSessions: () => Promise<void>;
   };
 }
+
+const reportSubagentReadFailure = (operation: string, error: unknown) => {
+  const reason = subagentReadFailure(error);
+  const detail = JSON.stringify({
+    operation,
+    reason,
+    error: redactLogText(String(error)).slice(0, 500),
+  });
+  console.warn(`[CoworkSubtasks] Subagent read failed ${detail}`);
+  return { success: false as const, reason };
+};
 
 export const loadCoworkSubagentDetails = async (
   loadSessionUsage: GatewaySessionUsageLoader | undefined,
@@ -110,11 +132,34 @@ export const registerCoworkSubtaskHandlers = ({
 }: Dependencies): void => {
   const resolveOwnedRoot = (sessionId: unknown) => {
     if (typeof sessionId !== 'string' || !sessionId.trim() || !hasSession(sessionId))
-      throw new Error('Product session was not found');
+      throw new SubagentReadError(SubagentReadFailure.SessionUnavailable, 'Product session was not found');
     const runtime = getRuntime();
     const client = runtime?.getGatewayClient();
-    if (!runtime || !client) throw new Error('Gateway client not connected');
-    return { runtime, client, keys: runtime.getSessionKeysForSession(sessionId) };
+    if (!runtime || !client) {
+      throw new SubagentReadError(SubagentReadFailure.Disconnected, 'Gateway client not connected');
+    }
+    return { sessionId, runtime, client, keys: runtime.getSessionKeysForSession(sessionId) };
+  };
+
+  const readOwnedRoot = async <T>(
+    requestedSessionId: unknown,
+    read: (client: GatewayRequestClient, keys: string[]) => Promise<T>,
+  ): Promise<T> => {
+    const { sessionId, runtime, client, keys } = resolveOwnedRoot(requestedSessionId);
+    const generation = runtime.getGatewayClientGeneration();
+    const result = await readSubagentProjection(
+      client,
+      () => getRuntime() === runtime && runtime.getGatewayClient() === client &&
+        runtime.getGatewayClientGeneration() === generation,
+      () => runtime.captureGatewayResponseContext(),
+      readClient => read(readClient, keys),
+    );
+    const currentKeys = runtime.getSessionKeysForSession(sessionId);
+    if (!hasSession(sessionId) || currentKeys.length !== keys.length ||
+      currentKeys.some(key => !keys.includes(key))) {
+      throw new SubagentReadError(SubagentReadFailure.SessionUnavailable, 'Product session changed during subagent read');
+    }
+    return result;
   };
   ipcMain.handle(
     CoworkSubagentDetailsIpc.GetConversation,
@@ -194,6 +239,22 @@ export const registerCoworkSubtaskHandlers = ({
     },
   );
   ipcMain.handle(
+    CoworkSubagentDetailsIpc.FindChild,
+    async (_event, sessionId: unknown, key: unknown): Promise<CoworkSubagentFindChildResult> => {
+      try {
+        if (typeof key !== 'string' || !key.trim()) {
+          throw new SubagentReadError(SubagentReadFailure.SessionUnavailable, 'Missing child session key');
+        }
+        const subagent = await readOwnedRoot(sessionId, (client, keys) =>
+          findGatewaySubagentChild(client, keys, key),
+        );
+        return { success: true, subagent };
+      } catch (error) {
+        return reportSubagentReadFailure('find-child', error);
+      }
+    },
+  );
+  ipcMain.handle(
     CoworkSubagentDetailsIpc.ListChildren,
     async (
       _event,
@@ -202,28 +263,20 @@ export const registerCoworkSubtaskHandlers = ({
       cursor?: unknown,
     ): Promise<CoworkSubagentChildrenResult> => {
       try {
-        const { client, keys } = resolveOwnedRoot(sessionId);
-        if (
-          parentTaskId !== undefined &&
-          (typeof parentTaskId !== 'string' || !parentTaskId.trim())
-        )
-          throw new Error('Invalid parent task ID');
-        if (cursor !== undefined && typeof cursor !== 'string')
-          throw new Error('Invalid task cursor');
-        return {
-          success: true,
-          ...(await listGatewaySubagentChildren(
-            client,
-            keys,
-            parentTaskId as string | undefined,
-            cursor as string | undefined,
-          )),
-        };
+        const parentKey = typeof parentTaskId === 'string' ? parentTaskId : undefined;
+        const pageCursor = typeof cursor === 'string' ? cursor : undefined;
+        if (parentTaskId !== undefined && !parentKey?.trim()) {
+          throw new SubagentReadError(SubagentReadFailure.SessionUnavailable, 'Invalid parent task ID');
+        }
+        if (cursor !== undefined && pageCursor === undefined) {
+          throw new SubagentReadError(SubagentReadFailure.PageExpired, 'Invalid task cursor');
+        }
+        const result = await readOwnedRoot(sessionId, (client, keys) =>
+          listGatewaySubagentChildren(client, keys, parentKey, pageCursor),
+        );
+        return { success: true, ...result };
       } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to load child tasks',
-        };
+        return reportSubagentReadFailure('children', error);
       }
     },
   );
@@ -251,14 +304,26 @@ export const registerCoworkSubtaskHandlers = ({
 
   ipcMain.handle(
     CoworkSubagentDetailsIpc.Status,
-    async (_event, sessionId?: string, forceRefresh?: boolean) => {
+    async (_event, sessionId?: unknown, forceRefresh?: unknown): Promise<CoworkSubagentStatusResult> => {
       try {
+        const id = typeof sessionId === 'string' ? sessionId : undefined;
+        if (sessionId !== undefined && (!id?.trim() || !hasSession(id))) {
+          throw new SubagentReadError(SubagentReadFailure.SessionUnavailable, 'Product session was not found');
+        }
         const runtime = getRuntime();
-        if (!runtime) return { success: true, subagents: [] };
-        const result = await runtime.getSubagentStatuses(sessionId, forceRefresh === true);
-        return { success: true, subagents: result.subagents || [] };
-      } catch {
-        return { success: false, subagents: [] };
+        if (!runtime) {
+          throw new SubagentReadError(SubagentReadFailure.Disconnected, 'Gateway client not connected');
+        }
+        const result = await runtime.getSubagentStatuses(id, forceRefresh === true);
+        if (getRuntime() !== runtime) {
+          throw new SubagentReadError(SubagentReadFailure.Disconnected, 'Runtime changed during subagent read');
+        }
+        if (id && !hasSession(id)) {
+          throw new SubagentReadError(SubagentReadFailure.SessionUnavailable, 'Product session was not found');
+        }
+        return { success: true, subagents: result.subagents };
+      } catch (error) {
+        return reportSubagentReadFailure('status', error);
       }
     },
   );

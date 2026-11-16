@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
-import { CoworkSubagentDetailsIpc } from '../../../shared/cowork/subagentDetails';
+import { CoworkSubagentDetailsIpc, SubagentReadFailure } from '../../../shared/cowork/subagentDetails';
 import { SwarmIpc } from '../../../shared/cowork/swarm';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { OpenClawRuntimeAdapter } from '../../engine';
@@ -8,6 +8,61 @@ const mocks = vi.hoisted(() => ({ handle: vi.fn() }));
 vi.mock('electron', () => ({ ipcMain: { handle: mocks.handle } }));
 import { registerCoworkSubtaskHandlers } from './subtasks';
 beforeEach(() => mocks.handle.mockReset());
+
+it('distinguishes an unavailable status refresh from a complete empty list', async () => {
+  const getSubagentStatuses = vi.fn()
+    .mockRejectedValueOnce(Object.assign(new Error('Native request timed out'), { code: 'CLIENT_TIMEOUT' }))
+    .mockResolvedValueOnce({ subagents: [] });
+  const runtime = { getSubagentStatuses } as unknown as OpenClawRuntimeAdapter;
+  const getRuntime = vi.fn().mockReturnValueOnce(null).mockReturnValue(runtime);
+  registerCoworkSubtaskHandlers({ getRuntime, hasSession: () => true });
+  const handler = mocks.handle.mock.calls.find(call => call[0] === CoworkSubagentDetailsIpc.Status)![1];
+
+  await expect(handler({}, 'session')).resolves.toEqual({
+    success: false, reason: SubagentReadFailure.Disconnected,
+  });
+  await expect(handler({}, 'session', true)).resolves.toEqual({
+    success: false, reason: SubagentReadFailure.TimedOut,
+  });
+  await expect(handler({}, 'session')).resolves.toEqual({ success: true, subagents: [] });
+});
+
+it('opens an exact archived child without depending on the catalog and rejects mismatched identity', async () => {
+  const parentKey = 'agent:main:session:parent';
+  const childKey = 'agent:main:dashboard:child';
+  const child = {
+    key: childKey,
+    sessionId: 'physical-child',
+    archivedAt: 1,
+    createdVia: 'spawn',
+    spawnDepth: 1,
+    parentSessionKey: parentKey,
+  };
+  const request = vi.fn()
+    .mockResolvedValueOnce({ session: child })
+    .mockResolvedValueOnce({ session: { ...child, parentSessionKey: 'agent:main:session:other' } })
+    .mockResolvedValueOnce({ session: { ...child, key: 'agent:main:dashboard:other' } });
+  const client = { request };
+  const runtime = {
+    getGatewayClient: () => client,
+    getGatewayClientGeneration: () => 1,
+    getSessionKeysForSession: () => [parentKey],
+  } as unknown as OpenClawRuntimeAdapter;
+  registerCoworkSubtaskHandlers({ getRuntime: () => runtime, hasSession: id => id === 'parent' });
+  const handler = mocks.handle.mock.calls.find(call => call[0] === CoworkSubagentDetailsIpc.FindChild)![1];
+
+  await expect(handler({}, 'parent', childKey)).resolves.toMatchObject({
+    success: true, subagent: { sessionKey: childKey, sessionId: child.sessionId },
+  });
+  await expect(handler({}, 'parent', childKey)).resolves.toEqual({ success: true, subagent: null });
+  await expect(handler({}, 'parent', childKey)).resolves.toEqual({
+    success: false, reason: SubagentReadFailure.InvalidData,
+  });
+  expect(request.mock.calls).toEqual(Array.from({ length: 3 }, () =>
+    ['sessions.describe', { key: childKey }],
+  ));
+});
+
 it('keeps native swarm snapshots independent from workflow plugin handlers', async () => {
   const getRuntime = vi.fn();
   registerCoworkSubtaskHandlers({ getRuntime, hasSession: () => false });
@@ -18,16 +73,21 @@ it('keeps native swarm snapshots independent from workflow plugin handlers', asy
     false,
   );
 });
-it.each([CoworkSubagentDetailsIpc.Control, CoworkSubagentDetailsIpc.ListChildren])(
+it.each([
+  CoworkSubagentDetailsIpc.Control,
+  CoworkSubagentDetailsIpc.ListChildren,
+  CoworkSubagentDetailsIpc.FindChild,
+])(
   'rejects deleted product sessions before native access for %s',
   async channel => {
     const getRuntime = vi.fn();
     registerCoworkSubtaskHandlers({ getRuntime, hasSession: () => false });
     const handler = mocks.handle.mock.calls.find(call => call[0] === channel)![1];
-    await expect(handler({}, 'deleted-session', 'task-one', 'cancel')).resolves.toEqual({
-      success: false,
-      error: 'Product session was not found',
-    });
+    await expect(handler({}, 'deleted-session', 'task-one', 'cancel')).resolves.toEqual(
+      channel === CoworkSubagentDetailsIpc.Control
+        ? { success: false, error: 'Product session was not found' }
+        : { success: false, reason: SubagentReadFailure.SessionUnavailable },
+    );
     expect(getRuntime).not.toHaveBeenCalled();
   },
 );

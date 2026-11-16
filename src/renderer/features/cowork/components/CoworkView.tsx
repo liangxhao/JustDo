@@ -23,6 +23,7 @@ import { CoworkInteractionKind } from '@shared/cowork/interactions/interactions'
 import { getMessageTitleInput } from '@shared/cowork/messageInput';
 import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { isGoalEditCommand } from '@shared/cowork/slashCommands';
+import type { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
 import { type ProgressCard, type ProgressCardViewState } from '@shared/openclaw/progressCard';
 import { OpenClawToolName } from '@shared/plugins/nativeIds';
@@ -150,8 +151,8 @@ import {
   resolveBackgroundRuntimeSessionIds,
 } from '@/features/cowork/components/status/runtimePolling';
 import type { ProgressCardRunState } from '@/features/cowork/components/status/SessionProgressCard';
-import { loadSpawnedSubtask } from '@/features/cowork/components/subagents/spawnedSubtask';
 import SubagentMessageDrawer from '@/features/cowork/components/subagents/SubagentMessageDrawer';
+import { subagentReadMessage } from '@/features/cowork/components/subagents/subagentReadMessage';
 import SubtaskListPanel from '@/features/cowork/components/subagents/SubtaskListPanel';
 import type { Subtask } from '@/features/cowork/components/subagents/subtaskPresentation';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
@@ -384,6 +385,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     tasks: Subtask[];
   }>();
   const subtasks = subtaskSnapshot?.sessionId === currentSessionId ? subtaskSnapshot.tasks : [];
+  const [subtaskReadFailure, setSubtaskReadFailure] = useState<{
+    sessionId: string | null;
+    reason: SubagentReadFailure;
+  } | null>(null);
+  const subtaskReadError = subtaskReadFailure?.sessionId === currentSessionId
+    ? subtaskReadFailure.reason
+    : undefined;
   const [subagentsPortalTarget, setSubagentsPortalTarget] = useState<HTMLDivElement | null>(null);
   const [summaryResources, setSummaryResources] = useState<SessionSummaryResources | null>(null);
   const {
@@ -1609,10 +1617,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       setSelectedSubagent(current => {
         if (!current) return null;
         if (current.parentSessionId && current.parentSessionId !== currentSessionId) return current;
-        return nextSubtasks.find(subtask => subtask.id === current.id) ?? null;
+        const latest = nextSubtasks.find(subtask => subtask.id === current.id);
+        if (!latest) return current.openedFromCard ? current : null;
+        if (current.sessionId && latest.sessionId && latest.sessionId !== current.sessionId) {
+          return null;
+        }
+        return { ...latest, sessionId: latest.sessionId ?? current.sessionId, parentSessionId: current.parentSessionId };
       });
     },
     [setSelectedSubagent, currentSessionId],
+  );
+  const handleSubtaskLoadErrorChange = useCallback(
+    (reason: SubagentReadFailure | null) =>
+      setSubtaskReadFailure(reason ? { sessionId: currentSessionId, reason } : null),
+    [currentSessionId],
   );
 
   const closeBrowserPanel = useCallback(() => {
@@ -1634,9 +1652,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     [setBrowserPanelTargetId, setIsWorkspaceFilesOpen, setPreferredDisplayTabId],
   );
 
+  const subtaskOpenRequestRef = useRef(0);
   const openSubtask = useCallback(
-    (subtask: Subtask, parentSessionId = currentSessionId ?? undefined) => {
-      setSelectedSubagent({ ...subtask, parentSessionId });
+    (subtask: Subtask, parentSessionId = currentSessionId ?? undefined, openedFromCard = false) => {
+      subtaskOpenRequestRef.current += 1;
+      setSelectedSubagent({ ...subtask, parentSessionId, openedFromCard });
       setIsWorkspaceFilesOpen(false);
       setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
       setIsDisplayPanelOpen(true);
@@ -1652,29 +1672,27 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   useEffect(() => {
     let disposed = false;
-    let request = 0;
     const handleOpenSpawnedAgent = (event: Event) => {
       const key = (event as CustomEvent<{ sessionKey?: unknown }>).detail?.sessionKey;
       if (typeof key !== 'string' || !key.trim() || !currentSessionId) return;
-      const currentRequest = ++request;
-      void loadSpawnedSubtask(window.electron.cowork.getSubTaskStatus, currentSessionId, key)
-        .then(subagent => {
-          if (disposed || currentRequest !== request) return;
-          if (subagent) {
-            openSubtask(subagent);
+      const currentRequest = ++subtaskOpenRequestRef.current;
+      const showFailure = (message: string) => {
+        if (!disposed && currentRequest === subtaskOpenRequestRef.current) {
+          window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+        }
+      };
+      void window.electron.cowork.findSubTaskChild(currentSessionId, key)
+        .then(result => {
+          if (disposed || currentRequest !== subtaskOpenRequestRef.current) return;
+          if (!result.success) {
+            showFailure(subagentReadMessage(result.reason));
+          } else if (result.subagent) {
+            openSubtask(result.subagent, currentSessionId, true);
           } else {
-            window.dispatchEvent(
-              new CustomEvent('app:showToast', { detail: i18nService.t('subtaskLoadFailed') }),
-            );
+            showFailure(i18nService.t('subtaskCardMissing'));
           }
         })
-        .catch(() => {
-          if (!disposed && currentRequest === request) {
-            window.dispatchEvent(
-              new CustomEvent('app:showToast', { detail: i18nService.t('subtaskLoadFailed') }),
-            );
-          }
-        });
+        .catch(() => showFailure(subagentReadMessage()));
     };
     window.addEventListener(OPEN_SPAWNED_AGENT_EVENT, handleOpenSpawnedAgent);
     return () => {
@@ -3260,6 +3278,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                         : undefined
                     }
                     tasks={subtasks}
+                    subtaskReadError={subtaskReadError}
                     resources={currentSummaryResources}
                     pluginEntries={
                       <AppPluginSlot
@@ -3297,6 +3316,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       }}
                       onOpenSubtask={openSubtask}
                       onSubtasksChange={handleSubtasksChange}
+                      onLoadErrorChange={handleSubtaskLoadErrorChange}
                     />
                   </OwnerDocumentContext.Provider>
                 </div>

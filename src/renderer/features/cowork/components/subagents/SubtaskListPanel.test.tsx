@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
 
+import { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
+import SessionSubtaskButton from './SessionSubtaskButton';
 import SubtaskListPanel from './SubtaskListPanel';
 
 afterEach(() => {
@@ -582,7 +584,7 @@ describe('SubtaskListPanel', () => {
     await waitFor(() => expect(getSubTaskDetails).toHaveBeenCalledTimes(2));
     expect(screen.getByText('154')).toBeTruthy();
     expect(
-      await screen.findByText('详情刷新失败，当前数据可能不是最新状态。', undefined, {
+      await screen.findByText('暂时无法刷新子任务详情。', undefined, {
         timeout: 4_000,
       }),
     ).toBeTruthy();
@@ -690,6 +692,31 @@ describe('SubtaskListPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh subtasks' }));
 
     await waitFor(() => expect(getSubTaskStatus).toHaveBeenCalledWith('parent-1', true));
+  });
+
+  it('offers a retry from the native session when the initial list is unavailable', async () => {
+    i18nService.setLanguage('en', { persist: false });
+    installElectron(
+      vi.fn()
+        .mockResolvedValueOnce({ success: false, reason: SubagentReadFailure.TimedOut })
+        .mockResolvedValue({ success: true, subagents: [] }),
+    );
+
+    render(<SessionSubtaskButton sessionId="parent-1" parentRunning={false} onOpenSubtask={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: i18nService.t('subtaskShow') }));
+    expect(screen.getByRole('alert').textContent).toBe(
+      'The local session service took too long to respond. Try again.',
+    );
+    expect(screen.queryByText('No subtasks in this session')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading the subagent list' }));
+    expect(await screen.findByText('No subtasks in this session')).toBeTruthy();
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Show subtasks' })),
+    );
   });
 
   it('does not let an invalidated status response close an open detail dialog', async () => {
@@ -818,7 +845,7 @@ describe('SubtaskListPanel', () => {
     );
   });
 
-  it('closes details after an authoritative refresh removes the selected task', async () => {
+  it('keeps existing tasks and details until a complete refresh confirms they are gone', async () => {
     i18nService.setLanguage('en', { persist: false });
     const getSubTaskStatus = vi
       .fn()
@@ -835,7 +862,8 @@ describe('SubtaskListPanel', () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ success: true, subagents: [] });
+      .mockResolvedValueOnce({ success: false, reason: SubagentReadFailure.InvalidData })
+      .mockResolvedValue({ success: true, subagents: [] });
     let taskChanged: ((event: { sessionId?: string }) => void) | undefined;
     const onSubtasksChanged = vi.fn((callback: typeof taskChanged) => {
       taskChanged = callback;
@@ -849,7 +877,17 @@ describe('SubtaskListPanel', () => {
 
     act(() => taskChanged?.({ sessionId: 'parent-1' }));
 
+    const list = within(screen.getByRole('complementary'));
+    const failure = await list.findByRole('alert');
+    expect(failure.textContent).toBe(
+      'The local engine returned invalid session data. Subtasks could not be loaded.',
+    );
+    expect(screen.getByRole('dialog', { name: 'Removed child' })).toBeTruthy();
+    expect(list.getByText('Removed child')).toBeTruthy();
+
+    act(() => taskChanged?.({ sessionId: 'parent-1' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByText('No subtasks in this session')).toBeTruthy();
   });
 
   it('does not queue another refresh after unmount and removes the task listener', async () => {

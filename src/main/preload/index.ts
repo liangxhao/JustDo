@@ -1082,6 +1082,8 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getSubTaskStatus: (sessionId?: string, forceRefresh?: boolean) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Status, sessionId, forceRefresh),
+    findSubTaskChild: (sessionId: string, childSessionKey: string) =>
+      ipcRenderer.invoke(CoworkSubagentDetailsIpc.FindChild, sessionId, childSessionKey),
     getSwarmSnapshot: (sessionId: string) => ipcRenderer.invoke(SwarmIpc.Snapshot, sessionId),
     getSubTaskDetails: (sessionKey: string, taskId?: string) =>
       ipcRenderer.invoke(CoworkSubagentDetailsIpc.Get, sessionKey, taskId),

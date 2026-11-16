@@ -1,8 +1,10 @@
+import { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import { useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
 import SubagentIcon from './SubagentIcon';
+import { subagentReadMessage } from './subagentReadMessage';
 import { resolveSubtaskExecutionKey, type Subtask } from './subtaskPresentation';
 
 /** Fetch one native level only when requested. Failed pages preserve previous results. */
@@ -26,7 +28,7 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
   const [children, setChildren] = useState<Subtask[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState<SubagentReadFailure | null>(null);
   const [cursor, setCursor] = useState<string>();
   const seenCursors = useRef(new Set<string>());
   const inFlight = useRef(false);
@@ -42,7 +44,7 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
-    setFailed(false);
+    setFailed(null);
     retryRefresh.current = refresh;
     try {
       const requestedCursor = refresh ? undefined : cursor;
@@ -53,7 +55,8 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
       );
       if (!mounted.current) return;
       if (!result.success) {
-        setFailed(true);
+        setFailed(result.reason ?? SubagentReadFailure.Unexpected);
+        if (result.reason === SubagentReadFailure.PageExpired) retryRefresh.current = true;
         return;
       }
       const blockedIds = new Set([...ancestors, task.id]);
@@ -70,7 +73,7 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
           : undefined,
       );
     } catch {
-      if (mounted.current) setFailed(true);
+      if (mounted.current) setFailed(SubagentReadFailure.Unexpected);
     } finally {
       if (mounted.current) setBusy(false);
       inFlight.current = false;
@@ -113,12 +116,12 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
           </span>
         </button>
       ))}
-      {loaded && children.length === 0 && (
+      {loaded && !failed && children.length === 0 && (
         <p className="text-xs text-secondary">{i18nService.t('subtaskChildrenEmpty')}</p>
       )}
       {failed && (
         <p role="alert" className="text-xs text-red-600">
-          {i18nService.t('subtaskLoadFailed')}
+          {subagentReadMessage(failed)}
         </p>
       )}
       {(!loaded || cursor || failed) && (
@@ -126,7 +129,7 @@ function SubtaskChildrenContent({ sessionId, task, ancestors, onOpen }: SubtaskC
           type="button"
           disabled={busy}
           className="text-xs text-primary disabled:opacity-50"
-          onClick={() => void load(failed && retryRefresh.current)}
+          onClick={() => void load(failed !== null && retryRefresh.current)}
         >
           {i18nService.t(
             busy

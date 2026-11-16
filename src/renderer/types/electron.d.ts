@@ -1328,10 +1328,11 @@ interface IElectronAPI {
     getSubTaskStatus: (
       sessionId?: string,
       forceRefresh?: boolean,
-    ) => Promise<{
-      success: boolean;
-      subagents?: import('../../shared/cowork/subagentDetails').CoworkSubagentDetailTask[];
-    }>;
+    ) => Promise<import('../../shared/cowork/subagentDetails').CoworkSubagentStatusResult>;
+    findSubTaskChild: (
+      sessionId: string,
+      childSessionKey: string,
+    ) => Promise<import('../../shared/cowork/subagentDetails').CoworkSubagentFindChildResult>;
     getSubTaskDetails: (
       sessionKey: string,
       taskId?: string,

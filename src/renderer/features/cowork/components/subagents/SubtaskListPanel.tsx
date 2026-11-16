@@ -7,6 +7,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import type { SessionDetailStats } from '@shared/cowork/sessionDetails';
+import { SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -18,6 +19,7 @@ import { useDraggableModal } from '../../../../shared/hooks/useDraggableModal';
 import SubagentIcon from './SubagentIcon';
 import { reconcileSubagentLabel, type SubagentLabelSource } from './subagentLabel';
 import { resolveSubagentPollInterval } from './subagentPolling';
+import { subagentReadMessage } from './subagentReadMessage';
 import SubagentTokenUsage from './SubagentTokenUsage';
 import SubtaskChildren from './SubtaskChildren';
 import SubtaskControls from './SubtaskControls';
@@ -47,6 +49,7 @@ interface SubtaskListPanelProps {
   onClose: (restoreFocus?: boolean) => void;
   onOpenSubtask?: (subtask: Subtask) => void;
   onSubtasksChange?: (subtasks: Subtask[]) => void;
+  onLoadErrorChange?: (reason: SubagentReadFailure | null) => void;
 }
 
 const formatDuration = (value?: number): string => {
@@ -71,13 +74,15 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   onClose,
   onOpenSubtask,
   onSubtasksChange,
+  onLoadErrorChange,
 }) => {
   const contextDocument = useOwnerDocument();
   const ownerDocument = portalTarget?.ownerDocument ?? contextDocument;
   const ownerWindow = (ownerDocument.defaultView ?? window) as Window & typeof globalThis;
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
-  const [hasLoadError, setHasLoadError] = useState(false);
+  const [loadError, setLoadError] = useState<SubagentReadFailure | null>(null);
+  const hasLoadError = loadError !== null;
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [finishedExpanded, setFinishedExpanded] = useState(true);
   const [finishedLimit, setFinishedLimit] = useState(50);
@@ -140,8 +145,16 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     };
   }, [anchorRef, detailSubtask, embedded, isOpen, onClose, ownerDocument]);
   const { active, finished } = useMemo(() => partitionSubtasks(subtasks), [subtasks]);
+  const refreshLabel = i18nService.t(hasLoadError ? 'subtaskListRetry' : 'subtaskRefresh');
 
   const closeDetails = useCallback(() => setDetailSubtask(null), []);
+  const reportLoadError = useCallback(
+    (reason: SubagentReadFailure | null) => {
+      setLoadError(reason);
+      onLoadErrorChange?.(reason);
+    },
+    [onLoadErrorChange],
+  );
   useEffect(() => {
     if (embedded && (!portalTarget || !isOpen)) closeDetails();
   }, [embedded, portalTarget, isOpen, closeDetails]);
@@ -174,8 +187,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           refreshInFlightRef.current === refreshToken &&
           refreshGenerationRef.current === refreshToken.generation
         ) {
-          const nextSubtasks = (result.subagents as Subtask[] | undefined) ?? [];
-          const normalizedSubtasks = nextSubtasks.map(subtask => {
+          const normalizedSubtasks = result.subagents.map(subtask => {
             const resolved = reconcileSubagentLabel(subtaskLabelsRef.current.get(subtask.id), {
               label: subtask.label,
               labelSource: subtask.labelSource,
@@ -205,22 +217,22 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           );
           onSubtasksChange?.(normalizedSubtasks);
           setHasLoaded(true);
-          setHasLoadError(false);
+          reportLoadError(null);
         } else if (
           !result.success &&
           mountedRef.current &&
-          refreshInFlightRef.current === refreshToken &&
-          refreshGenerationRef.current === refreshToken.generation
+          sessionIdRef.current === sessionId &&
+          refreshInFlightRef.current === refreshToken
         ) {
-          setHasLoadError(true);
+          reportLoadError(result.reason ?? SubagentReadFailure.Unexpected);
         }
       } catch {
         if (
           mountedRef.current &&
-          refreshInFlightRef.current === refreshToken &&
-          refreshGenerationRef.current === refreshToken.generation
+          sessionIdRef.current === sessionId &&
+          refreshInFlightRef.current === refreshToken
         ) {
-          setHasLoadError(true);
+          reportLoadError(SubagentReadFailure.Unexpected);
         }
       } finally {
         if (refreshInFlightRef.current === refreshToken) {
@@ -240,7 +252,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         }
       }
     },
-    [onSubtasksChange, sessionId],
+    [onSubtasksChange, reportLoadError, sessionId],
   );
   refreshRef.current = force => void refresh(force);
 
@@ -260,10 +272,10 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     setFinishedExpanded(true);
     setFinishedLimit(50);
     setDetailAncestors([]);
-    setHasLoadError(false);
+    reportLoadError(null);
     refreshPendingRef.current = false;
     onSubtasksChange?.([]);
-  }, [onSubtasksChange, sessionId]);
+  }, [onSubtasksChange, reportLoadError, sessionId]);
 
   useEffect(() => {
     void refresh();
@@ -635,11 +647,12 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
                 type="button"
                 onClick={() => void refresh(true)}
                 disabled={isLoading}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
-                aria-label={i18nService.t('subtaskRefresh')}
-                title={i18nService.t('subtaskRefresh')}
+                className="inline-flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-1 text-xs text-secondary transition-colors hover:bg-surface-raised hover:text-foreground disabled:opacity-50"
+                aria-label={refreshLabel}
+                title={refreshLabel}
               >
                 <ArrowPathIcon className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                {hasLoadError && i18nService.t('sessionDetailsRetry')}
               </button>
               <button
                 type="button"
@@ -653,12 +666,12 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
             </div>
           </div>
 
-          {hasLoadError && (
+          {loadError && (
             <div
               className="border-b border-border bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400"
               role="alert"
             >
-              {i18nService.t('subtaskLoadFailed')}
+              {subagentReadMessage(loadError)}
             </div>
           )}
 
@@ -668,25 +681,27 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
               {i18nService.t('loading')}
             </div>
           ) : subtasks.length === 0 ? (
-            <div className="flex min-h-40 flex-col items-center justify-center px-6 py-6 text-center">
-              <svg
-                viewBox="0 0 24 24"
-                className="mb-3 h-8 w-8 text-muted"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M9 6h11M9 12h11M9 18h11" />
-                <path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" />
-              </svg>
-              <p className="text-sm font-medium text-foreground">{i18nService.t('subtasks')}</p>
-              <p className="mt-1 text-xs leading-5 text-secondary">
-                {i18nService.t('subtaskEmpty')}
-              </p>
-            </div>
+            hasLoaded && !hasLoadError && (
+              <div className="flex min-h-40 flex-col items-center justify-center px-6 py-6 text-center">
+                <svg
+                  viewBox="0 0 24 24"
+                  className="mb-3 h-8 w-8 text-muted"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M9 6h11M9 12h11M9 18h11" />
+                  <path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2" />
+                </svg>
+                <p className="text-sm font-medium text-foreground">{i18nService.t('subtasks')}</p>
+                <p className="mt-1 text-xs leading-5 text-secondary">
+                  {i18nService.t('subtaskEmpty')}
+                </p>
+              </div>
+            )
           ) : (
             <div className="min-h-0 overflow-y-auto pb-1">
               {active.length > 0 && (
