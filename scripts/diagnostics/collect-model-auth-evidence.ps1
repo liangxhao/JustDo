@@ -34,7 +34,7 @@ application.queued application.started application.completed application.superse
 config-sync.queued config-sync.started config-sync.completed config-sync.failed
 snapshot.published snapshot.publication-failed snapshot.revoked snapshot.revocation-failed snapshot.observed
 reload.started reload.acknowledged reload.failed reload.superseded recovery.failed startup.failed notification.failed
-discovery.started discovery.succeeded discovery.failed discovery.optional-http-rejected request_credentials_rejected
+discovery.started discovery.succeeded discovery.failed discovery.optional-http-rejected discovery.optional-failed request_credentials_rejected
 '@
 $reasons = New-AllowedSet @'
 config-invalid endpoint-missing login-missing login-too-large login-invalid-json login-invalid-fields login-read-failed
@@ -53,7 +53,7 @@ UNABLE_TO_GET_ISSUER_CERT_LOCALLY ERR_SSL_WRONG_VERSION_NUMBER UNAVAILABLE CLIEN
 SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE SECRET_PROVIDER_INVALID SECRET_PROVIDER_NOT_CONFIGURED SECRET_PROVIDER_UNAVAILABLE
 SECRET_REF_NOT_FOUND SECRET_REF_POLICY_DENIED SECRET_REF_INVALID SECRET_REF_REDACTED_VALUE SECRET_REF_PROVIDER_ERROR SECRET_REF_PROVIDER_CONTRACT
 '@
-$resolverCodes = New-AllowedSet (($codes -join ' ') + ' MODULE_NOT_FOUND ERR_MODULE_NOT_FOUND ERR_PACKAGE_PATH_NOT_EXPORTED ERR_REQUIRE_ESM')
+$resolverCodes = New-AllowedSet (($codes -join ' ') + ' MODULE_NOT_FOUND ERR_MODULE_NOT_FOUND ERR_PACKAGE_PATH_NOT_EXPORTED ERR_REQUIRE_ESM ERR_REQUIRE_ESM_RACE_CONDITION ERR_INTERNAL_ASSERTION')
 $stringFields = [ordered]@{
   reason = $reasons; errorCode = $codes; networkCode = $codes; configErrorCode = $codes; resolverCode = $resolverCodes
   resolverStage = (New-AllowedSet 'sdk_load secret_ref')

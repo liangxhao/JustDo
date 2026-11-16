@@ -4,6 +4,7 @@ import {
   buildProviderModelInfoUrl,
   buildProviderModelsUrl,
   combineProviderModelDiscovery,
+  type DiscoveredProviderModel,
   normalizeModelProviderBaseUrl,
   parseProviderModelInfoResponse,
   parseProviderModelsResponse,
@@ -110,9 +111,12 @@ const compareModelIds = (left: ProviderModel, right: ProviderModel): number =>
   left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 
 type DiscoveryDiagnostic = {
-  stage: 'models' | 'model-info';
   phase: 'request' | 'response';
   optionalHttpStatus?: number;
+  optionalFailure?: {
+    reason: BuiltinModelAuthDiagnosticReason;
+    errorCode: ReturnType<typeof getBuiltinModelAuthErrorCode>;
+  };
 };
 
 class BuiltinModelDiscoveryHttpError extends Error {
@@ -121,17 +125,24 @@ class BuiltinModelDiscoveryHttpError extends Error {
   }
 }
 
+const discoveryFailureReason = (phase: DiscoveryDiagnostic['phase'], error: unknown) =>
+  phase === 'request' ? BuiltinModelAuthDiagnosticReason.NetworkFailure
+    : error instanceof SyntaxError ? BuiltinModelAuthDiagnosticReason.ResponseInvalidJson
+      : BuiltinModelAuthDiagnosticReason.ResponseUnreadable;
+
 async function fetchBuiltinModels(
+  store: SqliteStore,
   baseUrl: string,
   credential: BuiltinModelCredential,
   signal: AbortSignal,
   diagnostic: DiscoveryDiagnostic,
 ): Promise<BuiltinModels> {
   const headers = buildBuiltinModelRequestHeaders(credential);
-  signal = AbortSignal.any([signal, AbortSignal.timeout(15_000)]);
+  const deadline = AbortSignal.timeout(15_000);
+  const requestSignal = AbortSignal.any([signal, deadline]);
   const modelsResponse = await mainProcessFetch(buildProviderModelsUrl(baseUrl), {
     headers,
-    signal,
+    signal: requestSignal,
     redirect: 'error',
   });
   diagnostic.phase = 'response';
@@ -139,19 +150,33 @@ async function fetchBuiltinModels(
     throw new BuiltinModelDiscoveryHttpError(modelsResponse.status);
   }
   const listedModels = parseProviderModelsResponse(await modelsResponse.json());
+  if (listedModels.length === 0) return { chatModels: [], embeddingModels: [] };
 
-  diagnostic.stage = 'model-info';
   diagnostic.phase = 'request';
-  const infoResponse = await mainProcessFetch(buildProviderModelInfoUrl(baseUrl), {
-    headers,
-    signal,
-    redirect: 'error',
-  });
-  diagnostic.phase = 'response';
-  if (!infoResponse.ok) diagnostic.optionalHttpStatus = infoResponse.status;
-  const infoById = infoResponse.ok
-    ? parseProviderModelInfoResponse(await infoResponse.json())
-    : new Map();
+  let infoById = new Map<string, DiscoveredProviderModel>();
+  try {
+    const infoResponse = await mainProcessFetch(buildProviderModelInfoUrl(baseUrl), {
+      headers,
+      signal: requestSignal,
+      redirect: 'error',
+    });
+    diagnostic.phase = 'response';
+    if (infoResponse.ok) infoById = parseProviderModelInfoResponse(await infoResponse.json());
+    else diagnostic.optionalHttpStatus = infoResponse.status;
+  } catch (error) {
+    signal.throwIfAborted();
+    diagnostic.optionalFailure = {
+      reason: deadline.aborted ? BuiltinModelAuthDiagnosticReason.RequestTimeout : discoveryFailureReason(diagnostic.phase, error),
+      errorCode: getBuiltinModelAuthErrorCode(error),
+    };
+  }
+  if (infoById.size === 0) {
+    const previous = store.get<AppConfig>('app_config')?.providers?.[ProviderName.BuiltinModels];
+    if (previous?.baseUrl && normalizeModelProviderBaseUrl(previous.baseUrl) === baseUrl) {
+      for (const model of previous.models ?? []) infoById.set(model.id, model);
+      for (const model of previous.embeddingModels ?? []) infoById.set(model.id, { ...model, mode: 'embedding' });
+    }
+  }
   const discovery = combineProviderModelDiscovery(listedModels, infoById);
   const toProviderModel = (model: (typeof discovery.chatModels)[number]): ProviderModel => ({
     id: model.id,
@@ -277,9 +302,10 @@ export async function syncBuiltinModelProvider(
   let embeddingModels: ProviderModel[] = [];
   let catalogLoaded = false;
   const startedAt = Date.now();
-  const diagnostic: DiscoveryDiagnostic = { stage: 'models', phase: 'request' };
+  const diagnostic: DiscoveryDiagnostic = { phase: 'request' };
   try {
     const fetchedModels = await fetchBuiltinModels(
+      store,
       fileConfig.baseUrl,
       credential,
       syncState.controller!.signal,
@@ -295,6 +321,11 @@ export async function syncBuiltinModelProvider(
         httpStatus: diagnostic.optionalHttpStatus, reason: BuiltinModelAuthDiagnosticReason.HttpRejected,
       });
     }
+    if (diagnostic.optionalFailure) {
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.DiscoveryOptionalFailed, {
+        generation: syncState.generation, discoveryStage: 'model-info', ...diagnostic.optionalFailure,
+      });
+    }
     writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.DiscoverySucceeded, {
       generation: syncState.generation, elapsedMs: Date.now() - startedAt,
       chatModelCount: models.length, embeddingModelCount: embeddingModels.length,
@@ -303,11 +334,9 @@ export async function syncBuiltinModelProvider(
     if (!isCurrentBuiltinModelSync(store, syncState)) return;
     writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.DiscoveryFailed, {
       generation: syncState.generation, elapsedMs: Date.now() - startedAt,
-      discoveryStage: diagnostic.stage, errorCode: getBuiltinModelAuthErrorCode(error),
+      discoveryStage: 'models', errorCode: getBuiltinModelAuthErrorCode(error),
       reason: error instanceof BuiltinModelDiscoveryHttpError ? BuiltinModelAuthDiagnosticReason.HttpRejected
-        : diagnostic.phase === 'request' ? BuiltinModelAuthDiagnosticReason.NetworkFailure
-          : error instanceof SyntaxError ? BuiltinModelAuthDiagnosticReason.ResponseInvalidJson
-            : BuiltinModelAuthDiagnosticReason.ResponseUnreadable,
+        : discoveryFailureReason(diagnostic.phase, error),
       ...(error instanceof BuiltinModelDiscoveryHttpError ? { httpStatus: error.httpStatus } : {}),
     });
   }

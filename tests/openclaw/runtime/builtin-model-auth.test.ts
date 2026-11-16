@@ -34,7 +34,7 @@ test.skipIf(!available)('the managed model provider uses the published native SD
   expect(errors).toEqual([]);
 }, 30_000);
 
-test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot borrow a replacement login', async () => {
+test.skipIf(!available)('model requests reuse their SDK binding but read each fresh credential and reject revoked sessions', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'model-auth 测试 '));
   try {
     const providerFile = path.join(directory, 'provider.mjs');
@@ -76,6 +76,7 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
     const script = `
       import assert from 'node:assert/strict';
       import fs from 'node:fs';
+      import { registerHooks } from 'node:module';
       import path from 'node:path';
       import vm from 'node:vm';
       import { buildBuiltinModelAuthProvider } from ${url(providerFile)};
@@ -128,7 +129,7 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
       const context = { messages: [{ role: 'user', content: 'fixture', timestamp: Date.now() }] };
       const transport = createOpenAICompletionsTransportStreamFn();
       const provider = buildBuiltinModelAuthProvider();
-      const wrap = cfg => native(provider.wrapStreamFn({
+      const wrap = (cfg, authProvider = provider) => native(authProvider.wrapStreamFn({
         config: cfg, provider: 'builtin_models', modelId: 'fixture', model, streamFn: transport,
       }), { providerId: 'builtin_models', resolvedApiKey: first,
         authStorage: { getApiKey: async () => { throw new Error('The native wrapper must retain its captured key in this reproduction'); } } });
@@ -143,6 +144,19 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
         assert.equal(done, true);
       };
       const publish = value => fs.writeFileSync(${JSON.stringify(credentialFile)}, Buffer.from(value, 'base64'));
+      // The packaged loader's SDK alias depends on the active plugin cache. The
+      // provider must keep working when that alias is unavailable during execution.
+      const providerUrl = ${url(providerFile)};
+      const recoveryUrl = providerUrl + '?unavailable-sdk-at-load';
+      let recoveryAliasAvailable = false;
+      registerHooks({ resolve(specifier, context, nextResolve) {
+        if (specifier === ${url(path.join(sdk, 'secret-ref-runtime.js'))} &&
+            (context.parentURL === providerUrl ||
+             (context.parentURL === recoveryUrl && !recoveryAliasAvailable))) {
+          throw Object.assign(new Error('SDK alias is unavailable during execution'), { code: 'ERR_MODULE_NOT_FOUND' });
+        }
+        return nextResolve(specifier, context);
+      }});
       await runWithAiTransportHost(host, async () => {
         await request(sameTask);
         logicalTime += 1801;
@@ -160,6 +174,15 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
         replacement.secrets.providers.justdo_login.env[${JSON.stringify(MODEL_AUTH_SESSION_ENV)}] = 'b'.repeat(32);
         await request(wrap(replacement));
         assert.equal(requests, 3);
+
+        // An unavailable preload must not prevent the wrapper from registering.
+        const recoveryModule = await import(recoveryUrl);
+        const recovered = wrap(replacement, recoveryModule.buildBuiltinModelAuthProvider());
+        await assert.rejects(request(recovered), /Managed model credentials are unavailable/);
+        assert.equal(requests, 3, 'an unavailable SDK must not send a model request');
+        recoveryAliasAvailable = true;
+        await request(recovered);
+        assert.equal(requests, 4, 'the same provider can resolve the SDK on the next request');
       });
       assert.equal(model.headers['X-ACCESS-JWT'], first, 'captured run model remains immutable');
       process.stdout.write('verified-native-rotation-and-revocation');
@@ -173,6 +196,7 @@ test.skipIf(!available)('a native task crosses a 30-minute JWT expiry and cannot
     expect(result.stdout).toContain('verified-native-rotation-and-revocation');
     expect(result.stderr).toContain('"resolverStage":"secret_ref","resolverCode":"SECRET_PROVIDER_UNAVAILABLE","resolverReason":"snapshot_missing"');
     expect(result.stderr).toContain('"resolverStage":"secret_ref","resolverCode":"SECRET_PROVIDER_UNAVAILABLE","resolverReason":"session_mismatch"');
+    expect(result.stderr).toContain('"resolverStage":"sdk_load","resolverCode":"ERR_MODULE_NOT_FOUND"');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

@@ -234,7 +234,7 @@ describe('syncBuiltinModelProvider', () => {
     expect(records.some(record => record.event === 'discovery.failed')).toBe(false);
   });
 
-  test('logs malformed model-info JSON without its raw error or credentials', async () => {
+  test('publishes the first model list even when optional model-info JSON is malformed', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: 'new-model' }] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => { throw new SyntaxError('private-error-fixture\nBearer private-jwt-fixture'); } }));
@@ -243,11 +243,43 @@ describe('syncBuiltinModelProvider', () => {
 
     await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
 
+    expect(set.mock.calls[0][1].model.defaultModel).toBe('new-model');
+    expect(set.mock.calls[0][1].providers.builtin_models.models).toEqual([
+      expect.objectContaining({ id: 'new-model', enabled: true }),
+    ]);
     const [line] = vi.mocked(console.warn).mock.calls[0];
     expect(line).not.toMatch(/[\r\n]|private-.*-fixture|Bearer/);
     expect(JSON.parse(String(line).slice('[BuiltinModelAuth] '.length))).toEqual(expect.objectContaining({
-      event: 'discovery.failed', discoveryStage: 'model-info', reason: 'response-invalid-json',
+      event: 'discovery.optional-failed', discoveryStage: 'model-info', reason: 'response-invalid-json',
     }));
+  });
+
+  test.each([
+    ['fails to connect', async () => { throw new Error('optional service unreachable'); }],
+    ['returns no usable data', async () => ({ ok: true, json: async () => ({}) })],
+  ])('uses the fresh model list with known capabilities if optional metadata %s', async (_description, fetchInfo) => {
+    const config = { providers: { builtin_models: {
+      baseUrl: testProviderConfig.baseUrl,
+      models: [{ id: 'chat-model', name: 'Previous name', supportsImage: true, enabled: false }],
+      embeddingModels: [{ id: 'embedding-model' }, { id: 'retired-model' }],
+    } } };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({
+        data: [{ id: 'chat-model', name: 'New name' }, { id: 'embedding-model' }, { id: 'new-model' }],
+      }) })
+      .mockImplementationOnce(fetchInfo));
+    const set = vi.fn();
+    const store = { get: () => config, set } as unknown as SqliteStore;
+
+    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(set.mock.calls[0][1].providers.builtin_models).toMatchObject({
+      models: [
+        { id: 'chat-model', name: 'New name', supportsImage: true, enabled: false },
+        { id: 'new-model', enabled: true },
+      ],
+      embeddingModels: [{ id: 'embedding-model' }],
+    });
   });
 
   test('retains cached models and enabled flags when refreshing the built-in provider fails', async () => {

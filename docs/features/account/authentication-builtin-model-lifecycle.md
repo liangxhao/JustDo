@@ -132,7 +132,7 @@ URL、请求/响应体、mtoken、JWT、Cookie、MAC 和原始异常均不写日
 以及认证、配置应用、重载、重试和模型发现的失败原因。失败字段限于固定阶段、JWT 原因码、
 白名单 HTTP／网络／文件错误码和必要的耗时／重试信息；模型发现成功保留模型数量。
 不记录监控启停、开始、排队、被替代、缓存读取或每次成功模型请求。
-可选模型元数据请求被拒绝仍沿用原有降级行为，错误响应正文不进入日志。
+可选模型元数据接口失败仅记录独立的警告，错误响应正文不进入日志。
 
 `reload.acknowledged` 记录 RPC 接纳及可用的 `warningCount`；
 即使接纳，仍可能存在不可用的原生 owner，不能把该日志当作内置模型已经恢复。
@@ -220,7 +220,9 @@ Windows 解析预算仍为 60 秒，凭据重载 RPC 为 90 秒，覆盖原生�
 不能改写已经运行的任务闭包。只做后台换证会使长任务在旧 JWT 到期后，下一次模型请求仍携带旧值。
 
 必需的 Runtime Services 通过公开 Provider API 为 `builtin_models` 注册 `wrapStreamFn`
-和 `wrapSimpleCompletionStreamFn`。每次模型请求通过原生 `resolveSecretRefValues` 无缓存解析
+和 `wrapSimpleCompletionStreamFn`。插件加载时开始导入公开的凭据 SDK。成功导入后复用 SDK 模块，
+避免在执行时重新依赖插件缓存解析 SDK。导入失败时保留请求包装并允许下一次调用重新加载 SDK，
+持续失败仍在发出模型请求前拒绝。每次模型请求通过原生 `resolveSecretRefValues` 无缓存解析
 同一受管 exec SecretRef，复用其路径、权限、输出大小和超时校验；保留原生模型传输、
 工具结果、取消和执行结算。仅克隆本次请求的模型和 options，同步替换 `apiKey`、
 `Authorization` 和大小写不敏感的 `X-ACCESS-JWT`，不修改运行快照或重放任务。
@@ -261,7 +263,9 @@ builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、�
 
 凭据缺失/失效时清内存、中止旧发现，移除 builtin provider、相关 memory search 引用与受管 SecretRef，同步 Gateway 并通知 Renderer；不继续请求模型服务。
 
-发现失败但凭据有效且 generation 仍最新时，保留最近成功目录及最新模型启用状态，避免把暂时网络失败误判为模型下架。账号切换必须先完成退出清理，再写入新账号并调用登录入口，避免继承上一账号缓存。成功返回空目录则真实清空，已失效默认模型按可用列表回退。当前可选 `/model/info` 返回非成功 HTTP 状态时降级为无增强元数据；网络异常或 JSON 解析失败仍按整次目录刷新失败处理并保留缓存。
+必需的 `/models` 失败但凭据有效且 generation 仍最新时，保留最近成功目录及最新模型启用状态，避免把暂时网络失败误判为模型下架。账号切换必须先完成退出清理，再写入新账号并调用登录入口，避免继承上一账号缓存。成功返回空目录则真实清空，已失效默认模型按可用列表回退。
+
+可选的 `/model/info` 遇到非成功 HTTP 状态、断连、超时、解析失败或缺少可用数据时，仍发布已取得的 `/models`。同一服务地址下仍在新列表中的条目沿用已知的向量模型分类和能力。已被退出或更新一轮刷新替换的操作不会发布结果。
 
 ## 7. 服务端长期授权
 
@@ -296,6 +300,7 @@ Main 的 `[UserActivity]` 单行 JSON 日志记录启动、等待原因、采集
 `tests/openclaw/runtime/builtin-model-auth.test.ts` 使用当前安装的原生凭据解析器、运行凭据包装和
 真实 Completions 传输，在内存 HTTP 宿主中模拟同一任务跨过 30 分钟 JWT 到期点，
 验证后续请求的两个认证头均使用新 JWT，以及退出、同账号重新登录后的旧任务拒绝。
+同一测试模拟插件加载后 SDK 别名不可用，以及初次加载失败后别名恢复，核对请求准入和 SDK 绑定恢复。
 测试不访问真实模型或 JWT 服务。真实部署另验签发方/JWKS、Team 白名单、预算限流、管理路由拒绝与并发。
 
 `builtin-model-auth-lifecycle.test.ts` 组合真实换证协调器、监控器、私有快照发布、

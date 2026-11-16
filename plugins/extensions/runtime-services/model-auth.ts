@@ -36,6 +36,8 @@ const SDK_LOAD_ERROR_CODES = new Set([
   'ERR_MODULE_NOT_FOUND',
   'ERR_PACKAGE_PATH_NOT_EXPORTED',
   'ERR_REQUIRE_ESM',
+  'ERR_REQUIRE_ESM_RACE_CONDITION',
+  'ERR_INTERNAL_ASSERTION',
 ]);
 const RESOLUTION_ERROR_CODES = new Set([
   'SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE',
@@ -54,6 +56,19 @@ const READER_FAILURES = new Map(Object.entries(CredentialReaderExitCode).map(([r
   reason,
 ]));
 
+let credentialSdk: Promise<typeof import('openclaw/plugin-sdk/secret-ref-runtime')> | undefined;
+
+function loadCredentialSdk() {
+  return credentialSdk ??= import('openclaw/plugin-sdk/secret-ref-runtime').catch(error => {
+    credentialSdk = undefined;
+    throw error;
+  });
+}
+
+// Start loading under the plugin loader's SDK aliases. Keep the provider's
+// credential guard registered even if loading the SDK fails.
+void loadCredentialSdk().catch(() => undefined);
+
 function credentialReaderFailure(error: object): string | undefined {
   // Only the locked SDK's exact exec error for our provider carries a reader status.
   if ('scope' in error && error.scope === 'provider' && 'source' in error && error.source === 'exec' &&
@@ -65,11 +80,7 @@ function credentialReaderFailure(error: object): string | undefined {
 }
 
 /** Never project provider error text, routes, captured identities or credentials. */
-function logAuthFailure(
-  reason: AuthFailureReason,
-  error?: unknown,
-  resolverStage?: ResolverStage,
-): void {
+function logAuthFailure(reason: AuthFailureReason, error?: unknown, resolverStage?: ResolverStage): void {
   try {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
     const allowedCodes = resolverStage === ResolverStage.LoadSdk ? SDK_LOAD_ERROR_CODES : RESOLUTION_ERROR_CODES;
@@ -157,10 +168,9 @@ export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
     let failureReason: AuthFailureReason = AuthFailureReason.SecretResolutionFailed;
     let resolverStage: ResolverStage = ResolverStage.LoadSdk;
     try {
-      // A fresh resolver call deliberately has no cache: reload cannot replace a run's
-      // captured resolvedApiKey/model.headers, and a settled read must not outlive logout.
-      const { resolveSecretRefValues } = await import('openclaw/plugin-sdk/secret-ref-runtime');
+      const { resolveSecretRefValues } = await loadCredentialSdk();
       resolverStage = ResolverStage.ResolveSecretRef;
+      // Resolve a fresh credential on every request, including after renewal or logout.
       const values = await resolveSecretRefValues(
         [{ source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID }],
         { config, manifestRegistry: { plugins: [] } },

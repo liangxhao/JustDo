@@ -19,6 +19,7 @@ export const BuiltinModelAuthDiagnosticEvent = {
   DiscoverySucceeded: 'discovery.succeeded',
   DiscoveryFailed: 'discovery.failed',
   DiscoveryOptionalHttpRejected: 'discovery.optional-http-rejected',
+  DiscoveryOptionalFailed: 'discovery.optional-failed',
 } as const;
 
 export type BuiltinModelAuthDiagnosticEvent =
