@@ -466,23 +466,35 @@ export function createWebLaunchBackground({
         ...admission,
       });
     } catch (error) {
-      error.prepareUncertain = error.requestSent === true;
-      throw error;
+      const code = publicErrorCode(error);
+      const prepareUncertain =
+        error?.requestSent === true &&
+        (error.responseReceived !== true || code === 'INTERNAL_ERROR');
+      if (!prepareUncertain)
+        await transaction(() => {
+          delete state.requests[record.requestId];
+        }).catch(() => {});
+      throw { code, prepareUncertain };
     }
     if (doc.revoked || !(await documentActive(doc))) {
       doc.documentLeaseId = response.internal.documentLeaseId;
       await revoke(doc, 'navigation');
       throw { code: 'LEASE_REVOKED' };
     }
-    if (cancelled.has(cancelKey(message, sender))) {
-      response = await client.request(WebLaunchMethod.Cancel, {
-        source: doc.source,
-        documentLeaseId: response.internal.documentLeaseId,
-        launchId: response.receipt.launchId,
-      });
+    try {
+      if (cancelled.has(cancelKey(message, sender))) {
+        response = await client.request(WebLaunchMethod.Cancel, {
+          source: doc.source,
+          documentLeaseId: response.internal.documentLeaseId,
+          launchId: response.receipt.launchId,
+        });
+      }
+      await accept(record, response, doc);
+      const projected = await safeResponse(record, response, doc, revision);
+      return projected.ok ? projected : { ...projected, prepareUncertain: true };
+    } catch (error) {
+      throw { code: publicErrorCode(error), prepareUncertain: true };
     }
-    await accept(record, response, doc);
-    return safeResponse(record, response, doc, revision);
   }
   async function observe(message, sender) {
     if (preparing.has(cancelKey(message, sender)) && !message.type.endsWith('cancel'))
@@ -761,7 +773,13 @@ export function createWebLaunchBackground({
     if (typeof message?.type !== 'string' || !message.type.startsWith('web-launch:')) return false;
     if (message.type === 'web-launch:panel:event') return false;
     const done = operation => {
-      void operation.then(reply, error => reply({ ok: false, code: publicErrorCode(error) }));
+      void operation.then(reply, error =>
+        reply({
+          ok: false,
+          code: publicErrorCode(error),
+          ...(error?.prepareUncertain === true ? { prepareUncertain: true } : {}),
+        }),
+      );
       return true;
     };
     if (!message.type.startsWith(WEB_RUNTIME)) {

@@ -535,6 +535,22 @@ describe('webpage owned sender and exact results', () => {
     expect(access.owners.has(prepared.receipt.launchId)).toBe(false);
   });
 
+  it('keeps the exact result of a long run when another click arrives before the first read', async () => {
+    const f = fixture();
+    const prepared = f.prepare();
+    f.submit(prepared);
+    await tick();
+    f.advance(31 * 60_000);
+    f.finish('LONG_RUN_FINAL');
+    await tick();
+
+    f.prepare({ requestId: 'next-request', clickSequence: 2 });
+    const { receipt } = await f.service.read(f.ref(prepared));
+
+    expect(receipt.execution).toEqual({ status: 'completed', executionSettled: true });
+    expect(receipt.output.text).toBe('LONG_RUN_FINAL');
+  });
+
   it('never reads reply bodies for result:none and preserves failed execution independently', async () => {
     const f = fixture(); const prepared = f.prepare({ input: { ...input, result: 'none' } });
     f.submit(prepared, { shareResult: false }); await tick(); f.finish('NATIVE_ERROR_BODY', 'failed');

@@ -9,6 +9,8 @@ import {
   validIdentifier,
 } from './web-launch-security.js';
 
+const CLOSED_REQUEST = new Set(['cancelled', 'expired', 'rejected']);
+
 /** Isolated-world owner. Page scripts never receive document leases or runtime credentials. */
 export function installWebLaunchContent({
   window: view = window,
@@ -94,16 +96,31 @@ export function installWebLaunchContent({
     reply(message, { ok: true, bindingRevision: binding.revision });
   }
 
-  function acceptResponse(request, response) {
-    if (terminated || !requests.has(request.requestId) || !bindings.has(request.bindingId)) return;
+  function acceptResponse(request, response, phase, observedLaunchId) {
+    if (
+      terminated ||
+      request.failure ||
+      !requests.has(request.requestId) ||
+      !bindings.has(request.bindingId)
+    )
+      return;
     if (response?.documentLeaseId !== undefined)
       documentLeaseId = response.documentLeaseId ?? undefined;
     if (!response?.ok) {
+      const code = publicErrorCode(response);
+      if (phase === 'launch') {
+        if (response?.ok === false && response.prepareUncertain !== true) request.failure = code;
+      } else if (phase === 'read' && code === 'EXPIRED') {
+        // A read may have overtaken Prepare without its ACK. Keep observing that same request.
+        if (!observedLaunchId || observedLaunchId !== request.launchId) return;
+        request.failure = code;
+      }
       post({
         kind: 'error',
         bindingId: request.bindingId,
         requestId: request.requestId,
-        code: publicErrorCode(response),
+        code,
+        ...(request.failure ? { terminal: true } : {}),
       });
       if (['SITE_NOT_ALLOWED', 'PERMISSION_REQUIRED'].includes(response?.code)) {
         bindings.clear();
@@ -127,6 +144,21 @@ export function installWebLaunchContent({
     }
   }
 
+  async function observeRequest(request, kind) {
+    const launchId = request.launchId;
+    const response = await send({
+      type: `${WEB_RUNTIME}${kind}`,
+      requestId: request.requestId,
+      launchId,
+      documentLeaseId,
+      result: request.result,
+    });
+    if (kind === 'read' && response?.code === 'EXPIRED' && !launchId && request.launchId)
+      return { ok: true };
+    acceptResponse(request, response, kind, launchId);
+    return response;
+  }
+
   function handleClick(event) {
     if (
       terminated ||
@@ -147,8 +179,9 @@ export function installWebLaunchContent({
     if (requests.size >= 100) {
       const retired = [...requests.entries()].find(
         ([, request]) =>
+          request.failure ||
           request.receipt?.execution.executionSettled === true ||
-          ['cancelled', 'expired', 'rejected'].includes(request.receipt?.request.status),
+          CLOSED_REQUEST.has(request.receipt?.request.status),
       );
       if (retired) requests.delete(retired[0]);
       else {
@@ -187,8 +220,13 @@ export function installWebLaunchContent({
       title: doc.title,
     });
     void Promise.resolve(operation).then(
-      response => acceptResponse(request, response),
-      error => acceptResponse(request, { ok: false, code: publicErrorCode(error) }),
+      response => acceptResponse(request, response, 'launch'),
+      error =>
+        acceptResponse(
+          request,
+          { ok: false, code: publicErrorCode(error), prepareUncertain: true },
+          'launch',
+        ),
     );
     return operation;
   }
@@ -259,14 +297,8 @@ export function installWebLaunchContent({
         !['read', 'cancel'].includes(message.kind)
       )
         throw { code: 'INVALID_REQUEST' };
-      const response = await send({
-        type: `${WEB_RUNTIME}${message.kind}`,
-        requestId: request.requestId,
-        launchId: request.launchId,
-        documentLeaseId,
-        result: request.result,
-      });
-      acceptResponse(request, response);
+      if (request.failure) throw { code: request.failure };
+      const response = await observeRequest(request, message.kind);
       reply(
         message,
         response?.ok
@@ -283,23 +315,19 @@ export function installWebLaunchContent({
     polling = true;
     try {
       for (const request of requests.values()) {
-        if (request.receipt?.delivery.status === 'revoked') continue;
+        if (
+          request.failure ||
+          request.receipt?.delivery.status === 'revoked' ||
+          CLOSED_REQUEST.has(request.receipt?.request.status)
+        )
+          continue;
         if (
           request.receipt?.execution.executionSettled === true &&
           !['pending', 'awaiting-consent'].includes(request.receipt.output.status)
         )
           continue;
         try {
-          acceptResponse(
-            request,
-            await send({
-              type: `${WEB_RUNTIME}read`,
-              requestId: request.requestId,
-              launchId: request.launchId,
-              documentLeaseId,
-              result: request.result,
-            }),
-          );
+          await observeRequest(request, 'read');
         } catch {
           /* Observation never resends input. */
         }

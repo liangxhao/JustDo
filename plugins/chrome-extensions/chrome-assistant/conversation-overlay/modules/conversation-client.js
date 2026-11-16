@@ -291,7 +291,7 @@ export class AppServerClient {
               'request',
               message.error.data?.requestSent !== false,
             ),
-            { messageKey: message.error.data?.messageKey },
+            { messageKey: message.error.data?.messageKey, responseReceived: true },
           ),
         );
       } else pending.resolve(message.result);

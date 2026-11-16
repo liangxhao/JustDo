@@ -534,6 +534,33 @@ describe('first website connection', () => {
     expect((await decision(pending)).ok).toBe(false);
   });
 
+  it('notifies an open panel of navigation expiry without replaying it when the panel reopens', async () => {
+    const pending = (await request()).connectionPending;
+    updated(source.tab.id, { status: 'loading' });
+    await vi.waitFor(() =>
+      expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ...panelScope,
+          connectionPending: expect.objectContaining({
+            pendingId: pending.pendingId,
+            status: 'expired',
+          }),
+        }),
+      ),
+    );
+    expect(
+      await invoke({
+        type: 'web-launch:panel:register',
+        ...panelScope,
+        panelInstanceId: 'reopened-panel',
+      }),
+    ).toMatchObject({ ok: true, connectionPending: null });
+    expect(await external({ op: 'query', pendingId: pending.pendingId })).toMatchObject({
+      ok: true,
+      connectionPending: { pendingId: pending.pendingId, status: 'expired' },
+    });
+  });
+
   it('never creates pending after a navigation during deferred digest validation', async () => {
     let release: () => void;
     const cryptoApi = {
@@ -573,9 +600,11 @@ describe('first website connection', () => {
     );
     await new Promise(resolve => setTimeout(resolve, 1050));
     trustedClick();
-    await vi.waitFor(async () =>
-      expect((await registerPanel()).connectionPending?.pendingId).not.toBe(first.pendingId),
-    );
+    await vi.waitFor(async () => {
+      const pending = (await registerPanel()).connectionPending;
+      expect(pending?.requiresAction).toBe(true);
+      expect(pending?.pendingId).not.toBe(first.pendingId);
+    });
     const latest = (await registerPanel()).connectionPending;
     const queried = await external({
       op: 'query',
@@ -637,6 +666,89 @@ describe('first website connection', () => {
       ),
     ).toBe(false);
     expect((await registerPanel()).connectionPending.pendingId).toBe(initial.pendingId);
+  });
+
+  it('accepts the displayed consent revision when initial lookup resolves after the heartbeat', async () => {
+    const original = client.request.getMockImplementation()!;
+    const reads: Array<(value: { revision: number; sites: unknown[] }) => void> = [];
+    client.request.mockImplementation(async (method, params) =>
+      method === WebLaunchMethod.SitesRead
+        ? new Promise(resolve => reads.push(resolve))
+        : original(method, params),
+    );
+
+    const initial = request();
+    await vi.waitFor(() => expect(reads).toHaveLength(1));
+    await invoke({ type: 'web-launch:panel:state', ...panelScope, composerBusy: false });
+    await vi.waitFor(() => expect(reads).toHaveLength(2));
+
+    const policy = { revision: siteRevision, sites: [] };
+    reads[1](policy);
+    await vi.waitFor(async () =>
+      expect((await registerPanel()).connectionPending?.requiresAction).toBe(true),
+    );
+    const displayed = (await registerPanel()).connectionPending;
+    reads[0](policy);
+    expect(await initial).toMatchObject({ ok: true, connectionPending: displayed });
+
+    client.request.mockImplementation(original);
+    permitted = true;
+    expect(await decision(displayed)).toMatchObject({
+      ok: true,
+      connectionPending: { status: 'connected' },
+    });
+  });
+
+  it('does not broadcast an old consent when its deferred policy lookup finishes after navigation', async () => {
+    const original = client.request.getMockImplementation()!;
+    client.request.mockRejectedValueOnce({ code: 'APP_NOT_RUNNING' });
+    const old = (await request()).connectionPending;
+    expect(old.requiresAction).toBe(false);
+    let finishLookup!: (value: { revision: number; sites: unknown[] }) => void;
+    client.request.mockImplementation(async (method, params) =>
+      method === WebLaunchMethod.SitesRead && !finishLookup
+        ? new Promise(resolve => {
+            finishLookup = resolve;
+          })
+        : original(method, params),
+    );
+    await invoke({ type: 'web-launch:panel:state', ...panelScope, composerBusy: false });
+    await vi.waitFor(() => expect(finishLookup).toBeTypeOf('function'));
+
+    currentDocument = 'document-2';
+    updated(source.tab.id, { status: 'loading' });
+    const fresh = (
+      await external(
+        {
+          op: 'request',
+          bindingId: 'binding-2',
+          bindingRevision: 1,
+          input,
+          payloadDigest: await inputDigest(input, webcrypto),
+        },
+        { ...source, documentId: currentDocument },
+      )
+    ).connectionPending;
+    expect(fresh).toMatchObject({ requiresAction: true });
+    expect(fresh.pendingId).not.toBe(old.pendingId);
+
+    api.runtime.sendMessage.mockClear();
+    const writes = api.storage.session.set.mock.calls.length;
+    finishLookup({ revision: siteRevision, sites: [] });
+    await vi.waitFor(() =>
+      expect(api.storage.session.set.mock.calls.length).toBeGreaterThan(writes),
+    );
+    expect(
+      await external(
+        { op: 'cancel', pendingId: old.pendingId },
+        { ...source, documentLifecycle: 'cached' },
+      ),
+    ).toMatchObject({
+      ok: true,
+      connectionPending: { pendingId: old.pendingId, status: 'expired' },
+    });
+    expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+    expect((await registerPanel()).connectionPending).toEqual(fresh);
   });
 
   it('reconnects a revoked original button only on a fresh click, preserving sequence and producing one new manual draft', async () => {
@@ -838,9 +950,11 @@ describe('first website connection', () => {
         false,
       );
       trustedClick();
-      await vi.waitFor(async () =>
-        expect((await registerPanel()).connectionPending?.pendingId).not.toBe(first.pendingId),
-      );
+      await vi.waitFor(async () => {
+        const pending = (await registerPanel()).connectionPending;
+        expect(pending?.requiresAction).toBe(true);
+        expect(pending?.pendingId).not.toBe(first.pendingId);
+      });
       const fresh = (await registerPanel()).connectionPending;
       releaseQuery?.({ ok: true, connectionPending: { ...first, status: 'rejected' } });
       await Promise.resolve();

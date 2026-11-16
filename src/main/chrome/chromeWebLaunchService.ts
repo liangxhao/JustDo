@@ -255,7 +255,9 @@ export class ChromeWebLaunchService {
         receipt.errorCode = 'EXPIRED';
         this.bump(receipt);
       }
-      if ((settled(receipt) || receipt.notSent) && this.now() > receipt.deadlineAt + WebLaunchLimits.confirmationMs) delete state.receipts[id];
+      // The admission deadline must not consume a long run's result retention.
+      const retentionStart = Math.max(receipt.deadlineAt, receipt.terminal?.endedAt ?? receipt.deadlineAt);
+      if ((settled(receipt) || receipt.notSent) && this.now() > retentionStart + WebLaunchLimits.confirmationMs) delete state.receipts[id];
     }
     const used = new Set(Object.values(state.receipts).map(receipt => receipt.leaseId));
     for (const [id, lease] of Object.entries(state.leases)) if ((!lease.active || lease.expiresAt <= this.now()) && !used.has(id)) delete state.leases[id];

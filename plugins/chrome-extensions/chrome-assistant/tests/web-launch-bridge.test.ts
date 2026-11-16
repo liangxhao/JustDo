@@ -10,6 +10,7 @@ describe('webpage button bridge', () => {
   let content: ReturnType<typeof installWebLaunchContent>;
   let runtime: Record<string, ReturnType<typeof vi.fn>>;
   let launchCount: number;
+  let poll: () => void;
   beforeEach(() => {
     vi.stubGlobal('TextEncoder', TextEncoder);
     document.body.innerHTML = '<button id="business" type="button"><span>Summarize</span></button>';
@@ -23,6 +24,11 @@ describe('webpage button bridge', () => {
     Object.defineProperty(window.navigator, 'userActivation', {
       configurable: true,
       value: { isActive: true },
+    });
+    const setInterval = window.setInterval.bind(window);
+    vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+      if (delay === 3000 && typeof callback === 'function') poll = callback;
+      return setInterval(callback, delay);
     });
     launchCount = 0;
     runtime = {
@@ -158,11 +164,31 @@ describe('webpage button bridge', () => {
 
   it('queries by request identity after a prepare ACK is lost, without generating another launch', async () => {
     const handles: any[] = [];
+    const errors: string[] = [];
     const original = runtime.sendMessage.getMockImplementation()!;
+    let releaseFirstRead!: (response: { ok: boolean; code: string }) => void;
     runtime.sendMessage.mockImplementation(async message => {
       if (message.type.endsWith('launch')) {
         launchCount += 1;
-        return { ok: false, code: 'REQUEST_TIMEOUT' };
+        return { ok: false, code: 'REQUEST_TIMEOUT', prepareUncertain: true };
+      }
+      if (message.type.endsWith('read')) {
+        if (!releaseFirstRead)
+          return new Promise(resolve => {
+            releaseFirstRead = resolve;
+          });
+        return {
+          ok: true,
+          receipt: {
+            requestId: message.requestId,
+            launchId: 'launch-1',
+            receiptRevision: 1,
+            request: { status: 'drafted' },
+            execution: { status: 'not-started', executionSettled: false },
+            output: { status: 'awaiting-consent' },
+            delivery: { status: 'connected' },
+          },
+        };
       }
       return original(message);
     });
@@ -170,21 +196,90 @@ describe('webpage button bridge', () => {
     await sdk.bind(
       document.getElementById('business'),
       { prompt: 'once' },
-      { onRequest: handle => handles.push(handle) },
+      { onRequest: handle => handles.push(handle), onError: error => errors.push(error.code) },
     );
     click();
     await vi.waitFor(() => expect(handles).toHaveLength(1));
-    await handles[0].read();
+    const staleRead = handles[0].read();
+    await vi.waitFor(() => expect(releaseFirstRead).toBeTypeOf('function'));
+    await expect(handles[0].read()).resolves.toMatchObject({
+      receipt: { launchId: 'launch-1' },
+    });
+    releaseFirstRead({ ok: false, code: 'EXPIRED' });
+    await expect(staleRead).resolves.toMatchObject({ ok: true });
+    poll();
+    expect(runtime.sendMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: 'web-launch:document:read', launchId: 'launch-1' }),
+    );
+    expect(errors).toEqual(['REQUEST_TIMEOUT']);
     expect(
-      runtime.sendMessage.mock.calls.some(
+      runtime.sendMessage.mock.calls.filter(
         ([message]) =>
           message.type.endsWith('read') &&
           message.requestId === handles[0].requestId &&
           !message.launchId,
       ),
-    ).toBe(true);
+    ).toHaveLength(2);
     expect(launchCount).toBe(1);
   });
+
+  it('keeps the confirmed composer-busy failure for the original handle and never polls it', async () => {
+    const handles: any[] = [];
+    const errors: string[] = [];
+    const original = runtime.sendMessage.getMockImplementation()!;
+    runtime.sendMessage.mockImplementation(async message => {
+      if (message.type.endsWith('launch')) return { ok: false, code: 'COMPOSER_BUSY' };
+      if (message.type.endsWith('read')) return { ok: false, code: 'EXPIRED' };
+      return original(message);
+    });
+    const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
+    await sdk.bind(
+      document.getElementById('business'),
+      { prompt: 'request with busy composer' },
+      { onRequest: handle => handles.push(handle), onError: error => errors.push(error.code) },
+    );
+    click();
+    await vi.waitFor(() => expect(errors).toEqual(['COMPOSER_BUSY']));
+    poll();
+    await expect(handles[0].read()).rejects.toMatchObject({ code: 'COMPOSER_BUSY' });
+    expect(runtime.sendMessage.mock.calls.some(([message]) => message.type.endsWith('read'))).toBe(
+      false,
+    );
+    expect(errors).toEqual(['COMPOSER_BUSY']);
+  });
+
+  it.each([
+    { status: 'cancelled', expectedReads: 0 },
+    { status: 'drafted', expectedReads: 1 },
+  ])(
+    'stops polling after a $status receipt is closed or its known launch expires',
+    async ({ status, expectedReads }) => {
+      const original = runtime.sendMessage.getMockImplementation()!;
+      runtime.sendMessage.mockImplementation(async message => {
+        if (message.type.endsWith('read')) return { ok: false, code: 'EXPIRED' };
+        const result = await original(message);
+        if (message.type.endsWith('launch')) result.receipt.request.status = status;
+        return result;
+      });
+      const onStatus = vi.fn();
+      const onError = vi.fn();
+      const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
+      await sdk.bind(
+        document.getElementById('business'),
+        { prompt: 'one launch' },
+        { onStatus, onError },
+      );
+      click();
+      await vi.waitFor(() => expect(onStatus).toHaveBeenCalledOnce());
+      poll();
+      if (expectedReads) await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+      poll();
+      expect(
+        runtime.sendMessage.mock.calls.filter(([message]) => message.type.endsWith('read')),
+      ).toHaveLength(expectedReads);
+      expect(onError).toHaveBeenCalledTimes(expectedReads);
+    },
+  );
 
   it('retires old handles on soft navigation while preserving a binding and its document sequence', async () => {
     const handles: any[] = [];

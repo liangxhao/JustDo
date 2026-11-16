@@ -225,6 +225,7 @@ export function createChromeAssistant({
     const state = binding.requests.get(message.requestId);
     if (!state) return;
     if (message.kind === 'error') {
+      if (message.terminal === true) state.terminal = true;
       binding.callbacks.onError?.(failure(publicErrorCode(message)));
       return;
     }

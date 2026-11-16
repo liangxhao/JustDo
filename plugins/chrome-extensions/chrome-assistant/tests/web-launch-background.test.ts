@@ -376,7 +376,7 @@ describe('web launch background', () => {
     };
     expect(await invoke(controller, query)).toEqual({ ok: true, pending: true });
     rejectPrepare!({ code: 'REQUEST_TIMEOUT', requestSent: true });
-    expect(await pending).toEqual({ ok: false, code: 'REQUEST_TIMEOUT' });
+    expect(await pending).toEqual({ ok: false, code: 'REQUEST_TIMEOUT', prepareUncertain: true });
     expect((await invoke(controller, query)).receipt.launchId).toBe('launch-1');
     expect(
       client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
@@ -384,6 +384,25 @@ describe('web launch background', () => {
     expect(
       client.request.mock.calls.find(([method]) => method === WebLaunchMethod.Read)![1],
     ).toMatchObject({ requestId: launch.requestId });
+  });
+
+  it('releases the launch slot when Main confirms rejection even though the request was sent', async () => {
+    const original = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Prepare && params.requestId === launch.requestId)
+        throw { code: 'COMPOSER_BUSY', requestSent: true, responseReceived: true };
+      return original(method, params);
+    });
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    expect(await invoke(controller, launch)).toEqual({ ok: false, code: 'COMPOSER_BUSY' });
+    expect(storage.chromeWebLaunchSession.requests[launch.requestId]).toBeUndefined();
+
+    const next = { ...launch, requestId: 'request-2', clickSequence: 2 };
+    reply.receipt.requestId = next.requestId;
+    expect(await invoke(controller, next)).toMatchObject({
+      ok: true,
+      receipt: { requestId: next.requestId },
+    });
   });
 
   it('allows only an existing exact document to revoke during cached pagehide', async () => {

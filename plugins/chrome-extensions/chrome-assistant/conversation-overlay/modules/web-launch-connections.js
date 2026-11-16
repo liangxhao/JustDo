@@ -21,8 +21,10 @@ const Status = Object.freeze({
   Cancelled: 'cancelled',
   Expired: 'expired',
 });
+const pendingDecision = value => [Status.Awaiting, Status.Granting].includes(value.status);
+const needsPolicy = value => value.status === Status.Awaiting && value.sitesRevision === undefined;
 const live = value =>
-  [Status.Awaiting, Status.Granting, Status.Connected].includes(value.status) && !value.claimed;
+  (pendingDecision(value) || value.status === Status.Connected) && !value.claimed;
 const sameSource = (value, sender) =>
   value.source.origin === sender.origin &&
   value.source.documentId === sender.documentId &&
@@ -82,14 +84,14 @@ export function createWebLaunchConnections({
       delete values[value.pendingId];
   }
   async function change(pendingId, action) {
-    const result = await store(values => {
+    const { result, changed } = await store(values => {
       collect(values);
       const value = values[pendingId];
       if (!value) throw { code: 'EXPIRED' };
-      action(value);
-      return structuredClone(value);
+      const changed = action(value) !== false;
+      return { result: structuredClone(value), changed };
     });
-    notify(result.source, metadata(result));
+    if (changed) notify(result.source, metadata(result));
     return result;
   }
   async function current(panel) {
@@ -97,9 +99,19 @@ export function createWebLaunchConnections({
       collect(values);
       const value = Object.values(values)
         .reverse()
-        .filter(item => inPanelTab(item, panel))
+        .filter(item => inPanelTab(item, panel) && pendingDecision(item))
         .sort((a, b) => b.createdAt - a.createdAt)[0];
       return metadata(value);
+    });
+  }
+  async function completePolicyLookup(pendingId) {
+    const policies = await readSites();
+    return change(pendingId, item => {
+      if (!needsPolicy(item)) return false;
+      item.sitesRevision = policies.revision;
+      item.requiresAction = true;
+      item.revision += 1;
+      delete item.code;
     });
   }
   async function find(message, sender) {
@@ -159,24 +171,13 @@ export function createWebLaunchConnections({
     const value = await store(values =>
       structuredClone(
         Object.values(values).find(
-          item =>
-            inPanelTab(item, panel) &&
-            item.status === Status.Awaiting &&
-            item.sitesRevision === undefined &&
-            !expired(item),
+          item => inPanelTab(item, panel) && needsPolicy(item) && !expired(item),
         ),
       ),
     );
     if (!value) return;
     try {
-      const policies = await readSites();
-      await change(value.pendingId, item => {
-        if (item.status !== Status.Awaiting || item.sitesRevision !== undefined) return;
-        item.sitesRevision = policies.revision;
-        item.requiresAction = true;
-        item.revision += 1;
-        delete item.code;
-      });
+      await completePolicyLookup(value.pendingId);
     } catch {
       /* The trusted panel heartbeat can retry discovery without granting anything. */
     }
@@ -206,10 +207,7 @@ export function createWebLaunchConnections({
       if (message.decision === 'deny') {
         if (item.claimed) throw { code: 'TOO_LATE' };
         if (message.expectedRevision > item.revision || !live(item)) throw { code: 'EXPIRED' };
-      } else if (
-        item.revision !== message.expectedRevision ||
-        ![Status.Awaiting, Status.Granting].includes(item.status)
-      )
+      } else if (item.revision !== message.expectedRevision || !pendingDecision(item))
         throw { code: 'EXPIRED' };
       if (message.decision === 'allow' && (item.status !== Status.Awaiting || !item.requiresAction))
         throw { code: 'EXPIRED' };
@@ -282,7 +280,8 @@ export function createWebLaunchConnections({
       return { ok: true, connectionPending: metadata(value) };
     } catch (error) {
       await change(value.pendingId, item => {
-        if (![Status.Granting, Status.Connected].includes(item.status) || item.claimed) return;
+        if (![Status.Granting, Status.Connected].includes(item.status) || item.claimed)
+          return false;
         item.status = Status.Expired;
         item.code = publicErrorCode(error);
         item.revision += 1;
@@ -339,6 +338,7 @@ export function createWebLaunchConnections({
           .then(value =>
             change(value.pendingId, item => {
               if (item.claimed) throw { code: 'TOO_LATE' };
+              if (!live(item)) return false;
               retire(item.pendingId);
               item.status = Status.Cancelled;
               item.requiresAction = false;
@@ -435,17 +435,12 @@ export function createWebLaunchConnections({
           });
           if ((tabEpoch.get(sender.tab.id) ?? 0) !== epoch) throw { code: 'EXPIRED' };
           notify(value.source, metadata(value));
-          if (value.status === Status.Awaiting && value.sitesRevision === undefined) {
+          if (needsPolicy(value)) {
             try {
-              const policies = await readSites();
-              value = await change(value.pendingId, item => {
-                if (item.status !== Status.Awaiting) return;
-                item.sitesRevision = policies.revision;
-                item.requiresAction = true;
-                item.revision += 1;
-              });
+              value = await completePolicyLookup(value.pendingId);
             } catch (error) {
               value = await change(value.pendingId, item => {
+                if (!needsPolicy(item)) return false;
                 item.code = publicErrorCode(error);
               });
             }
@@ -483,7 +478,7 @@ export function createWebLaunchConnections({
     tabEpoch.set(tabId, (tabEpoch.get(tabId) ?? 0) + 1);
     if (tabEpoch.size > 256) tabEpoch.delete(tabEpoch.keys().next().value);
     void store(values => {
-      const sources = [];
+      const invalidated = [];
       for (const value of Object.values(values))
         if (value.source.tabId === tabId && live(value)) {
           retire(value.pendingId);
@@ -491,13 +486,13 @@ export function createWebLaunchConnections({
           value.revision += 1;
           value.requiresAction = false;
           delete value.input;
-          sources.push(value.source);
+          invalidated.push({ source: value.source, pending: metadata(value) });
         }
-      return sources;
+      return invalidated;
     })
-      .then(sources =>
-        Promise.all(sources.map(async source => notify(source, await current(source)))),
-      )
+      .then(invalidated => {
+        for (const { source, pending } of invalidated) notify(source, pending);
+      })
       .catch(() => {});
   }
   return { handleExternalMessage, decide, current, consume, invalidateTab, refresh };

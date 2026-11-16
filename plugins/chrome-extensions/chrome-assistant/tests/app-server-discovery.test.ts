@@ -421,7 +421,9 @@ describe('Chrome extension discovers existing app instances', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     socket.close();
-    expect(await result).toMatchObject({ requestSent: true });
+    const failure = await result;
+    expect(failure).toMatchObject({ requestSent: true });
+    expect(failure).not.toHaveProperty('responseReceived');
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(
@@ -478,7 +480,10 @@ describe('Chrome extension discovers existing app instances', () => {
         error: { message: 'Unavailable', data: { requestSent } },
       });
 
-      expect(await result).toMatchObject({ requestSent: requestSent !== false });
+      expect(await result).toMatchObject({
+        requestSent: requestSent !== false,
+        responseReceived: true,
+      });
     },
   );
 

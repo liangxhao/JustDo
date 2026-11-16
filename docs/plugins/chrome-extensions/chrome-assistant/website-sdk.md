@@ -230,10 +230,12 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 | COMPOSER_BUSY / WINDOW_BUSY                                                             | 先保留或处理侧栏现有草稿/网页请求，不覆盖、夹带附件或自动排队发送。                              |
 | CONFIRMATION_REQUIRED / RESULT_CONSENT_REQUIRED                                         | 查看侧栏提示，核对草稿后点击发送。                                                               |
 | CONTEXT_TOO_LARGE / REQUEST_TOO_LARGE / INVALID_REQUEST / UNSUPPORTED_INPUT             | 在下一次操作前缩短并修正完整参数，普通文本入口不支持斜杠命令或附件。                             |
-| EXPIRED / LEASE_REVOKED                                                                 | 旧操作不能恢复为新授权；查看侧栏，按当前页面重新登记并由用户发起新操作。                         |
+| EXPIRED / LEASE_REVOKED                                                                 | 连接申请、请求回执或网页访问权限已失效。按下方说明检查是否需要重新发起。                         |
 | CAPACITY_EXCEEDED                                                                       | 暂停新点击并检查在途请求及侧栏状态，释放已不再需要的绑定；不要自动重放这次操作。                 |
 | UNKNOWN_EXECUTION / REQUEST_TIMEOUT                                                     | 展示“结果未知”，使用原句柄查询；不得自动重发。                                                   |
 | TOO_LATE                                                                                | 请求可能已发出，分享已撤回；需要停止时让用户操作侧栏。                                           |
+
+连接申请或未发送的草稿超时后，用户可以从原网页再次发起。请求已发送或发送状态未知时，请先在扩展侧栏核对原会话，再决定是否重新发起。已发送任务的执行状态以原会话为准。
 
 错误码和回执中的安全键用于业务映射，不能将其理解为成功与失败的唯一判据。未识别的码显示通用提示，不展示底层连接地址、堆栈或凭据。
 

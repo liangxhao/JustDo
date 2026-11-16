@@ -16,6 +16,8 @@ const copy = navigator.language.startsWith('zh')
       preparing: '正在准备请求。',
       receipt: ({ request, execution, output }) =>
         `请求 ${request.status} · 执行 ${execution.status} · 结果 ${output.status}`,
+      expired:
+        '此网页已无法查询这次请求。若可能已经发送，请先在侧栏核对原会话，再决定是否重新发起。',
       error: code => `请求提示 ${code}。请查看扩展侧栏。`,
       unavailable: code => `按钮无法绑定（${code}）。请检查扩展及网页 SDK 是否为同一版本。`,
     }
@@ -38,6 +40,8 @@ const copy = navigator.language.startsWith('zh')
       preparing: 'Preparing the request.',
       receipt: ({ request, execution, output }) =>
         `Request ${request.status} · Execution ${execution.status} · Result ${output.status}`,
+      expired:
+        'This page can no longer check this request. If it may have been sent, check the original conversation in the side panel before trying again.',
       error: code => `Request notice ${code}. Check the extension side panel.`,
       unavailable: code =>
         `Could not bind the button (${code}). Check that the extension and website SDK versions match.`,
@@ -97,7 +101,8 @@ async function bindExample(section) {
         onStatus: showReceipt,
         onResult: showReceipt,
         onError(error) {
-          status.textContent = copy.error(error.code);
+          const requestUnavailable = error.code === 'EXPIRED' || error.code === 'LEASE_REVOKED';
+          status.textContent = requestUnavailable ? copy.expired : copy.error(error.code);
         },
       },
     );

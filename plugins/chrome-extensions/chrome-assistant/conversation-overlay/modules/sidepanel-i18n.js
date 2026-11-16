@@ -329,7 +329,7 @@ const translations = {
     defaultModel: '默认模型',
     selectModel: '选择模型',
     untitled: '未命名会话',
-    thinking: '思考',
+    thinking: 'Thinking',
     tool: '工具',
     input: '输入',
     output: '输出',
