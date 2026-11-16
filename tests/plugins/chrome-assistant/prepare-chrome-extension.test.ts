@@ -1,4 +1,4 @@
-import { webcrypto } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -379,9 +379,11 @@ describe('Chrome extension preparation', () => {
       expect(sendMessage).toHaveBeenCalledTimes(1);
       click({ isTrusted: true, composedPath: () => [button] });
       await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      const expectedInput = { prompt: 'Summarize', mode: 'draft', result: 'final' };
+      const expectedDigest = createHash('sha256').update(JSON.stringify(expectedInput)).digest('hex');
       expect(sendMessage.mock.calls[1]).toEqual([
         'jboajogplelmaahjbomgflnfngpolgcb',
-        expect.objectContaining({ op: 'request', input: { prompt: 'Summarize', mode: 'draft', result: 'none' }, payloadDigest: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+        expect.objectContaining({ op: 'request', input: expectedInput, payloadDigest: expectedDigest }),
       ]);
       expect(onRequest).not.toHaveBeenCalled();
       expect(onConnection).toHaveBeenCalledWith({ status: 'pending', origin: view.location.origin });

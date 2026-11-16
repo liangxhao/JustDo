@@ -38,6 +38,9 @@ const attachmentList = document.getElementById('attachments');
 const permissionSelect = document.getElementById('permission');
 const modelSelect = document.getElementById('model');
 const errorLine = document.getElementById('error');
+const decisionDialog = document.getElementById('decisionDialog');
+const approvalRoot = document.getElementById('approvals');
+const webConnectionCard = document.getElementById('webConnectionCard');
 const activityView = createRunActivityView(document.getElementById('runActivity'));
 const messageRenderer = createMessageRenderer(messages, {
   latestButton: document.getElementById('latest'),
@@ -69,12 +72,14 @@ const streamViews = new Map();
 const pendingCompletions = new Map();
 let streamRenderTimer = null;
 let draftId = crypto.randomUUID();
+let draftPermissionSelection = null;
 let draftWorkspaceSelection = null;
 let currentCwd = '';
 let recentCwds = [];
 let choosingWorkspace = false;
 let questionGeneration = 0;
 let questionsReady = false;
+let refreshingQuestions = false;
 
 const questions = createQuestionPanel(document.getElementById('questions'), {
   respond: async (threadId, requestId, response) => {
@@ -104,35 +109,61 @@ const addMenu = createComposerAddMenu(attachButton, document.getElementById('add
 function clearQuestions() {
   questionGeneration += 1;
   questionsReady = false;
+  refreshingQuestions = false;
   questions.clear();
   syncQuestionVisibility();
 }
 
+const approvalPending = () => !approvalRoot.classList.contains('hidden');
+const questionPending = () => (questionsReady || refreshingQuestions) && questions.hasPending;
+
 function syncQuestionVisibility() {
-  questions.setSuspended(!questionsReady ||
-    !document.getElementById('approvals').classList.contains('hidden'));
+  void webLaunchPanel?.publishState();
+  const hasApproval = approvalPending();
+  const showConnection = !webConnectionCard.classList.contains('hidden') && !questionPending();
+  if (!hasApproval && !showConnection) {
+    if (decisionDialog.open) decisionDialog.close();
+    questions.setSuspended(!questionsReady);
+    return;
+  }
+  questions.setSuspended(true);
+  const section = hasApproval ? approvalRoot : webConnectionCard;
+  decisionDialog.dataset.owner = hasApproval ? 'approval' : 'website';
+  decisionDialog.setAttribute('aria-label', t(hasApproval ? 'approvalRegion' : 'webConnectionTitle'));
+  const opening = !decisionDialog.open;
+  if (opening) decisionDialog.showModal();
+  if (opening || !section.contains(document.activeElement)) section.focus({ preventScroll: true });
 }
 
 async function refreshQuestions(threadId) {
   const generation = ++questionGeneration;
   questionsReady = false;
+  refreshingQuestions = Boolean(threadId && stoppingThreadId !== threadId);
+  if (!refreshingQuestions) questions.clear();
   syncQuestionVisibility();
-  if (!threadId || stoppingThreadId === threadId) { questions.clear(); return; }
+  if (!refreshingQuestions) return;
   try {
     const result = await client.request('chrome/questions/list', { threadId });
     if (generation === questionGeneration && threadId === sessionSelect.value && stoppingThreadId !== threadId) {
       questions.setQuestions(threadId, result.questions);
       questionsReady = true;
-      syncQuestionVisibility();
     }
   } catch (error) {
     if (generation === questionGeneration && threadId === sessionSelect.value && transportReady)
       showError(error);
+  } finally {
+    if (generation === questionGeneration) {
+      refreshingQuestions = false;
+      syncQuestionVisibility();
+    }
   }
 }
 
-const approvalObserver = new MutationObserver(syncQuestionVisibility);
-approvalObserver.observe(document.getElementById('approvals'), { attributes: true, attributeFilter: ['class'] });
+const decisionObserver = new MutationObserver(syncQuestionVisibility);
+decisionObserver.observe(approvalRoot, { childList: true, attributes: true, attributeFilter: ['class'] });
+decisionObserver.observe(webConnectionCard, { attributes: true, attributeFilter: ['class'] });
+// Dismissing the browser dialog must not silently resolve an authorization request.
+decisionDialog.addEventListener('cancel', event => event.preventDefault());
 
 function streamView(threadId) {
   if (!streamViews.has(threadId)) {
@@ -176,7 +207,7 @@ function renderDisplayHistory(display) {
 const MAX_ATTACHMENT_COUNT = 5;
 const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 const MAX_MODEL_PAGES = 32;
-const approvals = createApprovalPanel(document.getElementById('approvals'), {
+const approvals = createApprovalPanel(approvalRoot, {
   isCurrent: request => {
     const { threadId, turnId } = request.params ?? {};
     const pending = pendingSubmissions.get(threadId);
@@ -300,9 +331,6 @@ function rememberSettledTurn(threadId, turnId) {
 function setRunningTurn(threadId, turnId, nativeRunId, confirmed = false, retry = {}) {
   activeThreadId = typeof threadId === 'string' ? threadId : '';
   activeTurnId = typeof turnId === 'string' ? turnId : '';
-  send.classList.toggle('stop', Boolean(activeThreadId));
-  send.title = t(activeThreadId ? 'stop' : 'send');
-  send.setAttribute('aria-label', send.title);
   if (activeThreadId && activeTurnId) {
     const previous = knownTurns.get(activeThreadId);
     knownTurns.set(activeThreadId, {
@@ -326,11 +354,18 @@ function setRunningTurn(threadId, turnId, nativeRunId, confirmed = false, retry 
   updateActivity();
 }
 
+function selectedWebAction() {
+  const threadId = sessionSelect.value;
+  return webLaunchPanel?.composerAction(threadId, activeThreadId === threadId ? activeTurnId : '');
+}
+
 function updateActivity() {
   const threadId = sessionSelect.value;
   const activity = streamViews.get(threadId)?.project().activity ?? null;
+  const webActivity = webLaunchPanel?.activity(threadId, activeThreadId === threadId ? activeTurnId : '');
   let fallback = null;
-  if (pendingSubmissions.get(threadId)?.uncertain)
+  if (webActivity) fallback = webActivity;
+  else if (pendingSubmissions.get(threadId)?.uncertain)
     fallback = { stage: 'checking', startedAt: pendingSubmissions.get(threadId).startedAt };
   else if (knownTurns.get(threadId)?.uncertain)
     fallback = { stage: 'checking', startedAt: knownTurns.get(threadId).startedAt };
@@ -351,6 +386,11 @@ function updateComposerDisabledState() {
     knownTurns.get(sessionSelect.value)?.uncertain === true;
   sessionSelect.disabled = sending || choosingWorkspace;
   const externalInput = webLaunchPanel?.inputAssociated() === true;
+  const webAction = selectedWebAction();
+  const stopping = webAction ? webAction.type === 'stop' : currentThreadRunning;
+  send.classList.toggle('stop', stopping);
+  send.title = t(stopping ? 'stop' : (webAction?.label ?? 'send'));
+  send.setAttribute('aria-label', send.title);
   workspace.update({
     threadId: sessionSelect.value, draftId, cwd: currentCwd, recentCwds,
     disabled: !composerReady || !transportReady || sending || pending || externalInput ||
@@ -362,7 +402,7 @@ function updateComposerDisabledState() {
   includePage.disabled = externalInput || sending || pending;
   permissionSelect.disabled = !composerReady || sending || pending;
   modelSelect.disabled = !composerReady || sending || pending;
-  send.disabled =
+  send.disabled = webAction ? webAction.disabled : (
     choosingWorkspace ||
     sending ||
     !transportReady ||
@@ -370,8 +410,8 @@ function updateComposerDisabledState() {
     (currentThreadRunning && !activeTurnId) ||
     (stoppingThreadId === sessionSelect.value && Boolean(stoppingThreadId)) ||
     attachmentReadsInFlight > 0 ||
-    (!currentThreadRunning && (!composerReady || (!prompt.value.trim() && pendingAttachments.length === 0))) ||
-    (externalInput && webLaunchPanel.blocked());
+    (!currentThreadRunning && (!composerReady || (!prompt.value.trim() && pendingAttachments.length === 0)))
+  );
   void webLaunchPanel?.publishState();
 }
 
@@ -440,7 +480,12 @@ async function refreshSessions(preferredSessionId, generation) {
   if ([...sessionSelect.options].some(option => option.value === current)) {
     sessionSelect.value = current;
   }
-  if (previousSelection !== sessionSelect.value) { approvals.cancelAll(); clearQuestions(); }
+  if (previousSelection !== sessionSelect.value) {
+    draftPermissionSelection = null;
+    approvals.cancelAll();
+    clearQuestions();
+  }
+  webLaunchPanel?.updateSelection();
   const selectedThread = (result.data ?? []).find(entry => entry.id === sessionSelect.value);
   if (selectedThread?.status?.type === 'active') {
     setRunningTurn(
@@ -488,7 +533,7 @@ async function refreshComposerOptions(threadId, generation) {
   if (generation !== refreshGeneration || sessionSelect.value !== threadId) return;
   permissionSelect.value = webLaunchPanel?.inputAssociated()
     ? permissionSelect.value || 'ask'
-    : (result.permissionMode ?? 'full');
+    : (selectedDraftPermission(threadId) ?? result.permissionMode ?? 'full');
   lastPermissionMode = permissionSelect.value;
   const localModel = webLaunchPanel?.inputAssociated() ? modelSelect.value : '';
   modelSelect.replaceChildren();
@@ -511,6 +556,12 @@ async function refreshComposerOptions(threadId, generation) {
       ? localModel
       : (result.modelRef ?? '');
   modelSelect.title = modelSelect.selectedOptions[0]?.textContent || '';
+}
+
+function selectedDraftPermission(threadId) {
+  return draftPermissionSelection?.threadId === threadId && draftPermissionSelection.draftId === draftId
+    ? draftPermissionSelection.mode
+    : undefined;
 }
 
 async function refreshMessages(threadId, generation) {
@@ -748,6 +799,7 @@ async function collectPageContext() {
 }
 
 async function submit() {
+  if (decisionDialog.open) return;
   if (webLaunchPanel?.inputAssociated()) {
     await webLaunchPanel.submit('confirmed');
     return;
@@ -771,6 +823,7 @@ async function submit() {
   }));
   const modelRef = modelSelect.value;
   const permissionMode = permissionSelect.value;
+  const explicitPermissionMode = selectedDraftPermission(sessionSelect.value);
   const includePageContext = includePage.checked;
   let createdThreadId = '';
   let preparedThreadId = '';
@@ -799,11 +852,14 @@ async function submit() {
       currentCwd = started.thread.cwd || currentCwd;
       draftWorkspaceSelection = null;
       draftId = crypto.randomUUID();
+      if (explicitPermissionMode)
+        draftPermissionSelection = { threadId, draftId, mode: explicitPermissionMode };
       const option = document.createElement('option');
       option.value = threadId;
       option.textContent = started.thread.name || message.split(/\r?\n/u)[0] || t('untitled');
       sessionSelect.append(option);
       sessionSelect.value = threadId;
+      webLaunchPanel?.updateSelection();
     }
     preparedThreadId = threadId;
     submissionScopeThreadId = threadId;
@@ -849,6 +905,7 @@ async function submit() {
     });
     turnRequestStarted = true;
     const startedTurn = await client.request('turn/start', turnRequest);
+    if (selectedDraftPermission(threadId) === permissionMode) draftPermissionSelection = null;
     pendingSubmissions.delete(threadId);
     if (!settledTurns.has(`${threadId}/${startedTurn?.turn?.id}`)) {
       setRunningTurn(threadId, startedTurn?.turn?.id, undefined, true);
@@ -886,15 +943,11 @@ async function submit() {
     updateActivity();
     // A server request can arrive before admission returns. Keep subsequent
     // typing inside its answer field, especially when the answer is secret.
-    if (!questions.hasPending && !document.getElementById('approvals').contains(document.activeElement)) prompt.focus();
+    if (!decisionDialog.open && !questions.hasPending && !approvalPending()) prompt.focus();
   }
 }
 
 async function stopCurrentTurn() {
-  if (webLaunchPanel?.ownsThread(sessionSelect.value)) {
-    await webLaunchPanel.stop();
-    return;
-  }
   if (
     !activeThreadId ||
     !activeTurnId ||
@@ -933,14 +986,20 @@ sessionSelect.addEventListener('change', () => {
   workspace.invalidate();
   draftWorkspaceSelection = null;
   draftId = crypto.randomUUID();
+  draftPermissionSelection = null;
   const nextThread = sessionSelect.value;
+  webLaunchPanel.updateSelection();
   if (!webLaunchPanel.inputAssociated()) {
     clearAttachments();
+    updateActivity();
     void refreshAll(nextThread);
     return;
   }
   void (async () => {
-    if (!(await webLaunchPanel.beforeSwitch(nextThread))) return;
+    if (!(await webLaunchPanel.beforeSwitch(nextThread))) {
+      updateComposerDisabledState();
+      return;
+    }
     clearAttachments();
     await refreshAll(nextThread);
   })();
@@ -955,6 +1014,8 @@ permissionSelect.addEventListener('change', () => {
     return;
   }
   lastPermissionMode = permissionSelect.value;
+  if (!webLaunchPanel?.inputAssociated())
+    draftPermissionSelection = { threadId: sessionSelect.value, draftId, mode: permissionSelect.value };
   webLaunchPanel?.edit();
 });
 modelSelect.addEventListener('change', () => {
@@ -969,7 +1030,11 @@ fileInput.addEventListener('change', () => {
     });
 });
 send.addEventListener('click', () => {
-  if (webLaunchPanel?.inputAssociated()) void webLaunchPanel.submit('confirmed');
+  if (decisionDialog.open) return;
+  const webAction = selectedWebAction();
+  if (webAction?.type === 'stop')
+    void webLaunchPanel.stop(activeThreadId === sessionSelect.value ? activeTurnId : '');
+  else if (webAction?.type === 'send') void webLaunchPanel.submit('confirmed');
   else if (isCurrentThreadRunning(activeThreadId, sessionSelect.value)) void stopCurrentTurn();
   else void submit();
 });
@@ -977,7 +1042,7 @@ prompt.addEventListener('keydown', event => {
   if (event.isComposing) return;
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
-    if (isCurrentThreadRunning(activeThreadId, sessionSelect.value)) return;
+    if (selectedWebAction()?.type === 'stop' || isCurrentThreadRunning(activeThreadId, sessionSelect.value)) return;
     void submit();
   }
 });
@@ -994,7 +1059,8 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('unload', () => {
   addMenu.dispose();
-  approvalObserver.disconnect();
+  decisionObserver.disconnect();
+  if (decisionDialog.open) decisionDialog.close();
   workspace.dispose();
   questions.dispose();
   approvals.dispose();
@@ -1015,6 +1081,7 @@ webLaunchPanel = createWebLaunchPanel({
     attachments: pendingAttachments.length,
     attachmentReads: attachmentReadsInFlight,
     ready: composerReady && transportReady,
+    busy: sending || approvalPending() || questionPending(),
   }),
   installComposer: input => {
     if (input.threadId !== undefined && input.threadId !== sessionSelect.value) {
@@ -1022,6 +1089,7 @@ webLaunchPanel = createWebLaunchPanel({
       workspace.invalidate();
       draftWorkspaceSelection = null;
       draftId = crypto.randomUUID();
+      draftPermissionSelection = null;
     }
     if (input.threadId !== undefined && input.threadId !== sessionSelect.value) approvals.cancelAll();
     if (input.clearPrompt) prompt.value = '';
@@ -1041,7 +1109,10 @@ webLaunchPanel = createWebLaunchPanel({
       option.textContent = t('webLaunchTitle');
       sessionSelect.append(option);
     }
-    if (input.threadId !== undefined) sessionSelect.value = input.threadId;
+    if (input.threadId !== undefined) {
+      sessionSelect.value = input.threadId;
+      webLaunchPanel?.updateSelection();
+    }
     prompt.style.height = 'auto';
     prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`;
   },
@@ -1054,6 +1125,7 @@ webLaunchPanel = createWebLaunchPanel({
       threadId &&
       turnId &&
       execution?.status === 'running' &&
+      !settledTurns.has(`${threadId}/${turnId}`) &&
       (!knownTurns.has(threadId) || knownTurns.get(threadId).id === turnId)
     ) {
       if (threadId === sessionSelect.value)
@@ -1079,6 +1151,12 @@ webLaunchPanel = createWebLaunchPanel({
       setRunningTurn('', '');
     }
   },
-  onChange: updateComposerDisabledState,
+  onChange: () => {
+    updateComposerDisabledState();
+    updateActivity();
+  },
+  onError: showError,
+  onClearError: clearError,
+  isTurnSettled: (threadId, turnId) => settledTurns.has(`${threadId}/${turnId}`),
 });
 void refreshAll();

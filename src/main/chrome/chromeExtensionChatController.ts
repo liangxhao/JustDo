@@ -29,7 +29,7 @@ import {
 } from '../../shared/openclaw/runFailureDisplay';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
 import { matchesModelSelectionIdentity } from '../../shared/providers/modelSelectionIdentity';
-import { isPermissionMode, resolvePermissionMode } from '../../shared/security/approvals';
+import { isPermissionMode, PermissionMode, resolvePermissionMode } from '../../shared/security/approvals';
 import { projectPersistedAppServerRetryTurns } from '../clients/appServer/protocol/appServerHistory';
 import { createAppServerHistoryReader } from '../clients/appServer/protocol/appServerHistoryReader';
 import { AppServerErrorCode, AppServerRpcError } from '../clients/appServer/protocol/appServerProtocol';
@@ -73,6 +73,7 @@ const MAX_ATTACHMENT_BASE64_LENGTH = 6 * 1024 * 1024;
 const MAX_MODEL_REF_LENGTH = 500;
 const MAX_TRACKED_TURN_ERRORS = 100;
 const MAX_RETAINED_TURN_RECEIPTS = 100;
+const NEW_CHROME_CHAT_PERMISSION_MODE = PermissionMode.Full;
 
 function isRetryFailureStreamCopy(value: ChromeExtensionStreamEvent): boolean {
   const hasMedia = (data: Record<string, unknown>) =>
@@ -1063,9 +1064,9 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       ...(cwd ? { cwd, recentCwds: this.recentWorkspaces() } : {}),
       modelRef: session?.modelRef ?? defaultModelRef,
       models,
-      permissionMode: resolvePermissionMode(
-        session?.permissionMode ?? store.getConfig().permissionMode,
-      ),
+      permissionMode: session
+        ? resolvePermissionMode(session.permissionMode)
+        : NEW_CHROME_CHAT_PERMISSION_MODE,
     };
   }
 
@@ -1798,7 +1799,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       config.executionMode || 'local',
       [],
       agentId,
-      resolvePermissionMode(config.permissionMode),
+      NEW_CHROME_CHAT_PERMISSION_MODE,
       undefined,
       undefined,
       CoworkSessionSource.ChromeExtension,

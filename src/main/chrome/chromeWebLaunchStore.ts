@@ -6,6 +6,7 @@ import type {
   WebLaunchOutputStatus,
   WebLaunchRequestStatus,
   WebLaunchResultMode,
+  WebLaunchSendMode,
   WebLaunchSitePolicy,
   WebLaunchSource,
 } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
@@ -67,6 +68,7 @@ export interface WebLaunchStoredReceipt {
 export interface ChromeWebLaunchState {
   version: 1;
   policyRevision: number;
+  sendMode?: WebLaunchSendMode;
   sites: WebLaunchSitePolicy[];
   leases: Record<string, WebLaunchDocumentLease>;
   receipts: Record<string, WebLaunchStoredReceipt>;

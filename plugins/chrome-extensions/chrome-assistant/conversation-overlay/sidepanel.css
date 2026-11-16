@@ -1165,22 +1165,66 @@ footer {
   line-height: 1.45;
 }
 
-.web-launch-card {
-  flex: none;
-  max-height: 45vh;
-  overflow: auto;
-  margin: 6px 12px;
-  padding: 12px;
-  border: 1px solid var(--chat-border);
+.decision-dialog {
+  position: fixed;
+  inset: 0;
+  width: min(420px, calc(100% - 24px));
+  max-width: none;
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
   border-radius: 12px;
+  color: var(--chat-text);
   background: var(--chat-surface);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 24%);
 }
-.web-launch-card p {
+.decision-dialog::backdrop {
+  background: rgb(0 0 0 / 40%);
+  backdrop-filter: blur(4px);
+}
+.decision-dialog > section {
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  border-radius: inherit;
+}
+.decision-dialog > section:focus {
+  outline: none;
+}
+.decision-dialog[data-owner='approval'] #webConnectionCard {
+  display: none;
+}
+.web-connection-card {
+  padding: 12px;
+  border: 1px solid var(--chat-link);
+}
+.web-connection-card p {
   margin: 6px 0;
 }
 .web-launch-origin {
   overflow-wrap: anywhere;
   font-weight: 600;
+}
+.web-launch-controls {
+  margin: 0 3px 6px;
+  color: var(--chat-muted);
+  font-size: 12px;
+}
+.web-launch-controls > p {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+.web-launch-controls summary {
+  width: fit-content;
+  max-width: 100%;
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.web-launch-controls summary:focus-visible {
+  outline: 2px solid var(--chat-link);
+  outline-offset: 2px;
 }
 .web-launch-choice {
   display: flex;
@@ -1196,9 +1240,10 @@ footer {
   color: var(--chat-muted);
   font-size: 12px;
 }
-.web-launch-card textarea {
+.web-launch-controls textarea {
   width: 100%;
   min-height: 70px;
+  max-height: 28vh;
   color: var(--chat-text);
   background: var(--chat-bg);
   border: 1px solid var(--chat-border);
@@ -1224,9 +1269,8 @@ footer {
   opacity: 0.5;
   cursor: default;
 }
-.web-launch-card [hidden] {
+.web-connection-card [hidden],
+.web-launch-controls [hidden],
+.web-launch-choice[hidden] {
   display: none;
-}
-.web-connection-card {
-  border-color: var(--chat-link);
 }

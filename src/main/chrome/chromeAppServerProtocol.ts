@@ -12,6 +12,7 @@ export const ChromeAppServerMethod = {
   ChromePair: 'chrome/extension/pair',
   WebLaunchSitesRead: WebLaunchMethod.SitesRead,
   WebLaunchSitesWrite: WebLaunchMethod.SitesWrite,
+  WebLaunchSendModeSet: WebLaunchMethod.SendModeSet,
   WebLaunchPrepare: WebLaunchMethod.Prepare,
   WebLaunchRevise: WebLaunchMethod.Revise,
   WebLaunchSubmit: WebLaunchMethod.Submit,

@@ -2,6 +2,7 @@
 export const WebLaunchMethod = {
   SitesRead: 'chrome/webLaunch/sites/read',
   SitesWrite: 'chrome/webLaunch/sites/write',
+  SendModeSet: 'chrome/webLaunch/sites/send-mode',
   Prepare: 'chrome/webLaunch/prepare',
   Revise: 'chrome/webLaunch/revise',
   Submit: 'chrome/webLaunch/submit',
@@ -17,7 +18,13 @@ export type WebLaunchMethod = (typeof WebLaunchMethod)[keyof typeof WebLaunchMet
 export function isWebLaunchMethod(value: string): value is WebLaunchMethod {
   return (Object.values(WebLaunchMethod) as string[]).includes(value);
 }
-export type WebLaunchMode = 'draft' | 'send';
+export const WebLaunchSendMode = {
+  Website: 'website',
+  Draft: 'draft',
+  Direct: 'send',
+} as const;
+export type WebLaunchMode = typeof WebLaunchSendMode.Draft | typeof WebLaunchSendMode.Direct;
+export type WebLaunchSendMode = (typeof WebLaunchSendMode)[keyof typeof WebLaunchSendMode];
 export type WebLaunchResultMode = 'none' | 'final';
 export type WebLaunchPermissionMode = 'ask' | 'auto' | 'full';
 
@@ -71,6 +78,7 @@ export interface WebLaunchSitePolicy {
 
 export interface WebLaunchSites {
   revision: number;
+  sendMode?: WebLaunchSendMode;
   sites: WebLaunchSitePolicy[];
 }
 
@@ -140,6 +148,7 @@ export interface WebLaunchInternal {
   documentLeaseId: string;
   composeRevision: number;
   deadlineAt: number;
+  effectiveMode?: WebLaunchMode;
   requiresSendConfirmation: boolean;
   requiresResultConsent: boolean;
   requiresUnknownConfirmation?: boolean;

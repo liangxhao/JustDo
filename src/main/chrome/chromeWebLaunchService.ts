@@ -8,6 +8,7 @@ import {
   WebLaunchMethod,
   type WebLaunchReceipt,
   type WebLaunchResponse,
+  WebLaunchSendMode,
   type WebLaunchSitePolicy,
   type WebLaunchSource,
 } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
@@ -63,6 +64,9 @@ interface Owner {
   candidateExpiry?: ReturnType<typeof setTimeout>;
 }
 const settled = (receipt: WebLaunchStoredReceipt) => receipt.executionSettled;
+const closedRequestStatuses = new Set<WebLaunchStoredReceipt['requestStatus']>([
+  'cancelled', 'expired', 'rejected',
+]);
 const strippedSource = (source: WebLaunchSource): WebLaunchSource => {
   const { url: _url, title: _title, ...identity } = source;
   return identity;
@@ -87,7 +91,7 @@ export class ChromeWebLaunchService {
     this.store = new ChromeWebLaunchStore(deps.getDatabase, this.now);
     this.store.mutate(state => {
       for (const receipt of Object.values(state.receipts)) {
-        if (receipt.processEpoch === this.epoch || settled(receipt)) continue;
+        if (receipt.processEpoch === this.epoch || settled(receipt) || closedRequestStatuses.has(receipt.requestStatus)) continue;
         receipt.autoAllowed = false;
         receipt.composeRevision += 1;
         if (receipt.clientTurnId && !receipt.notSent) {
@@ -114,6 +118,7 @@ export class ChromeWebLaunchService {
     return {
       [WebLaunchMethod.SitesRead]: safe(() => this.sites()),
       [WebLaunchMethod.SitesWrite]: safe(params => this.writeSite(params)),
+      [WebLaunchMethod.SendModeSet]: safe(params => this.setSendMode(params)),
       [WebLaunchMethod.Prepare]: safe(params => this.prepare(params)),
       [WebLaunchMethod.Revise]: safe(params => this.revise(params)),
       [WebLaunchMethod.Submit]: safe(params => this.submit(params)),
@@ -128,7 +133,26 @@ export class ChromeWebLaunchService {
 
   sites() {
     const state = this.store.read();
-    return { revision: state.policyRevision, sites: state.sites };
+    return { revision: state.policyRevision, sites: state.sites, sendMode: state.sendMode ?? WebLaunchSendMode.Website };
+  }
+
+  setSendMode(raw: unknown) {
+    const value = webLaunchRecord(raw);
+    assertWebLaunchKeys(value, ['expectedRevision', 'sendMode']);
+    const expectedRevision = webLaunchInteger(value.expectedRevision, 0);
+    const sendMode = value.sendMode;
+    if (sendMode !== WebLaunchSendMode.Website && sendMode !== WebLaunchSendMode.Draft && sendMode !== WebLaunchSendMode.Direct)
+      return failWebLaunch('INVALID_REQUEST');
+    const changed = this.store.mutate(state => {
+      if (expectedRevision !== state.policyRevision) return failWebLaunch('POLICY_CONFLICT');
+      if (sendMode === (state.sendMode ?? WebLaunchSendMode.Website)) return false;
+      state.sendMode = sendMode;
+      state.policyRevision += 1;
+      // Changing how future clicks send leaves existing site grants and receipts intact.
+      return true;
+    });
+    if (changed) this.changed();
+    return this.sites();
   }
 
   private changed(): void { try { this.deps.onChanged?.(); } catch { /* Observer retirement cannot alter admission. */ } }
@@ -159,6 +183,7 @@ export class ChromeWebLaunchService {
     return { receipt: receiptValue, internal: {
       threadId: receipt.threadId, documentLeaseId: receipt.leaseId,
       composeRevision: receipt.composeRevision, deadlineAt: receipt.deadlineAt,
+      effectiveMode: receipt.mode,
       requiresSendConfirmation: !receipt.autoAllowed,
       requiresResultConsent: receipt.result === 'final' && !receipt.shareResult,
       requiresUnknownConfirmation: receipt.requiresUnknownConfirmation,
@@ -188,7 +213,15 @@ export class ChromeWebLaunchService {
       for (const receipt of Object.values(state.receipts).filter(item => item.source.origin === origin)) {
         receipt.autoAllowed = false;
         if (!enabled || !allowResult) { receipt.shareRevoked = true; receipt.shareResult = false; receipt.outputStatus = receipt.result === 'final' ? 'withheld' : 'not-requested'; }
-        if (!enabled) receipt.deliveryRevoked = true;
+        if (!enabled) {
+          receipt.deliveryRevoked = true;
+          if (!settled(receipt) && !closedRequestStatuses.has(receipt.requestStatus) &&
+            !receipt.dispatchAttempted && (!receipt.clientTurnId || receipt.notSent)) {
+            receipt.notSent = true;
+            receipt.requestStatus = 'cancelled';
+            receipt.errorCode = 'SITE_NOT_ALLOWED';
+          }
+        }
         this.bump(receipt);
       }
       if (!enabled) for (const lease of Object.values(state.leases)) if (lease.source.origin === origin) lease.active = false;
@@ -291,17 +324,19 @@ export class ChromeWebLaunchService {
       const thread = this.deps.getStore().createSession(new URL(value.source.origin).hostname, cwd, config.executionMode || 'local', [], 'main', 'ask', this.deps.getDefaultModelRef?.(), undefined, CoworkSessionSource.ChromeExtension);
       created = true;
       const requiresUnknownConfirmation = state.unknownOrigins.includes(value.source.origin);
-      const autoAllowed = !value.connectionOnly && value.input.mode === 'send' && site.allowSend && (value.input.result === 'none' || site.allowResult) && !requiresUnknownConfirmation;
+      const preference = state.sendMode ?? WebLaunchSendMode.Website;
+      const mode = value.connectionOnly || preference === WebLaunchSendMode.Website ? value.input.mode : preference;
+      const autoAllowed = !value.connectionOnly && mode === WebLaunchSendMode.Direct && site.allowSend && (value.input.result === 'none' || site.allowResult) && !requiresUnknownConfirmation;
       const shareResult = !value.connectionOnly && value.input.result === 'final' && site.allowResult;
       prepared = {
         launchId: this.uuid(), requestId: value.requestId, receiptRevision: 1, leaseId: lease.id,
         source: strippedSource(value.source), sourceKey, windowKey, clickSequence: value.clickSequence,
         bindingRevision: value.bindingRevision, payloadDigest: value.payloadDigest,
         actualDigest: webLaunchActualDigest({ prompt: value.input.prompt, ...(value.input.context ? { context: value.input.context } : {}), permissionMode: 'ask' }),
-        mode: value.input.mode, result: value.input.result, composeRevision: 1, threadId: thread.id,
+        mode, result: value.input.result, composeRevision: 1, threadId: thread.id,
         createdAt: this.now(), deadlineAt: this.now() + (autoAllowed ? WebLaunchLimits.automaticAdmissionMs : WebLaunchLimits.confirmationMs),
         confirmationStarted: !autoAllowed, grantRevision: site.revision,
-        requestStatus: value.input.mode === 'draft' ? 'drafted' : autoAllowed ? 'drafted' : 'awaiting-confirmation',
+        requestStatus: mode === WebLaunchSendMode.Draft ? 'drafted' : autoAllowed ? 'drafted' : 'awaiting-confirmation',
         executionStatus: 'not-started', executionSettled: false,
         outputStatus: value.input.result === 'none' ? 'not-requested' : shareResult ? 'pending' : 'awaiting-consent',
         shareResult, shareRevoked: false,
@@ -332,6 +367,7 @@ export class ChromeWebLaunchService {
     const expected = webLaunchInteger(value.expectedComposeRevision ?? value.composeRevision);
     const input = parseWebLaunchActualInput(value.input);
     const old = this.get(this.store.read(), id);
+    if (closedRequestStatuses.has(old.requestStatus)) return failWebLaunch('EXPIRED');
     buildStrictWebLaunchContext(old.source.origin, input.context?.text);
     const owner = this.owners.get(id);
     if (owner?.dispatched || old.dispatchAttempted && !old.notSent) return failWebLaunch('TOO_LATE');
@@ -358,6 +394,7 @@ export class ChromeWebLaunchService {
   submit(raw: unknown): WebLaunchResponse {
     const value = parseWebLaunchSubmit(raw);
     const current = this.get(this.store.read(), value.launchId);
+    if (closedRequestStatuses.has(current.requestStatus)) return failWebLaunch('EXPIRED');
     const context = buildStrictWebLaunchContext(current.source.origin, value.input.context?.text);
     const existingOwner = this.owners.get(value.launchId);
     if (current.clientTurnId && !current.notSent) {
@@ -376,7 +413,7 @@ export class ChromeWebLaunchService {
       if (settled(item)) return failWebLaunch('TOO_LATE');
       const unknown = state.unknownOrigins.includes(item.source.origin);
       if (unknown && (value.submission !== 'confirmed' || value.confirmNewTask !== true)) return failWebLaunch('UNKNOWN_EXECUTION');
-      if (value.submission === 'automatic' && (!item.autoAllowed || item.mode !== 'send' || item.grantRevision !== policy.revision
+      if (value.submission === 'automatic' && (!item.autoAllowed || item.mode !== WebLaunchSendMode.Direct || item.grantRevision !== policy.revision
         || !policy.allowSend || value.rememberSend || value.rememberResult || value.input.modelRef || (value.input.permissionMode ?? 'ask') !== 'ask')) return failWebLaunch('CONFIRMATION_REQUIRED');
       if (value.shareResult && item.result !== 'final') return failWebLaunch('RESULT_CONSENT_REQUIRED');
       if (value.submission === 'automatic' && value.shareResult && !policy.allowResult) return failWebLaunch('RESULT_CONSENT_REQUIRED');

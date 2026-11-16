@@ -1,11 +1,14 @@
 const translations = {
   zh: {
     webLaunchSitesTitle: '已连接的网站',
-    webLaunchSitesHint:
-      '在业务网页点击对话按钮，再到扩展中批准连接，无需手填网址。这里管理已连接网站；直接发送和结果分享仍单独授权。桌面应用需已启动。',
-    webLaunchAllowSend: '允许直接发送',
-    webLaunchAllowResult: '允许回传本次请求结果',
-    webLaunchRefresh: '刷新网站权限',
+    webLaunchSitesHint: '点击网页上的对话按钮，再到扩展中批准连接。可在这里撤销网站访问权限。',
+    webLaunchSendMode: '网页消息发送方式',
+    webLaunchSendModeWebsite: '跟随网页（默认）',
+    webLaunchSendModeDirect: '直接发送',
+    webLaunchSendModeDraft: '先填入草稿',
+    webLaunchSendModeSaved: '网页消息发送方式已保存。',
+    webLaunchReconnect: '再次点击该网站的对话按钮时，扩展会请你确认新的访问权限。',
+    webLaunchRefresh: '刷新网站列表',
     webLaunchRevoke: '撤销网站访问权限',
     webLaunchNoSites: '尚无已连接的网站，请先在业务网页点击对话按钮。',
     webLaunchSaved: '网站权限已保存。',
@@ -57,10 +60,14 @@ const translations = {
   en: {
     webLaunchSitesTitle: 'Connected websites',
     webLaunchSitesHint:
-      'Click the conversation button on a business website, then approve its connection in the extension. No address entry is needed. Manage connected websites here; direct sending and result sharing remain separate permissions. The desktop app must be running.',
-    webLaunchAllowSend: 'Allow direct sending',
-    webLaunchAllowResult: 'Allow returning this request’s result',
-    webLaunchRefresh: 'Refresh website permissions',
+      'Click the conversation button on a website, then approve the connection in the extension. Use this list to revoke website access.',
+    webLaunchSendMode: 'Website message sending mode',
+    webLaunchSendModeWebsite: 'Follow website (default)',
+    webLaunchSendModeDirect: 'Send directly',
+    webLaunchSendModeDraft: 'Open as draft',
+    webLaunchSendModeSaved: 'Website message sending mode saved.',
+    webLaunchReconnect: 'Click the website’s conversation button to confirm access again.',
+    webLaunchRefresh: 'Refresh websites',
     webLaunchRevoke: 'Revoke website access',
     webLaunchNoSites:
       'No connected websites. Start with the conversation button on a business website.',

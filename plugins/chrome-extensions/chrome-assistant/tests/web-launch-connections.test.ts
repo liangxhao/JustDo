@@ -268,6 +268,9 @@ describe('first website connection', () => {
       ([method]) => method === WebLaunchMethod.Prepare,
     );
     expect(prepares).toHaveLength(1);
+    expect(policies).toEqual([
+      { origin: source.origin, enabled: true, allowSend: true, allowResult: true, revision: 2 },
+    ]);
     expect(prepares[0][1]).toMatchObject({
       input,
       connectionOnly: true,
@@ -353,7 +356,7 @@ describe('first website connection', () => {
       onRequest: () => events.push('request'),
     });
     expect(api.scripting.executeScript).not.toHaveBeenCalled();
-    expect(client.request).not.toHaveBeenCalled();
+    expect(client.request.mock.calls).toEqual([[WebLaunchMethod.SitesRead]]);
     trustedClick();
     await vi.waitFor(async () =>
       expect((await registerPanel()).connectionPending?.requiresAction).toBe(true),
@@ -367,6 +370,80 @@ describe('first website connection', () => {
     expect(
       client.request.mock.calls.find(([method]) => method === WebLaunchMethod.Prepare)?.[1],
     ).toMatchObject({ connectionOnly: true, expectedPolicyRevision: 1 });
+  });
+
+  it('falls back to inline connection while the desktop app is slow to check a legacy grant', async () => {
+    storage.chromeWebLaunchSites = [source.origin];
+    let finishRead!: (value: unknown) => void;
+    client.request.mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finishRead = resolve;
+        }),
+    );
+    vi.useFakeTimers();
+    try {
+      const probe = external({ op: 'probe' });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await probe).toEqual({ ok: true, connected: false });
+    } finally {
+      vi.useRealTimers();
+      finishRead?.({ sites: [], revision: 1 });
+    }
+  });
+
+  it('uses the webpage configuration after an existing site approves the expanded connection', async () => {
+    permitted = true;
+    policies = [
+      { origin: source.origin, enabled: true, allowSend: true, allowResult: false, revision: 1 },
+    ];
+    storage.chromeWebLaunchSites = [source.origin];
+    const handles: any[] = [];
+    await sdk.bind(document.getElementById('launch'), input, {
+      onRequest: handle => handles.push(handle),
+    });
+    trustedClick();
+    await vi.waitFor(async () =>
+      expect((await registerPanel()).connectionPending?.requiresAction).toBe(true),
+    );
+    expect(policies[0].allowResult).toBe(false);
+    expect(client.request.mock.calls.some(([method]) => method === WebLaunchMethod.Prepare)).toBe(
+      false,
+    );
+
+    expect((await decision((await registerPanel()).connectionPending)).ok).toBe(true);
+    await vi.waitFor(() => expect(handles[0]?.launchId).toBe('launch-1'));
+    expect(await external({ op: 'probe' })).toMatchObject({ connected: true });
+    const first = client.request.mock.calls.find(
+      ([method]) => method === WebLaunchMethod.Prepare,
+    )![1];
+    expect(first).toMatchObject({ connectionOnly: true, expectedPolicyRevision: 2, input });
+
+    const closed = structuredClone(
+      storage.chromeWebLaunchSession.requests[first.requestId].response,
+    );
+    closed.receipt.request.status = 'submitted';
+    closed.receipt.execution = { status: 'completed', executionSettled: true };
+    closed.receipt.output = { status: 'available', text: 'First reply', format: 'text' };
+    const requestNative = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Read) return closed;
+      const response = await requestNative(method, params);
+      if (method === WebLaunchMethod.Prepare) response.receipt.launchId = 'launch-2';
+      return response;
+    });
+    expect((await handles[0].read()).receipt.output.text).toBe('First reply');
+    trustedClick();
+    await vi.waitFor(() => expect(handles[1]?.launchId).toBe('launch-2'));
+    const prepares = client.request.mock.calls.filter(
+      ([method]) => method === WebLaunchMethod.Prepare,
+    );
+    expect(prepares).toHaveLength(2);
+    expect(prepares[1][1]).toMatchObject({ clickSequence: 2, input });
+    expect(prepares[1][1]).not.toHaveProperty('connectionOnly');
+    expect(
+      client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.SitesWrite),
+    ).toHaveLength(1);
   });
 
   it('lets rejection overtake an in-flight grant with the old displayed revision before any policy write', async () => {
@@ -621,9 +698,9 @@ describe('first website connection', () => {
   it('disarms a bound-only revoked page on rejection without replaying that consumed click', async () => {
     permitted = true;
     policies = [
-      { origin: source.origin, enabled: true, allowSend: false, allowResult: false, revision: 1 },
+      { origin: source.origin, enabled: true, allowSend: true, allowResult: true, revision: 1 },
     ];
-    storage.chromeWebLaunchSites = [source.origin];
+    storage.chromeWebLaunchGrantedOrigins = [source.origin];
     await api.scripting.executeScript({
       target: { tabId: 7, documentIds: [source.documentId] },
       files: ['web-launch-content.js'],

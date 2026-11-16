@@ -5,11 +5,11 @@ const copy = navigator.language.startsWith('zh')
       record: '示例记录有 12 个订单，其中 3 个待处理。每个按钮显示最近一次请求的状态。',
       context: '订单 12 个，其中 3 个待处理。',
       prompt: '用一句话总结这条订单记录。',
-      draft: '打开草稿并请求结果',
-      draftHelp: '在侧栏确认发送和分享结果，最终文本会显示在这里。',
+      draft: '请求打开草稿并返回结果',
+      draftHelp: '发送方式为「跟随网页」时，在侧栏点击发送。执行完成后，最终文本会显示在这里。',
       send: '请求自动发送',
       sendHelp:
-        '完成当前草稿后再试。确认发送时可勾选“今后允许此网站直接发送”。以后点击只回传状态。',
+        '首次连接时，请在侧栏允许连接并发送草稿。发送方式为「跟随网页」时，后续点击会直接发送，最终文本会显示在这里。',
       ready: '可以点击按钮。',
       confirm: origin => `请在扩展侧栏确认连接 ${origin}。`,
       connection: status => `连接状态 ${status}`,
@@ -26,12 +26,12 @@ const copy = navigator.language.startsWith('zh')
         'This sample has 12 orders, including 3 pending orders. Each button shows its latest request.',
       context: 'There are 12 orders, including 3 pending orders.',
       prompt: 'Summarize this order record in one sentence.',
-      draft: 'Open a draft and request the result',
+      draft: 'Request a draft and its result',
       draftHelp:
-        'Confirm sending and result sharing in the side panel. The final text will appear here.',
+        'With Follow website (default) selected, send the draft in the side panel. The final text will appear here.',
       send: 'Request automatic sending',
       sendHelp:
-        'Finish the current draft first. When confirming this send, select “Allow this website to send directly next time.” This button returns status updates.',
+        'On first use, allow the connection and send the draft in the side panel. With Follow website (default) selected, later clicks send directly and the final text appears here.',
       ready: 'Ready to click.',
       confirm: origin => `Confirm the connection to ${origin} in the extension side panel.`,
       connection: status => `Connection status ${status}`,
@@ -78,7 +78,6 @@ async function bindExample(section) {
         prompt: copy.prompt,
         context: { text: copy.context },
         mode,
-        result: mode === 'draft' ? 'final' : 'none',
       },
       {
         onConnection(connection) {

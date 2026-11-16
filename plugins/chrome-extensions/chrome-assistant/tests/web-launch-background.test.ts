@@ -111,8 +111,8 @@ describe('web launch background', () => {
               {
                 origin: sender.origin,
                 enabled: true,
-                allowSend: false,
-                allowResult: false,
+                allowSend: true,
+                allowResult: true,
                 revision: 1,
               },
             ],
@@ -145,6 +145,53 @@ describe('web launch background', () => {
       ok: false,
       code: 'FORBIDDEN',
     });
+  });
+
+  it('only accepts trusted sending preferences and presents the effective mode from Main', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const preference = {
+      type: 'web-launch:sites:send-mode',
+      sendMode: 'send',
+      expectedRevision: 1,
+    };
+    expect(await invoke(controller, preference)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(client.request).not.toHaveBeenCalled();
+
+    const request = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.SendModeSet)
+        return { sites: [], revision: 2, sendMode: 'send' };
+      if (method === WebLaunchMethod.SitesRead) {
+        const value = await request(method, params);
+        return { ...value, revision: 2, sendMode: 'send' };
+      }
+      return request(method, params);
+    });
+    expect(await invoke(controller, preference, trusted)).toMatchObject({
+      ok: true,
+      sitesRevision: 2,
+      sendMode: 'send',
+    });
+    expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.SendModeSet, {
+      expectedRevision: 1,
+      sendMode: 'send',
+    });
+    reply.internal.effectiveMode = 'send';
+    reply.internal.requiresSendConfirmation = false;
+    reply.internal.requiresResultConsent = false;
+    expect(await invoke(controller, launch)).toMatchObject({ ok: true });
+
+    const panel = { ...trusted, url: `chrome-extension://${extensionId}/sidepanel.html` };
+    const result = await invoke(
+      controller,
+      { type: 'web-launch:panel:register', panelInstanceId: 'panel-1', windowId: 3 },
+      panel,
+    );
+    expect(result.envelope).toMatchObject({ mode: 'send', automaticSendAllowed: true });
+    expect(client.request).toHaveBeenCalledWith(
+      WebLaunchMethod.Prepare,
+      expect.objectContaining({ input: launch.input }),
+    );
   });
 
   it('rejects iframes before opening and denies a second window request without queueing it', async () => {
@@ -194,7 +241,18 @@ describe('web launch background', () => {
     let release: (value: unknown) => void;
     client.request.mockImplementation(async method => {
       if (method === WebLaunchMethod.SitesRead)
-        return { revision: 1, sites: [{ origin: sender.origin, enabled: true, revision: 1 }] };
+        return {
+          revision: 1,
+          sites: [
+            {
+              origin: sender.origin,
+              enabled: true,
+              allowSend: true,
+              allowResult: true,
+              revision: 1,
+            },
+          ],
+        };
       if (method === WebLaunchMethod.Read)
         return new Promise(resolve => {
           release = resolve;
@@ -402,7 +460,18 @@ describe('web launch background', () => {
     const receipts = new Map();
     client.request.mockImplementation(async (method, params) => {
       if (method === WebLaunchMethod.SitesRead)
-        return { revision: 1, sites: [{ origin: sender.origin, enabled: true, revision: 1 }] };
+        return {
+          revision: 1,
+          sites: [
+            {
+              origin: sender.origin,
+              enabled: true,
+              allowSend: true,
+              allowResult: true,
+              revision: 1,
+            },
+          ],
+        };
       if (method === WebLaunchMethod.Prepare) {
         const value = {
           ...reply,

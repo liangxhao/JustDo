@@ -1,6 +1,6 @@
 # 第三方网页调用 Chrome 扩展
 
-把 `chrome-assistant.js` 放到业务网站，再用 `window.chromeAssistant.bind()` 绑定一个按钮。用户点击后，可在 Chrome 侧栏核对草稿、发送消息，并选择是否把本轮结果返回网页。
+把 `chrome-assistant.js` 放到业务网站，再用 `window.chromeAssistant.bind()` 绑定一个按钮。扩展默认根据按钮的配置准备草稿或直接发送，并将本轮最终答复返回原网页。
 
 ## 1. 获取网页 SDK
 
@@ -26,8 +26,10 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 
 在 Chrome 加载本次组装的 `build/chrome-extension/chrome-extension/` 目录，启动与这份扩展匹配的桌面应用，再用 Chrome 打开[本地示例](http://127.0.0.1:4178)。Chrome 的开发者模式与加载步骤见[扩展概览](overview.md#安装或更新扩展)。
 
-- **打开草稿并请求结果**使用 `draft + final`。在侧栏确认发送和分享后，网页会显示本轮最终文本。
-- **请求自动发送**使用 `send + none`。侧栏要求确认时，可勾选 **今后允许此网站直接发送**，再点 **仅发送**。许可保存后，等当前请求结束再点这个按钮，即可体验直接发送。网页只显示状态。
+在扩展设置的 **Website message sending mode** 保留 **Follow website (default)**，可以比较两个按钮的行为。
+
+- **请求打开草稿并返回结果**使用 `draft + final`。在侧栏点击发送，最终文本会显示在网页上。
+- **请求自动发送**使用 `send + final`。如果这是本站首次连接，先在侧栏允许连接，再发送这次草稿。等当前请求结束后再次点击，即可体验直接发送和回传。
 
 示例服务从组装目录读取 SDK。要把示例搬到自己的网站，把 `index.html`、`demo.js` 和组装后的 `chrome-assistant.js` 放在同一目录。[示例页面](examples/website-sdk/index.html) · [绑定与回调代码](examples/website-sdk/demo.js)
 
@@ -38,6 +40,7 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 ```html
 <button id="ask-assistant" type="button" disabled>生成摘要</button>
 <p id="assistant-status" role="status"></p>
+<pre id="assistant-result"></pre>
 <script defer src="/assets/chrome-assistant.js"></script>
 <script defer src="/assets/assistant-entry.js"></script>
 ```
@@ -48,13 +51,31 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 async function bindAssistant() {
   const button = document.querySelector('#ask-assistant');
   const status = document.querySelector('#assistant-status');
+  const output = document.querySelector('#assistant-result');
 
   try {
-    await window.chromeAssistant.bind(button, {
-      prompt: '用一句话总结这条订单记录。',
-      context: { text: '订单 12 个，其中 3 个待处理。' },
-      mode: 'draft',
-    });
+    await window.chromeAssistant.bind(
+      button,
+      {
+        prompt: '用一句话总结这条订单记录。',
+        context: { text: '订单 12 个，其中 3 个待处理。' },
+        mode: 'draft',
+      },
+      {
+        onRequest() {
+          output.textContent = '';
+        },
+        onResult(receipt) {
+          if (
+            receipt.execution.executionSettled &&
+            receipt.execution.status === 'completed' &&
+            receipt.output.status === 'available'
+          ) {
+            output.textContent = receipt.output.text ?? '';
+          }
+        },
+      },
+    );
     button.disabled = false;
   } catch (error) {
     status.textContent = `无法使用扩展（${error.code ?? 'BRIDGE_UNAVAILABLE'}）。`;
@@ -68,14 +89,14 @@ void bindAssistant();
 
 ## 3. 用户点击后会看到什么
 
-1. 用户在业务网页点击 **生成摘要** 等按钮。首次使用时，Chrome 侧栏显示 **允许此网站连接？**，下方列出网站地址。
-2. 用户在这张授权卡上点击 **允许连接**。如果 Chrome 随后询问是否允许扩展访问该网站，按提示确认。
+1. 用户在业务网页点击 **生成摘要** 等按钮。首次使用时，Chrome 侧栏弹出 **允许此网站连接？**，下方列出网站地址。处理弹窗前，侧栏输入区暂停操作。
+2. 用户核对网站地址和授权范围后，点击 **允许连接**。此授权涵盖后续请求的直接发送和结果回传。如果 Chrome 随后询问是否允许扩展访问该网站，按提示确认。
 3. 授权完成后，刚才那次点击的消息进入侧栏输入框。用户可以核对或编辑草稿。
-4. 网页请求结果时，侧栏默认勾选 **将本轮结果返回此网站**。要分享结果，点击 **发送并返回结果**。只想在侧栏查看答复时，先取消勾选，再点击 **仅发送**。网页只请求对话时，直接点击 **仅发送**。
+4. 点击输入区右侧的发送按钮。请求回传时，输入区提示结果会返回哪个网站，发送按钮标为 **发送并返回结果**。同一次点击确认发送和本轮回传。
 
-首次授权后的这条消息始终需要用户确认发送。后续点击时，网页传入 `mode: 'send'`，且用户允许该网站直接发送，才可以自动提交。若同一次点击还请求返回结果，自动提交也需要已有的结果分享权限。
+触发授权的这条消息始终需要用户确认发送。后续请求默认按 [`mode` 和 `result` 的组合](#4-参数与四种组合)处理。用户可在侧栏点击 **连接设置**，为所有已连接网站选择[网页消息发送方式](website-launch.md#后续使用与撤销)，也可在 **Connected websites** 中查看或撤销单个网站的连接。站点授权按协议、主机和端口生效。
 
-用户可通过侧栏的 **连接设置** 打开扩展设置，在 **Connected websites** 中调整直接发送、结果回传或撤销访问。设置按网站的协议、主机和端口分别保存。
+升级前已同时授权直接发送和结果回传的网站可继续使用。只有部分授权的网站，下次使用时需要在侧栏确认一次新的范围。若旧绑定的第一次点击只显示连接提示，请再点击一次。仍无法打开连接卡时，刷新页面后再点。
 
 ## 4. 参数与四种组合
 
@@ -86,20 +107,20 @@ void bindAssistant();
 | `prompt`  | 必填、非空字符串                    | 本次待发送文字，最多 16,000 个字符；不接受以 `/` 开头的会话控制命令。 |
 | `context` | 可选 `{ text: string }`             | 显式业务快照，最多 24,000 个字符；会在侧栏单独展示。                  |
 | `mode`    | `'draft' \| 'send'`，默认 `'draft'` | 放入独立草稿，或请求直接发送。                                        |
-| `result`  | `'none' \| 'final'`，默认 `'none'`  | 只接收最小状态，或请求分享本轮最终文本。                              |
+| `result`  | `'none' \| 'final'`，默认 `'final'` | 回传本轮最终文本。显式传入 `none` 时只接收状态。                      |
 
 每次点击的请求 ID 由扩展分配。网页可提供消息和文本上下文，不能指定已有会话、模型、助手、工作目录、权限模式、附件或回调 URL。
 
-以下是网站连接后的行为。首次连接完成后，当次请求统一进入待确认草稿。
+以下是网站连接后，发送方式为 **Follow website (default)** 时的行为。触发首次授权的请求始终进入待确认草稿。
 
-| 组合            | 用户看到的行为                                                     |
-| --------------- | ------------------------------------------------------------------ |
-| `draft + none`  | 打开独立草稿，用户编辑并发送；网页只收到状态。                     |
-| `draft + final` | 打开独立草稿，用户确认实际输入及分享后发送；只分享获准的本轮结果。 |
-| `send + none`   | 已获直接发送授权时提交；未授权时在侧栏等待确认。                   |
-| `send + final`  | 发送与结果分享分别获准后提交；需要任一许可时在侧栏等待确认。       |
+| 组合            | 用户看到的行为                                           |
+| --------------- | -------------------------------------------------------- |
+| `draft + none`  | 打开独立草稿，用户编辑并发送；网页只收到状态。           |
+| `draft + final` | 打开独立草稿。用户点击发送，执行完成后回传本轮最终文本。 |
+| `send + none`   | 准入检查通过后自动发送，网页只收到状态。                 |
+| `send + final`  | 准入检查通过后自动发送，执行完成后回传本轮最终文本。     |
 
-`mode` 决定怎样发送，`result` 决定网页能收到什么。选择 `draft` 时始终由用户确认发送。选择 `none` 时始终只返回状态。用户也可以取消结果分享并选择 **仅发送**。
+用户选择 **Send directly** 或 **Open as draft** 时，该设置优先于网页的 `mode`，适用于所有已连接网站的新请求。回传仍按网页的 `result` 处理。省略 `result` 时回传最终文本，显式传 `none` 时只返回状态。
 
 整条请求最多 128 KiB UTF-8，最终文本最多 256 KiB UTF-8。上下文在加入说明、JSON 和特殊字符转义后仍须在 24,000 字符内。收到 `CONTEXT_TOO_LARGE` 时，请缩短文本再绑定或更新。
 
@@ -207,7 +228,7 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 | PANEL_OPEN_FAILED                                                                       | 浏览器未允许本次打开侧栏；用户可点击扩展图标检查状态，再主动发起新操作，不自动弹新标签或重试。   |
 | APP_NOT_RUNNING / NATIVE_HOST_UNAVAILABLE / CONNECTION_UNAVAILABLE / NATIVE_UNAVAILABLE | 检查桌面应用与扩展连接，再由用户确认下一步；已有句柄只读核对。                                   |
 | COMPOSER_BUSY / WINDOW_BUSY                                                             | 先保留或处理侧栏现有草稿/网页请求，不覆盖、夹带附件或自动排队发送。                              |
-| CONFIRMATION_REQUIRED / RESULT_CONSENT_REQUIRED                                         | 引导用户在侧栏确认发送和分享；网页不能自行提升权限。                                             |
+| CONFIRMATION_REQUIRED / RESULT_CONSENT_REQUIRED                                         | 查看侧栏提示，核对草稿后点击发送。                                                               |
 | CONTEXT_TOO_LARGE / REQUEST_TOO_LARGE / INVALID_REQUEST / UNSUPPORTED_INPUT             | 在下一次操作前缩短并修正完整参数，普通文本入口不支持斜杠命令或附件。                             |
 | EXPIRED / LEASE_REVOKED                                                                 | 旧操作不能恢复为新授权；查看侧栏，按当前页面重新登记并由用户发起新操作。                         |
 | CAPACITY_EXCEEDED                                                                       | 暂停新点击并检查在途请求及侧栏状态，释放已不再需要的绑定；不要自动重放这次操作。                 |
@@ -218,7 +239,8 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 
 ## 9. 接入验收
 
-- 用真实点击验证四种 mode/result 组合，以及首次未授权、允许直接发送、拒绝分享仍仅发送。
+- 用真实点击验证四种 mode/result 组合，覆盖首次连接、旧站点补充授权、手动发送后回传、后续自动发送和只接收状态。
+- 切换扩展的网页消息发送方式，验证它对所有已连接网站的新请求生效，回传仍按每次请求的 `result` 处理。
 - 侧栏已有文字、附件时保留原草稿；每次网页操作使用独立对话。
 - 验证更新记录、替换按钮、取消、页面刷新/跳转、撤权和应用未启动的提示。
 - 已发送后断线/超时只查询，不重发；确认 unknown 不被显示为成功或失败。

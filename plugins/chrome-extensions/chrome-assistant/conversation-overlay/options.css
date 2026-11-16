@@ -187,22 +187,29 @@ textarea:disabled {
   }
 }
 
-.web-launch-choice {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-weight: 400;
-  margin: 9px 0;
-}
-.web-launch-choice input {
-  flex: none;
-  margin-top: 5px;
+.web-launch-send-mode {
+  max-width: 24rem;
+  margin-bottom: 14px;
 }
 .web-launch-site {
   border-top: 1px solid var(--chat-border);
   padding-top: 14px;
   margin-top: 18px;
   overflow-wrap: anywhere;
+}
+.web-launch-site-access {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.web-launch-site-access > strong {
+  min-width: 0;
+}
+.web-launch-site-access > p {
+  flex-basis: 100%;
+  margin: 0;
 }
 #webLaunchSites [data-error='true'] {
   color: var(--chat-error);

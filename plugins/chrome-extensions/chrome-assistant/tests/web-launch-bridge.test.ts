@@ -88,14 +88,15 @@ describe('webpage button bridge', () => {
     );
     button.click();
     expect(launchCount).toBe(0);
-    await binding.update({ prompt: 'new', result: 'final' });
+    await binding.update({ prompt: 'new', result: 'none' });
     click();
     const outbound = runtime.sendMessage.mock.calls.find(([message]) =>
       message.type.endsWith('launch'),
     )![0];
-    expect(outbound.input).toEqual({ prompt: 'new', mode: 'draft', result: 'final' });
+    const expectedInput = { prompt: 'new', mode: 'draft', result: 'none' };
+    expect(outbound.input).toEqual(expectedInput);
     expect(outbound.clickSequence).toBe(1);
-    expect(outbound.payloadDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(outbound.payloadDigest).toBe(await inputDigest(expectedInput, webcrypto));
     await vi.waitFor(() => expect(requests).toHaveLength(1));
     expect(JSON.stringify(requests[0])).not.toContain('private-lease');
     await binding.unbind();

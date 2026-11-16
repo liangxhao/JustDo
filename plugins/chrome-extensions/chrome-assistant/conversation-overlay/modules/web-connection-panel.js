@@ -15,9 +15,9 @@ const ACTIVE = new Set([Status.Awaiting, Status.Granting]);
 const STATUSES = new Set(Object.values(Status));
 
 /** Presents browser-verified connection consent without claiming or changing a composer. */
-export function createWebConnectionPanel({ document, chrome, request }) {
+export function createWebConnectionPanel({ document, chrome, request, onNotice }) {
   const root = document.getElementById('webConnectionCard');
-  if (!root) return { accept() {}, prepared() {}, dispose() {} };
+  if (!root) return { accept() {}, dispose() {} };
   let pending = null;
   let disposed = false;
   let action = 0;
@@ -49,6 +49,11 @@ export function createWebConnectionPanel({ document, chrome, request }) {
   const deny = make('button', 'webConnectionDeny', actions);
   deny.type = 'button';
   const active = () => pending && ACTIVE.has(pending.status) && Date.now() < pending.expiresAt;
+  const errorText = code => {
+    const key = `webConnectionError_${code}`;
+    const text = t(key);
+    return text === key ? t('webConnectionError_GENERIC') : text;
+  };
   const current = (snapshot, operation) =>
     !disposed &&
     action === operation &&
@@ -56,28 +61,17 @@ export function createWebConnectionPanel({ document, chrome, request }) {
     pending.revision === snapshot.revision &&
     active();
   function render() {
-    root.classList.toggle('hidden', !pending);
-    if (!pending) return;
+    const visible = active();
+    root.classList.toggle('hidden', !visible);
+    if (!visible) return;
     origin.textContent = pending.origin;
-    const expired = ACTIVE.has(pending.status) && Date.now() >= pending.expiresAt;
-    const state = expired ? Status.Expired : allowing ? Status.Granting : pending.status;
+    const state = allowing ? Status.Granting : pending.status;
     status.textContent = t(`webConnectionStatus_${state}`);
-    allow.hidden = deny.hidden = !ACTIVE.has(state);
     allow.disabled =
-      !active() ||
-      pending.status !== Status.Awaiting ||
-      allowing ||
-      denying ||
-      pending.requiresAction === false;
-    deny.disabled = !active() || denying;
-    const code = errorCode || pending.code || '';
-    const key = `webConnectionError_${code}`;
-    error.textContent =
-      code && !(code === 'CONNECTION_REJECTED' && pending.status === Status.Rejected)
-        ? t(key) === key
-          ? t('webConnectionError_GENERIC')
-          : t(key)
-        : '';
+      pending.status !== Status.Awaiting || allowing || denying || pending.requiresAction === false;
+    deny.disabled = denying;
+    const code = errorCode || pending.code;
+    error.textContent = code ? errorText(code) : '';
     error.hidden = !error.textContent;
   }
   function accept(value) {
@@ -106,28 +100,36 @@ export function createWebConnectionPanel({ document, chrome, request }) {
     } catch {
       return;
     }
-    if (pending?.pendingId === value.pendingId && value.revision < pending.revision) return;
     if (
-      pending?.pendingId !== value.pendingId ||
-      pending.revision !== value.revision ||
-      !ACTIVE.has(value.status)
-    ) {
+      pending?.pendingId === value.pendingId &&
+      (value.revision < pending.revision ||
+        (!ACTIVE.has(pending.status) && ACTIVE.has(value.status)))
+    )
+      return;
+    const next =
+      ACTIVE.has(value.status) && Date.now() >= value.expiresAt
+        ? { ...value, status: Status.Expired, code: undefined }
+        : { ...value };
+    const statusChanged = pending?.pendingId !== next.pendingId || pending.status !== next.status;
+    if (statusChanged || pending.revision !== next.revision) {
       action += 1;
       allowing = denying = false;
       errorCode = '';
     }
-    pending = { ...value };
+    pending = next;
     clearTimeout(expiryTimer);
-    if (ACTIVE.has(pending.status))
+    if (ACTIVE.has(next.status))
       expiryTimer = setTimeout(
-        () => {
-          action += 1;
-          allowing = denying = false;
-          render();
-        },
-        Math.max(0, pending.expiresAt - Date.now()) + 1,
+        () => accept({ ...next, status: Status.Expired, code: undefined }),
+        Math.max(0, next.expiresAt - Date.now()) + 1,
       );
     render();
+    if (statusChanged && !ACTIVE.has(next.status) && next.status !== Status.Connected)
+      onNotice?.(
+        next.code && next.code !== 'CONNECTION_REJECTED'
+          ? errorText(next.code)
+          : t(`webConnectionStatus_${next.status}`),
+      );
   }
   async function decide(snapshot, operation, decision, reason) {
     try {
@@ -195,13 +197,11 @@ export function createWebConnectionPanel({ document, chrome, request }) {
   });
   return {
     accept,
-    prepared: () => {
-      if (pending?.status === Status.Connected) accept(null);
-    },
     dispose: () => {
       disposed = true;
       action += 1;
       clearTimeout(expiryTimer);
+      root.classList.add('hidden');
     },
   };
 }

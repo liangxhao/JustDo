@@ -79,21 +79,18 @@
         <h1 data-i18n="welcome">What can I help with?</h1>
       </div>
     </main>
+    <dialog id="decisionDialog" class="decision-dialog">
+      <section id="approvals" class="approval-panel hidden" tabindex="-1" aria-live="polite"></section>
+      <section id="webConnectionCard" class="web-connection-card hidden" tabindex="-1" aria-live="polite"></section>
+    </dialog>
     <div class="latest-anchor">
       <button id="latest" type="button" class="latest-button hidden" data-i18n="latest">
         Back to latest
       </button>
     </div>
     <div id="runActivity" class="run-activity hidden"></div>
-    <section id="approvals" class="approval-panel hidden" aria-live="polite" aria-label="Approval request" data-i18n-aria-label="approvalRegion"></section>
     <section id="questions" class="hidden"></section>
     <p id="error" class="error hidden" role="alert"></p>
-    <section
-      id="webConnectionCard"
-      class="web-launch-card web-connection-card hidden"
-      aria-live="polite"
-    ></section>
-    <section id="webLaunchCard" class="web-launch-card hidden" aria-live="polite"></section>
     <div id="addMenu" class="composer-add-menu hidden" role="menu" aria-label="Add" data-i18n-aria-label="addActions">
       <button id="attachFiles" type="button" role="menuitem">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 12 7-7a3 3 0 0 1 4 4L9 19a5 5 0 0 1-7-7L12 2M5 14 15 4" /></svg>
@@ -112,6 +109,7 @@
           data-i18n-placeholder="prompt"
           data-i18n-aria-label="prompt"
         ></textarea>
+        <div id="webLaunchControls" class="web-launch-controls" hidden></div>
         <div class="composer-toolbar">
           <button
             id="attach"
@@ -157,7 +155,7 @@
             >
               <option value="ask" data-i18n="ask">Ask for approval</option>
               <option value="auto" data-i18n="auto">Smart approval</option>
-              <option value="full" data-i18n="full">Full access</option>
+              <option value="full" data-i18n="full" selected>Full access</option>
             </select>
           </label>
           <span class="toolbar-spacer"></span>

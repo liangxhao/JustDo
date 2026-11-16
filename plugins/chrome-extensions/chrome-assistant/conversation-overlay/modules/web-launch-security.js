@@ -9,6 +9,10 @@ export const WEB_RUNTIME = 'web-launch:document:';
 export const WEB_CONNECTION = 'web-launch:connection';
 export const BIND_ATTRIBUTE = 'data-browser-conversation-binding';
 
+export function hasWebsiteLaunchGrant(site) {
+  return site?.enabled === true && site.allowSend === true && site.allowResult === true;
+}
+
 const record = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 const bytes = value => new TextEncoder().encode(value).byteLength;
 
@@ -50,7 +54,7 @@ export function normalizeInput(value) {
     prompt: value.prompt,
     ...(value.context ? { context: { text: value.context.text } } : {}),
     mode: value.mode ?? 'draft',
-    result: value.result ?? 'none',
+    result: value.result ?? 'final',
   };
   if (!['draft', 'send'].includes(input.mode) || !['none', 'final'].includes(input.result))
     return null;

@@ -115,7 +115,7 @@ describe('webpage launch admission and persistence', () => {
     expect(f.threadCreated).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a connection-only card manual and unshared despite an enabled send/result policy', async () => {
+  it('requires manual sending for the connection request and honors the next click automatically', async () => {
     const f = fixture();
     const prepared = f.prepare({ connectionOnly: true, expectedPolicyRevision: f.service.sites().revision });
     expect(prepared.internal.requiresSendConfirmation).toBe(true);
@@ -131,6 +131,64 @@ describe('webpage launch admission and persistence', () => {
     await tick();
     expect(f.wire).toHaveBeenCalledTimes(1);
     expect(f.state().receipts[prepared.receipt.launchId].shareResult).toBe(true);
+    f.finish('FIRST_REPLY');
+    expect((await f.service.read(f.ref(prepared))).receipt.output.text).toBe('FIRST_REPLY');
+
+    const next = f.prepare({ requestId: 'request-2', clickSequence: 2 });
+    expect(next.internal.requiresSendConfirmation).toBe(false);
+    expect(next.internal.requiresResultConsent).toBe(false);
+    f.submit(next);
+    await tick();
+    expect(f.wire).toHaveBeenCalledTimes(2);
+    f.finish('NEXT_REPLY');
+    expect((await f.service.read(f.ref(next))).receipt.output.text).toBe('NEXT_REPLY');
+    expect(f.service.sites().revision).toBe(1);
+  });
+
+  it('applies one sending preference to future clicks without changing accepted runs or requested results', async () => {
+    const f = fixture();
+    expect(f.service.sites().sendMode).toBe('website');
+    const first = f.prepare();
+    f.submit(first);
+    await tick();
+
+    const draftPreference = f.service.setSendMode({ expectedRevision: 1, sendMode: 'draft' });
+    expect(draftPreference.sites[0].revision).toBe(1);
+    expect(() => f.service.setSendMode({ expectedRevision: 1, sendMode: 'send' })).toThrow('POLICY_CONFLICT');
+    expect(() => f.service.setSendMode({ expectedRevision: 2, sendMode: 'invalid' })).toThrow('INVALID_REQUEST');
+    f.finish('ACCEPTED_REPLY');
+    expect((await f.service.read(f.ref(first))).receipt.output.text).toBe('ACCEPTED_REPLY');
+
+    const draft = f.prepare({ requestId: 'draft-override', clickSequence: 2 });
+    expect(draft.internal).toMatchObject({ effectiveMode: 'draft', requiresSendConfirmation: true });
+    expect(() => f.submit(draft)).toThrow('CONFIRMATION_REQUIRED');
+    f.service.cancel(f.ref(draft));
+
+    f.service.setSendMode({ expectedRevision: 2, sendMode: 'send' });
+    const secondSite = { ...source, origin: 'https://other.example', documentId: 'doc-2' };
+    const connected = f.service.writeSite({
+      expectedRevision: 3, origin: secondSite.origin, enabled: true, allowSend: true, allowResult: true,
+    });
+    const stateOnly: WebLaunchInput = { ...input, mode: 'draft', result: 'none' };
+    const firstOnSite = f.prepare({
+      source: secondSite, requestId: 'connection', input: stateOnly,
+      connectionOnly: true, expectedPolicyRevision: connected.revision,
+    });
+    expect(firstOnSite.internal.requiresSendConfirmation).toBe(true);
+    f.service.cancel(f.ref(firstOnSite, secondSite));
+
+    const direct = f.prepare({ source: secondSite, requestId: 'direct-override', clickSequence: 2, input: stateOnly });
+    expect(direct.internal).toMatchObject({ effectiveMode: 'send', requiresSendConfirmation: false });
+    expect(direct.receipt.output.status).toBe('not-requested');
+    f.submit(direct, { shareResult: false });
+    await tick();
+    expect(f.wire).toHaveBeenCalledTimes(2);
+    f.finish('PRIVATE_REPLY');
+    expect((await f.service.read(f.ref(direct, secondSite))).receipt.output).toEqual({ status: 'not-requested' });
+
+    f.service.setSendMode({ expectedRevision: connected.revision, sendMode: 'website' });
+    const next = f.prepare({ source: secondSite, requestId: 'site-choice', clickSequence: 3, input: stateOnly });
+    expect(next.internal).toMatchObject({ effectiveMode: 'draft', requiresSendConfirmation: true });
   });
 
   it('rejects stale connection consent against the global policy revision without creating a session', () => {
@@ -226,6 +284,21 @@ describe('webpage launch admission and persistence', () => {
     expect(result.receipt.request.status).toBe('cancelled');
     expect(result.receipt.execution).toEqual({ status: 'not-started', executionSettled: false });
   });
+
+  it('closes an unsent draft when its website connection is revoked', async () => {
+    const f = fixture();
+    const prepared = f.prepare();
+
+    f.service.writeSite({ expectedRevision: 1, origin: source.origin, enabled: false, allowSend: false, allowResult: false });
+
+    const { observations } = await f.service.observations();
+    expect(observations).toContainEqual(expect.objectContaining({ receipt: expect.objectContaining({
+      launchId: prepared.receipt.launchId,
+      request: { status: 'cancelled' },
+      delivery: { status: 'revoked' },
+    }) }));
+    expect(f.chat.sendMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('webpage owned sender and exact results', () => {
@@ -263,6 +336,26 @@ describe('webpage owned sender and exact results', () => {
     expect(f.wire).not.toHaveBeenCalled();
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.abort')).toBe(false);
     expect(f.state().receipts[prepared.receipt.launchId].notSent).toBe(true);
+  });
+
+  it('rejects a delayed confirmed submission or edit after Stop closes the draft', async () => {
+    const f = fixture();
+    const prepared = f.prepare();
+    const { launchId } = prepared.receipt;
+
+    const stopped = await f.service.stop({ launchId });
+    expect(stopped.receipt.request.status).toBe('cancelled');
+    expect(() => f.submit(prepared, { submission: 'confirmed' })).toThrow('EXPIRED');
+    expect(() => f.service.revise({
+      launchId, expectedComposeRevision: prepared.internal.composeRevision,
+      input: { prompt: 'A delayed edit', permissionMode: 'ask' },
+    })).toThrow('EXPIRED');
+    expect(f.state().receipts[launchId].requestStatus).toBe('cancelled');
+    expect(f.chat.sendMessage).not.toHaveBeenCalled();
+
+    const restarted = new ChromeWebLaunchService(f.deps);
+    services.push(restarted);
+    expect(f.state().receipts[launchId].requestStatus).toBe('cancelled');
   });
 
   it('retains a Stop on unknown dispatch and aborts only the later explicit native ACK identity', async () => {
@@ -367,9 +460,16 @@ describe('webpage owned sender and exact results', () => {
     expect(() => f.submit(result)).toThrow('CONFIRMATION_REQUIRED');
   });
 
-  it('returns only the exact final message and keeps result bodies out of metadata', async () => {
-    const f = fixture(); const prepared = f.prepare();
-    f.submit(prepared); await tick(); f.finish();
+  it('returns the exact final result after one confirmed send without granting future automatic return', async () => {
+    const f = fixture();
+    const policy = f.service.writeSite({ expectedRevision: 1, origin: source.origin, enabled: true, allowSend: true, allowResult: false });
+    const prepared = f.prepare();
+    expect(() => f.submit(prepared)).toThrow('CONFIRMATION_REQUIRED');
+    f.submit(prepared, { submission: 'confirmed' });
+    await tick();
+    expect(f.wire).toHaveBeenCalledOnce();
+    expect(f.service.sites()).toEqual(policy);
+    f.finish();
     const result = await f.service.read(f.ref(prepared));
     expect(result.receipt.execution).toEqual({ status: 'completed', executionSettled: true });
     expect(result.receipt.output).toEqual({ status: 'available', text: 'SYNTHETIC_FINAL', format: 'text' });

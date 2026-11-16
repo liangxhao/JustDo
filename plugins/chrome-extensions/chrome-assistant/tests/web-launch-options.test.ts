@@ -19,15 +19,22 @@ const site = {
   allowSend: false,
   allowResult: false,
 };
-type SettingsMessage = { type: string } & Partial<typeof site>;
-async function mount(initial: (typeof site)[] = []) {
+type SettingsMessage = { type: string; sendMode?: string } & Partial<typeof site>;
+async function mount(initial: (typeof site)[] = [], initialMode?: string) {
   document.body.innerHTML = '<section id="webLaunchSites"></section>';
   const policies = initial.map(value => ({ ...value }));
+  let sendMode = initialMode;
+  let revision = 7;
   const permission = vi.fn();
   const sendMessage = vi.fn(async (message: SettingsMessage): Promise<Record<string, unknown>> => {
     if (message.type === Message.List)
-      return { ok: true, sitesRevision: 7, policies: [...policies] };
+      return { ok: true, sitesRevision: revision, policies: [...policies], sendMode };
     if (message.type === Message.Observations) return { ok: true, observations: [] };
+    if (message.type === Message.SendMode) {
+      sendMode = message.sendMode;
+      revision += 1;
+      return { ok: true, sitesRevision: revision, sendMode };
+    }
     if (message.type === Message.Save) {
       const index = policies.findIndex(value => value.origin === message.origin);
       if (index >= 0) policies[index] = { ...policies[index], ...message };
@@ -52,38 +59,66 @@ async function mount(initial: (typeof site)[] = []) {
 }
 
 describe('website launch options', () => {
-  it('explains website-initiated connection without a manual address or combined permission grant', async () => {
-    const { permission } = await mount();
-    expect(document.body.textContent).toContain('No address entry is needed.');
+  it('offers one global selector and saves with no connected websites', async () => {
+    const { permission, sendMessage } = await mount();
+    expect(document.body.textContent).toContain('Click the conversation button on a website');
     expect(document.body.textContent).toContain('No connected websites.');
     expect(document.querySelector('input[type="url"]')).toBeNull();
     expect(document.querySelectorAll('input')).toHaveLength(0);
     expect(permission).not.toHaveBeenCalled();
+    const mode = document.querySelector<HTMLSelectElement>('#webLaunchSendMode')!;
+    expect(mode.labels?.[0].textContent).toBe('Website message sending mode');
+    expect([...mode.options].map(option => option.textContent)).toEqual([
+      'Follow website (default)',
+      'Send directly',
+      'Open as draft',
+    ]);
+    expect(mode.value).toBe('website');
+    expect(mode.disabled).toBe(false);
+    mode.focus();
+    mode.value = 'draft';
+    mode.dispatchEvent(new Event('change'));
+    expect(mode.disabled).toBe(true);
+    expect(sendMessage).toHaveBeenLastCalledWith({
+      type: Message.SendMode,
+      expectedRevision: 7,
+      sendMode: 'draft',
+    });
+    await vi.waitFor(() => expect(mode.disabled).toBe(false));
+    expect(mode.value).toBe('draft');
+    expect(document.activeElement).toBe(mode);
   });
 
-  it('keeps direct sending and result sharing separately opt-in for an already connected website', async () => {
-    const { sendMessage, permission } = await mount([site]);
-    const send = document.querySelectorAll<HTMLInputElement>('.web-launch-choice input')[0];
-    const result = document.querySelectorAll<HTMLInputElement>('.web-launch-choice input')[1];
-    expect(send.checked).toBe(false);
-    expect(result.checked).toBe(false);
-    send.checked = true;
-    send.dispatchEvent(new Event('change'));
-    await vi.waitFor(() =>
-      expect(sendMessage).toHaveBeenCalledWith({
-        type: Message.Save,
-        expectedRevision: 7,
-        origin: site.origin,
-        enabled: true,
-        allowSend: true,
-        allowResult: false,
-      }),
+  it('lists sites for revocation and directs legacy partial grants to reconfirm from the website', async () => {
+    const connected = {
+      ...site,
+      origin: 'https://approved.test',
+      allowSend: true,
+      allowResult: true,
+    };
+    const { sendMessage, permission } = await mount(
+      [{ ...site, allowSend: true }, connected],
+      'send',
     );
+    expect(document.querySelectorAll('select')).toHaveLength(1);
+    expect(document.querySelector<HTMLSelectElement>('#webLaunchSendMode')?.value).toBe('send');
+    const rows = [...document.querySelectorAll('.web-launch-site-access')];
+    expect(rows.map(row => row.querySelector('strong')?.textContent)).toEqual([
+      connected.origin,
+      site.origin,
+    ]);
+    expect(rows[0].querySelector('p')).toBeNull();
+    expect(rows[1].textContent).toContain(
+      'Click the website’s conversation button to confirm access again.',
+    );
+    for (const row of rows) {
+      expect(row.querySelector('input, select')).toBeNull();
+      expect([...row.querySelectorAll('button')].map(button => button.textContent)).toEqual([
+        'Revoke website access',
+      ]);
+    }
+    expect(sendMessage.mock.calls.some(([value]) => value.type === Message.Save)).toBe(false);
     expect(permission).not.toHaveBeenCalled();
-    await vi.waitFor(() =>
-      expect(document.body.textContent).toContain('Website permissions saved.'),
-    );
-    expect(document.body.textContent).not.toContain('[object Object]');
   });
 
   it('revokes all site permissions without deleting shared Chrome permissions', async () => {
@@ -153,9 +188,7 @@ describe('website launch options', () => {
     sendMessage.mockResolvedValue({ ok: false, code: 'APP_NOT_RUNNING' });
     await view.refresh();
     expect(button('Revoke website access').disabled).toBe(true);
-    expect(document.querySelector<HTMLInputElement>('.web-launch-choice input')?.disabled).toBe(
-      true,
-    );
+    expect(document.querySelector<HTMLSelectElement>('#webLaunchSendMode')?.disabled).toBe(true);
     expect(document.body.textContent).toContain('Check that the desktop application is running');
   });
 });

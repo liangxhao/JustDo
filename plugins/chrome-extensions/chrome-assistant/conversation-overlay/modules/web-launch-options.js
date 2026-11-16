@@ -1,11 +1,24 @@
+import { WebLaunchSendMode } from '../../contracts/webLaunch.ts';
 import { t } from './options-i18n.js';
 
 export const WebLaunchOptionsMessage = {
   List: 'web-launch:sites:list',
   Save: 'web-launch:sites:save',
+  SendMode: 'web-launch:sites:send-mode',
   Observations: 'web-launch:observations:list',
   Abandon: 'web-launch:launch:abandon',
 };
+
+const SEND_MODE_LABELS = {
+  [WebLaunchSendMode.Website]: 'webLaunchSendModeWebsite',
+  [WebLaunchSendMode.Direct]: 'webLaunchSendModeDirect',
+  [WebLaunchSendMode.Draft]: 'webLaunchSendModeDraft',
+};
+
+const readSendMode = value =>
+  typeof value === 'string' && Object.hasOwn(SEND_MODE_LABELS, value)
+    ? value
+    : WebLaunchSendMode.Website;
 
 export function createWebLaunchOptions({
   document,
@@ -18,6 +31,7 @@ export function createWebLaunchOptions({
   let busy = false;
   let generation = 0;
   let revision = 0;
+  let sendMode = WebLaunchSendMode.Website;
   let loaded = false;
   const make = (tag, text, parent = root) => {
     const node = document.createElement(tag);
@@ -27,14 +41,15 @@ export function createWebLaunchOptions({
   };
   make('h2', 'webLaunchSitesTitle');
   make('p', 'webLaunchSitesHint').className = 'muted';
-  const choice = (key, parent) => {
-    const element = make('label', null, parent);
-    element.className = 'web-launch-choice';
-    const input = make('input', null, element);
-    input.type = 'checkbox';
-    make('span', key, element);
-    return input;
-  };
+  const modeRow = make('div');
+  modeRow.className = 'web-launch-send-mode';
+  const modeLabel = make('label', 'webLaunchSendMode', modeRow);
+  modeLabel.htmlFor = 'webLaunchSendMode';
+  const modeSelect = make('select', null, modeRow);
+  modeSelect.id = modeLabel.htmlFor;
+  for (const [value, label] of Object.entries(SEND_MODE_LABELS)) {
+    make('option', label, modeSelect).value = value;
+  }
   const refreshButton = make('button', 'webLaunchRefresh');
   refreshButton.type = 'button';
   refreshButton.addEventListener('click', () => {
@@ -58,7 +73,9 @@ export function createWebLaunchOptions({
   };
   function controls() {
     refreshButton.disabled = busy;
-    for (const node of sites.querySelectorAll('button,input')) node.disabled = busy || !loaded;
+    modeSelect.disabled = busy || !loaded;
+    if (!busy) modeSelect.value = sendMode;
+    for (const node of sites.querySelectorAll('button')) node.disabled = busy || !loaded;
     for (const node of observations.querySelectorAll('button')) node.disabled = busy;
   }
   function showFailure(code) {
@@ -88,29 +105,35 @@ export function createWebLaunchOptions({
       if (!disposed) await refresh();
     }
   }
+  modeSelect.addEventListener('change', () => {
+    const selected = readSendMode(modeSelect.value);
+    if (!loaded || busy || selected === sendMode) return;
+    const restoreFocus = document.activeElement === modeSelect;
+    void perform(async () => {
+      const result = await request(WebLaunchOptionsMessage.SendMode, {
+        sendMode: selected,
+        expectedRevision: revision,
+      });
+      sendMode = readSendMode(result.sendMode);
+      return 'webLaunchSendModeSaved';
+    }).then(() => {
+      if (
+        restoreFocus &&
+        !disposed &&
+        !modeSelect.disabled &&
+        document.activeElement === document.body
+      )
+        modeSelect.focus();
+    });
+  });
   function renderSites(policies) {
     sites.replaceChildren();
     for (const policy of [...policies].sort((a, b) => a.origin.localeCompare(b.origin))) {
       if (!policy.enabled) continue;
       const row = make('div', null, sites);
-      row.className = 'web-launch-site';
+      row.className = 'web-launch-site web-launch-site-access';
       const heading = make('strong', null, row);
       heading.textContent = policy.origin;
-      const send = choice('webLaunchAllowSend', row);
-      send.checked = policy.allowSend;
-      const result = choice('webLaunchAllowResult', row);
-      result.checked = policy.allowResult;
-      const update = () =>
-        void perform(() =>
-          save({
-            origin: policy.origin,
-            enabled: true,
-            allowSend: send.checked,
-            allowResult: result.checked,
-          }),
-        );
-      send.addEventListener('change', update);
-      result.addEventListener('change', update);
       const revoke = make('button', 'webLaunchRevoke', row);
       revoke.type = 'button';
       revoke.addEventListener(
@@ -120,6 +143,8 @@ export function createWebLaunchOptions({
             save({ origin: policy.origin, enabled: false, allowSend: false, allowResult: false }),
           ),
       );
+      if (!policy.allowSend || !policy.allowResult)
+        make('p', 'webLaunchReconnect', row).className = 'muted';
     }
     if (!policies.some(policy => policy.enabled))
       make('p', 'webLaunchNoSites', sites).className = 'muted';
@@ -154,6 +179,7 @@ export function createWebLaunchOptions({
       ]);
       if (disposed || next !== generation) return;
       revision = result.sitesRevision ?? result.revision ?? 0;
+      sendMode = readSendMode(result.sendMode);
       const policies = result.policies ?? result.sites ?? [];
       loaded = true;
       renderSites(policies);

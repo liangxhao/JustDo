@@ -24,14 +24,19 @@ export function createWebLaunchPanel({
   refreshThread = async () => {},
   onReceipt = noop,
   onChange = noop,
+  onError = noop,
+  onClearError = noop,
+  isTurnSettled = () => false,
   confirm = message => globalThis.confirm(message),
 }) {
-  const root = document.getElementById('webLaunchCard');
+  const root = document.getElementById('webLaunchControls');
   if (!root || !chrome?.runtime?.sendMessage || !chrome?.windows?.getCurrent) {
     return {
       inputAssociated: () => false,
       ownsThread: () => false,
-      blocked: () => false,
+      composerAction: () => null,
+      activity: () => null,
+      updateSelection: noop,
       edit: noop,
       publishState: noop,
       ready: noop,
@@ -57,44 +62,30 @@ export function createWebLaunchPanel({
   let initialized = false;
   let modelChanged = false;
   let actionPending = false;
+  let stopPending = '';
+  let submissionStartedAt;
   let cancellation = null;
   let lastState = '';
-  let previousThread = '';
   let expiryTimer;
   let connectionVersion = 0;
+  let visibleLaunch = '';
   const make = (tag, key, parent = root) => {
     const node = document.createElement(tag);
     if (key) node.textContent = t(key);
     parent.append(node);
     return node;
   };
-  const title = make('strong', 'webLaunchTitle');
-  const origin = make('p');
-  origin.className = 'web-launch-origin';
-  const status = make('p');
-  status.setAttribute('role', 'status');
+  const recipient = make('p');
   const contextDetails = make('details');
   make('summary', 'webLaunchContext', contextDetails);
   const context = make('textarea', null, contextDetails);
   context.setAttribute('aria-label', t('webLaunchContext'));
   context.maxLength = 24000;
-  const option = key => {
-    const label = make('label');
-    label.className = 'web-launch-choice';
-    const input = make('input', null, label);
-    input.type = 'checkbox';
-    make('span', key, label);
-    return { label, input };
-  };
-  const share = option('webLaunchShare');
-  const warning = make('p', 'webLaunchShareHint');
-  warning.className = 'web-launch-hint';
-  const rememberSend = option('webLaunchRememberSend');
-  const rememberResult = option('webLaunchRememberResult');
-  const newTask = option('webLaunchUnknownConfirm');
-  const error = make('p');
-  error.className = 'error';
-  error.setAttribute('role', 'alert');
+  const newTaskLabel = make('label');
+  newTaskLabel.className = 'web-launch-choice';
+  const newTask = make('input', null, newTaskLabel);
+  newTask.type = 'checkbox';
+  make('span', 'webLaunchUnknownConfirm', newTaskLabel);
   const actions = make('div');
   actions.className = 'web-launch-actions';
   const button = (key, action) => {
@@ -103,24 +94,63 @@ export function createWebLaunchPanel({
     node.addEventListener('click', () => void action());
     return node;
   };
-  const submitButton = button('webLaunchSendOnly', () => submit('confirmed'));
-  submitButton.className = 'primary';
-  const cancelButton = button('webLaunchCancel', () => cancel(false));
-  const ordinaryButton = button('webLaunchOrdinary', () => cancel(true));
-  const stopButton = button('stop', stop);
+  const ordinaryButton = button('webLaunchOrdinary', recoverDraft);
   const abandonButton = button('webLaunchAbandon', abandon);
-  const returnButton = button('webLaunchReturn', async () => {
-    if (previousThread) await refreshThread(previousThread);
-  });
-  const inputAssociated = () =>
-    Boolean(current && !inputReleased && !CLOSED.has(receipt?.request?.status));
+  const inputAssociated = () => Boolean(current && !inputReleased);
+  const closed = () => CLOSED.has(receipt?.request?.status);
+  const draftUnavailable = () => closed() || Date.now() >= current.expiresAt;
   const ownsThread = threadId =>
     Boolean(
       current &&
       current.threadId === threadId &&
+      !(current.clientTurnId && isTurnSettled(threadId, current.clientTurnId)) &&
       !receipt?.execution?.executionSettled &&
-      !CLOSED.has(receipt?.request?.status),
+      !closed(),
     );
+  const selected = () => Boolean(current && readComposer().threadId === current.threadId);
+  const submitted = () =>
+    SENT.has(receipt?.request?.status) ||
+    Boolean(receipt?.execution?.status && receipt.execution.status !== 'not-started');
+  const canSubmit = () => {
+    const composer = readComposer();
+    return Boolean(
+      selected() &&
+      inputAssociated() &&
+      !draftUnavailable() &&
+      !submitted() &&
+      !busy &&
+      !installing &&
+      !actionPending &&
+      !dirty &&
+      !revisionError &&
+      composer.ready &&
+      composer.prompt.trim() &&
+      (!current.requiresUnknownConfirmation || newTask.checked),
+    );
+  };
+  function composerAction(threadId, turnId) {
+    if (!current || current.threadId !== threadId) return null;
+    if (turnId && current.clientTurnId !== turnId) return null;
+    if (ownsThread(threadId) && (busy || submitted()))
+      return { type: 'stop', disabled: actionPending || stopPending === current.launchId };
+    if (inputAssociated())
+      return {
+        type: 'send',
+        disabled: !canSubmit(),
+        label: current.result === 'final' ? 'webLaunchSendReturn' : 'webLaunchSendOnly',
+      };
+    return null;
+  }
+  function activity(threadId, turnId) {
+    if (composerAction(threadId, turnId)?.type !== 'stop') return null;
+    if (stopPending === current.launchId)
+      return { stage: 'stopping', startedAt: submissionStartedAt };
+    if (receipt?.execution?.status === 'unknown')
+      return { stage: 'checking', startedAt: submissionStartedAt };
+    if (busy || receipt?.request?.status === 'submitting')
+      return { stage: 'sending', startedAt: submissionStartedAt };
+    return null;
+  }
   const actualInput = () => {
     const composer = readComposer();
     return {
@@ -130,11 +160,13 @@ export function createWebLaunchPanel({
       permissionMode: composer.permissionMode || 'ask',
     };
   };
-  const fail = code => {
-    error.textContent =
+  const fail = (code, launchId = current?.launchId) => {
+    if (disposed || (launchId && (launchId !== current?.launchId || !selected()))) return;
+    onError(
       t(`webLaunchError_${code}`) === `webLaunchError_${code}`
         ? t('webLaunchError_GENERIC')
-        : t(`webLaunchError_${code}`);
+        : t(`webLaunchError_${code}`),
+    );
   };
   const request = async (type, params = {}) => {
     const result = await chrome.runtime.sendMessage({
@@ -149,68 +181,41 @@ export function createWebLaunchPanel({
       });
     return result;
   };
-  const connection = createWebConnectionPanel({ document, chrome, request });
+  const connection = createWebConnectionPanel({ document, chrome, request, onNotice: onError });
+  function updateSelection() {
+    const show = selected();
+    const draft = show && inputAssociated() && !submitted() && !busy;
+    const editable = draft && !draftUnavailable();
+    const canRecover = draft && !editable;
+    const canAbandon = show && receipt?.execution?.status === 'unknown';
+    const showRecipient = editable && current.result === 'final';
+    const showContext = editable && current.contextText !== undefined;
+    const showUnknownConfirmation = editable && current.requiresUnknownConfirmation;
+    const launch = show ? current.launchId : '';
+    if (launch !== visibleLaunch || !showContext) contextDetails.open = false;
+    visibleLaunch = launch;
+    root.hidden = !(
+      showRecipient ||
+      showContext ||
+      showUnknownConfirmation ||
+      canRecover ||
+      canAbandon
+    );
+    recipient.hidden = !showRecipient;
+    recipient.textContent = showRecipient
+      ? t('webLaunchReturningTo', { origin: current.origin })
+      : '';
+    contextDetails.hidden = !showContext;
+    context.disabled = !editable;
+    newTaskLabel.hidden = !showUnknownConfirmation;
+    actions.hidden = !(canRecover || canAbandon);
+    ordinaryButton.hidden = !canRecover;
+    ordinaryButton.disabled = actionPending;
+    abandonButton.hidden = !canAbandon;
+    abandonButton.disabled = busy || actionPending;
+  }
   function render() {
-    root.classList.toggle('hidden', !current);
-    if (!current) {
-      onChange();
-      return;
-    }
-    origin.textContent = current.origin;
-    const execution = receipt?.execution?.status;
-    const requestStatus = receipt?.request?.status;
-    const shareStatus = receipt?.output?.status;
-    status.textContent = t(
-      `webLaunchStatus_${execution === 'not-started' ? requestStatus : execution}`,
-    );
-    if (shareStatus === 'withheld') status.textContent += ` · ${t('webLaunchWithheld')}`;
-    else if (
-      current.result === 'final' &&
-      ['pending', 'available', 'empty', 'unsupported', 'unavailable', 'awaiting-consent'].includes(
-        shareStatus,
-      )
-    )
-      status.textContent += ` · ${t(`webLaunchOutput_${shareStatus}`)}`;
-    const associated = inputAssociated();
-    const submitted = SENT.has(requestStatus) || (execution && execution !== 'not-started');
-    contextDetails.hidden = !associated || (current.contextText === undefined && !context.value);
-    context.disabled = !associated || submitted;
-    share.label.hidden = !associated || current.result !== 'final';
-    warning.hidden = share.label.hidden || !share.input.checked;
-    rememberSend.label.hidden =
-      !associated || current.mode !== 'send' || current.automaticSendAllowed;
-    rememberResult.label.hidden =
-      !associated || current.result !== 'final' || current.shareAllowed || !share.input.checked;
-    newTask.label.hidden = !associated || !current.requiresUnknownConfirmation;
-    submitButton.textContent = t(
-      share.input.checked && current.result === 'final'
-        ? 'webLaunchSendReturn'
-        : 'webLaunchSendOnly',
-    );
-    submitButton.hidden = !associated || submitted;
-    submitButton.disabled =
-      busy ||
-      dirty ||
-      revisionError ||
-      !readComposer().ready ||
-      !readComposer().prompt.trim() ||
-      (current.requiresUnknownConfirmation && !newTask.input.checked) ||
-      Date.now() >= current.expiresAt;
-    cancelButton.textContent = t(submitted ? 'webLaunchStopSharing' : 'webLaunchCancel');
-    cancelButton.hidden = !associated && (current.result !== 'final' || shareStatus === 'withheld');
-    cancelButton.disabled = actionPending;
-    ordinaryButton.hidden = !associated || submitted;
-    ordinaryButton.disabled = busy;
-    stopButton.hidden =
-      (!submitted && !busy) ||
-      receipt?.execution?.executionSettled === true ||
-      CLOSED.has(requestStatus);
-    stopButton.disabled = actionPending;
-    abandonButton.hidden = execution !== 'unknown';
-    abandonButton.disabled = busy;
-    returnButton.hidden = !previousThread;
-    returnButton.disabled = associated;
-    title.textContent = t('webLaunchTitle');
+    updateSelection();
     onChange();
   }
   function acceptReceipt(response) {
@@ -223,6 +228,7 @@ export function createWebLaunchPanel({
     ) {
       receipt = next;
       current.receipt = next;
+      if (response.internal?.clientTurnId) current.clientTurnId = response.internal.clientTurnId;
       if (response.internal?.requiresSendConfirmation !== undefined) {
         current.automaticSendAllowed = !response.internal.requiresSendConfirmation;
         if (response.internal.requiresSendConfirmation) automaticDisarmed = true;
@@ -231,26 +237,30 @@ export function createWebLaunchPanel({
         current.shareAllowed =
           current.result === 'final' && !response.internal.requiresResultConsent;
       if (next.request.status === 'awaiting-confirmation') automaticDisarmed = true;
-      if (next.error?.code) fail(next.error.code);
+      const intentionalCancel =
+        next.error?.code === 'CANCELLED' &&
+        (cancellation?.launchId === next.launchId || stopPending === next.launchId);
+      if (next.error?.code && !intentionalCancel) fail(next.error.code);
       if (response.internal?.composeRevision !== undefined)
         current.composeRevision = response.internal.composeRevision;
       if (response.internal?.deadlineAt) current.expiresAt = response.internal.deadlineAt;
       if (next.request.status === 'submitted' || next.execution.status === 'running') {
         const original = readComposer().prompt;
         inputReleased = true;
-        if (!dirty && original === current.lastSubmittedPrompt)
+        if (selected() && !dirty && original === current.lastSubmittedPrompt)
           installComposer({ clearPrompt: true });
       }
-      if (CLOSED.has(next.request.status)) inputReleased = true;
       onReceipt({ ...response, threadId: response.internal?.threadId || current.threadId });
       if (CLOSED.has(next.request.status) && cancellation?.launchId === next.launchId) {
         if (
           cancellation.hadInput &&
+          selected() &&
           !cancellation.keepText &&
           inputVersion === cancellation.inputVersion &&
           readComposer().prompt === cancellation.prompt
         )
           installComposer({ clearPrompt: true });
+        inputReleased = true;
         cancellation = null;
         current = null;
         receipt = null;
@@ -267,6 +277,7 @@ export function createWebLaunchPanel({
           composer.prompt.trim() ||
           composer.attachments ||
           composer.attachmentReads ||
+          composer.busy ||
           busy ||
           inputAssociated(),
         ),
@@ -284,15 +295,15 @@ export function createWebLaunchPanel({
       if (failure.code === 'FORBIDDEN') await register();
     }
   }
-  async function acceptEnvelope(envelope) {
+  async function acceptEnvelope(envelope, internal) {
     if (disposed || !envelope || envelope.launchId === current?.launchId) return;
-    connection.prepared();
     const composer = readComposer();
     const alreadyDispatched =
       SENT.has(envelope.receipt?.request?.status) ||
       (envelope.receipt?.execution?.status && envelope.receipt.execution.status !== 'not-started');
     if (alreadyDispatched) {
-      current = { ...envelope };
+      if (inputAssociated()) return;
+      current = { ...envelope, clientTurnId: internal?.clientTurnId };
       receipt = envelope.receipt;
       inputReleased = true;
       automaticDisarmed = true;
@@ -303,6 +314,7 @@ export function createWebLaunchPanel({
       composer.prompt.trim() ||
       composer.attachments ||
       composer.attachmentReads ||
+      composer.busy ||
       busy ||
       inputAssociated()
     ) {
@@ -310,25 +322,22 @@ export function createWebLaunchPanel({
         launchId: envelope.launchId,
         reason: 'composer-busy',
       }).catch(() => {});
-      fail('COMPOSER_BUSY');
+      fail('COMPOSER_BUSY', null);
       return;
     }
     current = { ...envelope };
     receipt = envelope.receipt;
-    previousThread = composer.threadId;
+    submissionStartedAt = undefined;
     inputReleased = false;
     cancellation = null;
     dirty = false;
     revisionError = false;
     automaticDisarmed = envelope.restored === true;
     modelChanged = false;
-    error.textContent = '';
+    onClearError();
     installing = true;
     context.value = envelope.contextText || '';
-    share.input.checked = envelope.result === 'final';
-    rememberSend.input.checked = false;
-    rememberResult.input.checked = false;
-    newTask.input.checked = false;
+    newTask.checked = false;
     installComposer({
       prompt: envelope.prompt,
       permissionMode: 'ask',
@@ -357,7 +366,7 @@ export function createWebLaunchPanel({
     if (revisePromise || !current || !inputAssociated()) return revisePromise;
     const launchId = current.launchId;
     revisePromise = (async () => {
-      while (dirty && current?.launchId === launchId && !disposed) {
+      while (dirty && current?.launchId === launchId && selected() && !closed() && !disposed) {
         const version = inputVersion;
         const input = actualInput();
         try {
@@ -365,7 +374,6 @@ export function createWebLaunchPanel({
             launchId,
             expectedComposeRevision: current.composeRevision,
             input,
-            shareResult: current.result === 'final' && share.input.checked,
           });
           if (current?.launchId !== launchId || disposed) return;
           if (result.internal?.composeRevision !== undefined)
@@ -376,7 +384,7 @@ export function createWebLaunchPanel({
         } catch (failure) {
           if (current?.launchId !== launchId || disposed) return;
           revisionError = true;
-          fail(failure.code);
+          fail(failure.code, launchId);
           break;
         }
       }
@@ -388,8 +396,8 @@ export function createWebLaunchPanel({
     return revisePromise;
   }
   function edit(field) {
+    if (installing || !selected() || !inputAssociated() || draftUnavailable() || disposed) return;
     if (field === 'model') modelChanged = true;
-    if (installing || !inputAssociated() || disposed) return;
     automaticDisarmed = true;
     dirty = true;
     inputVersion += 1;
@@ -416,18 +424,7 @@ export function createWebLaunchPanel({
     await submit('automatic');
   }
   async function submit(submission = 'confirmed') {
-    if (
-      !inputAssociated() ||
-      SENT.has(receipt?.request?.status) ||
-      busy ||
-      dirty ||
-      revisionError ||
-      !readComposer().ready ||
-      !readComposer().prompt.trim() ||
-      Date.now() >= current.expiresAt ||
-      (current.requiresUnknownConfirmation && !newTask.input.checked)
-    )
-      return;
+    if (!canSubmit()) return;
     if (
       submission === 'automatic' &&
       (automaticDisarmed ||
@@ -439,8 +436,9 @@ export function createWebLaunchPanel({
     const launchId = current.launchId;
     const input = actualInput();
     current.lastSubmittedPrompt = input.prompt;
+    submissionStartedAt = Date.now();
     busy = true;
-    error.textContent = '';
+    onClearError();
     render();
     try {
       const result = await request(WebLaunchPanelMessage.Submit, {
@@ -448,19 +446,16 @@ export function createWebLaunchPanel({
         composeRevision: current.composeRevision,
         input,
         submission,
-        shareResult: current.result === 'final' && share.input.checked,
-        rememberSend: submission === 'confirmed' && rememberSend.input.checked,
-        rememberResult:
-          submission === 'confirmed' && share.input.checked && rememberResult.input.checked,
-        confirmNewTask: newTask.input.checked,
+        shareResult: current.result === 'final',
+        confirmNewTask: newTask.checked,
       });
       if (current?.launchId !== launchId || disposed) return;
       acceptReceipt(result);
-      await refreshThread(current.threadId);
+      if (selected() && !receipt?.error) await refreshThread(current.threadId);
     } catch (failure) {
       if (current?.launchId === launchId && !disposed) {
         automaticDisarmed = true;
-        fail(failure.code);
+        fail(failure.code, launchId);
       }
     } finally {
       busy = false;
@@ -468,8 +463,22 @@ export function createWebLaunchPanel({
       void publishState();
     }
   }
+  function recoverDraft() {
+    if (selected() && inputAssociated() && !submitted() && !busy && draftUnavailable())
+      return cancel(true);
+  }
   async function cancel(keepText) {
-    if (!current || actionPending) return;
+    if (!selected() || actionPending) return;
+    if (closed()) {
+      if (!inputAssociated()) return;
+      if (!keepText) installComposer({ clearPrompt: true });
+      inputReleased = true;
+      current = null;
+      receipt = null;
+      onClearError();
+      render();
+      return;
+    }
     const launchId = current.launchId;
     const cancellingPrompt = readComposer().prompt;
     const hadInput = inputAssociated();
@@ -493,41 +502,61 @@ export function createWebLaunchPanel({
         receipt = null;
       }
     } catch (failure) {
-      fail(failure.code);
+      fail(failure.code, launchId);
     } finally {
       actionPending = false;
       render();
       void publishState();
     }
   }
-  async function stop() {
-    if (!current) return;
+  async function stop(turnId) {
+    const action = composerAction(readComposer().threadId, turnId);
+    if (action?.type !== 'stop' || action.disabled) return;
+    const launchId = current.launchId;
+    stopPending = launchId;
+    render();
     try {
-      acceptReceipt(await request(WebLaunchPanelMessage.Stop, { launchId: current.launchId }));
+      acceptReceipt(await request(WebLaunchPanelMessage.Stop, { launchId }));
     } catch (failure) {
-      fail(failure.code);
+      fail(failure.code, launchId);
+    } finally {
+      if (stopPending === launchId) {
+        stopPending = '';
+        render();
+      }
     }
   }
   async function abandon() {
-    if (!current || !confirm(t('webLaunchAbandonConfirm'))) return;
+    if (
+      !selected() ||
+      receipt?.execution?.status !== 'unknown' ||
+      actionPending ||
+      !confirm(t('webLaunchAbandonConfirm'))
+    )
+      return;
+    const launchId = current.launchId;
+    actionPending = true;
+    render();
     try {
       const result = await request(WebLaunchPanelMessage.Abandon, {
-        launchId: current.launchId,
+        launchId,
         confirm: true,
       });
+      if (disposed || current?.launchId !== launchId) return;
       acceptReceipt(result);
       inputReleased = true;
       current = null;
       receipt = null;
+    } catch (failure) {
+      fail(failure.code, launchId);
+    } finally {
+      actionPending = false;
       render();
       void publishState();
-    } catch (failure) {
-      fail(failure.code);
     }
   }
-  share.input.addEventListener('change', edit);
   context.addEventListener('input', edit);
-  newTask.input.addEventListener('change', render);
+  newTask.addEventListener('change', render);
   const listener = (message, sender) => {
     if (
       chrome.runtime.id &&
@@ -548,9 +577,9 @@ export function createWebLaunchPanel({
       connection.accept(message.connectionPending);
     }
     if (message.envelope && message.envelope.launchId !== current?.launchId)
-      void acceptEnvelope(message.envelope);
+      void acceptEnvelope(message.envelope, message.internal);
     else if (message.receipt) acceptReceipt(message);
-    else if (message.code) fail(message.code);
+    else if (message.code) fail(message.code, message.launchId ?? null);
   };
   chrome.runtime.onMessage?.addListener(listener);
   async function register() {
@@ -562,7 +591,10 @@ export function createWebLaunchPanel({
       const composer = readComposer();
       const result = await request(WebLaunchPanelMessage.Register, {
         composerBusy: Boolean(
-          composer.prompt.trim() || composer.attachments || composer.attachmentReads,
+          composer.prompt.trim() ||
+          composer.attachments ||
+          composer.attachmentReads ||
+          composer.busy,
         ),
       });
       initialized = true;
@@ -571,7 +603,12 @@ export function createWebLaunchPanel({
         Object.hasOwn(result, 'connectionPending')
       )
         connection.accept(result.connectionPending);
-      if (result.envelope) await acceptEnvelope(result.envelope);
+      if (result.envelope) {
+        const observed = result.observations?.find(
+          item => item.receipt?.launchId === result.envelope.launchId,
+        );
+        await acceptEnvelope(result.envelope, observed?.internal);
+      }
     } catch {
       /* Ordinary extension chat remains available when this bridge is unavailable. */
     }
@@ -581,7 +618,9 @@ export function createWebLaunchPanel({
   return {
     inputAssociated,
     ownsThread,
-    blocked: () => inputAssociated() && (dirty || busy || revisionError),
+    composerAction,
+    activity,
+    updateSelection,
     edit,
     publishState,
     ready: () => {
@@ -592,13 +631,15 @@ export function createWebLaunchPanel({
     stop,
     beforeSwitch: async threadId => {
       if (!inputAssociated() || threadId === current.threadId) return true;
+      const currentThread = current.threadId;
+      installComposer({ threadId: currentThread });
       if (!confirm(t('webLaunchSwitchConfirm'))) {
-        installComposer({ threadId: current.threadId });
         return false;
       }
       await cancel(false);
-      if (inputAssociated() && current) installComposer({ threadId: current.threadId });
-      return !inputAssociated();
+      if (inputAssociated() || readComposer().threadId !== currentThread) return false;
+      installComposer({ threadId });
+      return true;
     },
     dispose: () => {
       disposed = true;

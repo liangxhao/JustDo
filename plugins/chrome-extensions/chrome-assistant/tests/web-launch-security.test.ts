@@ -42,7 +42,7 @@ describe('web launch trust boundaries', () => {
     expect(normalizeInput({ prompt: 'hello' })).toEqual({
       prompt: 'hello',
       mode: 'draft',
-      result: 'none',
+      result: 'final',
     });
     expect(normalizeInput({ prompt: 'hello', permissionMode: 'full' })).toBeNull();
     expect(normalizeInput({ prompt: 'x'.repeat(16_001) })).toBeNull();

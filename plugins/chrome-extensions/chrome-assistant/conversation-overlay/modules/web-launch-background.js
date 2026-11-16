@@ -1,10 +1,11 @@
-import { WebLaunchMethod } from '../../contracts/webLaunch.ts';
+import { WebLaunchMethod, WebLaunchSendMode } from '../../contracts/webLaunch.ts';
 import { AppServerClient } from './conversation-client.js';
 import { ensureAppServer } from './app-server-background.js';
 import { createWebLaunchConnections } from './web-launch-connections.js';
 import {
   WEB_RUNTIME,
   exactOrigin,
+  hasWebsiteLaunchGrant,
   normalizeInput,
   inputDigest,
   publicErrorCode,
@@ -16,7 +17,10 @@ import {
 } from './web-launch-security.js';
 
 const SESSION_KEY = 'chromeWebLaunchSession';
-const SITES_KEY = 'chromeWebLaunchSites';
+const SITES_KEY = 'chromeWebLaunchGrantedOrigins';
+const LEGACY_SITES_KEY = 'chromeWebLaunchSites';
+const LEGACY_SITE_READ_TIMEOUT_MS = 1000;
+const grantedOriginsFrom = sites => sites.filter(hasWebsiteLaunchGrant).map(site => site.origin);
 const scriptId = origin =>
   `web-launch-${[...new TextEncoder().encode(origin)].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
 const terminal = receipt =>
@@ -190,6 +194,28 @@ export function createWebLaunchBackground({
     applySites(value);
     return value;
   }
+  async function hasCachedWebsiteGrant(origin) {
+    const cached = (await chromeApi.storage.local.get(SITES_KEY))[SITES_KEY];
+    if (Array.isArray(cached)) return cached.includes(origin);
+    // Older caches include sites that only consented to opening drafts.
+    const legacy = (await chromeApi.storage.local.get(LEGACY_SITES_KEY))[LEGACY_SITES_KEY];
+    if (!Array.isArray(legacy) || !legacy.includes(origin)) return false;
+    // The legacy lookup must leave time for the SDK to fall back to an inline connection.
+    let timeout;
+    const loaded = await Promise.race([
+      readSites().then(
+        () => true,
+        () => false,
+      ),
+      new Promise(resolve => {
+        timeout = setTimeout(() => resolve(false), LEGACY_SITE_READ_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timeout));
+    if (!loaded) return false;
+    const origins = grantedOriginsFrom(sites.sites);
+    await chromeApi.storage.local.set({ [SITES_KEY]: origins });
+    return origins.includes(origin);
+  }
   async function getDocument(message, sender) {
     return transaction(async () => {
       const key = `${sender.tab.id}/${sender.documentId}/${message.documentNonce}`;
@@ -286,7 +312,7 @@ export function createWebLaunchBackground({
       requestId: record.requestId,
       origin: record.source.origin,
       threadId: metadata.threadId,
-      mode: record.mode ?? input?.mode ?? 'draft',
+      mode: metadata.effectiveMode ?? record.mode ?? input?.mode ?? WebLaunchSendMode.Draft,
       result: record.result,
       prompt: input?.prompt ?? '',
       contextText: input?.context?.text,
@@ -379,7 +405,7 @@ export function createWebLaunchBackground({
     const doc = await getDocument(message, sender);
     await readSites();
     const policy = sites.sites.find(site => site.origin === doc.source.origin);
-    if (!policy?.enabled || doc.revoked || !(await documentActive(doc)))
+    if (!hasWebsiteLaunchGrant(policy) || doc.revoked || !(await documentActive(doc)))
       throw { code: 'SITE_NOT_ALLOWED' };
     if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
     const panel = panels.get(sender.tab.windowId) ?? state.panels[String(sender.tab.windowId)];
@@ -507,7 +533,7 @@ export function createWebLaunchBackground({
     if (owned.length) await chromeApi.scripting.unregisterContentScripts({ ids: owned });
     const enabled = new Map();
     for (const site of value.sites) {
-      if (!site.enabled) continue;
+      if (!hasWebsiteLaunchGrant(site)) continue;
       const url = new URL(site.origin);
       const match = `${url.protocol}//${url.hostname}/*`;
       if (await chromeApi.permissions.contains({ origins: [match] }))
@@ -521,9 +547,7 @@ export function createWebLaunchBackground({
         });
     }
     if (enabled.size) await chromeApi.scripting.registerContentScripts([...enabled.values()]);
-    await chromeApi.storage.local.set({
-      [SITES_KEY]: value.sites.filter(site => site.enabled).map(site => site.origin),
-    });
+    await chromeApi.storage.local.set({ [SITES_KEY]: grantedOriginsFrom(value.sites) });
   }
   const connections = createWebLaunchConnections({
     chromeApi,
@@ -532,6 +556,7 @@ export function createWebLaunchBackground({
     readSites,
     applySites,
     registerScripts,
+    hasCachedWebsiteGrant,
     store: action => transaction(() => action((state.connections ??= {}))),
     windowBusy: windowId => slots.has(windowId),
     notify: (windowId, connectionPending) => {
@@ -601,7 +626,20 @@ export function createWebLaunchBackground({
     if (message.type === 'web-launch:sites:list') {
       const value = await readSites();
       await registerScripts(value);
-      return { ok: true, policies: value.sites, sitesRevision: value.revision };
+      return {
+        ok: true,
+        policies: value.sites,
+        sitesRevision: value.revision,
+        sendMode: value.sendMode ?? WebLaunchSendMode.Website,
+      };
+    }
+    if (message.type === 'web-launch:sites:send-mode') {
+      const value = await client.request(WebLaunchMethod.SendModeSet, {
+        expectedRevision: message.expectedRevision,
+        sendMode: message.sendMode,
+      });
+      applySites(value);
+      return { ok: true, sitesRevision: value.revision, sendMode: value.sendMode };
     }
     if (message.type === 'web-launch:sites:save') {
       const params = {
@@ -739,8 +777,8 @@ export function createWebLaunchBackground({
     }
     if (message.type === `${WEB_RUNTIME}hello`)
       return done(
-        chromeApi.storage.local.get(SITES_KEY).then(value => ({
-          ok: Array.isArray(value[SITES_KEY]) && value[SITES_KEY].includes(sender.origin),
+        hasCachedWebsiteGrant(sender.origin).then(ok => ({
+          ok,
           code: 'SITE_NOT_ALLOWED',
         })),
       );
@@ -748,8 +786,7 @@ export function createWebLaunchBackground({
       return done(
         (async () => {
           const input = normalizeInput(message.input);
-          const allowed = (await chromeApi.storage.local.get(SITES_KEY))[SITES_KEY];
-          if (!input || !Array.isArray(allowed) || !allowed.includes(sender.origin))
+          if (!input || !(await hasCachedWebsiteGrant(sender.origin)))
             throw { code: 'SITE_NOT_ALLOWED' };
           return { ok: true, digest: await inputDigest(input, cryptoApi) };
         })(),

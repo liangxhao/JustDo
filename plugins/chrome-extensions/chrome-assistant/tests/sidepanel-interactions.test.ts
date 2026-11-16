@@ -36,12 +36,6 @@ vi.mock('../conversation-overlay/modules/sidepanel-messages.js', () => ({
 vi.mock('../conversation-overlay/modules/sidepanel-activity.js', () => ({
   createRunActivityView: () => ({ render: vi.fn(), dispose: vi.fn() }),
 }));
-vi.mock('../conversation-overlay/modules/web-launch-panel.js', () => ({
-  createWebLaunchPanel: () => ({
-    inputAssociated: () => false, ownsThread: () => false,
-    publishState: vi.fn(), ready: vi.fn(), edit: vi.fn(), dispose: vi.fn(), blocked: () => false,
-  }),
-}));
 vi.mock('../conversation-overlay/modules/sidepanel-stream.js', () => ({
   ChromeExtensionStream: class {
     id: string;
@@ -78,7 +72,9 @@ async function mount() {
     if (method === 'thread/list') return { data: [{ id: 'one' }, { id: 'two' }, { id: 'created' }] };
     if (method === 'thread/resume') return { thread: { id: params.threadId, turns: [],
       chrome: { display: { id: params.threadId, turns: [] }, activeTurn: null } } };
-    if (method === 'chrome/composer/options') return { cwd: 'E:/default', recentCwds: [], modelRef: 'p/m', permissionMode: 'ask' };
+    if (method === 'chrome/composer/options') return {
+      cwd: 'E:/default', recentCwds: [], modelRef: 'p/m', permissionMode: params.threadId ? 'ask' : 'full',
+    };
     if (method === 'model/list') return { data: [{ id: 'p/m', displayName: 'Model' }], nextCursor: null };
     if (method === 'chrome/questions/list') return { questions: [question] };
     if (method === 'thread/start') return { thread: { id: 'created', cwd: 'E:/selected folder', name: 'Created' } };
@@ -86,6 +82,9 @@ async function mount() {
     if (method === 'chrome/workspace/select') return { cwd: 'E:/selected folder', selectionToken: 'chosen-once' };
     return {};
   });
+  const dialog = element<HTMLDialogElement>('decisionDialog');
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.close = () => { dialog.open = false; };
   // Import the real entry point: declaration-order errors and missing adapters fail here.
   await import('../conversation-overlay/sidepanel.js');
   await vi.waitFor(() => expect(element<HTMLSelectElement>('model').disabled).toBe(false));
@@ -107,7 +106,10 @@ describe('sidepanel working directory and question integration', () => {
     mock.questions.hasPending = false;
     mock.questionOptions = null;
   });
-  afterEach(() => window.dispatchEvent(new Event('unload')));
+  afterEach(() => {
+    window.dispatchEvent(new Event('unload'));
+    vi.unstubAllGlobals();
+  });
 
   it('boots the actual entry point and suspends questions until authoritative pending refresh succeeds', async () => {
     await mount();
@@ -132,16 +134,72 @@ describe('sidepanel working directory and question integration', () => {
     expect(mock.questions.setSuspended).toHaveBeenLastCalledWith(false);
   });
 
+  it('blocks composer submission until the front dialog is resolved and preserves the draft', async () => {
+    await mount();
+    await selectThread('one');
+    const dialog = element<HTMLDialogElement>('decisionDialog');
+    const prompt = element<HTMLTextAreaElement>('prompt');
+    prompt.value = 'Keep this draft';
+    prompt.dispatchEvent(new Event('input'));
+    mock.questions.hasPending = true;
+    element('webConnectionCard').classList.remove('hidden');
+    await flush();
+    expect(dialog.open).toBe(false);
+    const pending = deferred<{ questions: unknown[] }>();
+    mock.request.mockImplementationOnce(() => pending.promise);
+    mock.notify('chrome/questions/changed', { threadId: 'one' });
+    expect(dialog.open).toBe(false);
+    pending.resolve({ questions: [question] });
+    await flush();
+
+    element('approvals').classList.remove('hidden');
+    await flush();
+    expect(dialog.open).toBe(true);
+    expect(dialog.dataset.owner).toBe('approval');
+    expect(dialog.dispatchEvent(new Event('cancel', { cancelable: true }))).toBe(false);
+
+    prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    element<HTMLButtonElement>('send').click();
+    expect(mock.request.mock.calls.some(([method]) => method === 'turn/start')).toBe(false);
+
+    element('approvals').classList.add('hidden');
+    await flush();
+    expect(dialog.open).toBe(false);
+    expect(mock.questions.setSuspended).toHaveBeenLastCalledWith(false);
+    mock.questions.hasPending = false;
+    mock.notify('chrome/questions/changed', { threadId: 'one' });
+    await flush();
+    expect(dialog.open).toBe(true);
+    expect(dialog.dataset.owner).toBe('website');
+
+    element('webConnectionCard').classList.add('hidden');
+    await flush();
+    expect(dialog.open).toBe(false);
+    expect(prompt.value).toBe('Keep this draft');
+    element<HTMLInputElement>('includePage').checked = false;
+    element<HTMLButtonElement>('send').click();
+    await vi.waitFor(() => expect(
+      mock.request.mock.calls.some(([method]) => method === 'turn/start'),
+    ).toBe(true));
+  });
+
   it('keeps questions suspended when a refresh fails and never manufactures an answer', async () => {
     await mount();
     await selectThread('one');
     mock.questions.setQuestions.mockClear();
+    mock.questions.hasPending = true;
+    element('webConnectionCard').classList.remove('hidden');
+    await flush();
+    const dialog = element<HTMLDialogElement>('decisionDialog');
+    expect(dialog.open).toBe(false);
     mock.request.mockRejectedValueOnce(new Error('Pending snapshot unavailable'));
     mock.notify('chrome/questions/changed', { threadId: 'one' });
     await flush();
     expect(mock.questions.setSuspended).toHaveBeenLastCalledWith(true);
     expect(mock.questions.setQuestions).not.toHaveBeenCalled();
     expect(element('error').textContent).toContain('Pending snapshot unavailable');
+    expect(dialog.open).toBe(true);
+    expect(dialog.dataset.owner).toBe('website');
     expect(mock.request.mock.calls.some(([method]) => method === 'chrome/questions/respond')).toBe(false);
   });
 
@@ -178,6 +236,107 @@ describe('sidepanel working directory and question integration', () => {
     mock.notify('chrome/questions/changed', { threadId: 'one' });
     await flush();
     expect(mock.questions.setQuestions.mock.calls.length).toBe(snapshots);
+  });
+
+  it('uses the composer button to send a website draft and stop its exact launch before the send acknowledgement', async () => {
+    const receipt = {
+      launchId: 'website-launch',
+      receiptRevision: 1,
+      request: { status: 'drafted' },
+      execution: { status: 'not-started', executionSettled: false },
+      output: { status: 'awaiting-consent' },
+    };
+    const pendingSubmit = deferred<{ ok: boolean; receipt: typeof receipt }>();
+    const webRequest = vi.fn(async (request: { type: string }) => {
+      if (request.type === 'web-launch:launch:submit') return pendingSubmit.promise;
+      return { ok: true };
+    });
+    let receive = (_message: Record<string, unknown>) => {};
+    vi.stubGlobal('chrome', {
+      runtime: {
+        sendMessage: webRequest,
+        onMessage: {
+          addListener: (listener: typeof receive) => { receive = listener; },
+          removeListener: vi.fn(),
+        },
+      },
+      windows: { getCurrent: async () => ({ id: 4 }) },
+    });
+
+    await mount();
+    const registration = webRequest.mock.calls.find(([request]) => request.type === 'web-launch:panel:register')![0];
+    receive({
+      ...registration,
+      type: 'web-launch:panel:event',
+      envelope: {
+        launchId: receipt.launchId,
+        threadId: 'one',
+        origin: 'https://business.invalid:8443',
+        prompt: 'Summarize these orders',
+        mode: 'draft',
+        result: 'final',
+        shareAllowed: false,
+        automaticSendAllowed: false,
+        composeRevision: 1,
+        expiresAt: Date.now() + 60_000,
+        receipt,
+      },
+    });
+
+    const prompt = element<HTMLTextAreaElement>('prompt');
+    const send = element<HTMLButtonElement>('send');
+    await vi.waitFor(() => {
+      expect(prompt.value).toBe('Summarize these orders');
+      expect(send.disabled).toBe(false);
+    });
+    expect(document.getElementById('webLaunchCard')).toBeNull();
+    expect(element<HTMLSelectElement>('permission').value).toBe('ask');
+    expect(send.getAttribute('aria-label')).toBe('Send and return result');
+    expect(element('webLaunchControls').textContent).toContain('https://business.invalid:8443');
+    send.click();
+    await vi.waitFor(() => {
+      expect(send.getAttribute('aria-label')).toBe('Stop');
+      expect(send.disabled).toBe(false);
+    });
+    expect(webRequest).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'web-launch:launch:submit', launchId: receipt.launchId,
+      submission: 'confirmed', shareResult: true,
+    }));
+
+    prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(webRequest.mock.calls.filter(([request]) => request.type === 'web-launch:launch:stop')).toHaveLength(0);
+    send.click();
+    expect(webRequest).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'web-launch:launch:stop', launchId: receipt.launchId,
+    }));
+    pendingSubmit.resolve({ ok: true, receipt });
+    await flush();
+    expect(webRequest.mock.calls.filter(([request]) => request.type === 'web-launch:launch:submit')).toHaveLength(1);
+    expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start' || method === 'turn/interrupt')).toHaveLength(0);
+  });
+
+  it('preserves an explicit lower permission when refreshing an unsent ordinary draft', async () => {
+    await mount();
+    const permission = element<HTMLSelectElement>('permission');
+    const prompt = element<HTMLTextAreaElement>('prompt');
+    expect(permission.value).toBe('full');
+    permission.value = 'ask';
+    permission.dispatchEvent(new Event('change'));
+    prompt.value = 'Check this ordinary draft';
+    prompt.dispatchEvent(new Event('input'));
+    element<HTMLInputElement>('includePage').checked = false;
+
+    mock.request.mockClear();
+    element<HTMLButtonElement>('refresh').click();
+    await vi.waitFor(() => {
+      expect(mock.request).toHaveBeenCalledWith('chrome/composer/options', {});
+      expect(permission.disabled).toBe(false);
+    });
+    expect(permission.value).toBe('ask');
+    element<HTMLButtonElement>('send').click();
+    await vi.waitFor(() => expect(mock.request).toHaveBeenCalledWith('turn/start', expect.objectContaining({
+      chrome: expect.objectContaining({ permissionMode: 'ask' }),
+    })));
   });
 
   it('carries a human-selected draft folder and its token into thread/start only', async () => {

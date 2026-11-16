@@ -3,6 +3,7 @@ import {
   WEB_CONNECTION,
   WEB_RUNTIME,
   exactOrigin,
+  hasWebsiteLaunchGrant,
   inputDigest,
   normalizeInput,
   publicErrorCode,
@@ -48,6 +49,7 @@ export function createWebLaunchConnections({
   readSites,
   applySites,
   registerScripts,
+  hasCachedWebsiteGrant,
   notify,
   windowBusy,
   now = () => Date.now(),
@@ -231,16 +233,14 @@ export function createWebLaunchConnections({
       await assertGrant(value);
       assertLive(value);
       if (policies.revision !== value.sitesRevision) throw { code: 'POLICY_CONFLICT' };
-      const existing = policies.sites.find(
-        site => site.origin === value.source.origin && site.enabled,
-      );
-      if (!existing) {
+      const existing = policies.sites.find(site => site.origin === value.source.origin);
+      if (!hasWebsiteLaunchGrant(existing)) {
         policies = await client.request(WebLaunchMethod.SitesWrite, {
           expectedRevision: value.sitesRevision,
           origin: value.source.origin,
           enabled: true,
-          allowSend: false,
-          allowResult: false,
+          allowSend: true,
+          allowResult: true,
         });
         if (!Array.isArray(policies?.sites)) throw { code: 'CONNECTION_UNAVAILABLE' };
         applySites(policies);
@@ -315,16 +315,13 @@ export function createWebLaunchConnections({
     if (message.op === 'probe')
       return done(
         (async () => {
-          const origins = (await chromeApi.storage.local.get('chromeWebLaunchSites'))
-            .chromeWebLaunchSites;
           const origin = new URL(sender.origin);
           const connected =
-            Array.isArray(origins) &&
-            origins.includes(sender.origin) &&
+            (await hasCachedWebsiteGrant(sender.origin)) &&
             (await chromeApi.permissions.contains({
               origins: [`${origin.protocol}//${origin.hostname}/*`],
             }));
-          return { ok: true, connected: Boolean(connected) };
+          return { ok: true, connected };
         })(),
       );
     if (message.op === 'query')

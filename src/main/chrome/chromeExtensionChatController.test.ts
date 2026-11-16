@@ -656,7 +656,7 @@ describe('ChromeExtensionChatController', () => {
     expect(runtime.listenerCount('gatewayEvent')).toBe(0);
     expect(runtime.listenerCount('gatewayReady')).toBe(0);
   });
-  it('uses the application default instead of a legacy main profile model', async () => {
+  it('uses the application model and full access for a new Chrome composer', async () => {
     const controller = new ChromeExtensionChatController({
       ensureEngineRunning: vi.fn(),
       getRouter: vi.fn(),
@@ -681,7 +681,7 @@ describe('ChromeExtensionChatController', () => {
         { id: 'provider/alternate', name: 'alternate' },
         { id: 'provider/default', name: 'default' },
       ],
-      permissionMode: 'auto',
+      permissionMode: 'full',
     });
   });
 
@@ -715,7 +715,7 @@ describe('ChromeExtensionChatController', () => {
         { id: 'provider/alternate', name: 'provider/Alternate' },
         { id: 'other/vision', name: 'other/Vision' },
       ],
-      permissionMode: 'auto',
+      permissionMode: 'full',
     });
     expect(requestGateway).toHaveBeenCalledWith('models.list', {
       agentId: 'main',
@@ -1412,7 +1412,7 @@ describe('ChromeExtensionChatController', () => {
         cwd: process.cwd(),
         permissionMode: 'auto',
       };
-      const chrome = { ...desktop, id: 'browser', source: CoworkSessionSource.ChromeExtension };
+      const chrome = { ...desktop, id: 'browser', source: CoworkSessionSource.ChromeExtension, permissionMode: 'full' };
       const createSession = vi.fn(() => chrome);
       const updateSession = vi.fn();
       const controller = new ChromeExtensionChatController({
@@ -1457,7 +1457,7 @@ describe('ChromeExtensionChatController', () => {
         'local',
         [],
         'main',
-        'auto',
+        'full',
         undefined,
         undefined,
         CoworkSessionSource.ChromeExtension,
@@ -1601,7 +1601,7 @@ describe('ChromeExtensionChatController', () => {
   });
 });
 
-it('marks newly created extension threads while inheriting the application model', async () => {
+it('creates an ordinary Chrome thread with full access without altering the app default', async () => {
   const createSession = vi.fn(() => ({ id: 'new-thread' }));
   const controller = new ChromeExtensionChatController({
     ensureEngineRunning: vi.fn(),
@@ -1622,11 +1622,28 @@ it('marks newly created extension threads while inheriting the application model
     'local',
     [],
     'main',
-    'auto',
+    'full',
     undefined,
     undefined,
     CoworkSessionSource.ChromeExtension,
   );
+});
+
+it('preserves the permission saved on an existing Chrome thread', async () => {
+  const session = { id: 'existing-thread', source: CoworkSessionSource.ChromeExtension, permissionMode: 'ask' };
+  const controller = new ChromeExtensionChatController({
+    ensureEngineRunning: vi.fn(),
+    getRouter: vi.fn(),
+    getRuntime: () => null,
+    getStore: () =>
+      ({
+        getConfig: () => ({ permissionMode: 'full' }),
+        getSession: () => session,
+        listAgents: () => [],
+      }) as never,
+  });
+
+  await expect(controller.getComposerOptions(session.id)).resolves.toMatchObject({ permissionMode: 'ask' });
 });
 
 it('lists browser sessions without reserving assistant names', () => {
