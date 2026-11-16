@@ -265,7 +265,7 @@ const retainHistoryIdentity = (message: unknown, placeholder: unknown): unknown 
   );
 };
 
-async function readChunkedHistoryMessage(
+export async function readChunkedHistoryMessage(
   client: GatewayClient,
   sessionKey: string,
   messageId: string,

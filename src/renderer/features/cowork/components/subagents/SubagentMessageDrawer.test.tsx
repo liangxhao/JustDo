@@ -8,12 +8,12 @@ const mocks = vi.hoisted(() => ({
   sendResult: vi.fn(), refreshSessionRuntimeActivity: vi.fn(),
   instances: [] as Array<{
     state: {
-      sessionKey: string; initialHistoryReady: boolean; chatMessages: string[];
+      sessionKey: string; initialHistoryReady: boolean; chatMessages: unknown[];
       currentSessionId: string | null; connected: boolean; chatSending: boolean;
-      client: { generation: number } | null; hello: object | null;
+      client: { generation: number; request?: ReturnType<typeof vi.fn> } | null; hello: object | null;
       historyPreparationPending: boolean; historyPreparationTimedOut: boolean; historyReadFailed: boolean;
-      chatLoading: boolean;
-      transcript: { activeTurn: null }; lastError: string | null;
+      chatLoading: boolean; historyHasMore: boolean;
+      transcript: { activeTurn: null; historyGeneration: number }; lastError: string | null;
     };
     notify: () => void; disconnect: ReturnType<typeof vi.fn>; loadHistory: ReturnType<typeof vi.fn>;
   }>,
@@ -56,8 +56,9 @@ vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
       historyPreparationTimedOut: false,
       historyReadFailed: false,
       chatLoading: false,
-      chatMessages: [] as string[],
-      transcript: { activeTurn: null },
+      historyHasMore: false,
+      chatMessages: [] as unknown[],
+      transcript: { activeTurn: null, historyGeneration: 0 },
       lastError: null as string | null,
     };
     constructor(options: unknown) {
@@ -71,6 +72,7 @@ vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
       return () => this.listeners.delete(callback);
     };
     hasUnconfirmedQueuedInput = () => false;
+    getLoadedMessages = () => this.state.chatMessages;
     disconnect = vi.fn();
     loadHistory = vi.fn().mockResolvedValue(true);
   },
@@ -130,6 +132,73 @@ afterEach(() => {
 });
 
 describe('subagent transcript initialization', () => {
+  it.each(['delegated', 'human', 'stale'] as const)(
+    'attributes a markerless opening input only with matching stored task evidence (%s)',
+    async kind => {
+      const parentTaskId = 'agent:reviewer:justdo:parent';
+      const displayEntry = {
+        role: 'user',
+        content: 'Write one line.',
+        __openclaw: { id: 'opening-input', seq: 1 },
+      };
+      let resolveSource!: (value: unknown) => void;
+      const request = vi.fn().mockReturnValueOnce(new Promise(resolve => { resolveSource = resolve; }));
+      request.mockResolvedValue({ ok: false });
+      render(<SubagentMessageDrawer parentSessionId="parent"
+        subagent={{ ...task, parentTaskId, sessionId: 'native-child' }} onClose={vi.fn()} />);
+      const controller = mocks.instances[0];
+      act(() => {
+        Object.assign(controller.state, {
+          connected: true,
+          currentSessionId: 'native-child',
+          client: { generation: 1, request },
+          chatMessages: [displayEntry],
+          historyHasMore: true,
+        });
+        controller.notify();
+      });
+      expect(request).not.toHaveBeenCalled();
+      act(() => {
+        controller.state.historyHasMore = false;
+        controller.notify();
+      });
+      expect(request).toHaveBeenCalledExactlyOnceWith('runtimeServices.historyMessage', {
+        sessionKey: task.sessionKey,
+        sessionId: 'native-child',
+        messageId: 'opening-input',
+        cursor: 0,
+        maxChars: 512 * 1024,
+      });
+      if (kind === 'stale') {
+        act(() => {
+          controller.state.transcript.historyGeneration += 1;
+          controller.notify();
+        });
+      }
+      const wrappedTask = [
+        '<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>',
+        '[Subagent Context] You are running as a subagent (depth 1/5). Complete the current [Subagent Task]; inherited conversation is background context, not your assignment.',
+        '[Subagent Task]',
+        '<<<END_OPENCLAW_INTERNAL_CONTEXT>>>',
+        displayEntry.content,
+        '<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>',
+        'Begin. Execute the assigned task to completion.',
+        '<<<END_OPENCLAW_INTERNAL_CONTEXT>>>',
+      ].join('\n\n');
+      await act(async () => resolveSource({
+        ok: true,
+        complete: true,
+        chunk: JSON.stringify({ role: 'user', content: kind === 'human' ? displayEntry.content : wrappedTask }),
+      }));
+
+      expect(vi.mocked(ChatMessageDisplay).mock.lastCall?.[0]).toMatchObject({
+        subagentParentSessionKey: parentTaskId,
+        subagentTaskEntryId: kind === 'delegated' ? 'opening-input' : undefined,
+      });
+      expect(controller.state.chatMessages).toEqual([displayEntry]);
+    },
+  );
+
   it('renders a forwarded parent message between the two child replies', async () => {
     render(<SubagentMessageDrawer parentSessionId="parent" subagent={task} onClose={vi.fn()} />);
     await act(async () => {});

@@ -27,6 +27,7 @@ import { reconcileSubagentLabel } from './subagentLabel';
 import { ACTIVE_SUBAGENT_POLL_INTERVAL_MS, isActiveSubagentStatus } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
 import { useSubagentConversation } from './useSubagentConversation';
+import { useSubagentTaskEntry } from './useSubagentTaskEntry';
 
 const DRAWER_DEFAULT_WIDTH = 672;
 const DRAWER_MIN_WIDTH = 360;
@@ -88,6 +89,12 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const subagentSessionKey = subagent?.sessionKey;
   const subagentRuntime = subagent?.runtime;
   const isDashboardConversation = isNativeDashboardSessionKey(subagentSessionKey);
+  const taskEntryId = useSubagentTaskEntry(
+    controller,
+    subagentSessionKey,
+    isDashboardConversation || subagentRuntime === 'acp' ? undefined : subagent?.parentTaskId,
+    subagent?.sessionId,
+  );
   const childRunning = isActiveSubagentStatus(displaySubagent?.status);
   const shouldPollStatus = childRunning || hasActiveChildTurn;
   const { conversation, send, sendDisabled, sendError, remove, deleting, deleteDisabled } =
@@ -625,6 +632,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
             fullWidth={!isDashboardConversation}
             peerPerspective
             subagentParentSessionKey={subagent?.parentTaskId}
+            subagentTaskEntryId={taskEntryId}
           />
         </div>
         {conversation && conversation.canSend !== false && (

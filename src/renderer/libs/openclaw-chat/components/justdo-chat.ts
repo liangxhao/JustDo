@@ -279,6 +279,9 @@ export class JustDoChatElement extends LitElement {
   declare subagentParentSessionKey: string;
 
   @property({ type: String, attribute: false })
+  declare subagentTaskEntryId: string;
+
+  @property({ type: String, attribute: false })
   declare workingDirectory: string;
 
   @property({ attribute: false })
@@ -463,6 +466,7 @@ export class JustDoChatElement extends LitElement {
     this.peerNames = {};
     this.peerPerspective = false;
     this.subagentParentSessionKey = '';
+    this.subagentTaskEntryId = '';
     this.workingDirectory = '';
     this.searchQuery = '';
     this.searchCaseSensitive = false;
@@ -743,7 +747,9 @@ export class JustDoChatElement extends LitElement {
         const parentKey = this.subagentParentSessionKey;
         const firstUserInput = parentKey ? messages.find(message => message.role === 'user') : undefined;
         const initialTask = firstUserInput && !firstUserInput.provenance &&
-          !firstUserInput.__openclaw?.senderIdentity && isSubagentTaskHistoryMessage(firstUserInput)
+          !firstUserInput.__openclaw?.senderIdentity &&
+          ((this.subagentTaskEntryId && firstUserInput.__openclaw?.id === this.subagentTaskEntryId) ||
+            isSubagentTaskHistoryMessage(firstUserInput))
           ? firstUserInput : undefined;
         projected = messages
           .filter(message => !isPluginReplyMirror(message))
@@ -1265,7 +1271,9 @@ export class JustDoChatElement extends LitElement {
 
   protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
     this.renderStartedAt = performance.now();
-    if (changedProperties.has('subagentParentSessionKey')) this.peerPerspectiveHistory = new WeakMap();
+    if (changedProperties.has('subagentParentSessionKey') || changedProperties.has('subagentTaskEntryId')) {
+      this.peerPerspectiveHistory = new WeakMap();
+    }
     this.historyDisclosureState.capture(this.renderRoot);
     this.completedProcessMotion.capture(this.renderRoot);
     this.messageDisclosureState.capture(this.renderRoot as ShadowRoot);
