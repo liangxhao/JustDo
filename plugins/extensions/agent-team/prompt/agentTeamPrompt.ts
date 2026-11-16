@@ -45,11 +45,3 @@ export function stripAgentTeamInstruction(text: string): string {
   }
   return text;
 }
-
-/** Launch admission recognizes only the currently authored explicit selection suffix. */
-export function recognizeAgentTeamMode(prompt: string): AgentTeamMode | undefined {
-  prompt = unwrapAppInput(prompt);
-  return Object.values(AGENT_TEAM_MODE).find(mode =>
-    prompt.endsWith(appendAgentTeamInstruction('', mode)),
-  );
-}

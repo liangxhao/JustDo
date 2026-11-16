@@ -14,21 +14,19 @@ Agent Team 是默认关闭、用户可切换的可选扩展。任务协作保留
 才使用组织者来源。投递 ACK 尚未返回时不根据旧批次猜测归属：保留待答问题，拒绝新建
 错误归属的浏览器页面；真实回执落账后由插件通知宿主重新解析，不自动补发工具。
 
-先在「插件 → 扩展」启用 Agent Team。主输入框的“+”菜单中选择 Agent Team，再选择「任务协作」或「群组讨论」；模式标签只代表下一次提交。发送前不创建团队，取消标签不删除已有团队，切换模式不搬迁、重写或拼接原生历史。Team 与 Swarm 的本次模式选择互斥，各自插件和已有执行独立。
+先在「插件 → 扩展」启用 Agent Team。主输入框的“+”菜单中选择 Agent Team，再选择「任务协作」或「群组讨论」。模式标签用于下一次提交。Team 和 Swarm 在输入框中共享一个模式选择。
 
-用户也可在普通主会话明确要求创建长期助手、组建群聊或发起任务协作，无需先选择 Team 模式。模式选择是下一次提交的快捷入口，不是这些工具的使用前提。显式选择模式时，应用在实际来源消息中附加组织说明与自包含交接要求；宿主使用通用有界 `<app-plugin-input>` envelope 承载当前 owner/epoch/mode，插件自己的组织提示仍使用 `<agent-team-request>` 标签，继续协作使用 `<collaboration-continuation>`，不保留旧标签或旧提示格式的处理分支。
+选择模式会把 `<agent-team-request>` 中的组织说明和交接要求附在普通消息中。来源正在运行时，按原生普通消息队列提交。输入框在规划、未结束的 Goal、斜杠命令和完成反馈场景中限制该模式的提交。用户也可以在普通主会话中直接要求创建长期助手、组建群聊或发起协作。已有协作的继续提示使用 `<collaboration-continuation>`。
 
-显示和编辑投影仅隐藏精确的当前应用后缀，原生正文不被改写。来源模型使用真实工具组织团队，工具结果才证明创建或接纳，正文宣称不能充当回执。
+显示和编辑投影从原生正文解析精确的应用后缀及已有的宿主输入封装。团队创建及投递接纳以真实工具回执为准。
 
 来源助手按任务发现已启用助手、准备成员并分工；用户无需手工构建 Graph 或预先组群。关闭插件会清除 Team 模式草稿并撤销旧回调，正文、附件及引用保留。普通对话不每轮注入 roster 或协作说明。
 
 ### 来源普通输入与运行显示
 
-其他成员执行期间，用户仍可在左侧继续给来源助手发送普通消息；来源自身忙碌时按正常原生消息队列处理。普通发送会尝试核对旧 Team 发起请求的清理，但未完成或不可核实不会阻止发送，也不会因此取消或放宽其守卫。只有再次显式选择 Team 模式发起新请求时，才要求旧请求的精确终态和清理完成。停止中、未确认的消息准入、会话删除、权限和原生工具政策仍分别校验；新的普通消息不自动广播给成员。
+其他成员执行期间，用户仍可在左侧继续给来源助手发送消息。停止中、未确认的消息准入、会话删除、权限和原生工具策略沿用普通聊天流程。向团队成员派发消息使用实际的协作操作。
 
-发起回执的工具目录、实际调用、轮末检查和下一代登记使用同一释放事实：Required 服务已释放与旧 Team intent 的 admission ID、generation、来源 key/SID/revision 和 run 完全一致的回执。Native 在后续工具执行或新登记前将该事实持久写回 Team 账本，避免通用通道的下一代回执覆盖后旧守卫复活。上一轮即使只发现助手、未实际建队，只要精确终态与清理已确认，也不再限制下一轮普通消息创建助手、组建群聊或发起协作；空闲或缺失回执本身不构成释放。
-
-来源会话列表的运行图标包含成员原生运行及关联群聊的准备／提交／运行／停止状态。协作批次的 pending 计数表示尚缺精确执行终态回执，open／closing 也不能单独证明当前仍在运行；成员全部空闲后收起旋转图标，保留未收束批次、投递和未知结果，不据空闲补造完成回执。主输入框仅消费来源自身的主运行状态，后台成员和群聊不把发送按钮切换为停止。用户停止来源时先同步关闭发起准入，原生停止不等待守卫取消 RPC 返回；发起回执的精确清理仍由原协调器完成。
+来源会话列表的运行图标包含成员原生运行及关联群聊的准备／提交／运行／停止状态。协作批次的 pending 计数表示尚缺精确执行终态回执，open／closing 也不能单独证明当前仍在运行；成员全部空闲后收起旋转图标，保留未收束批次、投递和未知结果，不据空闲补造完成回执。主输入框仅消费来源自身的主运行状态，后台成员和群聊不把发送按钮切换为停止。停止来源调用宿主的原生停止流程。协作执行、讨论和已有发起回执的清理仍依据各自的精确证据。
 
 ### 当前团队与全部历史入口
 
@@ -119,8 +117,6 @@ Renderer 同时识别原生 `__openclaw.transport.channel=agent-team`，使缺�
 
 已有只读关联群在下一次发送前更新原成员策略，不换会话、不搬历史，也不更改数据库结构。群聊不额外设置只读工具白名单、禁用工具或阻止成员按来源权限调用工具；原生权限、审批与有效工具政策继续生效。未验证的 ACP/harness/runtime 和不能安全继承的 creation-owned sandbox 仍拒绝。
 
-显式 Team 发起的 Plan 准入规则继续独立执行。
-
 成员保持插件自有的独立原生会话；通过公开 SDK 在精确身份上同步执行与模型选择字段，并在本次 dispatch 配置中继承来源助手设置。普通 `sessions.create` 不传来源 `parentSessionKey`，因为原生禁止插件关联不归自己创建的来源会话；配置继承不建立父子控制关系，也不借用来源的写入归属。
 
 准备和新批次 Start 核对完整继承配置；执行开始后继续固定权限、工具与 exec 边界，允许原生自行轮换认证档案或执行模型回退，不因这些运行内变化错误拒绝有效输出。
@@ -153,7 +149,7 @@ Renderer 同时识别原生 `__openclaw.transport.channel=agent-team`，使缺�
 
 成员独立用户运行、正文中的组织者声明、模型自报轮次、历史引用或名称均不能创建或借入批次；封闭或停止的旧轮次继续拒绝发送。Stop 仅冻结已有轮次并围栏已知精确运行，不补建任何轮次。组织者以非 main 名称或助手身份发起时仍按来源会话判断，不用名称字符串授权。
 
-Team 主会话发起、成员单聊、建房前检查和发起回执清理均不依赖全局 `sessions.list`。成员单聊仍要求全队当前空闲，但只按当前房间各成员的精确 key 查询；选中成员必须匹配其控制器的 native SID，其他成员不能借用与产品历史绑定不同的 SID。每次异步读取前后均核对当前 router、连接代次、产品身份和房间成员，明确的 nullable revision 保持原值，缺失或错误字段不推为空闲。未知状态与实际忙碌分别提示，历史未确认投递仍保留。
+成员单聊、建房前检查和已有发起回执清理按目标的精确会话身份查询。成员单聊要求全队当前空闲，选中成员必须匹配其控制器的原生 SID。每次异步读取前后均核对当前 router、连接代次、产品身份和房间成员，并保留明确的 nullable revision。未知状态与实际忙碌分别提示，历史未确认投递仍保留。
 
 ### 准备失败与迟到结果
 
@@ -321,7 +317,7 @@ Agent Team 的插件开关通过原生 API 同步插件和技能配置，使用�
 
 同包启停在现有 Gateway 内热应用，不重启 Gateway。关闭后立即撤回设置、历史入口、输入模式和业务视图；已加载普通聊天的历史仍由插件独立纯展示入口保持原格式，不开放 Team 业务读取。插件草稿的正文、附件路径及未知请求冻结状态在当前产物 hash 的内存中保留，重新启用不自动重开发送或恢复旧对话框。
 
-原生热启用在候选服务启动后才发布新方法表。Team 的发起、讨论、汇总和待发存储 service.start 只初始化本地状态；已发布的业务请求在写入或执行前绑定当前 Required owner，握手前后复核权限、service 代次、停止状态和原生生命周期。开启不以尚未发布的 proof RPC 作为启动前置，也不沿用上个实例的租约；握手期间再次关闭或重启会拒绝旧请求。讨论与汇总的状态查询使用不落盘的回执快照，保留 unknown，不因读取重新登记或恢复执行。
+原生热启用在候选服务初始化后发布新方法表。讨论、汇总和待发存储需要写租约的请求通过已发布的接口绑定当前 Required owner。握手前后核对权限、服务代次、停止状态和原生生命周期，关闭或重启使旧请求失效。讨论和汇总状态通过只读回执快照查询，无法核实时保留 unknown。
 
 #### 禁用事务与取消围栏
 
@@ -331,7 +327,7 @@ Agent Team 的插件开关通过原生 API 同步插件和技能配置，使用�
 
 #### 关闭后仍允许的维护
 
-Main 协调器的寿命属于插件实例，业务关开只切换业务定时器，不能再次执行 `recoverInterrupted`。独立 `maintenance` 在关闭后继续核对已经存在的精确 whole-run、摘要停止和 holding 取消收据；不启动新摘要、读取 holding 正文、派发 FIFO 或重新准备成员。Main 暂时丢失 Native 绑定证明不等于明确禁用，不能据此取消待处理摘要。持久取消 tombstone 的幂等清理可继续，未知收据保持未知，不根据空闲推断结算。
+Main 协调器的寿命属于插件实例，业务关开只切换业务定时器，不能再次执行 `recoverInterrupted`。独立 `maintenance` 在关闭后继续核对已经存在的精确 whole-run、发起回执、摘要停止和 holding 取消收据；不启动新摘要、读取 holding 正文、派发 FIFO 或重新准备成员。Main 暂时丢失 Native 绑定证明不等于明确禁用，不能据此取消待处理摘要。持久取消 tombstone 的幂等清理可继续，未知收据保持未知，不根据空闲推断结算。
 
 普通来源会话删除只要求关联执行停止并取得精确结算/清理收据，不要求调用 Team 的删群 RPC。Native Team 缺席时通过通用 Required 收据完成该核对；未知执行仍阻止破坏性删除。显式销毁整个群及其自有成员则需要合法 Team owner 的房间关闭证明，不能用通用 holding close 冒充。卸载时宿主只解除该插件的资源关联，保留助手、会话和业务数据。
 
@@ -351,81 +347,15 @@ Renderer 只使用当前成员已连接、历史读取成功的 ChatController �
 
 #### 中性 Goal 快照的处理
 
-普通会话结束或停止后，宿主 Goal 协调器也可能留下无 `goalId`、`phase: waiting/stopped` 的中性快照；这不是 Goal 存在或运行的证据，不阻断新的成员用户消息或新的显式 Team 发起。两条入口复用同一纯准入判断；原生 Goal、带目标身份的宿主快照、其他阶段、损坏状态或身份未确认仍拒绝。新的发起仍需核对前代精确结算和清理，成员消息仍核对全队空闲、停止代次和精确成员身份，不凭中性快照补造完成。
+普通会话结束或停止后，宿主 Goal 协调器可能留下无 `goalId`、`phase: waiting/stopped` 的中性快照。成员用户消息可在这种状态下继续提交，仍需核对全队空闲、停止代次和精确成员身份。原生 Goal、带目标身份的宿主快照和无法核实的状态继续限制该成员入口。
 
-### 受限发起守卫
+### 模式提示与工具执行
 
-显式 Team 发送的两次空闲核验使用当前来源会话的原生 `sessions.describe` 活动投影，
-包含已排队或正在运行的后代。其他历史会话变更不能把该定点查询变成全局列表的不确定
-结果。仅尚未绑定且无历史、无本地执行或未知提交的新来源，才可将原生明确的空结果
-视为不存在；已绑定身份缺失、错 SID、连接或当前来源身份变动仍属未知。实际忙碌时
-提示等待结束，无法确认状态时明确提示暂不可确认；两者均保留草稿和模式，未知不重发。
+模式提示引导来源助手按用户所选的方式组织团队。任务协作使用 `task_assistants` 准备长期成员并通过 `sessions_send` 派发，群组讨论使用 `team_discussion` 创建关联讨论。两种模式都可先按现有权限读取必要材料，将目标、约束、可访问附件和验收条件整理成自包含的交接说明。
 
-常规权限同步对已有会话的原生准备可能先收到 `sessions.create` 回应，随后才收到异步
-`sessions.changed`。如果只有事件令正在等待的定点观察失效，而产品、连接、代次和
-本地执行归属都未变化，Main 丢弃该旧观察，最多再精确读取一次。第二次必须保持首次
-响应的物理 SID 和 lifecycle revision，包括省略、null 与字符串的区别；再次失效、
-身份变化、原生错误或未确认提交仍拒绝。重新观察只读，不重放准备、注册或消息发送。
+工具目录沿用 OpenClaw 的有效工具策略。`tool_search` 和 `tool_describe` 可发现团队工具并查看参数，`tool_call` 的实际目标仍须通过原生执行策略和工具自身校验。成员准备、投递和讨论启动仍绑定真实调用来源及权限，由各业务流程核对房间、成员、运行身份和接纳回执。
 
-准入测试须经过生产 Main 的会话物化、
-Adapter 事件处理及 Router，不能用固定返回空闲的宿主端口代替这段链路。
-
-显式 Team 发起守卫限定到可验证精确当前输入的正常来源提交。Main 记录无正文候选及 native identity；Team 的 `runtime/launch/` 拥有模式工具政策、发起状态及有界纠正。Runtime Services 仅保留已登记精确 run 的通用准入与退休围栏，不在 Team 缺席时解释团队规则。
-
-守卫核验当前来源及实际 Team 操作，不能由正文标记、assertActive、工具名或未知输入猜测授权。缺少精确用户事实、execution lineage、历史读取或当前插件可用性的证据时保守阻断；Code Mode 外壳与内部实际工具分别按公开上下文核对。
-
-原生可恢复直连输入会在权威用户消息上写入 `provenance: { kind: 'external_user' }`。
-发起核验接受无来源标记的正常用户输入及这一精确标记，hook 来源使用同一判断；
-跨会话、内部系统、未知或附带转发来源字段的记录仍拒绝。来源分类本身不授予权限，
-仍须核对当前 run、物理会话及 revision、精确消息键与 anchor、全文 SHA-256 和原生
-`senderIsOwner`。合法 `external_user` 不应使通用执行准入停留在未验证状态；
-owner 已退休或执行结果未知时仍保留原有围栏。
-
-精确当前输入验证后，目标与必要上下文足够明确时优先尽快使用所选 Team 工具发起；仅在存在实质歧义或缺少必要上下文时，才先按原生权限读取材料、检索、检查环境、分析需求或初步规划。只补齐必要缺口，随后回到所选工具，不停留在分析或计划阶段。普通工具返回未决策，继续受原生权限、审批及其他工具政策约束；不设置额外准备白名单、不启用被禁用工具，也不直接改写原生目录或系统提示文本。普通工具准备不计为 Team attempt，不建立团队接纳证据；实际成员准备和协作操作仍登记发起尝试。助手将必要结论整理为自包含交接，不自行完成受委派工作或用其他模式代替用户所选模式。
-
-守卫继续按操作核验 Team 模式：两种模式都可发现助手和读取讨论；群聊模式不允许准备任务 peer 或发送协作消息，任务协作模式不允许发起群聊。普通工具（包括 Code Mode 内层工具）沿用原生策略，避免模型目录展示可用而发起白名单在调用时额外拒绝。助手创建仍由工具自身核验用户意图和权限；准备或临时子任务不能代替真实 Team 接纳回执。
-
-#### 目录收窄与执行前校验
-
-Agent Team 工具工厂通过自身发起账本读取无正文目录提示，并在注册定义时缩小自身工具的 schema 和描述。任务协作发起期间，`team_discussion` 只展示 `read`、必填 `roomId` 及可选的批次筛选 `discussionIds`；群聊发起期间，`team_discussion` 只展示 `create/read/stop`，`task_assistants` 只展示无参数发现，不再宣传 peer 准备、seal 或 review。
-
-原生 deferred 目录和 `tool_describe` 使用这些定义，不通过字符串删除目录项。取消、未知 owner、损坏或原生身份失配时隐藏 Team 自有工具；已接纳但来源尚未整轮结算时保留收窄，精确整轮终态或 released 后恢复后续请求的正常定义。目录提示不构成调用授权，执行前守卫继续校验精确来源与 run。
-
-本期不增加 runtime patch。原生 `sessions_send` 的模式可见性及首次 Swarm 发起时对 Team 定义的同步裁剪仍未实现；这些路径继续依赖调用前检查，不能宣称所有禁止操作已从 system prompt 消失。
-
-Team 发起期间也禁止竞争的 `swarm_workflow_start`。Team 自己解释模式，并将精确来源 run 登记到 Runtime Services 的通用执行通道；Workflow 只读取该通道的 `clear/held/unknown`，不读取 Team 模式或业务账本。Workflow 工厂在通道受限时隐藏启动工具，保留的定义在执行前再次核对。已登记旧 run 的退休围栏不会限制后续普通聊天工具；新插件发起仍须等待明确的通用释放证据。Required 服务不导入或识别两插件的工具。
-
-协作工具与显式发起门禁均通过 App SDK planning 契约解释原生 `plan-mode/state`：Native 读取原始 session entry，Main 通过 `runtimeServices.sessionNamespace` 获取精确 SID/revision 的单一原始命名空间。`sessions.describe` 的展示投影可能省略不可读状态，不能据此证明规划已关闭。开启规划、尚有待审批计划或原始快照不可确认时均拒绝发起；Runtime Services 不解释这些业务字段。
-
-轮末修订的交付等待通过原生 `before_agent_finalize` hook 的 `appliesToAgentRun` 能力声明。先确认当前原生 SID；
-仅已确认无发起账本、已 released，或原发起整轮已精确结算后的不同 run 可解除该钩子的
-等待。未知/损坏账本、退役实例及身份异常继续保护。选择在 prompt build 后冻结，
-不以正文标记或后续工具调用补选；原有 live ledger、权限及修订检查继续执行，
-解除等待本身不证明授权或完成。
-
-OpenClaw 的紧凑工具目录通过 `tool_search`、`tool_describe` 和 `tool_call` 发现及调用团队工具。精确当前提交完成验证后，守卫允许这些原生入口；`tool_call` 的实际目标仍由原生执行器再次接受可信工具政策检查，入口本身不能证明团队已启动，也不能绕过所选 Team 操作、原生写入权限或命令审批。
-
-原生 queued/followup 的通用提交/执行绑定仍未成立，显式 Team 在忙碌或已有未确认队列时保留草稿并拒绝普通 followup。有限纠正最多使用两次原生 revise，只能在精确阶段、尚无已确认或不确定副作用时执行；副作用已发生后不回退。此能力不保证建群成功，也不扩大工具权限。完整业务建群的剩余验收见[现行说明与验证边界](#当前验证边界)。
-
-#### 发起回执与冷重启
-
-Main 候选回执通过 KV CAS 保存原生 generation、来源 incarnation、clientTurnId、prompt SHA-256、通用 admission 引用和提交边界，没有正文。指纹按原生普通 `chat.send` 入库规则先 NFC、拒绝 NUL、移除禁止的控制字符再 trim；保持原生消息及普通聊天发送不变。正常 release 需要 Required 服务观测的精确 whole-run proof，以及 Main 对同一 key/SID/revision 的 fresh 定点状态和无活动/无队列核对收据；该 cleanup attestation 与原生终态分别保存，不将它声称为原生执行证明。
-
-发送前及 cleanup 不扫描全局目录。Stop、产品终态或空历史本身都不能释放。register ACK 丢失且无法确认已登记通用资源时保留 unknown，不依赖一次 absent 结果撤销、重新登记或重发。
-
-冷重启时原生插件 namespace 可被退休流程清除，不能作为跨进程守卫的唯一权威。Team 自己持有发起业务账本，位于 SDK 准备的 `state/plugin-data/agent-team/launch-receipts/`；当前实现不迁移、扫描或回退读取旧目录。通用 `stateDir/runtime-services/execution-admissions/` 另存无正文的精确 run、generation、owner、接纳、终态和 cleanup 收据，不解析 Team 模式。
-
-账本先持久写入再确认；损坏、不可读、写入结果不明或退休 owner 保持 unknown，不凭缺失镜像恢复为空，也不复制原生正文。重新安装不重放旧任务；本次不提供旧协议或旧账本迁移层。
-
-#### 未发送释放与首条消息委托
-
-本地 markSubmissionStarted 的 IPC ACK 丢失不等于用户输入已发送，也不能凭一次空历史撤销提交边界。只有已经不可恢复地关闭发送续体、实际未调用 native send 的 owning sender，才能调用 `TeamSubmissionAbortedBeforeSend`。
-
-Main 的 abortBeforeSend 再拒绝已接纳、已有 whole-run 或已 launched 的候选，并通过独立 native absence/idle/代次 tombstone 完成释放。已调用 native send 的未知结果不会走此入口，不自动重发；Renderer 与 Main adapter 分别在实际调用边界记录 issued，失败前关闭发送续体。
-
-首条消息使用宿主的窗口/frame-bound viewer 委托：Main 完成准备并登记发起边界，再将同一 chat.send 交给实际展示的 Renderer，不回退双发。viewer 明确返回 requestSent:false 才执行未发送候选的释放核验；委托失联、超时及已发送未知均保留保护。执行前 Team 资格被撤销时不交给 viewer。
-
-已经 released 的历史候选不阻断同 key 的合法 reset/revision 后续发起：inspect 仅接受其原 SID 或原生当前精确 SID，保留旧身份与 generation，但 identity 变化后不返回旧 whole-run proof。下一代 register 仍必须绑定当前 SID/revision 并 CAS 前代，新代不继承旧终态。未 released 候选的 identity 漂移仍保持冻结；不能用 reset 把未确认执行伪装成完成。
+维护任务通过已连接的 Gateway 核对旧版本已登记的发起回执。它使用精确整轮终态、同一原生会话与清理证据释放原回执。回执存储和旧任务恢复见[持久化](persistence.md#已有发起回执的维护)。
 
 ## 数据、禁用与删除的所有权
 
@@ -462,11 +392,10 @@ OpenClaw 保存长期 transcript、公开群消息、成员执行、汇总及待
 
 协作的 execution/review 表与群聊的 rooms/runs/executions/task_links/summaries/deleted_rooms、queue_control/pending_inputs 分别承担真实查询和恢复契约。原生幂等先于新预算扣除；未知不换 requestId 重发。旧独立群不迁移为 borrowed source，不引入原生数据库迁移桥。
 
-Agent Team 自有的原生磁盘账本统一使用 SDK 准备的
-`state/plugin-data/agent-team/`：`discussion-receipts/` 保存讨论执行收据，
-`summary-receipts/` 保存汇总收据，`launch-receipts/` 保存发起守卫账本。
-这些目录只保存执行身份和恢复元数据，采用卸载后保留策略；通用数据清理不会删除它们。
-新版本只读写该布局，不迁移或回退读取旧目录。产品数据库、原生历史和工作区附件
+Agent Team 在 SDK 准备的 `state/plugin-data/agent-team/` 中保存讨论执行收据
+`discussion-receipts/` 和汇总收据 `summary-receipts/`。这些收据记录执行身份和
+恢复元数据，卸载后保留。已有的 `launch-receipts/` 文件同样保留，发起回执维护以
+Main 和 Runtime Services 的匹配记录为依据。产品数据库、原生历史和工作区附件
 继续由各自的存储规则管理。
 
 ### 禁用、卸载与删除的区别
@@ -479,9 +408,9 @@ Agent Team 自有的原生磁盘账本统一使用 SDK 准备的
 
 ## 模块边界
 
-源码通过安装的 `@app-plugin/sdk`、`@runtime-services/sdk` 和公开构建工具独立检查、构建与测试，不导入应用、Plan Mode 或相邻插件实现。discussion 协议、业务 receipt ledger、发起模式规则及纠正提示全部归 Team。
+源码通过安装的 `@app-plugin/sdk`、`@runtime-services/sdk` 和公开构建工具独立检查、构建与测试。讨论协议、业务回执和输入模式提示由 Team 维护。
 
-Required Runtime Services 只提供通用执行准入、inert session 托管及精确收据/取消/清理能力，不解释 Team 业务。同步工具投影绑定真实 Native 实例，执行前再次读取限制，旧回调不能沿用新实例。Main 通过精确会话身份的通用原始 namespace 查询及 App SDK planning 解析器核对规划和待审核状态，不把被省略的展示投影当作已关闭。
+Required Runtime Services 提供通用执行准入、inert session 托管及精确收据、取消和清理能力。Team 使用精确会话身份查询原始 namespace，通过 App SDK planning 解析器核对协作操作所需的规划和待审核状态。
 
 独立构建、Native 信任、宿主端口及界面生命周期见[宿主集成](integration.md)。
 
@@ -494,14 +423,14 @@ Required Runtime Services 只提供通用执行准入、inert session 托管及�
 | `app/`                                     | Browser UI、模式、设置/历史/详情、翻译及独立纯展示入口            |
 | Agent Team `browser/`                      | 纯浏览器草稿、继续证据、队列/提及/导出辅助                        |
 | Agent Team `collaboration/`、`discussion/` | 原生执行及启用时的业务历史                                        |
-| Agent Team `runtime/`                      | 发起模式政策、讨论 holding 适配及业务回执账本                     |
+| Agent Team `runtime/`                      | 讨论 holding 适配及业务回执账本                                 |
 | 已安装的 `@runtime-services/sdk`           | 通用准入、inert 托管、精确收据、取消与清理                        |
 | 已安装的 `@app-plugin/sdk`                 | 无应用源码依赖的版本化 Main/Browser 端口                          |
 | 桌面宿主                                   | 清单发现、可信产物、通用请求桥、配置/提交/删除参与者及 UI 插槽    |
 
 Team 不要求宿主保留业务专属门面、preload/IPC 或业务组件；原生注册、桌面 Main 与 Browser 入口均由本包声明，通过已安装 SDK 接入。
 
-协作消息详情 `collaboration.messages` 和公开群聊历史 `teamDiscussion.history` 归 Agent Team 的对应执行域，只在插件启用时读取原生正文。发起工具分类、模式和纠正提示、讨论输入解析/序列化、房间/轮次协议、业务 ledger 及 RPC 全部在 Team 内部。
+协作消息详情 `collaboration.messages` 和公开群聊历史 `teamDiscussion.history` 归 Agent Team 的对应执行域，只在插件启用时读取原生正文。模式提示、协作投递、讨论输入解析/序列化、房间/轮次协议、业务 ledger 及 RPC 全部在 Team 内部。
 
 Runtime Services 按 `admission/`、`custody/` 提供与业务无关的能力，停用后保留的是精确资源的准入、收据及取消围栏。旧 `teamDiscussion.offlineControl` 不再提供常驻兼容入口，Main 清理直接使用通用 RPC；通用 FIFO 仍只提供容量和显式释放，不推断执行已完成。
 
@@ -542,7 +471,7 @@ immutable actor 发布，Team 不接管该事务，也不为业务功能新增�
 
 修改时核对插件纯合约、host store/coordinator、原生 service/guard、App Browser UI 和
 通用宿主端口。重点回归容量事务、FIFO/汇总结算、ACK 丢失、迟到结果、权限漂移、
-独立补充草稿与可信发起身份，不以文件存在或注册成功代替行为验证。
+独立补充草稿与可信工具调用身份，不以文件存在或注册成功代替行为验证。
 
 ## 当前验证边界
 

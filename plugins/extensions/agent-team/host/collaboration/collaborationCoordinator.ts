@@ -31,13 +31,6 @@ import type {
 } from '../ports';
 
 export interface CollaborationDependencies {
-  onExecution?: (payload: unknown) => void;
-  onLaunchAccepted?: (receipt: {
-    sessionKey: string;
-    sourceRunId: string;
-    mode: 'discussion' | 'collaboration';
-    receiptId: string;
-  }) => Promise<void>;
   stopDiscussions?: (sessionId: string, requireSettled?: boolean) => Promise<void>;
   discussion?: (
     sourceSessionId: string,
@@ -395,7 +388,6 @@ export class CollaborationCoordinator {
     };
   }
   observeExecution(payload: unknown): void {
-    this.deps.onExecution?.(payload);
     if (!payload || typeof payload !== 'object') return;
     const event = payload as {
       stream?: string;
@@ -1014,19 +1006,8 @@ export class CollaborationCoordinator {
               : 'failed';
           if (delivery.state !== nextState)
             this.metadata.transition(delivery.id, delivery.state, nextState, input.runId);
-          // The exact Native ACK is already durable. Release receipt waiters
-          // and refresh first-tool UI before awaiting a separate launch receipt.
           this.notifyNativeAdmission(delivery.roomId, delivery.to);
           this.notifySessionsChanged();
-          if (accepted)
-            await this.deps
-              .onLaunchAccepted?.({
-                sessionKey: request.sessionKey,
-                sourceRunId: delivery.sourceRunId,
-                mode: 'collaboration',
-                receiptId: delivery.id,
-              })
-              .catch((): void => undefined);
         }
         await this.deps.requestGateway(CollaborationGateway.Resolve, {
           requestId: request.requestId,
@@ -1195,24 +1176,6 @@ export class CollaborationCoordinator {
           JSON.stringify([request.sessionKey, request.sourceRunId, request.toolCallId]),
           assertActive,
         );
-        if (
-          request.operation === 'discussion' &&
-          result &&
-          typeof result === 'object' &&
-          (result as { accepted?: unknown }).accepted === true &&
-          ['running', 'ready'].includes(String((result as { state?: unknown }).state))
-        ) {
-          const receiptId = (result as { discussionId?: unknown }).discussionId;
-          if (typeof receiptId === 'string')
-            await this.deps
-              .onLaunchAccepted?.({
-                sessionKey: request.sessionKey,
-                sourceRunId: request.sourceRunId as string,
-                mode: 'discussion',
-                receiptId,
-              })
-              .catch((): void => undefined);
-        }
         await this.deps.requestGateway(CollaborationGateway.Resolve, {
           requestId: request.requestId,
           result,

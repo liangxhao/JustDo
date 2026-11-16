@@ -105,16 +105,14 @@ Renderer 按需读取当前面板投影，不建立 Redux 或 Main 正文缓存�
 
 已解锁后正常退出可能清除 native marker；只有持久 closed slot 的精确 key/SID/revision/harness/root 与 archived/unlocked 原生条目一致且没有冲突 marker，才允许补完删除，不放宽正文接收/读取。中途未知保留任务，不删除同 key 的替代 incarnation。详见[业务与删除契约](guide.md#数据禁用与删除的所有权)。
 
-## Agent Team 发起守卫元数据
+## 已有发起回执的维护
 
-Main KV 记录产品候选与提交边界；Team 自己的发起账本使用 SDK 准备的 `state/plugin-data/agent-team/launch-receipts/`，保存 generation、来源 incarnation、clientTurnId、prompt SHA-256、owner、业务状态及精确 whole-run 元数据。该目录采用卸载保留策略；不迁移、扫描或回退读取旧目录。
+通过“+”选择 Team 的新消息按普通聊天提交。已有发起记录保留在 Main KV 和 Runtime Services 的 `stateDir/runtime-services/execution-admissions/`。维护任务通过已连接的 Gateway 核对已登记的来源 key、物理 SID、revision、run 和回执代次。已经释放的原生回执会同步到 Main。
 
-Required 服务的通用 `stateDir/runtime-services/execution-admissions/` 只保存精确 run、owner 租约、generation、接纳、终态和 cleanup attestation，不读取 Team schema。两者均不保存正文。持久写入使用 fsync 和原子替换；读取失败、损坏和写入未知不能转为空状态。原生 namespace 不作为跨重启唯一权威，退休 owner 不自动重放。SDK 受管恢复账本保留，不增加旧协议回退、旧目录扫描或迁移桥。
-
-released tombstone 的历史身份在合法 reset/revision 后仍可核对，原 SID 或当前精确 SID 可读取前代 generation；身份变化后旧 whole-run proof 不转移到当前 incarnation。新候选必须绑定当前 SID/revision 且 CAS 下一代，不能复用旧 clientTurnId。未 released 的身份变化不作历史完成推断。
+清理已提交的旧请求须同时确认精确整轮终态、来源及后代空闲、队列为空，以及该轮输入回执与消费记录一致。Main 通过通用维护接口保存清理证明并释放该回执。对于可以证明从未提交且从未开始执行的请求，维护接口支持放弃登记。身份、结果或写入无法确认时保留原回执待核对。维护流程沿用已有存储与协议。
 
 ## 数据路径与保留策略
 
-Team 自有原生磁盘账本统一使用 SDK 准备的 `state/plugin-data/agent-team/`：`discussion-receipts/`、`summary-receipts/`、`launch-receipts/`。此受管根采用 `retain` 策略，关闭、更新及卸载均不清空恢复账本；重新安装也不自动重放未知任务。路径由 SDK 提供，不由模型参数或旧目录猜测。
+Team 使用 SDK 准备的 `state/plugin-data/agent-team/` 保存 `discussion-receipts/` 与 `summary-receipts/`，已有的 `launch-receipts/` 目录保留原样。此受管根采用 `retain` 策略，关闭、更新及卸载均保留这些元数据。重新安装后继续核对未知结果。
 
 原生 transcript、通用 Required 服务账本、宿主产品数据库与项目 `.agent-tasks/team-discussions/` 附件有各自的所有权。取消 ACK、插件退休或本地对象释放都不能证明原生已停止引用文件，也不能授权删除 borrowed source。完整业务删除顺序见[禁用、卸载与删除](guide.md#禁用卸载与删除的区别)。

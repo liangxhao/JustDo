@@ -47,6 +47,7 @@ console.log(JSON.stringify({ check: 'frozen-runtime-artifact',
 const skipConcurrencyMatrix = process.argv.includes('--skip-concurrency-matrix');
 const historyToggleOnly = process.argv.includes('--history-toggle-only');
 const coldStartOnly = process.argv.includes('--cold-start-only');
+const promptSendOnly = process.argv.includes('--prompt-send-only');
 const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), 'agent-team-gateway-'));
 // Native watches admit the config directory's parent and each workspace's
 // parent. Keep those authorities private, as in the desktop layout: a config
@@ -111,6 +112,7 @@ const organizerContextChecks = [];
 const toolObservations = [];
 const lifecycleObservations = [];
 const launchObservations = [];
+const teamPromptObservations = [];
 let reviewDeliveryIds = [];
 let reviewerFinishResponse;
 const model = createServer(async (request, response) => {
@@ -173,13 +175,22 @@ const model = createServer(async (request, response) => {
   }
   if (JSON.stringify(body.messages).includes('ORGANIZE_TEAM_FIXTURE')) {
     const results = body.messages.filter(message => message.role === 'tool');
+    if (results.length === 0) {
+      const content = JSON.stringify(body.messages);
+      teamPromptObservations.push({
+        collaboration: content.includes('Selected mode: task collaboration.'),
+        discussion: content.includes('Selected mode: group discussion.'),
+        managed: content.includes('<app-plugin-input>'),
+      });
+    }
     const publishedSkill = path.join(state, 'plugin-skills/agent-team/SKILL.md');
     const steps = [
       ['read', { path: publishedSkill }],
       ['tool_search', { query: 'task_assistants' }],
       ['tool_describe', { id: 'task_assistants' }],
       ['tool_call', { id: 'task_assistants', args: {} }],
-      ['tool_call', { id: 'write', args: { path: 'forbidden-launch.txt', content: 'forbidden' } }],
+    ];
+    if (!promptSendOnly) steps.push(
       [
         'tool_call',
         {
@@ -193,7 +204,7 @@ const model = createServer(async (request, response) => {
           },
         },
       ],
-    ];
+    );
     if (results.length > 0) {
       const text = JSON.stringify(results.at(-1).content);
       launchObservations[results.length - 1] = text;
@@ -428,6 +439,7 @@ buildSync({
       export { isAppNativeHandshake } from './plugins/sdk/app-plugin-sdk/native-contract';
       export { readConversationSenders } from ${JSON.stringify(path.join(pluginRoot, "tests/fixtures/agent-team-model-context.ts"))};
       export { discussionOperationId } from ${JSON.stringify(path.join(pluginRoot, "runtime/discussion/receipt.ts"))};
+      export { appendAgentTeamInstruction } from ${JSON.stringify(path.join(pluginRoot, 'prompt/agentTeamPrompt.ts'))};
       export { discussionMemberSessionKey } from ${JSON.stringify(path.join(pluginRoot, "contracts/teamDiscussion.ts"))};
       export { CUSTODY_RPC } from '@runtime-services/sdk/custody';
       export { preparePluginDataDirectory } from './src/main/plugins/data/pluginDataService';
@@ -818,6 +830,63 @@ async function runChecks() {
   // HELLO precedes completion of Native config activation. Use the same public
   // read-only admission receipt as Main. Do not prewarm skills or models.
   await awaitAppNativeRegistration();
+  if (promptSendOnly) {
+    const { hostDb } = await prepareHost();
+    try {
+      for (const [agentId, sourceId, mode] of [['alice', 'organizer', 'task'], ['bob', 'review-worker', 'group']]) {
+        launchObservations.length = 0;
+        const sessionKey = `agent:${agentId}:justdo:${sourceId}`;
+        const prepared = await client.request('sessions.create', {
+          key: sessionKey, cwd: project, permissionMode: 'guarded',
+        });
+        const runId = `prompt-fixture-${mode}`;
+        const message = mainBinding.appendAgentTeamInstruction('ORGANIZE_TEAM_FIXTURE', mode);
+        const sent = await client.request('chat.send', { sessionKey, message, idempotencyKey: runId });
+        assert.equal(sent.runId, runId);
+        const deadline = Date.now() + 45000;
+        let terminal;
+        while (!terminal && Date.now() < deadline) {
+          terminal = lifecycleObservations.find(event =>
+            event.runId === runId && event.sessionKey === sessionKey &&
+            event.sessionId === prepared.entry.sessionId && event.data?.executionSettled === true,
+          );
+          if (!terminal) await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        assert.equal(terminal?.data.phase, 'end', 'ordinary Team prompt must reach its exact native whole-run terminal');
+        assert.equal(launchObservations.length, 4);
+        assert.ok(launchObservations[0].includes('# Agent team'), 'read must return the published skill');
+        assert.ok(launchObservations[1].includes('task_assistants'), 'search must find the Team tool');
+        assert.ok(launchObservations[2].includes('task_assistants'), 'describe must return the Team tool');
+        assert.ok(launchObservations[3].includes('available') && launchObservations[3].includes('carol'),
+          'the actual Team member tool must return the enabled assistant roster through Main');
+        let history;
+        const idleDeadline = Date.now() + 15000;
+        do {
+          history = await client.request('chat.history', { sessionKey, limit: 16 });
+          assert.equal(history.sessionId, prepared.entry.sessionId);
+          if (history.sessionInfo?.hasActiveRun === false && history.pendingInputs?.total === 0) break;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } while (Date.now() < idleDeadline);
+        assert.equal(history.sessionInfo?.hasActiveRun, false, 'source dispatcher must finish retiring the settled run');
+        assert.equal(history.pendingInputs?.total, 0);
+        const results = history.messages.map(row => row.message ?? row).filter(row => row.role === 'toolResult');
+        assert.deepEqual(results.map(row => row.toolName), ['read', 'tool_search', 'tool_describe', 'tool_call']);
+        assert.ok(results.every(row => row.isError !== true));
+      }
+      assert.deepEqual(teamPromptObservations, [
+        { collaboration: true, discussion: false, managed: false },
+        { collaboration: false, discussion: true, managed: false },
+      ]);
+      console.log(JSON.stringify({ check: 'ordinary-team-prompt', modes: 2, readSearchDescribeVerified: true, assistantRosterVerified: true }));
+      successReport = { ok: true, ordinaryTeamPromptModes: 2, readSearchDescribeVerified: true, assistantRosterVerified: true,
+        scope: 'isolated native tools and whole-run settlement in default and role workspaces' };
+      return;
+    } finally {
+      hostHandler = undefined;
+      hostLifecycleObserver = undefined;
+      hostDb.close();
+    }
+  }
   if (!historyToggleOnly) {
     // Keep the independent tool/CWD/command matrix and its original 30s/45s
     // limits in the full probe, outside the history registration check.
@@ -1161,90 +1230,93 @@ async function runChecks() {
   );
   await checkTracking(1, 1);
   // Real model tool -> native identity hook -> product host coordinator -> native group.
-  const hostBundle = path.join(state, 'host-coordinators.mjs');
-  const electronStub = path.join(state, 'electron-stub.mjs');
-  writeFileSync(electronStub, 'export const ipcMain={handle(){}};');
-  buildSync({
-    absWorkingDir: repoRoot,
-    stdin: {
-      contents:
-        `export {AgentTeamSettingsService} from ${JSON.stringify(path.join(pluginRoot, "host/data/agentTeamSettingsService"))}; export {TeamDiscussionCoordinator} from ${JSON.stringify(path.join(pluginRoot, "host/discussion/teamDiscussionCoordinator"))}; export {CollaborationCoordinator} from ${JSON.stringify(path.join(pluginRoot, "host/collaboration/collaborationCoordinator"))}; export {initializeTeamDiscussionTables} from ${JSON.stringify(path.join(pluginRoot, "host/data/teamDiscussionStore"))}; export {initializeCollaborationTables,CollaborationStore} from ${JSON.stringify(path.join(pluginRoot, "host/data/collaborationStore"))};`,
-      resolveDir: repoRoot,
-    },
-    outfile: hostBundle,
-    bundle: true,
-    platform: 'node',
-    format: 'esm',
-    packages: 'external',
-    alias: { electron: electronStub },
-  });
-  const host = await import(pathToFileURL(hostBundle));
-  const hostDb = new DatabaseSync(':memory:');
-  hostDb.exec(`PRAGMA foreign_keys=ON;
-    CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER);
-    CREATE TABLE agents(id TEXT PRIMARY KEY,enabled INTEGER);
-    CREATE TABLE cowork_sessions(id TEXT PRIMARY KEY,agent_id TEXT,status TEXT);
-    INSERT INTO agents VALUES('alice',1),('bob',1),('carol',1);
-    INSERT INTO cowork_sessions VALUES('organizer','alice','idle'),('review-source','alice','idle'),('review-worker','bob','idle'),('review-peer','carol','idle');`);
-  const database = {
-    pragma: sql => hostDb.prepare('PRAGMA ' + sql).all(),
-    exec: sql => hostDb.exec(sql),
-    prepare: sql => hostDb.prepare(sql),
-    transaction: fn => () => {
-      hostDb.exec('BEGIN IMMEDIATE');
-      try {
-        const result = fn();
-        hostDb.exec('COMMIT');
-        return result;
-      } catch (error) {
-        hostDb.exec('ROLLBACK');
-        throw error;
-      }
-    },
-  };
-  host.initializeTeamDiscussionTables(database);
-  host.initializeCollaborationTables(database);
-  const reviewProfiles = {
-    'review-source': 'alice',
-    'review-worker': 'bob',
-    'review-peer': 'carol',
-  };
-  const hostStore = {
-    getSession: id =>
-      id === 'organizer'
-        ? { id, agentId: 'alice', cwd: project, permissionMode: 'ask' }
-        : reviewProfiles[id]
-          ? { id, agentId: reviewProfiles[id], cwd: project, permissionMode: 'ask' }
-          : undefined,
-    getAgent: id => ({ id, name: id, enabled: true }),
-    listAgents: () => ['alice', 'bob', 'carol'].map(id => ({ id, name: id, enabled: true })),
-    getSessionRuns: () => [{ rootRunId: nativeSourceRun, state: 'running' }],
-  };
-  // Host entry points capture their registration once; nested requests retain
-  // that admission across awaits, as they do in the actual Main host.
-  const requestGateway = (method, params) =>
-    appClient.request(method, params, { timeoutMs: 45000 });
-  const discussionHost = new host.TeamDiscussionCoordinator({
-    getDatabase: () => database,
-    getStore: () => hostStore,
-    ensureReady: async () => {},
-    requestGateway,
-    requestConnectedGateway: requestGateway,
-    onChanged: () => {},
-  });
-  const collaborationHost = new host.CollaborationCoordinator({
-    getDatabase: () => database,
-    getStore: () => hostStore,
-    getRouter: () => ({}),
-    getRuntime: () => null,
-    requestGateway,
-    discussion: (...args) => discussionHost.fromAgent(...args),
-  });
-  hostHandler = payload => withAppBinding(() => collaborationHost.handle(payload));
-  hostLifecycleObserver = payload =>
-    withAppBinding(() => collaborationHost.observeExecution(payload));
-  const callDiscussionHost = (method, ...args) =>
-    withAppBinding(() => discussionHost[method](...args));
+  const { host, hostDb, database, discussionHost, callDiscussionHost } = await prepareHost();
+  async function prepareHost() {
+    const hostBundle = path.join(state, 'host-coordinators.mjs');
+    const electronStub = path.join(state, 'electron-stub.mjs');
+    writeFileSync(electronStub, 'export const ipcMain={handle(){}};');
+    buildSync({
+      absWorkingDir: repoRoot,
+      stdin: {
+        contents:
+          `export {AgentTeamSettingsService} from ${JSON.stringify(path.join(pluginRoot, "host/data/agentTeamSettingsService"))}; export {TeamDiscussionCoordinator} from ${JSON.stringify(path.join(pluginRoot, "host/discussion/teamDiscussionCoordinator"))}; export {CollaborationCoordinator} from ${JSON.stringify(path.join(pluginRoot, "host/collaboration/collaborationCoordinator"))}; export {initializeTeamDiscussionTables} from ${JSON.stringify(path.join(pluginRoot, "host/data/teamDiscussionStore"))}; export {initializeCollaborationTables,CollaborationStore} from ${JSON.stringify(path.join(pluginRoot, "host/data/collaborationStore"))};`,
+        resolveDir: repoRoot,
+      },
+      outfile: hostBundle,
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+      alias: { electron: electronStub },
+    });
+    const host = await import(pathToFileURL(hostBundle));
+    const hostDb = new DatabaseSync(':memory:');
+    hostDb.exec(`PRAGMA foreign_keys=ON;
+      CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER);
+      CREATE TABLE agents(id TEXT PRIMARY KEY,enabled INTEGER);
+      CREATE TABLE cowork_sessions(id TEXT PRIMARY KEY,agent_id TEXT,status TEXT);
+      INSERT INTO agents VALUES('alice',1),('bob',1),('carol',1);
+      INSERT INTO cowork_sessions VALUES('organizer','alice','idle'),('review-source','alice','idle'),('review-worker','bob','idle'),('review-peer','carol','idle');`);
+    const database = {
+      pragma: sql => hostDb.prepare('PRAGMA ' + sql).all(),
+      exec: sql => hostDb.exec(sql),
+      prepare: sql => hostDb.prepare(sql),
+      transaction: fn => () => {
+        hostDb.exec('BEGIN IMMEDIATE');
+        try {
+          const result = fn();
+          hostDb.exec('COMMIT');
+          return result;
+        } catch (error) {
+          hostDb.exec('ROLLBACK');
+          throw error;
+        }
+      },
+    };
+    host.initializeTeamDiscussionTables(database);
+    host.initializeCollaborationTables(database);
+    const reviewProfiles = {
+      'review-source': 'alice',
+      'review-worker': 'bob',
+      'review-peer': 'carol',
+    };
+    const hostStore = {
+      getSession: id =>
+        id === 'organizer'
+          ? { id, agentId: 'alice', cwd: project, permissionMode: 'ask' }
+          : reviewProfiles[id]
+            ? { id, agentId: reviewProfiles[id], cwd: project, permissionMode: 'ask' }
+            : undefined,
+      getAgent: id => ({ id, name: id, enabled: true }),
+      listAgents: () => ['alice', 'bob', 'carol'].map(id => ({ id, name: id, enabled: true })),
+      getSessionRuns: () => [{ rootRunId: nativeSourceRun, state: 'running' }],
+    };
+    // Host entry points capture their registration once; nested requests retain
+    // that admission across awaits, as they do in the actual Main host.
+    const requestGateway = (method, params) =>
+      appClient.request(method, params, { timeoutMs: 45000 });
+    const discussionHost = new host.TeamDiscussionCoordinator({
+      getDatabase: () => database,
+      getStore: () => hostStore,
+      ensureReady: async () => {},
+      requestGateway,
+      requestConnectedGateway: requestGateway,
+      onChanged: () => {},
+    });
+    const collaborationHost = new host.CollaborationCoordinator({
+      getDatabase: () => database,
+      getStore: () => hostStore,
+      getRouter: () => ({}),
+      getRuntime: () => null,
+      requestGateway,
+      discussion: (...args) => discussionHost.fromAgent(...args),
+    });
+    hostHandler = payload => withAppBinding(() => collaborationHost.handle(payload));
+    hostLifecycleObserver = payload =>
+      withAppBinding(() => collaborationHost.observeExecution(payload));
+    const callDiscussionHost = (method, ...args) =>
+      withAppBinding(() => discussionHost[method](...args));
+    return { host, hostDb, database, discussionHost, callDiscussionHost };
+  }
   // Progress reads use exact Native receipts; history is loaded after settlement.
   const readSettledDiscussion = async (roomId, deadline) => {
     const run = discussionHost.metadata.latestRun(roomId);
@@ -1277,26 +1349,11 @@ async function runChecks() {
     cwd: project,
     permissionMode: 'guarded',
   });
-  const launchSource = (
-    await requestTeam('teamDiscussion.summary', {
-      operation: 'source',
-      sessionKey: 'agent:alice:justdo:organizer',
-    })
-  ).source;
-  await requestTeam('agentTeam.launch.register', {
-    expectedGeneration: 0,
-    sessionKey: 'agent:alice:justdo:organizer',
-    nativeSessionId: launchSource.sessionId,
-    lifecycleRevision: launchSource.lifecycleRevision ?? null,
-    clientTurnId: 'organizer-request',
-    promptSha256: createHash('sha256').update('ORGANIZE_TEAM_FIXTURE').digest('hex'),
-    mode: 'discussion',
-  });
   await client.request(
     'chat.send',
     {
       sessionKey: 'agent:alice:justdo:organizer',
-      message: 'ORGANIZE_TEAM_FIXTURE',
+      message: mainBinding.appendAgentTeamInstruction('ORGANIZE_TEAM_FIXTURE', 'group'),
       idempotencyKey: 'organizer-request',
     },
     { timeoutMs: 15000 },
@@ -1328,8 +1385,8 @@ async function runChecks() {
   assert.equal(organized.room.sourceSessionId, 'organizer');
   assert.equal(
     launchObservations.length,
-    6,
-    'all native discovery, read, policy, and create steps must run',
+    5,
+    'all native discovery, read, and create steps must run',
   );
   assert.ok(
     launchObservations[0].includes('# Agent team'),
@@ -1337,26 +1394,14 @@ async function runChecks() {
   );
   for (const index of [1, 2, 3])
     assert.ok(
-      !launchObservations[index].includes('Explicit Agent Team launch is unconfirmed'),
-      'native catalog controls and the allowed target must be admitted',
+      launchObservations[index].includes(index === 3 ? 'available' : 'task_assistants'),
+      'native catalog controls and Team member discovery must return meaningful results',
     );
-  assert.ok(
-    launchObservations[4].includes('Explicit Agent Team launch is unconfirmed'),
-    'native tool_call must still gate its write target',
-  );
-  await requestTeam('agentTeam.launch.confirm', {
-    sessionKey: 'agent:alice:justdo:organizer',
-    nativeSessionId: launchSource.sessionId,
-    clientTurnId: 'organizer-request',
-    mode: 'discussion',
-    receiptId: organized.latestRun.discussionId,
-  });
   console.log(
     JSON.stringify({
-      check: 'explicit-team-launch',
+      check: 'ordinary-team-prompt',
       nativeSkillPublished: true,
       catalogControls: true,
-      innerWriteDenied: true,
       nativeGroupCreated: true,
     }),
   );
@@ -1742,7 +1787,9 @@ try {
       process.exitCode = 1;
     }
   }
-  const observed = await observeCleanup(childClosed, 45000);
+  // The two-workspace prompt probe retires both model generations and then
+  // waits for the launcher to flush its compile cache during process exit.
+  const observed = await observeCleanup(childClosed, promptSendOnly ? 60000 : 45000);
   const shutdown = observed.settled ? observed.value : { code: null, signal: 'forced-timeout' };
   if (!observed.settled) {
     process.exitCode = 1;

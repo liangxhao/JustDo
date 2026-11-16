@@ -210,19 +210,18 @@ try {
     return entry.method;
   };
   let previous = await handshake('agent-team');
-  const sourceKey = `agent:fixture:justdo:${randomUUID()}`;
   for (let cycle = 1; cycle <= 2; cycle++) {
     stage(`agent-team-cycle-${cycle}`);
+    const roomId = `probe_${randomUUID().replaceAll('-', '')}`;
+    const holding = { roomId, generation: 1, agentId: 'fixture', cwd: workspace };
     const stopped = await enabled('agent-team', false);
-    await assert.rejects(call(previous, 'agentTeam.launch.inspect', { sessionKey: sourceKey }));
+    await assert.rejects(call(previous, 'teamDiscussion.holdingPrepare', holding));
     const started = await enabled('agent-team', true);
     const receipt = await handshake('agent-team');
     assert.notEqual(receipt.registrationId, previous.registrationId);
     assert.notEqual(proof(receipt), proof(previous), 'A replacement cannot reuse the retired owner proof registration.');
-    await assert.rejects(call(previous, 'agentTeam.launch.inspect', { sessionKey: sourceKey }));
-    assert.deepEqual(await call(receipt, 'agentTeam.launch.inspect', { sessionKey: sourceKey }), { state: 'absent', generation: 0 });
-    const roomId = `probe_${randomUUID().replaceAll('-', '')}`;
-    const identity = await call(receipt, 'teamDiscussion.holdingPrepare', { roomId, generation: 1, agentId: 'fixture', cwd: workspace });
+    await assert.rejects(call(previous, 'teamDiscussion.holdingPrepare', holding));
+    const identity = await call(receipt, 'teamDiscussion.holdingPrepare', holding);
     assert.equal(identity.roomId, roomId); assert.equal(identity.epoch, 1); assert.equal(identity.generation, 1);
     const send = { roomId, requestId: randomUUID(), expectedRevision: 1, message: 'Synthetic pending input; never dispatch.', selectedAgentIds: [], rounds: 1 };
     const fingerprint = hash(JSON.stringify([roomId, 1, send.message, [], 1, [], []]));
@@ -232,7 +231,7 @@ try {
     assert.equal(readInput.send.message, send.message); assert.equal(readInput.send.requestId, send.requestId);
     assert.equal(readInput.identity.sessionId, identity.sessionId); assert.equal(readInput.identity.lifecycleRevision, identity.lifecycleRevision);
     report.checks.push({ cycle, stopped, started, registrationId: receipt.registrationId,
-      ownerProofSha256: hash(proof(receipt)), launchInspect: true, holdingPreparedSavedRead: true, oldRegistrationRejected: true });
+      ownerProofSha256: hash(proof(receipt)), holdingPreparedSavedRead: true, oldRegistrationRejected: true });
     previous = receipt;
   }
   stage('swarm-workflow-cycle');

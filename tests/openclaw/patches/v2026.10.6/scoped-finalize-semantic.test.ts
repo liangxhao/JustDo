@@ -65,38 +65,6 @@ it.skipIf(!sdkRoot)(
         );
       }
     }
-    for (const [index, relative] of [
-      'plugins/extensions/runtime-services/agent-team/launch/agent-team-launch-guard.ts',    ].entries()) {
-      const text = fs.readFileSync(path.join(repo, relative), 'utf8');
-      const ast = ts.createSourceFile(relative, text, ts.ScriptTarget.Latest, true);
-      let options: ts.TypeNode | undefined;
-      let identity = '';
-      const visit = (node: ts.Node) => {
-        if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'finalizeOptions')
-          options = node.type;
-        if (ts.isTypeAliasDeclaration(node) && node.name.text === 'Identity')
-          identity = node.getText(ast);
-        ts.forEachChild(node, visit);
-      };
-      visit(ast);
-      if (!identity && relative.includes('agent-team-launch-guard')) {
-        const imported = fs.readFileSync(path.join(repo, 'plugins/extensions/runtime-services/agent-team/launch/agent-team-launch-state.ts'), 'utf8');
-        const types = ts.createSourceFile('launch-state.ts', imported, ts.ScriptTarget.Latest, true);
-        identity = types.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'Identity')!.getText(types).replace(/^export /, '');
-      }
-      expect(options).toBeDefined();
-      lines.push(
-        `namespace Product${index} {`,
-        'declare const api: OpenClawPluginApi;',
-        identity,
-        `const finalizeOptions: ${options!.getText(ast)} = {appliesToAgentRun: () => false};`,
-        "api.on('before_agent_finalize', async () => {}, finalizeOptions);",
-        'type AssertFalse<T extends false> = T;',
-        'type OptionsNotNever = AssertFalse<[typeof finalizeOptions] extends [never] ? true : false>;',
-        'type ApiNotAny = AssertFalse<0 extends (1 & typeof api.on) ? true : false>;',
-        '}',
-      );
-    }
     lines.push(
       '// @ts-expect-error non-finalize hooks cannot declare an admission selector',
       "core.on('agent_end', async () => {}, {appliesToAgentRun: () => false});",

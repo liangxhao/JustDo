@@ -86,7 +86,7 @@ flowchart LR
 
 接纳后继续保留来源 run 的模式约束，只在同代次、精确 sessionId/runId 的 executionSettled 原生整轮终态清理；停止服务和有界到期清理不建立执行结果。接纳后的提示重建只要求确认既有回执并结束，不重新准备或启动。
 
-当前未为此增加 runtime patch。Team 发起期间的 Workflow 启动由工厂隐藏；首次 Swarm 发起的可信登记发生在 `before_prompt_build`，此时工具工厂已经构造目录，不能据正文标记提前裁剪 Team 定义或授予操作。原生 `sessions_send` 仍可显示，因为准备阶段的原生子任务通信合法。其按目标的限制、Team 创建/派发的限制继续在调用时检查；当前工具工厂时序不能保证首次来源请求已经在目录层完成全部同步过滤，不能将目录可见性当作调用许可。
+Workflow 启动工具在构建和执行时读取 Runtime Services 的通用执行准入状态。已有的未释放登记仍受这项检查。Agent Team 的输入模式通过普通聊天提交。首次 Swarm 发起的可信登记发生在 `before_prompt_build`，工具目录可能已经构建，因此 Team 创建、派发和 `sessions_send` 的目标限制在实际调用时校验。
 
 ### 发起未接纳时的有限纠正
 

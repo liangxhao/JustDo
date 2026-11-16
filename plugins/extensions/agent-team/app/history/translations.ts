@@ -111,13 +111,7 @@ export const agentTeamTranslations = {
     teamDiscussionExecutionUnknown: '执行终态暂未确认，已停止派发后续成员。',
     teamFeatureBack: '返回功能菜单',
     teamFeatureRemove: '移除 Agent Team 模式',
-    teamFeatureDisabled: '请先在扩展中启用 Agent Team，再发送。',
-    teamFeatureUnavailable: '无法检查 Agent Team 扩展状态，请稍后重试。',
     teamLaunchUnconfirmed: '上次 Agent Team 请求尚未完成核实，请等待执行和队列清理后重试。',
-    teamLaunchContractUnavailable:
-      '当前会话无法发起 Agent Team，请检查 Goal、计划模式、只读状态和会话类型。',
-    teamFeatureConflict:
-      'Agent Team 需要普通执行消息；请退出 Plan 或当前目标流程，并移除斜杠命令后发送。',
     teamReplyToAgent: '回复',
     teamSpeaking: '正在响应',
     teamAwaitingMembers: '等待成员继续讨论',
@@ -207,7 +201,6 @@ export const agentTeamTranslations = {
     teamCollaborationReferenceHelp:
       '只添加成员和原批次引用。请在主会话补充要求并发送，请求开启新的协作阶段。',
     teamReturnToSource: '回主会话补充',
-    teamFeatureBusy: '请等待当前执行结束后再发起 Agent Team；草稿和所选模式已保留。',
     teamFeatureStatusUnknown: '暂时无法确认当前会话的执行状态，请稍后重试；草稿和所选模式已保留。',
     teamReferenceLimit: '主会话最多保留 8 条引用，请先移除一条。',
     teamRecords: '团队记录',
@@ -441,14 +434,8 @@ export const agentTeamTranslations = {
       'Execution has no confirmed terminal outcome. Further member dispatch has stopped.',
     teamFeatureBack: 'Back to features',
     teamFeatureRemove: 'Remove Agent Team mode',
-    teamFeatureDisabled: 'Enable Agent Team in Extensions before sending.',
-    teamFeatureUnavailable: 'Cannot check Agent Team availability. Please retry.',
     teamLaunchUnconfirmed:
       'The previous Agent Team request is still unconfirmed. Wait for execution and queue cleanup before retrying.',
-    teamLaunchContractUnavailable:
-      'This conversation cannot start Agent Team. Check Goal, Plan mode, read-only status, and conversation type.',
-    teamFeatureConflict:
-      'Agent Team needs a normal execution message. Exit Plan or the active goal workflow and remove slash commands before sending.',
     teamReplyToAgent: 'Reply',
     teamSpeaking: 'Responding',
     teamAwaitingMembers: 'Waiting for members to continue',
@@ -544,8 +531,6 @@ export const agentTeamTranslations = {
     teamCollaborationReferenceHelp:
       'Adds only the member and original batch reference. Add your request and send it in the main chat to request a new phase.',
     teamReturnToSource: 'Continue in main chat',
-    teamFeatureBusy:
-      'Wait for the current run to finish before starting Agent Team. Your draft and mode are preserved.',
     teamFeatureStatusUnknown:
       'The current session’s execution status could not be confirmed. Try again shortly. Your draft and mode are preserved.',
     teamReferenceLimit: 'The main chat supports up to 8 references. Remove one first.',

@@ -41,12 +41,10 @@ export function register(host: AppBrowserHost): () => void {
       },
       icon: <UserGroupIcon />,
       removeLabelKey: 'teamFeatureRemove',
+      allowQueue: true,
       ordinaryTurnOnly: true,
-      prepare: async input => {
-        if (input.planModeEnabled || input.queued || input.prompt.trimStart().startsWith('/'))
-          throw new Error('teamFeatureConflict');
-        return { prompt: appendAgentTeamInstruction(input.prompt, mode) };
-      },
+      promptOnly: true,
+      prepare: async ({ prompt }) => ({ prompt: appendAgentTeamInstruction(prompt, mode) }),
     });
   host.registerView({
     id: 'page',

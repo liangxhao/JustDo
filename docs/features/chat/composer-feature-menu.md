@@ -14,7 +14,9 @@ flowchart LR
   Composer --> Menu
   Menu --> Selection[按聊天保存的模式选择]
   Selection --> Token[通用原子标签]
-  Selection --> Prepare[插件 prepare + 宿主提交围栏]
+  Selection --> Prepare[插件准备提示]
+  Prepare -->|promptOnly| Chat[普通聊天]
+  Prepare -->|结构化提交| Participant[宿主提交参与者]
 ```
 
 ## 接入契约
@@ -54,6 +56,8 @@ Team 与 Workflow 选择互斥，按聊天保留草稿；关闭插件清理自�
 草稿及 epoch。失败不清理正文，已接受发送只清理对应快照，不能删除后来的新选择。
 模型准备前捕获模式，实际发送前重查，不能因插件撤回而把原插件请求降为普通消息。
 通用显示过滤不能代替 Main/Gateway 的执行权限校验。
+
+Agent Team 的模式把组织提示附在普通消息后，支持原生消息排队。规划、未结束的 Goal、斜杠命令和完成反馈沿用普通轮次限制。Swarm Workflow 使用宿主的结构化提交。
 
 附件不依赖插件状态；计划模式仍由既有 Core 保存，保存中禁止重复切换。
 运行中允许排队时仍可添加附件，插件模式继续受输入框的运行和排队条件约束；已有计划模式可关闭，

@@ -22,10 +22,10 @@ Node、OpenClaw、SDK 与 React 兼容范围以[package.json](../../../../plugin
 
 | 验证入口                                                              | 核对内容                                                             | 证据范围                                                          |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `scripts/native/hot-reenable.native-probe.mjs`                        | 同进程关闭/开启、新 proof、旧 App 绑定拒绝、launch 与 inert holding  | 已有冻结产物隔离证据；使用可信目录测试覆盖，非生产安装信任验收    |
+| `scripts/native/hot-reenable.native-probe.mjs`                        | 同进程关闭/开启、新 proof、旧 App 绑定拒绝、inert holding           | 冻结产物隔离验证，使用可信目录测试覆盖                            |
 | `scripts/test/verify-group-discussion-runtime.mjs --tool-inheritance` | 成员工具、来源参与、讨论结束后来源继续工具执行、精确终态与汇总 entry | 历史 v2026.10.6 loopback 合成模型证据，不能延续为当前真实模型通过 |
 | `scripts/native/agent-team-message-paths.native-probe.mjs`            | 成员单聊、公开群聊、重放不新增调用、bind/dispatch、定点 CAS 清理     | 历史 v2026.10.6 原生链路证据，元数据与权限端口为 fixture          |
-| `scripts/native/main-send-admission.native-probe.mjs`                 | 实际 Store/Adapter/Router、定点观察重读、SID/连接变化、注册与清理    | 隔离合成模型；不代表整个生产应用没有后台全局查询                  |
+| `scripts/native/main-send-admission.native-probe.mjs`                 | 实际 Store/Adapter/Router、定点观察重读、SID/连接变化、Team 普通发送 | 隔离合成模型与实际 Main 发送链路                                  |
 
 表中脚本路径均相对本包根目录。以上探针均显式依赖集成环境，须设置 `APP_PLUGIN_HOST_ROOT`，
 并提供相符的宿主构建、冻结运行时和独立插件产物；原生探针使用所选运行时自带 Node。
@@ -47,6 +47,12 @@ Node、OpenClaw、SDK 与 React 兼容范围以[package.json](../../../../plugin
 | `node scripts/openclaw/probe-agent-team-settings.mjs <runtime-directory>`    | 使用有界延迟 fixture dispatcher 核对公开 group SDK 的逐请求策略、turn budget、mention 与取消。测量的是 dispatcher 并发，不是真实模型执行或 whole-run 结果。                                                                                                                                                                                                                                                       |
 | `node scripts/test/verify-group-discussion-runtime.mjs [runtime-directory]`  | 使用独立状态、loopback 模型及随包 group/summary RPC，核对广播、原生 `NO_REPLY` 不重试空回答、静默轮提前完成、精确 mentions、借用来源身份、来源汇总、整组取消与 provider 失败。产物位于宿主的 `.agent-tasks/runtime/group-mode-native-*/`，不访问用户配置、凭据或历史；只验证原生执行契约，不证明真实模型讨论质量或完整 Main/Renderer 流程。                                                                       |
 
+为 Gateway 探针追加 `--prompt-send-only`，可单独核对两种模式提示经普通 `chat.send`
+发送、原生 `read`、`tool_search`、`tool_describe` 和 `task_assistants` 实际返回结果，
+以及精确整轮终态。
+该场景覆盖默认助手及独立角色工作区，使用隔离 Gateway 和确定性模型。输入框的普通消息
+路由与队列选择另由宿主的 composer 测试覆盖。
+
 `node scripts/test/probe-agent-team-ui.cjs` 委托独立构建 Browser 产物探针，使用真实共享 React、
 已注册的 Team/Workflow 视图与模式，以及 fixture application/Gateway 端口；不再导入已移除的应用 feature 组件。
 Team 原生 send 验证入口是：
@@ -66,7 +72,10 @@ Gateway 探针编译宿主当前的真实 Runtime Services 入口及清单，沿
 whole-run 终态对应；关闭后须保留同一收据。它只证明已结算收据的保留，不证明关闭期间新结算在途执行。
 启停通过原生热应用及独立技能同步完成，要求同一 Gateway 进程和连接、新 Native 注册及旧绑定拒绝。
 Windows 沿用生产 polling 模式及 Native 的 30 秒技能树扫描周期，局部文件发现窗口为 40 秒（30 秒周期加 10 秒调度余量），不设置全局短 polling interval；其他平台保留 5 秒窗口。探针从 `skills.status` 的权威 workspaceDir 写入本次隔离技能，核对三次真实内容刷新及 Team 技能仍然发布，并记录每次耗时、扫描周期和最大等待。这不构成 5 秒被动刷新的产品承诺。
-探针使用宿主现行 shutdown preload/消息关闭自有 Gateway，正常退出等待上限为 45 秒；超时仅停止仍存活的自有子进程，再有界观察 3 秒，未确认回收则记录 unknown 并退出失败，不按退休 PID 清理进程树。模型服务关闭同样有界，只有正常退出后才输出最终 `ok`。
+探针使用宿主现行 shutdown preload/消息关闭自有 Gateway。常规退出等待上限为 45 秒，
+`--prompt-send-only` 使用 60 秒，覆盖两次模型执行的清理和启动器写回编译缓存。
+超时仅停止仍存活的自有子进程，再有界观察 3 秒。未确认回收时记录 unknown 并退出失败。
+模型服务关闭同样有界，只有正常退出后才输出最终 `ok`。
 此场景不执行完整产品 Main disable lease、待发输入取消事务或真实企业模型验收。
 
 2026-11-07 的 Windows 定向复验中，`--cold-start-only` 与 `--history-toggle-only` 均以退出码 0 完成，并确认自有 Gateway 正常关闭。冷启动完成两名成员的真实工具执行和公开历史投递，耗时 6,734 ms；历史开关后的三次文件变更分别在 15,250、366 和 29,845 ms 被实际观察，保持生产扫描周期及严格内容断言。该记录仅覆盖本节所述隔离合成模型与定向场景，不代表完整组织者、产品禁用事务或安装包验收。

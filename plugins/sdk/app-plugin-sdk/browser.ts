@@ -104,6 +104,8 @@ export interface AppComposerMode {
   selectionCaret?: 'preserve' | 'start';
   allowQueue?: boolean;
   ordinaryTurnOnly?: boolean;
+  /** Send the prepared text as a normal chat turn without a Main submission participant. */
+  promptOnly?: boolean;
   prepare(input: {
     prompt: string;
     sessionId?: string;

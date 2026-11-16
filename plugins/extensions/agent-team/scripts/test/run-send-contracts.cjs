@@ -61,6 +61,9 @@ async function main() {
     ['actual Renderer main-chat wire and initial dispatch', [
       'tests/openclaw/runtime/collaboration-main-send.native-probe.mjs', runtime,
     ], 900_000],
+    ['Agent Team mode prompts over ordinary native chat with real tools', [
+      path.join(pluginRoot, 'scripts/openclaw/probe-agent-team-gateway.mjs'), runtime, '--prompt-send-only',
+    ], 900_000],
     ['Agent Team source, direct member and real group messages', [
       path.join(pluginRoot, 'scripts/native/agent-team-message-paths.native-probe.mjs'), runtime,
     ], 900_000],

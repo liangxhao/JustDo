@@ -4,7 +4,7 @@
 
 ## 依赖、构建与代码信任
 
-`@app-plugin/sdk` 提供 Main／Browser、规划状态解析及 Native 绑定端口；`@runtime-services/sdk` 提供必需的通用执行准入、inert custody 和精确收据核对。后者不理解 Team 模式、房间或讨论协议，也不反向依赖可选 Team。讨论输入、发起守卫和业务账本归本包。
+`@app-plugin/sdk` 提供 Main／Browser、规划状态解析及 Native 绑定端口。`@runtime-services/sdk` 提供通用执行准入回执维护、inert custody 和精确收据核对。Team 模式提示、讨论输入和业务账本由本包维护。
 
 独立依赖安装后由 `@app-plugin/build` 检查和构建，命令与测试条件见[验证说明](validation.md#独立包检查)。运行时装配消费完整的 Native/Main/Browser 配套产物，不读取宿主源码或在线安装依赖。公开 SDK 的安装、版本兼容与所选 OpenClaw 运行时须由使用方提供，构建成功不证明宿主已接纳代码。
 
@@ -12,11 +12,11 @@ Native RPC 仍要求 OpenClaw 的可信安装准入；桌面 Main/UI 的产物 h
 
 ## Main 注册与运行所有权
 
-[Main 入口](../../../../plugins/extensions/agent-team/host/app.ts) 注册插件 schema、命令、配置／提交／停止／删除参与者及维护任务。业务 store、coordinator 和队列使用 SDK 的实时窄端口读取同一实际 store/router；异步续体不能使用入口创建时复制的宿主状态。
+[Main 入口](../../../../plugins/extensions/agent-team/host/app.ts) 注册插件 schema、命令、配置贡献、停止观察、删除参与者及维护任务。业务 store、coordinator 和队列使用 SDK 的实时窄端口读取实际 store/router。
 
-桌面宿主继续拥有 SQLite 连接、产品会话、助手档案、权限准备、原生聊天控制器、Gateway、窗口和通用资源账本。Team 拥有房间、来源参与、FIFO、独立验收和发起政策。同库创建成员产品会话及房间元数据维持同步原子事务，原生请求仍在事务外执行。
+桌面宿主继续拥有 SQLite 连接、产品会话、助手档案、权限准备、原生聊天控制器、Gateway、窗口和通用资源账本。Team 拥有房间、来源参与、FIFO、投递和独立验收。同库创建成员产品会话及房间元数据维持同步原子事务，原生请求在事务外执行。
 
-用户停止来源时先同步撤销 Team 在途准入，再立即请求原生停止，不等待远端守卫清理。精确停止 ACK 也不代表执行或托管工具清理已完成。Main `maintenance` 只核对已经登记的 whole-run、摘要停止、holding 取消及持久清理任务；关闭后不派发新 FIFO、不读取待发正文、不创建汇总或成员。热关开复用同一协调器，不重复进程恢复或推进房间代次。
+用户停止来源时沿用宿主的原生停止流程，插件观察停止事件并协调已关联的 Team 执行。Main `maintenance` 通过已连接的 Gateway 核对已经登记的整轮终态、已有发起登记、摘要停止、holding 取消及持久清理任务。插件关闭期间的维护限于精确回执与资源清理。热关开复用同一协调器。
 
 ### 全队停止与成员单执行停止
 
@@ -34,7 +34,7 @@ Native RPC 仍要求 OpenClaw 的可信安装准入；桌面 Main/UI 的产物 h
 
 ## Browser 草稿与准备恢复
 
-[Browser 入口](../../../../plugins/extensions/agent-team/app/browser/index.tsx) 注册模式、工作区、设置、历史、摘要、应用页与详情贡献；宿主只组合这些通用插槽。纯展示入口独立于业务启用状态，不能借展示恢复工具或读取额外历史。
+[Browser 入口](../../../../plugins/extensions/agent-team/app/browser/index.tsx) 注册模式、工作区、设置、历史、摘要、应用页与详情贡献。Team 的两种模式通过 `promptOnly` 把准备好的提示交给宿主普通聊天流程，原生队列和专用输入路由沿用宿主规则。纯展示入口独立于业务启用状态，使用宿主提供的历史投影。
 
 SDK `uiState.get/set` 保存当前插件 ID/hash 隔离的有界 plain-data 草稿。正文、附件路径和未知请求定位可在关闭、断线或可恢复围栏间保留；真正卸载或更换 hash 后清除。草稿不保存 ChatController、回调、原生授权或 transcript，重新启用不自动发送或重开旧对话框。
 

@@ -49,7 +49,6 @@ const compilation = await build({ stdin: { contents: `
 export { CoworkStore } from './src/main/data/coworkStore';
 export { OpenClawRuntimeAdapter } from './src/main/engine/openclaw/openclawRuntimeAdapter';
 export { CoworkEngineRouter } from './src/main/engine/cowork/coworkEngineRouter';
-export { AgentTeamLaunchCoordinator } from ${JSON.stringify(path.join(pluginRoot, "host/launch/agentTeamLaunchCoordinator"))};
 export { appendAgentTeamInstruction } from ${JSON.stringify(path.join(pluginRoot, "prompt/agentTeamPrompt"))};
 export { buildManagedSessionKey } from './src/main/openclaw/sessions/openclawSessionKeys';
 export { GatewayProcessShutdown } from './src/main/openclaw/runtime/launch/gatewayProcessShutdown';
@@ -102,8 +101,6 @@ db.exec(`PRAGMA foreign_keys=ON;
 const store = new host.CoworkStore(db);
 const adapter = new host.OpenClawRuntimeAdapter(store, { getAppStartedAtMs: () => Date.now() });
 const router = new host.CoworkEngineRouter({ openclawRuntime: adapter });
-const launch = new host.AgentTeamLaunchCoordinator({ getStore: () => store, getDatabase: () => db,
-  getRouter: () => router, requestGateway: (method, params) => adapter.requestGateway(method, params) });
 adapter.on('error', () => {});
 router.on('error', () => {});
 const methods = [], originalFrames = [], deliveredFrames = [], responses = [], terminals = new Map();
@@ -114,7 +111,7 @@ const model = createServer(async (request, response) => {
   try {
     for await (const chunk of request) { void chunk; }
     modelRequests += 1;
-    assert.ok(modelRequests <= 5, 'One ordinary warmup, three bounded Team passes and one custom source request');
+    assert.ok(modelRequests <= 3, 'One ordinary warmup and one request per source');
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
     response.end(`data: ${JSON.stringify({ id: 'fixture-admission', object: 'chat.completion.chunk', choices: [{ index: 0,
       delta: { role: 'assistant', content: 'SYNTHETIC_MAIN_ADMISSION_REPLY' }, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
@@ -262,7 +259,6 @@ try {
         else deliver(frame);
         if (frame.event === 'agent' && frame.payload?.stream === 'lifecycle' && frame.payload?.data?.executionSettled === true &&
           ['end', 'error'].includes(frame.payload?.data?.phase)) terminals.set(frame.payload.runId, frame.payload);
-        if (frame.event === 'agent') launch.observeExecution(frame.payload);
       } });
     transport = { request, stop: () => client.stop(), start: () => client.start() };
     adapter.gatewayClient = transport;
@@ -328,14 +324,6 @@ try {
       ? host.appendAgentTeamInstruction('SYNTHETIC_MAIN_ADMISSION_main', 'task')
       : 'SYNTHETIC_MAIN_ADMISSION_researcher';
     const beforeModel = modelRequests;
-    let launchReceipt;
-    if (agentId === 'main') {
-      launchReceipt = await launch.register({ sessionId: source.id, clientTurnId: runId, prompt });
-      assert.equal(launchReceipt.registerAcknowledged, true);
-      assert.equal(launchReceipt.nativeSessionId, prepared.gatewaySessionId);
-      launch.markSubmissionStarted(source.id, runId);
-      progress('team-registered', { agentId });
-    }
     const sent = await adapter.requestGateway('chat.send', { sessionKey: key, sessionId: prepared.gatewaySessionId,
       idempotencyKey: runId, message: prompt });
     assert.equal(sent.runId, runId);
@@ -347,19 +335,16 @@ try {
     progress('whole', { agentId });
     const history = await adapter.requestGateway('chat.history', { sessionKey: key });
     assert.equal(history.sessionId, prepared.gatewaySessionId);
-    assert.ok(JSON.stringify(history.messages).includes(`SYNTHETIC_MAIN_ADMISSION_${agentId}`));
+    assert.ok(JSON.stringify(history.messages).includes(JSON.stringify(prompt).slice(1, -1)));
     assert.ok(JSON.stringify(history.messages).includes('SYNTHETIC_MAIN_ADMISSION_REPLY'));
-    assert.equal(modelRequests - beforeModel, agentId === 'main' ? 3 : 1);
+    assert.equal(modelRequests - beforeModel, 1);
     progress('history', { agentId });
     await nativeIdle(source.id, prepared.gatewaySessionId, current[0].lifecycleRevision);
     progress('native-cleanup-idle', { agentId });
-    if (launchReceipt) assert.equal(await launch.releaseIfSettled(source.id), true,
-      'A real admitted Team launch releases only after its exact terminal and native input custody proof');
-    if (launchReceipt) progress('team-released', { agentId });
     report.checks.push({ path: 'actual-main-admission', agentId, key, nativeSessionId: prepared.gatewaySessionId,
       lifecycleRevision: current[0].lifecycleRevision, lifecycleRevisionPresent: current[0].lifecycleRevisionPresent,
       lifecycleRevisionType: current[0].lifecycleRevisionType, describeRequests: 2, runId, executionSettled: true,
-      historyVerified: true, actualTeamLaunchRegisteredAndReleased: !!launchReceipt });
+      historyVerified: true, agentTeamPrompt: agentId === 'main' });
   }
   for (const kind of ['generation', 'client']) {
     const source = sourceWithCompletedMetadata('main');
@@ -381,7 +366,8 @@ try {
   assert.equal(wrong.known, false);
   assert.deepEqual(methods.slice(before).map(row => row.method), ['sessions.describe']);
   report.checks.push({ path: 'expected-native-identity', key, nativeSessionId: prepared.gatewaySessionId, known: false, mutations: 0 });
-  assert.equal(modelRequests, 5);
+  assert.equal(modelRequests, 3);
+  assert.ok(!methods.some(row => row.method.startsWith('agentTeam.launch.')));
   assert.ok(!methods.some(row => row.method === 'sessions.list'));
   report.verified = true;
 } catch (error) { primaryFailure = error; }

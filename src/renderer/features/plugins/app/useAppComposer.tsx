@@ -172,6 +172,7 @@ export function useAppComposer(
         throw new Error('appPluginSubmitUnavailable');
       const result = await selected.prepare({ ...input, options: selection?.options });
       if (!current()) throw new Error('appPluginRetired');
+      if (selected.promptOnly) return { prompt: result.prompt, submission: undefined };
       if (!isAppWireValue(result.input)) throw new Error('appPluginInvalidRequest');
       return {
         ...result,

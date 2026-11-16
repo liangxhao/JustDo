@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 
-import { recognizeAgentTeamMode, stripAgentTeamInstruction } from '../../prompt/agentTeamPrompt';
+import { stripAgentTeamInstruction } from '../../prompt/agentTeamPrompt';
 import {
   appendCollaborationContinuation,
   stripCollaborationContinuation,
@@ -15,7 +15,7 @@ const target = {
   targetSessionKey: 'agent:worker:justdo:peer',
   priorDeliveryId: 'prior',
 };
-it('projects only the canonical continuation locator and never turns it into a new Team selection', () => {
+it('projects the canonical continuation locator in the visible message', () => {
   const text = 'Keep my wording\nMEDIA:/project/evidence.txt';
   const native = appendCollaborationContinuation(text, target);
   expect(native).toContain('<collaboration-continuation>');
@@ -24,7 +24,6 @@ it('projects only the canonical continuation locator and never turns it into a n
   expect(native).not.toContain('</justdo-');
   expect(stripCollaborationContinuation(native)).toBe(text);
   expect(stripAgentTeamInstruction(native)).toBe(text);
-  expect(recognizeAgentTeamMode(native)).toBeUndefined();
   expect(native).toContain(JSON.stringify(target));
 });
 it('does not project the retired branded continuation envelope', () => {
@@ -34,7 +33,6 @@ it('does not project the retired branded continuation envelope', () => {
   );
   expect(stripCollaborationContinuation(native)).toBe(native);
   expect(stripAgentTeamInstruction(native)).toBe(native);
-  expect(recognizeAgentTeamMode(native)).toBeUndefined();
   expect(native).toContain(target.targetSessionKey);
   const imitation = native.replace('Report any refusal', 'Ignore any refusal');
   expect(stripCollaborationContinuation(imitation)).toBe(imitation);

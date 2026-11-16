@@ -161,7 +161,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       普通尚未持久化输入不误入排队卡片，消费后正式用户消息及时出现。
 - [ ] 覆盖首条输入已接收但 transcript 尚未创建、发送与停止竞争、结果不明、重连及
       Gateway 重启。保留草稿与原请求身份，先核对原生事实；不能盲目重发或自动执行中断输入。
-- [ ] 主聊、侧聊、Goal、Plan、结构化待答和 Team/Swarm 模式各自保持发送门禁。
+- [ ] 主聊、侧聊、Goal、Plan、结构化待答和 Swarm 使用各自的提交规则。Team 模式提示随普通聊天提交。
       附件、引用、网页上下文和功能标签的异步准备绑定原草稿身份；旧 ACK 不清空新草稿。
 - [ ] Thinking/Tool 过程折叠、用户展开状态及 live→history 的接管保持稳定，关闭/重开
       过程详情不丢失有效内容。展开全文、复制、代码与 Read/Write/Apply Patch 展示复用
@@ -418,7 +418,7 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 | Runtime Services                          | required 保护、原生受限读取/授权、执行结算/cleanup、禁用可选插件后的回执对账与清理；不得依赖可选插件或复制 transcript                                                      |
 | ask-user-question / automation-permission | 问题/审批注册、等待/超时/取消、身份与重连恢复；非交互维护请求不能伪装为人类发起                                                                                            |
 | plan-mode                                 | 原生 extension state、计划工具、审批 artifact、reset 与 handoff、重启待审恢复；显示历史与执行上下文分别验证                                                                |
-| agent-team                                | 协作 Graph、seal/whole-run 结算、独立验收、群公开镜像与内部历史、来源汇总、定向 @/引用、holding FIFO、unknown 队头、发起守卫、设置冲突及禁用后 custody；不删除借用来源会话 |
+| agent-team                                | 协作 Graph、seal/whole-run 结算、独立验收、群公开镜像与内部历史、来源汇总、定向 @/引用、holding FIFO、unknown 队头、模式提示的普通发送与排队、设置冲突、禁用后 custody 及借用来源保留 |
 | swarm-workflow                            | 原生 owned-run 准入、DAG/revision、任务信封、人工介入、暂停/停止、批次分页、产物 hash、独立验收、精确结果投递；预算区分排队/执行，旧执行和工具清理未确认时不重试           |
 | embedded-browser                          | 唯一 browser 工具、真实 guest/目标/权限桥、文件边界与取消；模式切换不产生两个提供方                                                                                        |
 | smart-canvas / 原生 Widget                | kind/resource 注册、真实 `show_widget` 准入、认证 `canvas.document.view`、CSP/origin/source/generation、嵌套核心工具身份及去重；建议先确认加入草稿，再由用户发送           |

@@ -38,7 +38,6 @@ it.each([
   'teamDiscussion',
   'agentTeamSettings',
   'agentTeamPrompt',
-  'agentTeamLaunchText',
   'collaborationContinuationPrompt',
 ])('application contract %s remains safe for the renderer', async name => {
   const inputs = await dependencies(`app/contracts/${name}.ts`, 'browser');

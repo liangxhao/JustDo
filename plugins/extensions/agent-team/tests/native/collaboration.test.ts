@@ -1,34 +1,26 @@
-import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 
-import type { ExecutionAdmissionSnapshot } from '@runtime-services/sdk/admission';
-import { MANAGED_EXECUTION_DESCRIPTOR, managedSubagent } from '@runtime-services/sdk/execution';
-import { createRuntimeServicesClient } from '@runtime-services/sdk/native-client';
-import { registerRuntimeServicesProvider } from '@runtime-services/sdk/provider';
 import { buildSync } from 'esbuild';
 import { Type } from 'typebox';
 import { Check } from 'typebox/value';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 
-import type { TeamLaunchCatalogMode } from '../../runtime/launch/agent-team-launch-state';
 import { prepareTeamPluginData } from './fixtures/pluginData';
 
 const nativeRequire = createRequire(import.meta.url);
 const pluginRoot = path.resolve(import.meta.dirname, '../..');
 const temporaryRoots = new Set<string>();
-const providerDisposers = new Set<() => void>();
 afterAll(() => {
-  for (const dispose of providerDisposers) dispose();
   for (const directory of temporaryRoots) {
     if (
       !directory.startsWith(path.resolve(os.tmpdir()) + path.sep) ||
-      !path.basename(directory).startsWith('agent-team-catalog-test-')
+      !path.basename(directory).startsWith('agent-team-collaboration-test-')
     )
-      throw new Error('Unexpected catalog test cleanup directory');
+      throw new Error('Unexpected collaboration test cleanup directory');
     rmSync(directory, { recursive: true, force: true });
   }
 });
@@ -39,24 +31,20 @@ const code = buildSync({
   format: 'cjs',
   tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } },
   write: false,
-  external: ['openclaw/plugin-sdk/*', 'typebox', '@runtime-services/sdk/native-client', '@runtime-services/sdk/execution', '@runtime-services/sdk/admission-client'],
+  external: ['openclaw/plugin-sdk/*', 'typebox'],
 }).outputFiles[0].text;
-async function fixture(teamEnabled = true, separateHooks = false, realSchemas = false) {
-  const stateDir = mkdtempSync(path.join(os.tmpdir(), 'agent-team-catalog-test-'));
-  const dataDirectory = prepareTeamPluginData(stateDir);
+async function fixture(teamEnabled = true, separateHooks = false) {
+  const stateDir = mkdtempSync(path.join(os.tmpdir(), 'agent-team-collaboration-test-'));
+  prepareTeamPluginData(stateDir);
   temporaryRoots.add(stateDir);
   const warn = vi.fn();
   let plan = false;
   let nativeSessionId = 'native-target';
   let nativePolicy: Record<string, unknown> = {};
   let transcriptEntries: any[] = [];
-  let executionAdmission: ExecutionAdmissionSnapshot = { state: 'clear', generation: 0 };
   const providers: Array<(request: any) => unknown> = [];
   const hooks = new Map<string, (...args: any[]) => any>();
   const methods = new Map<string, (...args: any[]) => any>();
-  const requiredMethods = new Map<string, (...args: any[]) => any>();
-  const bindings: Promise<boolean>[] = [];
-  const ledgerFile = (sessionKey: string) => path.join(dataDirectory, 'launch-receipts', createHash('sha256').update(sessionKey).digest('hex') + '.json');
   const methodDescriptors = new Map<string, Record<string, unknown>>();
   const registerGatewayMethod = (
     name: string,
@@ -90,19 +78,7 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
     Date,
     process,
     require: (name: string) =>
-      name === '@runtime-services/sdk/admission-client' ? { createExecutionAdmissionClient: () => ({ bind: async () => true, inspect: async () => ({ state: 'clear', generation: 0 }), reserve: async () => ({ id: 'admission-fixture', generation: 1 }), update: async () => ({}), dispose() {} }) } : name === '@runtime-services/sdk/native-client'
-        ? {
-            createRuntimeServicesClient(api: Parameters<typeof createRuntimeServicesClient>[0]) {
-              const client = createRuntimeServicesClient(api);
-              // This fixture explicitly supplies a ready required service to each
-              // registration; native service adoption/bootstrap is a host test.
-              bindings.push(client.bind());
-              return client;
-            },
-          }
-        : name === '@runtime-services/sdk/execution'
-          ? { managedSubagent }
-        : name === 'openclaw/plugin-sdk/gateway-method-runtime'
+      name === 'openclaw/plugin-sdk/gateway-method-runtime'
         ? {
             dispatchGatewayMethod: async (method: string, params: unknown) => ({
               ok: true,
@@ -110,19 +86,7 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
             }),
           }
         : name === 'typebox'
-          ? realSchemas
-            ? { Type }
-            : {
-                Type: new Proxy(
-                  {},
-                  {
-                    get:
-                      () =>
-                      (...args: unknown[]) =>
-                        args,
-                  },
-                ),
-              }
+          ? { Type }
           : name === 'openclaw/plugin-sdk/routing'
             ? {
                 isSubagentSessionKey: (key: string) =>
@@ -181,7 +145,6 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
   };
   const nativeContext = vm.createContext(context);
   new vm.Script(code).runInContext(nativeContext);
-  const launchOwner = vm.runInContext("globalThis[Symbol.for('agent-team.launch.owner')]", nativeContext);
   const runtime = {
     state: { resolveStateDir: () => stateDir },
     events: { onAgentEvent: () => () => undefined },
@@ -201,7 +164,7 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
             );
             return;
           }
-          (requiredMethods.get(name) ?? methods.get(name))!({
+          methods.get(name)!({
             params,
             client: { connect: { client: { mode: 'backend' } } },
             req: { method: name },
@@ -223,7 +186,6 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
     return {
       id: 'agent-team',
       source: path.join(pluginRoot, 'index.ts'),
-      session: { state: { registerSessionExtension: () => undefined } },
       lifecycle: {
         signal: new AbortController().signal,
         onDispose: (dispose: () => void | Promise<void>) => {
@@ -234,14 +196,6 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
       },
     };
   };
-  providerDisposers.add(registerRuntimeServicesProvider({
-    ...nativeApi(),
-    id: 'runtime-services',
-    registerGatewayMethod: (name, handler) => { requiredMethods.set(name, handler); },
-  }, {
-    readExecutionAdmission: () => executionAdmission,
-    managedExecution: MANAGED_EXECUTION_DESCRIPTOR,
-  }));
   if (teamEnabled)
     moduleBox.exports.default.register({
       ...nativeApi(),
@@ -249,7 +203,6 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
       runtime,
       registerChannel: () => undefined,
       registerAgentHarness: () => undefined,
-      registerTrustedToolPolicy: () => undefined,
       registerService: (value: any) => {
         service = value;
       },
@@ -267,7 +220,6 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
       runtime,
       registerChannel: () => undefined,
       registerAgentHarness: () => undefined,
-      registerTrustedToolPolicy: () => undefined,
       registerService: () => undefined,
       registerGatewayMethod: () => undefined,
       on: (name: string, callback: (...args: any[]) => any) => {
@@ -294,9 +246,7 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
       respond: vi.fn(),
     });
   });
-  const startup = service?.start({ gatewayEvents: { emit } });
-  await Promise.all(bindings);
-  await startup;
+  await service?.start({ gatewayEvents: { emit } });
   return {
     runtime,
     warn,
@@ -310,17 +260,8 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
     setTeamEnabled: (enabled: boolean) => {
       teamEnabled = enabled;
     },
-    setExecutionAdmission: (value: ExecutionAdmissionSnapshot) => { executionAdmission = value; },
     setNativeSessionId: (sessionId: string) => {
       nativeSessionId = sessionId;
-    },
-    setLaunchProjection: (sessionKey: string, mode: TeamLaunchCatalogMode) => {
-      const file = ledgerFile(sessionKey);
-      if (mode === undefined) { try { unlinkSync(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } return; }
-      mkdirSync(path.dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify({ generation: 1, sessionKey, nativeSessionId, lifecycleRevision: null,
-        clientTurnId: 'catalog-run', promptSha256: 'a'.repeat(64), mode: mode === 'blocked' ? 'discussion' : mode,
-        owner: launchOwner, state: mode === 'blocked' ? 'cancelled' : 'verified', corrections: 0 }));
     },
     setNativePolicy: (policy: Record<string, unknown>) => {
       nativePolicy = policy;
@@ -335,158 +276,17 @@ async function fixture(teamEnabled = true, separateHooks = false, realSchemas = 
   };
 }
 
-describe('Team launch tool catalog', () => {
-  const sessionKey = 'agent:main:justdo:catalog';
-  const source = { sessionKey, sessionId: 'native-target' };
-
-  it('advertises only discussion reading when the provider restricts a collaboration launch', async () => {
-      const h = await fixture(true, false, true);
-      h.setLaunchProjection(sessionKey, 'collaboration');
-      const discussion = h.factories.get('team_discussion')!(source);
-      expect(
-        Check(discussion.parameters, {
-          action: 'read',
-          roomId: 'room-1',
-          discussionIds: ['discussion-1'],
-        }),
-      ).toBe(true);
-      expect(
-        Check(discussion.parameters, { action: 'read', discussionIds: ['discussion-1'] }),
-      ).toBe(false);
-      expect(discussion.description).toContain('the existing roomId');
-      for (const action of ['create', 'send', 'stop', 'configure'])
-        expect(Check(discussion.parameters, { action })).toBe(false);
-      expect(
-        Check(discussion.parameters, {
-          action: 'read',
-          roomId: 'room-1',
-          message: 'Dispatch work',
-        }),
-      ).toBe(false);
-      expect(discussion.description).not.toMatch(/create|sessions_send|organize|configure/i);
-      expect(
-        Check(h.factories.get('task_assistants')!(source).parameters, { agentId: 'reviewer' }),
-      ).toBe(true);
-      expect(h.factories.get('assistants_create')!(source)).not.toBeNull();
-      expect(h.emit).not.toHaveBeenCalled();
-      h.stop();
-  });
-
-  it('advertises discovery and selected discussion actions for a discussion projection', async () => {
-      const h = await fixture(true, false, true);
-      h.setLaunchProjection(sessionKey, 'discussion');
-      const members = h.factories.get('task_assistants')!(source);
-      expect(Check(members.parameters, {})).toBe(true);
-      for (const input of [{ agentId: 'reviewer' }, { seal: true }, { review: {} }])
-        expect(Check(members.parameters, input)).toBe(false);
-      expect(members.description).not.toMatch(/sessions_send|prepare a peer|seal|review:/);
-      const discussion = h.factories.get('team_discussion')!(source);
-      for (const action of ['create', 'read', 'stop'])
-        expect(Check(discussion.parameters, { action })).toBe(true);
-      for (const action of ['send', 'configure'])
-        expect(Check(discussion.parameters, { action })).toBe(false);
-      expect(discussion.description).not.toMatch(/action:"send"|configure|sessions_send/);
-      expect(h.emit).not.toHaveBeenCalled();
-      h.stop();
-  });
-
-  it('does not restrict unrelated conversations or ordinary native tools', async () => {
-    const h = await fixture(true, false, true);
-    h.setLaunchProjection('agent:main:justdo:another-source', 'discussion');
+describe('native peer tool authority', () => {
+  it('publishes the regular Team schemas and leaves sessions_send to the native tool', async () => {
+    const h = await fixture();
+    const source = { sessionKey: 'agent:main:justdo:source', sessionId: 'native-target' };
     const discussion = h.factories.get('team_discussion')!(source);
     expect(Check(discussion.parameters, { action: 'send', message: 'Follow up' })).toBe(true);
     expect(Check(discussion.parameters, { action: 'configure' })).toBe(true);
-    expect(Check(h.factories.get('task_assistants')!(source).parameters, { seal: true })).toBe(
-      true,
-    );
+    expect(Check(h.factories.get('task_assistants')!(source).parameters, { seal: true })).toBe(true);
     expect(h.factories.has('sessions_send')).toBe(false);
     h.stop();
   });
-
-  it('hides Team tools when the provider reports blocked', async () => {
-      const h = await fixture(true, false, true);
-      h.setLaunchProjection(sessionKey, 'blocked');
-      for (const name of ['team_discussion', 'task_assistants', 'assistants_create'])
-        expect(
-          h.factories.get(name)!({
-            ...source,
-            sessionId: source.sessionId,
-          }),
-        ).toBeNull();
-      h.stop();
-  });
-
-  it('keeps the narrowed catalog until the provider withdraws its restriction', async () => {
-    const h = await fixture(true, false, true);
-    h.setLaunchProjection(sessionKey, 'discussion');
-    expect(
-      Check(h.factories.get('task_assistants')!(source).parameters, { agentId: 'reviewer' }),
-    ).toBe(false);
-    h.setLaunchProjection(sessionKey, undefined);
-    expect(
-      Check(h.factories.get('task_assistants')!(source).parameters, { agentId: 'reviewer' }),
-    ).toBe(true);
-    expect(Check(h.factories.get('team_discussion')!(source).parameters, { action: 'send' })).toBe(
-      true,
-    );
-    h.stop();
-  });
-
-  it.each([
-    ['team_discussion', { action: 'read', roomId: 'room-1' }],
-    ['task_assistants', {}],
-    ['assistants_create', { name: 'Review', description: '', instructions: 'Review work' }],
-  ])('rechecks a blocked projection before executing the captured %s tool', async (name, input) => {
-    const h = await fixture();
-    const tool = h.factories.get(name as string)!(source);
-    h.setLaunchProjection(sessionKey, 'blocked');
-    const request = vi.spyOn(h.runtime.gateway, 'request');
-    await expect(tool.execute('changed-projection', input)).rejects.toThrow('restrictions changed');
-    expect(request).not.toHaveBeenCalled();
-    expect(h.emit).not.toHaveBeenCalled();
-    h.stop();
-  });
-
-  it('rechecks a generic unknown source lane without requiring a Team business ledger', async () => {
-    const h = await fixture();
-    const tool = h.factories.get('task_assistants')!(source);
-    h.setExecutionAdmission({ state: 'unknown' });
-    expect(h.factories.get('task_assistants')!(source)).toBeNull();
-    const request = vi.spyOn(h.runtime.gateway, 'request');
-    await expect(tool.execute('changed-admission', {})).rejects.toThrow('restrictions changed');
-    expect(request).not.toHaveBeenCalled(); expect(h.emit).not.toHaveBeenCalled(); h.stop();
-  });
-
-  it.each([
-    ['team_discussion', { action: 'create', message: 'Discuss' }, 'collaboration'],
-    ['team_discussion', { action: 'send', message: 'Discuss' }, 'discussion'],
-    ['task_assistants', { agentId: 'reviewer' }, 'discussion'],
-  ] as const)('rejects captured %s actions after the selected mode changes to %s', async (name, input, mode) => {
-    const h = await fixture();
-    const tool = h.factories.get(name)!(source);
-    h.setLaunchProjection(sessionKey, mode);
-    const request = vi.spyOn(h.runtime.gateway, 'request');
-    await expect(tool.execute('changed-mode', input)).rejects.toThrow('restrictions changed');
-    expect(request).not.toHaveBeenCalled();
-    expect(h.emit).not.toHaveBeenCalled();
-    h.stop();
-  });
-
-  it('preserves assistant preparation after a captured tool sees a discussion projection', async () => {
-    const h = await fixture();
-    const tool = h.factories.get('assistants_create')!(source);
-    await h.hooks.get('before_tool_call')!({ toolName: 'assistants_create' }, {
-      sessionKey, runId: 'run', toolCallId: 'create',
-    });
-    h.setLaunchProjection(sessionKey, 'discussion');
-    await tool.execute('create', { name: 'Review', description: '', instructions: 'Review work' });
-    expect(h.emit).toHaveBeenCalledOnce();
-    expect(h.emit.mock.calls[0][1]).toMatchObject({ operation: 'create' });
-    h.stop();
-  });
-});
-
-describe('native peer tool authority', () => {
   it('registers the actual public Native bridge alongside collaboration handlers', async () => {
     const h = await fixture();
     try {
@@ -708,9 +508,7 @@ describe('native peer tool authority', () => {
   it('does not inject team context into ordinary turns', async () => {
     const h = await fixture();
     expect(h.hooks.has('agent_turn_prepare')).toBe(false);
-    expect(await h.hooks.get('before_prompt_build')!({}, {
-      sessionKey: 'agent:main:justdo:ordinary', sessionId: 'native-target', runId: 'ordinary-run',
-    })).toBeUndefined();
+    expect(h.hooks.has('before_prompt_build')).toBe(false);
     h.stop();
   });
   it('omits optional Team history, tools and hooks when not registered', async () => {

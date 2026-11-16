@@ -1,6 +1,5 @@
 import type { AppMainHost, AppMainRegistration } from '@app-plugin/sdk/main';
 
-import { recognizeAgentTeamMode } from '../prompt/agentTeamPrompt';
 import { CollaborationGateway } from '../contracts/collaboration';
 import { settingsRecord, type AgentTeamKind } from '../contracts/agentTeamSettings';
 import { CollaborationCoordinator } from './collaboration/collaborationCoordinator';
@@ -18,6 +17,7 @@ export function register(host: AppMainHost): AppMainRegistration {
   let collaboration: CollaborationCoordinator | undefined;
   let discussion: TeamDiscussionCoordinator | undefined;
   let launch: AgentTeamLaunchCoordinator | undefined;
+  let reconcileLaunchReceipts = true;
   const notifySessionsChanged = () => {
     try {
       host.sessionsChanged();
@@ -27,10 +27,8 @@ export function register(host: AppMainHost): AppMainRegistration {
   };
   const getLaunch = () =>
     (launch ??= new AgentTeamLaunchCoordinator({
-      getStore: host.getSessions,
       getDatabase: host.getDatabase,
-      getRouter: host.getExecution,
-      requestGateway: host.requestGateway,
+      requestGateway: host.requestConnectedGateway,
     }));
   const getDiscussion = () =>
     (discussion ??= new TeamDiscussionCoordinator({
@@ -50,8 +48,6 @@ export function register(host: AppMainHost): AppMainRegistration {
       getRouter: host.getExecution,
       getRuntime: host.getRuntime,
       requestGateway: host.requestGateway,
-      onExecution: payload => getLaunch().observeExecution(payload),
-      onLaunchAccepted: receipt => getLaunch().confirm(receipt),
       stopDiscussions: (id, settled) => getDiscussion().stopForSource(id, settled),
       discussion: (id, input, identity, assertActive) =>
         getDiscussion().fromAgent(id, input, identity, assertActive),
@@ -195,20 +191,6 @@ export function register(host: AppMainHost): AppMainRegistration {
         },
       },
     ],
-    submission: {
-      matches: prompt => recognizeAgentTeamMode(prompt) !== undefined,
-      register: input => {
-        host.assertActive();
-        return getLaunch().register({ ...input, assertCurrent: input.assertActive });
-      },
-      markSubmissionStarted: async (id, turn) => {
-        host.assertActive();
-        getLaunch().markSubmissionStarted(id, turn);
-      },
-      abortBeforeSend: (id, turn) => getLaunch().abortBeforeSend(id, turn),
-      cancel: (id, turn) => getLaunch().cancel(id, turn),
-      releaseIfSettled: id => getLaunch().releaseIfSettled(id),
-    },
     resources: {
       protectedResources,
       adoptResources: previous => {
@@ -252,14 +234,21 @@ export function register(host: AppMainHost): AppMainRegistration {
       );
       disposers.push(
         host.onSessionStopped(id => {
+          void getLaunch().cancel(id).catch(() => undefined);
           void getCollaboration()
             .stop(id)
             .catch(() => undefined);
         }),
       );
     },
-    maintenance: () => {
-      if (!host.isEnabled()) return getDiscussion().reconcile({ cleanupOnly: true });
+    maintenance: async () => {
+      if (!host.isEnabled()) await getDiscussion().reconcile({ cleanupOnly: true });
+      if (reconcileLaunchReceipts) {
+        const coordinator = getLaunch();
+        const sessions = coordinator.protectedSessionIds();
+        reconcileLaunchReceipts = sessions.length > 0;
+        for (const id of sessions) await coordinator.releaseIfSettled(id).catch(() => false);
+      }
     },
     onEnable: resources => {
       const coordinator = getDiscussion();

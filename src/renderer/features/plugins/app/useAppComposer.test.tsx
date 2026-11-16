@@ -153,6 +153,22 @@ test('keeps ordinary chat independent and carries bounded plugin input through t
   act(() => active.result.current.accepted());
   expect(active.result.current.selected).toBeUndefined();
 });
+test('sends a prompt-only selection through the ordinary chat route, including queued turns', async () => {
+  fixture.modes = [{
+    ...mode(),
+    promptOnly: true,
+    allowQueue: true,
+    prepare: async ({ prompt }) => ({ prompt: prompt + ' team instructions' }),
+  }];
+  const draft = crypto.randomUUID();
+  const view = renderHook(() => useAppComposer(draft, true));
+  act(() => view.result.current.features[0].onSelect());
+
+  const prepared = await view.result.current.prepare({ prompt: 'request', queued: true });
+
+  expect(prepared).toEqual({ prompt: 'request team instructions', submission: undefined });
+  expect(readAppInput(prepared.prompt)).toBeUndefined();
+});
 test('rejects a delayed prepare after disable and does not clear a new selection with an old acknowledgement', async () => {
   let resolve!: (value: { prompt: string }) => void;
   const owner = mode(

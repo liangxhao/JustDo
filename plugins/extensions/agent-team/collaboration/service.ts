@@ -6,8 +6,6 @@ import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 import { createSessionVisibilityChecker } from 'openclaw/plugin-sdk/session-visibility';
 import { Type } from 'typebox';
 
-import { readTeamLaunchCatalogMode } from '../runtime/launch/agent-team-launch-state';
-import { createRuntimeServicesClient } from '@runtime-services/sdk/native-client';
 import { nativePlanningConstraint, PlanningConstraint } from '@app-plugin/sdk/planning';
 import { hasUnsupportedDiscussionSourcePolicy } from '../discussion/discussion-source-policy';
 import { CollaborationCallError, collaborationCallFailure } from './call-failure';
@@ -19,8 +17,6 @@ const DISCUSSION = 'team_discussion';
 const CREATE = 'assistants_create';
 const ASSISTANTS = 'task_assistants';
 const DISCUSSION_ACTIONS = ['create', 'send', 'read', 'stop', 'configure'];
-const DISCUSSION_LAUNCH_ACTIONS = ['create', 'read', 'stop'];
-const DISCUSSION_READ_ACTIONS = ['read'];
 const HOST_REQUEST_TIMEOUT_MS = 8000;
 const HOST_PREPARATION_TIMEOUT_MS = 60000;
 const GATEWAY_PREPARATION_TIMEOUT_MS = 75000;
@@ -30,14 +26,6 @@ const PREPARATION_OPERATIONS = new Set(['create', 'discussion', 'ensure']);
 const NATIVE_RECEIPT_TTL_MS = 10 * 60 * 1000;
 
 export function registerCollaborationService(api: OpenClawPluginApi): void {
-  const runtimeServices = createRuntimeServicesClient(api);
-  let capabilityPreparation: Promise<boolean> | undefined;
-  const prepareRuntimeServices = () => {
-    if (runtimeServices.captureExecutionAdmission()) return Promise.resolve(true);
-    return capabilityPreparation ??= runtimeServices.bind().finally(() => {
-      capabilityPreparation = undefined;
-    });
-  };
   const nativeCalls = new Map<
     string,
     {
@@ -124,10 +112,8 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
   };
   api.registerService({
     id: 'agent-team',
-    async start(ctx) {
-      const generation = serviceGeneration;
-      await prepareRuntimeServices();
-      if (generation !== serviceGeneration || !api.lifecycle.signal || api.lifecycle.signal.aborted)
+    start(ctx) {
+      if (!api.lifecycle.signal || api.lifecycle.signal.aborted)
         throw new Error('Agent Team registration is no longer current.');
       removeAccess ??= registerAccess();
       emit = ctx.gatewayEvents?.emit;
@@ -507,68 +493,35 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
   api.registerTool(
     ctx => {
       if (!managed(ctx.sessionKey)) return null;
-      const projection = runtimeServices.captureExecutionAdmission();
-      if (!projection) { void prepareRuntimeServices(); return null; }
-      const catalogMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), {
-        sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId,
-      }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
-      if (!projection || catalogMode === 'blocked') return null;
-      const readOnly = catalogMode === 'collaboration';
-      const actions = readOnly
-        ? DISCUSSION_READ_ACTIONS
-        : catalogMode === 'discussion'
-          ? DISCUSSION_LAUNCH_ACTIONS
-          : DISCUSSION_ACTIONS;
       return {
         name: DISCUSSION,
         label: 'Team discussion',
-        description: readOnly
-          ? 'Read existing group discussion context for task collaboration. Use action:"read" and the existing roomId. Optionally filter batches with exact discussionIds.'
-          : catalogMode === 'discussion'
-            ? 'Organize the selected group discussion. Discover real assistant IDs with task_assistants first. Use action:"create" with a topic and 2–6 assistant IDs, excluding the source assistant. If organizerParticipates:true, include 1–5 other assistants. Omit organizerParticipates and rounds to follow the user’s settings; task_assistants returns current limits. The discussion inherits the source project, permissions and tool/execution configuration without group-specific tool restrictions. Results automatically return here with the source tools available to continue any outstanding user-authorized task. Use the existing roomId with action:"read" for public replies or action:"stop" to end a discussion. After an accepted launch, return control so its result handoff can resume the task; accepted means started, not completed.'
-            : 'Organize a group discussion from the main task. Discover real assistant IDs with task_assistants first. create selects 2–6 participants (exclude this source assistant from agentIds; organizerParticipates:true counts the same source conversation as one participant, allowing 1–5 other assistants). When omitted, organizerParticipates uses the user’s Agent Team settings (factory default false); task_assistants returns current limits. configure changes organizerParticipates only while idle. Completed or partially failed discussions automatically hand their results back to this source conversation, which can use its normal tools to continue the user’s outstanding task. read accepts exact discussionIds for delayed summaries. create sends the initial topic, inheriting the source project, permissions and tool/execution configuration. Discussion and handoff turns add no tool restrictions; native permissions and approvals still apply. The user can participate directly in the team panel. send explicitly forwards context to an existing room; do not automatically broadcast every user message. read returns public replies; stop ends discussion. Omitted rounds use the user’s configured default. Respect task_assistants limits: rounds have a product ceiling of 4, but the user may set a lower maximum. Member, response and concurrency limits are enforced by the host. Accepted means started, not completed. Do not poll in a loop; return control after starting so the result handoff can resume the task. Existing collaboration uses task_assistants plus sessions_send, not this tool. teamDiscussionSourcePolicyUnsupported means the source has creation-owned isolation or a runtime that independent group sessions cannot safely inherit. Explain the limitation and remain in the current conversation; do not weaken those restrictions.',
+        description: 'Organize a group discussion from the main task. Discover real assistant IDs with task_assistants first. create selects 2–6 participants (exclude this source assistant from agentIds; organizerParticipates:true counts the same source conversation as one participant, allowing 1–5 other assistants). When omitted, organizerParticipates uses the user’s Agent Team settings (factory default false); task_assistants returns current limits. configure changes organizerParticipates only while idle. Completed or partially failed discussions automatically hand their results back to this source conversation, which can use its normal tools to continue the user’s outstanding task. read accepts exact discussionIds for delayed summaries. create sends the initial topic, inheriting the source project, permissions and tool/execution configuration. Discussion and handoff turns add no tool restrictions; native permissions and approvals still apply. The user can participate directly in the team panel. send explicitly forwards context to an existing room; do not automatically broadcast every user message. read returns public replies; stop ends discussion. Omitted rounds use the user’s configured default. Respect task_assistants limits: rounds have a product ceiling of 4, but the user may set a lower maximum. Member, response and concurrency limits are enforced by the host. Accepted means started, not completed. Do not poll in a loop; return control after starting so the result handoff can resume the task. Existing collaboration uses task_assistants plus sessions_send, not this tool. teamDiscussionSourcePolicyUnsupported means the source has creation-owned isolation or a runtime that independent group sessions cannot safely inherit. Explain the limitation and remain in the current conversation; do not weaken those restrictions.',
         parameters: Type.Object(
           {
-            action: Type.Union(actions.map(value => Type.Literal(value))),
-            roomId: readOnly
-              ? Type.String({ minLength: 1 })
-              : Type.Optional(Type.String({ minLength: 1 })),
+            action: Type.Union(DISCUSSION_ACTIONS.map(value => Type.Literal(value))),
+            roomId: Type.Optional(Type.String({ minLength: 1 })),
             discussionIds: Type.Optional(
               Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
                 minItems: 1,
                 maxItems: 20,
               }),
             ),
-            ...(!readOnly
-              ? {
-                  title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
-                  organizerParticipates: Type.Optional(Type.Boolean()),
-                  agentIds: Type.Optional(
-                    Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 6 }),
-                  ),
-                  message: Type.Optional(Type.String({ minLength: 1, maxLength: 16000 })),
-                  rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 4 })),
-                }
-              : {}),
-            ...(catalogMode === undefined
-              ? {
-                  selectedAgentIds: Type.Optional(
-                    Type.Array(Type.String({ minLength: 1 }), { maxItems: 6 }),
-                  ),
-                }
-              : {}),
+            title: Type.Optional(Type.String({ minLength: 1, maxLength: 120 })),
+            organizerParticipates: Type.Optional(Type.Boolean()),
+            agentIds: Type.Optional(
+              Type.Array(Type.String({ minLength: 1 }), { minItems: 1, maxItems: 6 }),
+            ),
+            message: Type.Optional(Type.String({ minLength: 1, maxLength: 16000 })),
+            rounds: Type.Optional(Type.Integer({ minimum: 1, maximum: 4 })),
+            selectedAgentIds: Type.Optional(
+              Type.Array(Type.String({ minLength: 1 }), { maxItems: 6 }),
+            ),
           },
           { additionalProperties: false },
         ),
         async execute(toolCallId: string, input: unknown, signal?: AbortSignal) {
           if (signal?.aborted) throw new Error('The tool call was cancelled.');
-          if (!projection.isCurrent()) throw new Error('Runtime Services projection is retired.');
-          const currentMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), { sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
-          const allowedActions = currentMode === 'collaboration' ? DISCUSSION_READ_ACTIONS
-            : currentMode === 'discussion' ? DISCUSSION_LAUNCH_ACTIONS : DISCUSSION_ACTIONS;
-          const action = input && typeof input === 'object' ? Reflect.get(input, 'action') : undefined;
-          if (currentMode === 'blocked' || !allowedActions.includes(String(action)))
-            throw new Error('Agent Team launch restrictions changed.');
           const result = await rpc('collaboration.dispatch', {
             operation: 'discussion',
             sessionKey: ctx.sessionKey,
@@ -589,20 +542,13 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
     api.registerTool(
       ctx => {
         if (!managed(ctx.sessionKey)) return null;
-        const projection = runtimeServices.captureExecutionAdmission();
-        if (!projection) { void prepareRuntimeServices(); return null; }
-        const catalogMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), { sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
-        if (!projection || catalogMode === 'blocked') return null;
-        const discoveryOnly = operation === 'members' && catalogMode === 'discussion';
         return {
           name: operation === 'create' ? CREATE : ASSISTANTS,
           label: operation === 'create' ? 'Create assistant' : 'Collaboration members',
           description:
             operation === 'create'
               ? 'Create a persistent assistant when the user requests one. Native OpenClaw manages its workspace. Supply a name, description and AGENTS.md instructions; optionally choose an available provider/model. Omit model to use the configured default. This does not start a task or add the assistant to collaboration. Reusing a name returns the existing assistant without changing it. On incomplete creation, retry the same fields to resume; never claim success from an error.'
-              : discoveryOnly
-                ? 'Discover available assistants, exact assistant IDs and current Agent Team settings for the selected group discussion. Call with no arguments, then use the returned identities and limits with team_discussion.'
-                : 'List task peers, the exact organizer identity, recent exact delivery/execution receipts, review reports and available assistants. With agentId, prepare a peer without starting it, then use native sessions_send. Handoffs must include bounded stages, next recipients and the final return to organizer.sessionKey; the immediate sender is not necessarily the organizer. Only the original source organizer can start a new graph or phase. Members need the exact incoming delivery grant to send peers; direct member-panel user turns cannot create or borrow a batch. The host enforces this regardless of prompt text. Sends are asynchronous: end the turn after dispatch, without polling. Honor explicit next or return recipients, including intermediate members. Only when the full team relay ends or no route can be resolved, send results or blockers to the organizer; a member final alone does not reach the user. Do not invent another stage or retry an unknown send. An independent reviewer invited by the organizer may report its final review with review:{deliveryIds:[exact worker receipt IDs],verdict:"passed"|"changes_requested"|"unverified"}; keep findings and evidence in native replies. Only completed worker runs in the same batch can be reviewed; never review your own work or the organizer. Report once per reviewer run, then send findings to the organizer and finish. A report is pending until the whole reviewer run settles. The organizer seals the batch with seal:true only after required results and reviews arrive; sealing is not proof of quality and does not stop accepted work. Do not combine agentId, seal and review.',
+              : 'List task peers, the exact organizer identity, recent exact delivery/execution receipts, review reports and available assistants. With agentId, prepare a peer without starting it, then use native sessions_send. Handoffs must include bounded stages, next recipients and the final return to organizer.sessionKey; the immediate sender is not necessarily the organizer. Only the original source organizer can start a new graph or phase. Members need the exact incoming delivery grant to send peers; direct member-panel user turns cannot create or borrow a batch. The host enforces this regardless of prompt text. Sends are asynchronous: end the turn after dispatch, without polling. Honor explicit next or return recipients, including intermediate members. Only when the full team relay ends or no route can be resolved, send results or blockers to the organizer; a member final alone does not reach the user. Do not invent another stage or retry an unknown send. An independent reviewer invited by the organizer may report its final review with review:{deliveryIds:[exact worker receipt IDs],verdict:"passed"|"changes_requested"|"unverified"}; keep findings and evidence in native replies. Only completed worker runs in the same batch can be reviewed; never review your own work or the organizer. Report once per reviewer run, then send findings to the organizer and finish. A report is pending until the whole reviewer run settles. The organizer seals the batch with seal:true only after required results and reviews arrive; sealing is not proof of quality and does not stop accepted work. Do not combine agentId, seal and review.',
           parameters:
             operation === 'create'
               ? Type.Object(
@@ -614,40 +560,32 @@ export function registerCollaborationService(api: OpenClawPluginApi): void {
                   },
                   { additionalProperties: false },
                 )
-              : discoveryOnly
-                ? Type.Object({}, { additionalProperties: false })
-                : Type.Object(
-                    {
-                      agentId: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
-                      seal: Type.Optional(Type.Boolean()),
-                      review: Type.Optional(
-                        Type.Object(
-                          {
-                            deliveryIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
-                              minItems: 1,
-                              maxItems: 16,
-                              uniqueItems: true,
-                            }),
-                            verdict: Type.Union([
-                              Type.Literal('passed'),
-                              Type.Literal('changes_requested'),
-                              Type.Literal('unverified'),
-                            ]),
-                          },
-                          { additionalProperties: false },
-                        ),
+              : Type.Object(
+                  {
+                    agentId: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
+                    seal: Type.Optional(Type.Boolean()),
+                    review: Type.Optional(
+                      Type.Object(
+                        {
+                          deliveryIds: Type.Array(Type.String({ minLength: 1, maxLength: 128 }), {
+                            minItems: 1,
+                            maxItems: 16,
+                            uniqueItems: true,
+                          }),
+                          verdict: Type.Union([
+                            Type.Literal('passed'),
+                            Type.Literal('changes_requested'),
+                            Type.Literal('unverified'),
+                          ]),
+                        },
+                        { additionalProperties: false },
                       ),
-                    },
-                    { additionalProperties: false },
-                  ),
+                    ),
+                  },
+                  { additionalProperties: false },
+                ),
           async execute(toolCallId: string, input: unknown, signal?: AbortSignal) {
             if (signal?.aborted) throw new Error('The tool call was cancelled.');
-            if (!projection.isCurrent()) throw new Error('Runtime Services projection is retired.');
-            const currentMode = readTeamLaunchCatalogMode(api.runtime.state.resolveStateDir(), { sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }, projection.readExecutionAdmission({ sessionKey: ctx.sessionKey!, sessionId: ctx.sessionId }));
-            const options = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-            if (currentMode === 'blocked' || (currentMode === 'discussion' &&
-                operation === 'members' && (options.agentId || options.seal || options.review)))
-              throw new Error('Agent Team launch restrictions changed.');
             const result = await rpc('collaboration.dispatch', {
               operation:
                 operation === 'members' && (input as { review?: unknown })?.review
