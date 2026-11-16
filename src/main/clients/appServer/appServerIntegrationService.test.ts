@@ -361,7 +361,7 @@ describe('native-client WebSocket app-server', () => {
     await open(f.service);
   });
 
-  it('reports an occupied fixed port without falling back to a random port', async () => {
+  it('reports an occupied fixed port and uses updated settings after restart', async () => {
     const occupied = createServer();
     await new Promise<void>(resolve => occupied.listen(0, '127.0.0.1', resolve));
     try {
@@ -374,6 +374,14 @@ describe('native-client WebSocket app-server', () => {
         running: false, url: '', configuredPort: address.port, restartRequired: false, failure: 'port-in-use',
       });
       expect(() => f.service.getConnectionConfig()).toThrow('not running');
+
+      expect(f.service.setPort(0)).toMatchObject({ running: false, configuredPort: 0 });
+      await f.service.start();
+      const config = f.service.getConnectionConfig();
+      expect(Number(new URL(config.url).port)).not.toBe(address.port);
+      expect(f.service.getStatus()).toEqual({
+        running: true, url: config.url, configuredPort: 0, restartRequired: false,
+      });
     } finally {
       await new Promise<void>((resolve, reject) => occupied.close(error => error ? reject(error) : resolve()));
     }
@@ -381,6 +389,26 @@ describe('native-client WebSocket app-server', () => {
 });
 
 describe('WebSocket service lifecycle fencing', () => {
+  it('leaves a reserved port available for the Gateway before it starts', async () => {
+    const settings = memorySettings();
+    const port = 42960;
+    settings.setPort(port);
+    const start = vi.fn(async () => {});
+    const service = new AppServerIntegrationService({
+      getDefaultCwd: () => process.cwd(),
+      getReservedPort: () => port,
+      sessionManager: { connect: vi.fn() },
+      settings,
+      createServer: () => ({ start, stop: async () => {}, running: false, getUrl: () => '' }),
+    });
+    services.push(service);
+
+    await expect(service.start()).rejects.toHaveProperty('code', 'EADDRINUSE');
+
+    expect(start).not.toHaveBeenCalled();
+    expect(service.getStatus()).toMatchObject({ running: false, configuredPort: port, failure: 'port-in-use' });
+  });
+
   it('rejects unreadable settings without creating a listener or replacing credentials', async () => {
     const settings = memorySettings();
     settings.get.mockImplementation(() => { throw new Error('Sensitive file contents'); });

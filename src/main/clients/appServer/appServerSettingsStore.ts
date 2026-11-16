@@ -13,6 +13,7 @@ export interface AppServerSettings {
   token: string;
 }
 
+const DEFAULT_APP_SERVER_PORT = 42960;
 const MAX_SETTINGS_BYTES = 4096;
 const unavailable = (): Error => new Error('Application connection settings are unavailable.');
 const writeFailed = (): Error => new Error('Unable to save application connection settings.');
@@ -51,7 +52,7 @@ export class AppServerSettingsStore {
       stored = JSON.parse(fs.readFileSync(this.file, 'utf8'));
     } catch (error) {
       if (!isMissing(error)) throw unavailable();
-      const initial = { port: 0, token: randomBytes(32).toString('hex') };
+      const initial = { port: DEFAULT_APP_SERVER_PORT, token: randomBytes(32).toString('hex') };
       this.persist(initial);
       this.settings = initial;
       return { ...initial };

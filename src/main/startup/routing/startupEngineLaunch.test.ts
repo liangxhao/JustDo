@@ -6,6 +6,7 @@ import { expect, test, vi } from 'vitest';
 import { AppInitializationActivity, AppInitializationPhase, AppInitializationStep, AppInitializationTask, AppInitializationTaskStatus } from '../../../shared/app/initialization';
 import { StartupRoute } from '../../../shared/app/startup/routing';
 import { EngineFailureReason, EnginePhase, type OpenClawEngineStatus } from '../../../shared/openclaw/engineStatus';
+import { isAppServerPortInUseError } from '../../clients/appServer/appServerIntegrationService';
 
 // Execute Main's real launch/ingress composition without starting Electron or a Gateway.
 const source = ts.createSourceFile('main.ts', fs.readFileSync(new URL('../../application.ts', import.meta.url), 'utf8'),
@@ -138,6 +139,7 @@ function fixture(route: StartupRoute, configReady = true, delayServices = false)
     getAgentCliIntegrationService: () => ({ prepare: () => { calls.push('cli'); } }),
     ensureAgentBridgeRunning: async () => { calls.push('bridge'); },
     getAppServerIntegrationService: () => ({ start: async () => { calls.push('server'); } }),
+    isAppServerPortInUseError,
     waitForAppServerShutdown: async () => {},
     appServerIntegrationService: undefined, agentBridgeServer: undefined,
     t: (key: string) => key,
@@ -212,6 +214,24 @@ test('ordinary startup does not launch an engine using failed configuration', as
   expect(owner.engine).toBeUndefined();
   expect(f.pending).not.toHaveBeenCalled();
   expect(f.context.initialization.failEnginePreparation).toHaveBeenCalledWith(expect.any(Error));
+});
+
+test.each([StartupRoute.Normal, StartupRoute.Fresh])('a WebSocket port conflict stays local during %s startup', async route => {
+  const f = fixture(route);
+  f.context.getAppServerIntegrationService = () => ({
+    start: async () => { throw Object.assign(new Error('Port occupied'), { code: 'EADDRINUSE' }); },
+  });
+
+  const opening = f.run();
+  await vi.waitFor(() => expect(f.calls).toContain('gateway'));
+  f.finish({ phase: EnginePhase.Running });
+  const owner = await opening;
+  await Promise.all([owner.integrations, owner.engine]);
+
+  expect(f.context.initialization.setTaskStatus).toHaveBeenLastCalledWith(
+    AppInitializationTask.Integrations, AppInitializationTaskStatus.Complete);
+  expect(f.context.initialization.fail).not.toHaveBeenCalled();
+  expect(f.calls).toContain('poll');
 });
 
 test('an unexpected ordinary integration failure does not invalidate the usable shell', async () => {

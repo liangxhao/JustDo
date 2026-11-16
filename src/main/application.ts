@@ -71,7 +71,10 @@ import {
 } from './chrome/chromeExtensionNativeMessaging';
 import { readAutomaticChromeExtensionPairing } from './chrome/chromeExtensionPairing';
 import { ChromeWebLaunchService } from './chrome/chromeWebLaunchService';
-import { AppServerIntegrationService } from './clients/appServer/appServerIntegrationService';
+import {
+  AppServerIntegrationService,
+  isAppServerPortInUseError,
+} from './clients/appServer/appServerIntegrationService';
 import { AppServerSettingsStore } from './clients/appServer/appServerSettingsStore';
 import { waitForAppServerShutdown } from './clients/appServer/appServerShutdown';
 import { AppServerSessionManager } from './clients/appServer/client/appServerSessionManager';
@@ -1345,6 +1348,7 @@ const getAppServerIntegrationService = (): AppServerIntegrationService => {
   appServerIntegrationService ??= new AppServerIntegrationService({
     sessionManager: getAppServerSessionManager(),
     getDefaultCwd: () => getCoworkStore().getConfig().workingDirectory,
+    getReservedPort: () => getOpenClawEngineManager().getConfiguredGatewayPort(),
     settings: new AppServerSettingsStore(app.getPath('userData')),
   });
   return appServerIntegrationService;
@@ -3074,7 +3078,9 @@ if (agentBridgeArgv) {
       if (!appShutdown.isQuitting()) {
         await getAppServerIntegrationService()
           .start()
-          .catch(() => {
+          .catch(error => {
+            // The service reports port conflicts through the application integration settings.
+            if (isAppServerPortInUseError(error)) return;
             integrationsSucceeded = false;
             console.error('[AppServer] Failed to start local WebSocket service.');
           });

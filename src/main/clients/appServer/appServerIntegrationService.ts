@@ -18,6 +18,7 @@ type Server = Pick<AppServerWebSocketServer, 'running' | 'start' | 'stop' | 'get
 
 interface Options {
   getDefaultCwd: () => string;
+  getReservedPort?: () => number;
   sessionManager: Pick<AppServerSessionManager, 'connect'>;
   settings: Pick<AppServerSettingsStore, 'get' | 'setPort' | 'regenerateToken'>;
   createServer?: (options: AppServerWebSocketServerOptions) => Server;
@@ -34,6 +35,9 @@ interface Lease {
 }
 
 const unavailable = (): Error => new Error('Application WebSocket service is not running.');
+
+export const isAppServerPortInUseError = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE';
 
 const isAuthorized = (request: IncomingMessage, token: string): boolean => {
   // This endpoint accepts native-client credentials without an Origin.
@@ -91,6 +95,9 @@ export class AppServerIntegrationService {
       try {
         if (previousStop) await previousStop;
         if (!owns()) return;
+        if (lease.port === this.options.getReservedPort?.()) {
+          throw Object.assign(new Error('The application WebSocket port is reserved.'), { code: 'EADDRINUSE' });
+        }
         await lease.server.start();
         if (!owns()) {
           await this.drain(lease);
@@ -99,7 +106,7 @@ export class AppServerIntegrationService {
         lease.ready = true;
       } catch (error) {
         if (owns()) {
-          this.failure = (error as NodeJS.ErrnoException | null)?.code === 'EADDRINUSE'
+          this.failure = isAppServerPortInUseError(error)
             ? AppServerIntegrationFailure.PortInUse
             : AppServerIntegrationFailure.Unavailable;
         }

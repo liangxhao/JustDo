@@ -38,7 +38,7 @@ describe('persistent app-server connection settings', () => {
     });
     const store = new AppServerSettingsStore(directory);
     const initial = store.get();
-    expect(initial).toEqual({ port: 0, token: expect.stringMatching(/^[0-9a-f]{64}$/u) });
+    expect(initial).toEqual({ port: 42960, token: expect.stringMatching(/^[0-9a-f]{64}$/u) });
     expect(restrictCredentialDirectory).toHaveBeenCalledWith(settingsDirectory);
     expect(new AppServerSettingsStore(directory).get()).toEqual(initial);
 
@@ -61,10 +61,10 @@ describe('persistent app-server connection settings', () => {
   it('returns independent snapshots for reads and both settings updates', () => {
     const store = new AppServerSettingsStore(directory);
     const first = store.get();
-    const token = first.token;
+    const { port, token } = first;
     first.token = 'changed';
     first.port = 100;
-    expect(store.get()).toEqual({ port: 0, token });
+    expect(store.get()).toEqual({ port, token });
     const configured = store.setPort(65535);
     configured.port = 1;
     expect(store.get()).toEqual({ port: 65535, token });
@@ -72,7 +72,9 @@ describe('persistent app-server connection settings', () => {
     const rotatedToken = rotated.token;
     rotated.token = 'changed';
     expect(store.get()).toEqual({ port: 65535, token: rotatedToken });
-    expect(store.setPort(0)).toEqual({ port: 0, token: rotatedToken });
+    const automatic = store.setPort(0);
+    expect(automatic).toEqual({ port: 0, token: rotatedToken });
+    expect(new AppServerSettingsStore(directory).get()).toEqual(automatic);
   });
 
   it('rejects invalid port input before creating or changing settings', () => {

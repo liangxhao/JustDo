@@ -529,7 +529,7 @@ export const settingsTranslations = {
     appServerWebSocketTokenSaved: '新令牌已保存，下次启动应用时生效。',
     appServerWebSocketTokenFailed: '无法重新生成令牌，请重试。',
     appServerWebSocketRestartRequired: '新设置已保存，重启后生效。重启后请重新复制连接配置。',
-    appServerWebSocketPortInUse: '监听端口已被占用。请保存其他端口，然后重启应用。',
+    appServerWebSocketPortInUse: '监听端口已被占用或保留。请在连接设置中更换端口，保存后重启应用。',
     appServerWebSocketUnavailable: 'WebSocket 服务无法启动。请重启应用后重试。',
     appServerWebSocketLoading: '正在检测…',
     appServerWebSocketReady: '服务已就绪',
@@ -1627,7 +1627,7 @@ export const settingsTranslations = {
     appServerWebSocketRestartRequired:
       'New settings saved. Restart the app to apply them, then copy the connection configuration again.',
     appServerWebSocketPortInUse:
-      'The listening port is already in use. Save a different port, then restart the app.',
+      'The listening port is in use or reserved. Choose a different port in Connection settings, save it, and restart the app.',
     appServerWebSocketUnavailable:
       'The WebSocket service could not start. Restart the app and try again.',
     appServerWebSocketLoading: 'Checking…',
