@@ -428,10 +428,12 @@ export function contextUsageSnapshotsEqual(
 export function isSubagentTaskHistoryMessage(message: unknown): boolean {
   const record = asRecord(message);
   if (String(record?.role ?? '').toLowerCase() !== 'user') return false;
-  const text = extractSnapshotText(message);
+  const text = extractSnapshotText(message)
+    ?.trimStart()
+    .replace(/^<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\r?\n\s*/, '');
   return (
-    typeof text === 'string' &&
-    text.trimStart().startsWith('[Subagent Context] You are running as a subagent (depth ') &&
+    !!text &&
+    text.startsWith('[Subagent Context] You are running as a subagent (depth ') &&
     /(?:^|\r?\n)\[Subagent Task\](?:\r?\n|$)/.test(text)
   );
 }

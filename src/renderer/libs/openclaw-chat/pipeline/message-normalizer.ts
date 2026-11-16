@@ -22,7 +22,7 @@ import {
 import { splitMediaFromOutput } from '@/libs/openclaw-chat/shims/backend-helpers';
 import { parseInlineDirectives } from '@/libs/openclaw-chat/shims/backend-helpers';
 import { mediaKindFromMime } from '@/libs/openclaw-chat/shims/media-core';
-import type { MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat/types';
+import type { GatewayMessage, MessageContentItem, NormalizedMessage } from '@/libs/openclaw-chat/types';
 import { i18nService } from '@/services/i18n';
 
 import { stripAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
@@ -49,6 +49,21 @@ export function isTrustedPeerInput(message: unknown): boolean {
     provenance?.kind === 'inter_session' &&
     ['collaboration_send', 'sessions_send'].includes(String(provenance.sourceTool))
   );
+}
+
+const subagentInputSender = Symbol('subagentInputSender');
+
+/** Attach a sender to the display copy without adding native provenance. */
+export function withSubagentInputSender(
+  message: GatewayMessage,
+  initialTaskParentKey?: string,
+): GatewayMessage {
+  const sourceKey = initialTaskParentKey ??
+    (isTrustedPeerInput(message) ? asRecord(message.provenance)?.sourceSessionKey : undefined);
+  const agentId = typeof sourceKey === 'string'
+    ? /^agent:([^:]+):.+$/.exec(sourceKey.trim())?.[1]
+    : undefined;
+  return agentId ? { ...message, [subagentInputSender]: agentId } : message;
 }
 
 /** Optional native-input presentation is registered by its current plugin. */
@@ -890,13 +905,14 @@ export function normalizeMessage(
   // Keep source identity in the display label: grouping and duplicate detection also use it.
   // Do not infer it from message text or a model-supplied sender label.
   const peerSource = parseCoworkSessionKey(peerSourceKey)?.agentId || peerSourceKey;
-  const senderLabel = projectTeamInput
+  const childInputSender = (m as { [subagentInputSender]?: string })[subagentInputSender];
+  const senderLabel = childInputSender ?? (projectTeamInput
     ? (pluginMessagePresentation(m)?.senderLabel ?? null)
     : projectPeerInput
       ? [i18nService.t('nativePeerIncomingMessage'), peerSource].filter(Boolean).join(' · ')
       : typeof m.senderLabel === 'string' && m.senderLabel.trim()
         ? m.senderLabel.trim()
-        : null;
+        : null);
   const modelName = isAssistantMessage && !projectPeerInput ? resolveMessageModelName(m) : null;
 
   if (
@@ -936,11 +952,11 @@ export function normalizeMessage(
     id,
     senderLabel,
     // The colon makes this display identity distinct from every native agent ID.
-    senderId: projectTeamInput
+    senderId: childInputSender ?? (projectTeamInput
       ? (pluginMessagePresentation(m)?.senderId ?? null)
       : projectPeerInput
         ? peerSource || null
-        : null,
+        : null),
     modelName,
     ...(audioAsVoice ? { audioAsVoice: true } : {}),
     ...(replyTarget ? { replyTarget } : {}),

@@ -19,6 +19,43 @@ function setHistory(controller: ChatController, messages: unknown[]): void {
   ).setCurrentSessionMessages(messages, { resetLoadedHistory: true });
 }
 
+test.each([false, true])('shows the parent as the sender of a delegated task and a follow-up (wrapped task: %s)', async wrapped => {
+  const parent = 'agent:main:justdo:parent';
+  const taskHeader = '[Subagent Context] You are running as a subagent (depth 1/5).\n\n[Subagent Task]\n\n';
+  const task = wrapped
+    ? `<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\n\n${taskHeader}<<<END_OPENCLAW_INTERNAL_CONTEXT>>>\n\nWrite one line.`
+    : `${taskHeader}Write one line.`;
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.peerPerspective = true;
+  const controller = new ChatController();
+  setHistory(controller, [
+    { id: 'task', role: 'user', timestamp: 1, content: task },
+    { id: 'reply-1', role: 'assistant', timestamp: 2, content: 'First reply.' },
+    {
+      id: 'follow-up', role: 'assistant', timestamp: 3, content: 'Try a second line.',
+      provenance: { kind: 'inter_session', sourceTool: 'sessions_send', sourceSessionKey: parent },
+    },
+    { id: 'reply-2', role: 'assistant', timestamp: 4, content: 'Second reply.' },
+    { id: 'human', role: 'user', timestamp: 5, content: task },
+  ]);
+  chat.controller = controller;
+  document.body.append(chat);
+  await chat.updateComplete;
+  chat.subagentParentSessionKey = parent;
+  await chat.updateComplete;
+
+  const root = chat.shadowRoot!;
+  const avatars = [...root.querySelectorAll('.chat-group--user .chat-avatar.peer')];
+  expect(avatars.map(avatar => [avatar.getAttribute('title'), avatar.textContent?.trim()])).toEqual([
+    ['main', 'M'],
+    ['main', 'M'],
+  ]);
+  expect([...root.querySelectorAll('.chat-group--user .chat-group__sender')].map(label => label.textContent)).toEqual([
+    'main', 'main', i18nService.t('coworkYouLabel'),
+  ]);
+  expect(root.querySelectorAll('.chat-group--user .chat-avatar.user')).toHaveLength(1);
+});
+
 test.each([
   [false, false],
   [true, false],

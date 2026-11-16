@@ -3,6 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   mergeSubtaskSnapshots,
   partitionSubtasks,
+  reconcileOpenSubtask,
   resolveExternalAgentLabel,
   resolveSubtaskElapsedMs,
   type Subtask,
@@ -19,6 +20,18 @@ const subtask = (overrides: Partial<Subtask>): Subtask => ({
 });
 
 describe('subtask presentation', () => {
+  test('retains a selected child through an incomplete list and rejects a new native incarnation', () => {
+    const selected = { ...subtask({ sessionId: 'native-child' }), parentSessionId: 'parent' };
+
+    expect(reconcileOpenSubtask(selected, [])).toBe(selected);
+    expect(reconcileOpenSubtask(selected, [subtask({ status: 'done' })])).toMatchObject({
+      sessionId: 'native-child',
+      parentSessionId: 'parent',
+      status: 'done',
+    });
+    expect(reconcileOpenSubtask(selected, [subtask({ sessionId: 'replacement-child' })])).toBeNull();
+  });
+
   test('keeps newer Swarm membership and clears it when the latest snapshot has none', () => {
     const current = subtask({ swarmGroupId: 'batch-a', updatedAt: 20 });
     expect(mergeSubtaskSnapshots(current, subtask({ updatedAt: 10 })).swarmGroupId).toBe('batch-a');

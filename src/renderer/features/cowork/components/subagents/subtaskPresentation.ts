@@ -156,6 +156,22 @@ export const mergeSubtaskSnapshots = (
   return merged;
 };
 
+export const reconcileOpenSubtask = <T extends Subtask>(
+  current: T | null,
+  subtasks: readonly Subtask[],
+): T | null => {
+  if (!current) return null;
+  // The catalog can omit an open session during refresh. Keep its last snapshot.
+  const latest = subtasks.find(subtask => subtask.sessionKey === current.sessionKey);
+  if (!latest) return current;
+  if (current.sessionId && latest.sessionId && current.sessionId !== latest.sessionId) return null;
+  return {
+    ...current,
+    ...latest,
+    sessionId: latest.sessionId ?? current.sessionId,
+  };
+};
+
 const subtaskTimestamp = (subtask: Subtask): number =>
   subtask.updatedAt ?? subtask.endedAt ?? subtask.startedAt ?? 0;
 

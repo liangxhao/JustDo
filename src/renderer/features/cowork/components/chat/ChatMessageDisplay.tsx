@@ -24,6 +24,7 @@ interface ChatMessageDisplayProps {
   peerColors?: Readonly<Record<string, string>>;
   peerNames?: Readonly<Record<string, string>>;
   peerPerspective?: boolean;
+  subagentParentSessionKey?: string;
   workingDirectory?: string;
   onOpenFile?: OpenMessageFileLink;
   searchQuery?: string;
@@ -64,6 +65,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   peerColors = EMPTY_PEER_NAMES,
   peerNames = EMPTY_PEER_NAMES,
   peerPerspective = false,
+  subagentParentSessionKey = '',
   workingDirectory = '',
   onOpenFile,
   searchQuery = '',
@@ -137,6 +139,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     chat.peerColors = peerColors;
     chat.peerNames = peerNames;
     chat.peerPerspective = peerPerspective;
+    chat.subagentParentSessionKey = subagentParentSessionKey;
     chat.workingDirectory = workingDirectory;
     chat.onOpenFile = openFile;
     chat.processSummariesExpanded = processSummariesExpanded;
@@ -152,6 +155,7 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     peerColors,
     peerNames,
     peerPerspective,
+    subagentParentSessionKey,
     controller,
     gatewayMessages,
     isStreaming,

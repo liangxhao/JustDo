@@ -28,6 +28,7 @@ import {
   isActiveSubtask,
   mergeSubtaskSnapshots,
   partitionSubtasks,
+  reconcileOpenSubtask,
   resolveExternalAgentLabel,
   resolveSubtaskElapsedMs,
   resolveSubtaskExecutionKey,
@@ -87,8 +88,6 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   const [finishedExpanded, setFinishedExpanded] = useState(true);
   const [finishedLimit, setFinishedLimit] = useState(50);
   const [detailAncestors, setDetailAncestors] = useState<Subtask[]>([]);
-  const detailAncestorsRef = useRef(detailAncestors);
-  detailAncestorsRef.current = detailAncestors;
   const [detailSubtask, setDetailSubtask] = useState<Subtask | null>(null);
   const [detailStats, setDetailStats] = useState<SessionDetailStats>();
   const [isDetailStatsLoading, setIsDetailStatsLoading] = useState(false);
@@ -201,20 +200,12 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
             ]),
           );
           setSubtasks(normalizedSubtasks);
-          setDetailSubtask(current =>
-            current
-              ? (() => {
-                  const latest = normalizedSubtasks.find(subtask => subtask.id === current.id);
-                  return latest
-                    ? mergeSubtaskSnapshots(current, latest, { preserveCurrentTask: true })
-                    : normalizedSubtasks.some(
-                          subtask => subtask.id === detailAncestorsRef.current[0]?.id,
-                        )
-                      ? current
-                      : null;
-                })()
-              : null,
-          );
+          setDetailSubtask(current => {
+            const latest = reconcileOpenSubtask(current, normalizedSubtasks);
+            return current && latest && latest !== current
+              ? mergeSubtaskSnapshots(current, latest, { preserveCurrentTask: true })
+              : latest;
+          });
           onSubtasksChange?.(normalizedSubtasks);
           setHasLoaded(true);
           reportLoadError(null);

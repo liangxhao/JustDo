@@ -155,7 +155,10 @@ import type { ProgressCardRunState } from '@/features/cowork/components/status/S
 import SubagentMessageDrawer from '@/features/cowork/components/subagents/SubagentMessageDrawer';
 import { subagentReadMessage } from '@/features/cowork/components/subagents/subagentReadMessage';
 import SubtaskListPanel from '@/features/cowork/components/subagents/SubtaskListPanel';
-import type { Subtask } from '@/features/cowork/components/subagents/subtaskPresentation';
+import {
+  reconcileOpenSubtask,
+  type Subtask,
+} from '@/features/cowork/components/subagents/subtaskPresentation';
 import TerminalPanel from '@/features/cowork/components/terminal/TerminalPanel';
 import {
   selectCoworkConfig,
@@ -1616,14 +1619,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     (nextSubtasks: Subtask[]) => {
       setSubtaskSnapshot({ sessionId: currentSessionId, tasks: nextSubtasks });
       setSelectedSubagent(current => {
-        if (!current) return null;
-        if (current.parentSessionId && current.parentSessionId !== currentSessionId) return current;
-        const latest = nextSubtasks.find(subtask => subtask.id === current.id);
-        if (!latest) return current.openedFromCard ? current : null;
-        if (current.sessionId && latest.sessionId && latest.sessionId !== current.sessionId) {
-          return null;
-        }
-        return { ...latest, sessionId: latest.sessionId ?? current.sessionId, parentSessionId: current.parentSessionId };
+        if (current?.parentSessionId && current.parentSessionId !== currentSessionId) return current;
+        return reconcileOpenSubtask(current, nextSubtasks);
       });
     },
     [setSelectedSubagent, currentSessionId],
@@ -1655,9 +1652,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   const subtaskOpenRequestRef = useRef(0);
   const openSubtask = useCallback(
-    (subtask: Subtask, parentSessionId = currentSessionId ?? undefined, openedFromCard = false) => {
+    (subtask: Subtask, parentSessionId = currentSessionId ?? undefined) => {
       subtaskOpenRequestRef.current += 1;
-      setSelectedSubagent({ ...subtask, parentSessionId, openedFromCard });
+      setSelectedSubagent({ ...subtask, parentSessionId });
       setIsWorkspaceFilesOpen(false);
       setPreferredDisplayTabId(SUBAGENT_DISPLAY_TAB_ID);
       setIsDisplayPanelOpen(true);
@@ -1688,7 +1685,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           if (!result.success) {
             showFailure(subagentReadMessage(result.reason));
           } else if (result.subagent) {
-            openSubtask(result.subagent, currentSessionId, true);
+            openSubtask(result.subagent, currentSessionId);
           } else {
             showFailure(i18nService.t('subtaskCardMissing'));
           }

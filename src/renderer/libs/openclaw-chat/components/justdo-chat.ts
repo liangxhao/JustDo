@@ -53,6 +53,7 @@ import { HistorySearchIndex, type HistorySearchMatch } from '@/libs/openclaw-cha
 import { MessageDisclosureState } from '@/libs/openclaw-chat/controllers/message-disclosure-state';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { isSubagentTaskHistoryMessage } from '@/libs/openclaw-chat/gateway/chat-controller-support';
 import {
   nativePendingInputReadFailed,
   nativePendingInputState,
@@ -124,6 +125,7 @@ import {
   isPluginReplyMirror,
   isTeamDiscussionInput,
   isTrustedPeerInput,
+  withSubagentInputSender,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type {
   ChatItem,
@@ -271,6 +273,10 @@ export class JustDoChatElement extends LitElement {
   /** Show a selected agent on the left and its trusted peer inputs on the right. */
   @property({ type: Boolean, attribute: false })
   declare peerPerspective: boolean;
+
+  /** Native parent from the selected child session's ancestry. */
+  @property({ type: String, attribute: false })
+  declare subagentParentSessionKey: string;
 
   @property({ type: String, attribute: false })
   declare workingDirectory: string;
@@ -456,6 +462,7 @@ export class JustDoChatElement extends LitElement {
     this.peerColors = {};
     this.peerNames = {};
     this.peerPerspective = false;
+    this.subagentParentSessionKey = '';
     this.workingDirectory = '';
     this.searchQuery = '';
     this.searchCaseSensitive = false;
@@ -733,13 +740,19 @@ export class JustDoChatElement extends LitElement {
         // so they reset the local assistant's consecutive-message avatar slot.
         // A room-owned session also stores public group mirrors, including
         // borrowed-source replies. They are not this member's model execution.
+        const parentKey = this.subagentParentSessionKey;
+        const firstUserInput = parentKey ? messages.find(message => message.role === 'user') : undefined;
+        const initialTask = firstUserInput && !firstUserInput.provenance &&
+          !firstUserInput.__openclaw?.senderIdentity && isSubagentTaskHistoryMessage(firstUserInput)
+          ? firstUserInput : undefined;
         projected = messages
           .filter(message => !isPluginReplyMirror(message))
-          .map(message =>
-            isTrustedPeerInput(message) && message.role === 'assistant'
-              ? { ...message, role: 'user' }
-              : message,
-          );
+          .map(message => {
+            if (message === initialTask) return withSubagentInputSender(message, parentKey);
+            if (!isTrustedPeerInput(message)) return message;
+            const input = message.role === 'assistant' ? { ...message, role: 'user' } : message;
+            return parentKey ? withSubagentInputSender(input) : input;
+          });
         this.peerPerspectiveHistory.set(messages, projected);
       }
       return projected;
@@ -1252,6 +1265,7 @@ export class JustDoChatElement extends LitElement {
 
   protected willUpdate(changedProperties: Map<string | number | symbol, unknown>): void {
     this.renderStartedAt = performance.now();
+    if (changedProperties.has('subagentParentSessionKey')) this.peerPerspectiveHistory = new WeakMap();
     this.historyDisclosureState.capture(this.renderRoot);
     this.completedProcessMotion.capture(this.renderRoot);
     this.messageDisclosureState.capture(this.renderRoot as ShadowRoot);

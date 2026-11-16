@@ -47,7 +47,7 @@ export interface CoworkSideChatTab {
 
 export interface SessionDisplayState {
   runtimeId: string;
-  selectedSubagent: (Subtask & { parentSessionId?: string; openedFromCard?: boolean }) | null;
+  selectedSubagent: (Subtask & { parentSessionId?: string }) | null;
   isSubagentsTabOpen: boolean;
   summaryResourceTabs: SummaryResourceListKind[];
   isDisplayPanelOpen: boolean;

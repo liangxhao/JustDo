@@ -38,8 +38,9 @@ vi.mock('../composer/CoworkPromptInput', () => ({
   ),
 }));
 vi.mock('../chat/ChatMessageDisplay', () => ({
-  default: ({ controller }: { controller: (typeof mocks.instances)[number] | null }) =>
+  default: vi.fn(({ controller }: { controller: (typeof mocks.instances)[number] | null }) =>
     <div>Native history {controller?.state.chatMessages.join('\n')}</div>,
+  ),
 }));
 vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
   ChatController: class {
@@ -75,8 +76,10 @@ vi.mock('@/libs/openclaw-chat/gateway/chat-controller', () => ({
   },
 }));
 
+import { buildChatItems } from '@/libs/openclaw-chat/pipeline/build-chat-items';
 import { i18nService } from '@/services/i18n';
 
+import ChatMessageDisplay from '../chat/ChatMessageDisplay';
 import SubagentMessageDrawer from './SubagentMessageDrawer';
 import type { Subtask } from './subtaskPresentation';
 
@@ -127,6 +130,44 @@ afterEach(() => {
 });
 
 describe('subagent transcript initialization', () => {
+  it('renders a forwarded parent message between the two child replies', async () => {
+    render(<SubagentMessageDrawer parentSessionId="parent" subagent={task} onClose={vi.fn()} />);
+    await act(async () => {});
+
+    const display = vi.mocked(ChatMessageDisplay).mock.lastCall?.[0];
+    const messages = [
+      { role: 'user', content: 'Write one line', timestamp: 1 },
+      { role: 'assistant', content: 'First reply', timestamp: 2 },
+      {
+        role: 'assistant',
+        content: 'Try a second line',
+        timestamp: 3,
+        provenance: {
+          kind: 'inter_session',
+          sourceTool: 'sessions_send',
+          sourceSessionKey: 'agent:main:justdo:parent',
+        },
+      },
+      { role: 'assistant', content: 'Second reply', timestamp: 4 },
+    ];
+    const items = buildChatItems({
+      sessionKey: task.sessionKey,
+      messages,
+      toolMessages: [],
+      showToolCalls: true,
+      stream: null,
+      streamStartedAt: null,
+      peerPerspective: display?.peerPerspective,
+    });
+
+    expect(items.filter(item => item.kind === 'group').map(item => [item.role, item.senderId])).toEqual([
+      ['user', null],
+      ['assistant', null],
+      ['user', 'main'],
+      ['assistant', null],
+    ]);
+  });
+
   it.each([false, true])('bounds preparation recovery without task proof and cancels on genuine readiness (%s)', async becomesReady => {
     vi.useFakeTimers();
     const view = render(<SubagentMessageDrawer parentSessionId="parent"

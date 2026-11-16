@@ -845,35 +845,38 @@ describe('SubtaskListPanel', () => {
     );
   });
 
-  it('keeps existing tasks and details until a complete refresh confirms they are gone', async () => {
+  it('keeps the open run details across a parent status change and a missing list row', async () => {
     i18nService.setLanguage('en', { persist: false });
+    const task = {
+      id: 'child-1',
+      taskName: 'child-1',
+      sessionKey: 'agent:main:subagent:child-1',
+      sessionId: 'native-child',
+      label: 'Research child',
+      labelSource: 'label',
+      status: 'running',
+    };
     const getSubTaskStatus = vi
       .fn()
-      .mockResolvedValueOnce({
-        success: true,
-        subagents: [
-          {
-            id: 'child-1',
-            taskName: 'child-1',
-            sessionKey: 'agent:main:subagent:child-1',
-            label: 'Removed child',
-            labelSource: 'label',
-            status: 'running',
-          },
-        ],
-      })
+      .mockResolvedValueOnce({ success: true, subagents: [task] })
       .mockResolvedValueOnce({ success: false, reason: SubagentReadFailure.InvalidData })
-      .mockResolvedValue({ success: true, subagents: [] });
+      .mockResolvedValueOnce({ success: true, subagents: [] })
+      .mockResolvedValue({ success: true, subagents: [{ ...task, status: 'done' }] });
     let taskChanged: ((event: { sessionId?: string }) => void) | undefined;
     const onSubtasksChanged = vi.fn((callback: typeof taskChanged) => {
       taskChanged = callback;
       return vi.fn();
     });
-    installElectron(getSubTaskStatus, vi.fn(), onSubtasksChanged);
+    installElectron(
+      getSubTaskStatus,
+      vi.fn().mockResolvedValue({ success: true }),
+      onSubtasksChanged,
+    );
 
-    render(<SubtaskListPanel sessionId="parent-1" isOpen onClose={vi.fn()} />);
+    const props = { sessionId: 'parent-1', isOpen: true, onClose: vi.fn() };
+    const view = render(<SubtaskListPanel {...props} parentRunning />);
     fireEvent.click(await screen.findByRole('button', { name: 'View details' }));
-    expect(screen.getByRole('dialog', { name: 'Removed child' })).toBeTruthy();
+    const dialog = screen.getByRole('dialog', { name: task.label });
 
     act(() => taskChanged?.({ sessionId: 'parent-1' }));
 
@@ -882,12 +885,18 @@ describe('SubtaskListPanel', () => {
     expect(failure.textContent).toBe(
       'The local engine returned invalid session data. Subtasks could not be loaded.',
     );
-    expect(screen.getByRole('dialog', { name: 'Removed child' })).toBeTruthy();
-    expect(list.getByText('Removed child')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: task.label })).toBe(dialog);
+    expect(list.getByText(task.label)).toBeTruthy();
+
+    view.rerender(<SubtaskListPanel {...props} parentRunning={false} />);
+    act(() => taskChanged?.({ sessionId: 'parent-1' }));
+    expect(await list.findByText('No subtasks in this session')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: task.label })).toBe(dialog);
 
     act(() => taskChanged?.({ sessionId: 'parent-1' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    expect(screen.getByText('No subtasks in this session')).toBeTruthy();
+    expect(await within(dialog).findByText(i18nService.t('subtaskStatusDone'))).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
   });
 
   it('does not queue another refresh after unmount and removes the task listener', async () => {

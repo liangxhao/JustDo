@@ -623,6 +623,8 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
             productSessionId={conversation?.productSessionId}
             workingDirectory={conversation?.workingDirectory}
             fullWidth={!isDashboardConversation}
+            peerPerspective
+            subagentParentSessionKey={subagent?.parentTaskId}
           />
         </div>
         {conversation && conversation.canSend !== false && (
