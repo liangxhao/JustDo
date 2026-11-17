@@ -233,19 +233,44 @@ describe('DisplayPanelLauncher', () => {
     expect(createBrowser).toHaveBeenCalledWith('https://example.com/docs');
   });
 
-  it('reopens the actual local file and shows its native path without requesting a network icon', async () => {
-    const url = 'file:///C:/reports/%E5%9C%B0%E7%90%83.html?mode=3d#camera';
+  it('shows a PDF icon and reopens the actual local file without requesting a network icon', async () => {
+    const url = 'file:///C:/reports/%E6%8A%A5%E5%91%8A%20final.PDF?mode=read#page=2';
     listHistory.mockResolvedValue({
       success: true,
-      entries: [{ url, title: 'Globe', lastVisitAt: 1, visitCount: 1 }],
+      entries: [{ url, title: 'Quarterly report', lastVisitAt: 1, visitCount: 1 }],
     });
     const createBrowser = vi.fn();
     render(<DisplayPanelLauncher onCreateBrowser={createBrowser} onCreateTerminal={vi.fn()} />);
-    const button = await screen.findByRole('button', { name: 'Globe' });
-    expect(button.title).toBe('Globe\nC:\\reports\\地球.html');
+    const button = await screen.findByRole('button', { name: 'Quarterly report' });
+    expect(button.title).toBe('Quarterly report\nC:\\reports\\报告 final.PDF');
+    expect(button.querySelector('svg text')?.textContent).toBe('PDF');
     fireEvent.click(button);
     expect(createBrowser).toHaveBeenCalledWith(url);
     expect(loadHistoryFavicon).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes loopback sites and served PDFs when there is no site icon', async () => {
+    const siteUrl = 'http://[::1]:5173/';
+    const pdfUrl = 'http://127.0.0.1:5173/files/report.pdf#page=2';
+    listHistory.mockResolvedValue({
+      success: true,
+      entries: [
+        { url: siteUrl, title: 'Local site', lastVisitAt: 3, visitCount: 1 },
+        { url: pdfUrl, title: 'Served report', lastVisitAt: 2, visitCount: 1 },
+        { url: 'https://example.com/', title: 'Public site', lastVisitAt: 1, visitCount: 1 },
+      ],
+    });
+    loadHistoryFavicon.mockResolvedValue({ success: false });
+    render(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);
+    const site = await screen.findByRole('button', { name: 'Local site' });
+    const pdf = screen.getByRole('button', { name: 'Served report' });
+    const web = screen.getByRole('button', { name: 'Public site' });
+
+    expect(site.querySelector('.display-launcher__local-site-icon')).toBeTruthy();
+    expect(web.querySelector('.display-launcher__local-site-icon')).toBeNull();
+    expect(web.querySelector('svg')).toBeTruthy();
+    expect(pdf.querySelector('svg text')?.textContent).toBe('PDF');
+    expect(loadHistoryFavicon).toHaveBeenCalledWith(siteUrl, false);
   });
 
   it('deletes a recent page from history, fills its place, and keeps it removed on reopening', async () => {
@@ -392,31 +417,35 @@ describe('DisplayPanelLauncher', () => {
     expect(screen.queryByRole('button', { name: 'Example' })).toBeNull();
   });
 
-  it('shows the stored inline website icon without another renderer network request', async () => {
-    listHistory.mockResolvedValue({
-      success: true,
-      entries: [
-        {
-          url: 'https://example.com/docs',
-          title: 'Docs',
-          lastVisitAt: 1,
-          visitCount: 1,
-          faviconUrl: 'https://cdn.example.com/site.svg',
-        },
-      ],
-    });
-    render(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);
-    const button = await screen.findByRole('button', { name: 'Docs' });
-    await waitFor(() =>
-      expect(button.querySelector('img')?.getAttribute('src')).toBe(faviconDataUrl),
-    );
-    const icon = button.querySelector('img');
-    expect(icon?.getAttribute('referrerpolicy')).toBe('no-referrer');
-    expect(loadHistoryFavicon).toHaveBeenCalledWith('https://example.com/docs', false);
-    expect(button.querySelector('svg')).toBeTruthy();
-    fireEvent.load(icon!);
-    expect(button.querySelector('svg')).toBeNull();
-  });
+  it.each(['https://example.com/docs', 'http://localhost:5173/docs'])(
+    'shows the stored inline website icon without another renderer network request for %s',
+    async url => {
+      listHistory.mockResolvedValue({
+        success: true,
+        entries: [
+          {
+            url,
+            title: 'Docs',
+            lastVisitAt: 1,
+            visitCount: 1,
+            faviconUrl: 'https://cdn.example.com/site.svg',
+          },
+        ],
+      });
+      render(<DisplayPanelLauncher onCreateBrowser={vi.fn()} onCreateTerminal={vi.fn()} />);
+      const button = await screen.findByRole('button', { name: 'Docs' });
+      await waitFor(() =>
+        expect(button.querySelector('img')?.getAttribute('src')).toBe(faviconDataUrl),
+      );
+      const icon = button.querySelector('img');
+      expect(icon?.getAttribute('referrerpolicy')).toBe('no-referrer');
+      expect(loadHistoryFavicon).toHaveBeenCalledWith(url, false);
+      const fallback = button.querySelector('.display-launcher__local-site-icon, svg');
+      expect(fallback).toBeTruthy();
+      fireEvent.load(icon!);
+      expect(fallback?.isConnected).toBe(false);
+    },
+  );
 
   it('tries the site favicon then a globe when images fail, while keeping navigation usable', async () => {
     listHistory.mockResolvedValue({

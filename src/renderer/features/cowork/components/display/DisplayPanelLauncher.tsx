@@ -14,12 +14,14 @@ import {
 import { PINNED_BROWSER_VISITS_PREFERENCE_KEY } from '@shared/app/rendererPreferences';
 import { isBrowserFaviconDataUrl, resolveBrowserAddressInput } from '@shared/browser/browser';
 import { getBrowserLocalFilePath } from '@shared/browser/browserHistory';
+import { getBrowserFilePreviewKind } from '@shared/preview/filePreview';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { defaultConfig } from '@/app/config';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { rendererPreferences } from '@/services/rendererPreferences';
+import FileTypeIcon from '@/shared/components/icons/fileTypes/FileTypeIcon';
 
 import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { type RecentBrowserVisit, selectRecentBrowserVisits } from './displayPanelRecentVisits';
@@ -86,12 +88,47 @@ function ToolButton({
   );
 }
 
+function RecentVisitFallbackIcon({ url, localFilePath }: { url: string; localFilePath: string | null }) {
+  const className = 'h-7 w-7';
+  if (localFilePath !== null) return <FileTypeIcon fileName={localFilePath} className={className} />;
+
+  const { hostname, pathname } = new URL(url);
+  const host = hostname.replace(/\.$/u, '');
+  const isLoopback =
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    host === '[::1]' ||
+    /^127(?:\.\d{1,3}){3}$/u.test(host);
+  if (!isLoopback) return <GlobeAltIcon className={className} />;
+
+  if (getBrowserFilePreviewKind(pathname)) {
+    return <FileTypeIcon fileName={pathname} className={className} />;
+  }
+  return (
+    <svg
+      className={`${className} display-launcher__local-site-icon`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.25}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="2" y="3.5" width="20" height="17" rx="3.5" />
+      <path d="M2 8.5h20" />
+      <path d="M8 17.75v-3.5l4-3 4 3v3.5z" />
+    </svg>
+  );
+}
+
 function RecentVisitIcon({ visit, visible }: { visit: RecentBrowserVisit; visible: boolean }) {
+  const localFilePath = getBrowserLocalFilePath(visit.url);
   const [iconUrl, setIconUrl] = useState<string>();
   const [loadedUrl, setLoadedUrl] = useState<string>();
   const [retry, setRetry] = useState(false);
   useEffect(() => {
-    if (!visible || getBrowserLocalFilePath(visit.url) !== null) return;
+    if (!visible || localFilePath !== null) return;
     let cancelled = false;
     void window.electron.browser
       .loadHistoryFavicon(visit.url, retry)
@@ -103,13 +140,15 @@ function RecentVisitIcon({ visit, visible }: { visit: RecentBrowserVisit; visibl
     return () => {
       cancelled = true;
     };
-  }, [retry, visit.url, visible]);
+  }, [localFilePath, retry, visit.url, visible]);
   return (
     <span
       className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-surface-raised text-secondary"
       aria-hidden
     >
-      {(!iconUrl || loadedUrl !== iconUrl) && <GlobeAltIcon className="h-7 w-7" />}
+      {(!iconUrl || loadedUrl !== iconUrl) && (
+        <RecentVisitFallbackIcon url={visit.url} localFilePath={localFilePath} />
+      )}
       {iconUrl && (
         <img
           key={iconUrl}

@@ -1,3 +1,5 @@
+import { AUDIO_PREVIEW_EXTENSIONS, VIDEO_PREVIEW_EXTENSIONS } from '@shared/preview/filePreview';
+
 /** Shared file icon shapes and type metadata for React and Lit consumers. */
 export const FileIconKind = {
   word: 'word',
@@ -79,7 +81,9 @@ register(
     '.cpp',
     '.h',
     '.css',
+    '.htm',
     '.html',
+    '.xhtml',
     '.xml',
     '.sh',
     '.bat',
@@ -94,18 +98,21 @@ register(
   ['.txt', '.md', '.log', '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.env', '.gitignore'],
   { iconKind: FileIconKind.text, color: '#6B7280', label: 'Text' },
 );
-register(['.mp3', '.wav', '.flac', '.ogg', '.aac', '.m4a', '.wma'], {
+register([...AUDIO_PREVIEW_EXTENSIONS, '.wma'], {
   iconKind: FileIconKind.audio,
   color: '#EC4899',
   label: 'Audio',
 });
-register(['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm'], {
+register([...VIDEO_PREVIEW_EXTENSIONS, '.avi', '.wmv', '.flv'], {
   iconKind: FileIconKind.video,
   color: '#6366F1',
   label: 'Video',
 });
 register(
-  ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.tiff', '.tif', '.ico', '.avif'],
+  [
+    '.png', '.apng', '.jpg', '.jpeg', '.jpe', '.jfif', '.pjpeg', '.pjp', '.gif', '.webp', '.bmp',
+    '.svg', '.tiff', '.tif', '.ico', '.avif',
+  ],
   { iconKind: FileIconKind.image, color: '#3B82F6', label: 'Image' },
 );
 const DEFAULT_FILE_TYPE: FileTypeDefinition = {

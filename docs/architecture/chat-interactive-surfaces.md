@@ -373,7 +373,7 @@ Gateway 原生终端。页签在创建时记录产品会话归属，隐藏面板
 
 最近访问在启动页可见时通过 `browser.listHistory` 读取，选择最新八个不同的 HTTP(S) 或本地文件页面，忽略非法地址、含 URL 账户凭据的记录及临时预览页。Main 保存原生图标来源及真实 browser session 已取得的受限图片；启动页按已有页面 URL 调用 `browser.loadHistoryFavicon`，只接收图片 data URL，不由主 Renderer 直接请求网站或图标 CDN。
 
-旧记录缺图时由 Main 沿浏览器代理与 Cookie 补取，解码失败至多再尝试一次站点 favicon，最终显示通用图标。清理使旧补取与写回失效，不使用第三方图标服务。启动页只保留挂载期间的显示投影，隐藏后旧读取失效，重开重新读取。无浏览器标签时通过当前会话 pending-tab 队列打开 URL；已有空白标签导航原 Tab，达到新标签上限仍可导航当前页。
+旧网页记录缺图时由 Main 沿浏览器代理与 Cookie 补取，解码失败至多再尝试一次站点 favicon。启动页显示[按文件类型或站点地址选择的备用图标](../features/workspace/sidebar-home.md#最近访问读取打开与删除)。清理使旧补取与写回失效，不使用第三方图标服务。启动页只保留挂载期间的显示投影，隐藏后旧读取失效，重开重新读取。无浏览器标签时通过当前会话 pending-tab 队列打开 URL；已有空白标签导航原 Tab，达到新标签上限仍可导航当前页。
 
 详细网络和清理契约见[浏览器设置](../features/browser/browser-settings-design.md)，用户入口见[侧栏首页](../features/workspace/sidebar-home.md)。
 
