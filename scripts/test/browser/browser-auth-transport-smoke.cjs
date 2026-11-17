@@ -21,16 +21,44 @@ const fixture = String.raw`
 const { app, BrowserWindow, session } = require('electron');
 const { X509Certificate } = require('node:crypto');
 const assert = require('node:assert/strict');
+const childProcess = require('node:child_process');
 const net = require('node:net');
 const { once } = require('node:events');
+const path = require('node:path');
+const { setTimeout: delay } = require('node:timers/promises');
+const { profile, fingerprint, aliasName, businessPort, loginPort, localEndpoint } =
+  JSON.parse(process.env.AUTH_TRANSPORT_FIXTURE);
+
+const lookupReady = Promise.withResolvers();
+const relayReady = Promise.withResolvers();
+const spawn = childProcess.spawn;
+childProcess.spawn = (executable, args, options) => {
+  const child = spawn(executable, args, options);
+  const imageName = path.basename(executable).toLowerCase();
+  if (imageName === 'powershell.exe' && args.includes('-EncodedCommand')) {
+    let output = '';
+    const observeReady = chunk => {
+      output += chunk.toString();
+      const end = output.indexOf('\n');
+      if (end === -1) return;
+      child.stdout.off('data', observeReady);
+      if (output.slice(0, end).trim() === 'ready') lookupReady.resolve();
+    };
+    child.stdout.on('data', observeReady);
+  } else if (imageName === aliasName) {
+    child.once('message', message => {
+      if (message === 'ready') relayReady.resolve();
+    });
+  }
+  return child;
+};
+
 const {
   prepareBrowserAuthenticationTransport,
   stopBrowserAuthenticationTransport,
 } = require('../../../src/main/browser/authentication/browserAuthenticationTransport');
 const { configureBrowserSessionUi } = require('../../../src/main/browser/browserSessionPolicy');
 const { applyBrowserProxyPreference } = require('../../../src/main/core/network/systemProxyPreference');
-const { profile, fingerprint, aliasName, businessPort, loginPort, localEndpoint } =
-  JSON.parse(process.env.AUTH_TRANSPORT_FIXTURE);
 
 app.setPath('userData', profile);
 app.setPath('sessionData', profile);
@@ -44,6 +72,16 @@ const launch = async () => {
     [current, 'MAP provider.example 127.0.0.1', 'MAP business.example 127.0.0.1'].filter(Boolean).join(', '));
   await app.whenReady();
   await applyBrowserProxyPreference({ browserProxy: { mode: 'direct' } });
+
+  if (aliasName) {
+    // No page has opened a connection yet. Both children must be ready on startup.
+    const ready = await Promise.race([
+      Promise.all([lookupReady.promise, relayReady.promise]).then(() => true),
+      delay(10_000, false, { ref: false }),
+    ]);
+    assert.equal(ready, true, 'Authentication helpers did not become ready before navigation');
+  }
+  childProcess.spawn = spawn;
 
   const configureSession = async browserSession => {
     browserSession.setCertificateVerifyProc((request, callback) => {
@@ -278,7 +316,7 @@ async function main() {
           payload: request.method === 'POST' ? body : '',
         });
       }
-      console.log(`${aliasName ?? 'Baseline'}: native redirects, iframe, TLS POST and socket ownership verified.`);
+      console.log(`${aliasName ?? 'Baseline'}: ${aliasName ? 'startup readiness, ' : ''}native redirects, iframe, TLS POST and socket ownership verified.`);
     }
   } finally {
     for (const server of servers) {

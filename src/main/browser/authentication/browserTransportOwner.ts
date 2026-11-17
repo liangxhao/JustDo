@@ -132,6 +132,10 @@ export class BrowserTransportOwner {
   private retirement?: Promise<void>;
   private stopping = false;
 
+  prepare(): Promise<boolean> {
+    return this.enqueue(async () => !this.stopping && Boolean(this.worker ?? (await this.start())));
+  }
+
   authorize(socket: Socket): Promise<boolean> {
     const { remoteAddress, remotePort, localAddress, localPort } = socket;
     if (
@@ -145,37 +149,39 @@ export class BrowserTransportOwner {
     )
       return Promise.resolve(false);
 
-    const result = this.queue
-      .then(async () => {
-        if (this.stopping || socket.destroyed) return false;
-        const service = currentNetworkService();
-        if (!service) return false;
-        const worker = this.worker ?? (await this.start());
-        if (!worker || this.stopping || socket.destroyed) return false;
-        const pending = this.readLine(worker, LOOKUP_TIMEOUT_MS);
-        worker.child.stdin.write(`${remotePort} ${localPort}\n`);
-        const reply = await pending;
-        if (!reply || this.stopping || socket.destroyed) return false;
-        const match = /^(\d+) (\d+)$/.exec(reply);
-        if (!match || Number(match[1]) !== service.pid) return false;
+    return this.enqueue(async () => {
+      if (this.stopping || socket.destroyed) return false;
+      const service = currentNetworkService();
+      if (!service) return false;
+      const worker = this.worker ?? (await this.start());
+      if (!worker || this.stopping || socket.destroyed) return false;
+      const pending = this.readLine(worker, LOOKUP_TIMEOUT_MS);
+      worker.child.stdin.write(`${remotePort} ${localPort}\n`);
+      const reply = await pending;
+      if (!reply || this.stopping || socket.destroyed) return false;
+      const match = /^(\d+) (\d+)$/.exec(reply);
+      if (!match || Number(match[1]) !== service.pid) return false;
 
-        const confirmed = currentNetworkService();
-        // Electron's floating-point milliseconds may round at the microsecond boundary.
-        return (
-          confirmed?.pid === service.pid &&
-          confirmed.creationTime === service.creationTime &&
-          Math.abs(Number(match[2]) - Math.round(service.creationTime * 1_000)) <= 1
-        );
-      })
-      .catch(() => false);
-    this.queue = result.then(() => {});
-    return result;
+      const confirmed = currentNetworkService();
+      // Electron's floating-point milliseconds may round at the microsecond boundary.
+      return (
+        confirmed?.pid === service.pid &&
+        confirmed.creationTime === service.creationTime &&
+        Math.abs(Number(match[2]) - Math.round(service.creationTime * 1_000)) <= 1
+      );
+    });
   }
 
   stop(): Promise<void> {
     this.stopping = true;
     if (this.worker) this.retire(this.worker);
     return this.queue.then(() => this.retirement);
+  }
+
+  private enqueue(operation: () => Promise<boolean>): Promise<boolean> {
+    const result = this.queue.then(operation).catch(() => false);
+    this.queue = result.then(() => {});
+    return result;
   }
 
   private async start(): Promise<LookupProcess | undefined> {

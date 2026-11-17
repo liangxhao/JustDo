@@ -474,9 +474,9 @@ The other `test/browser/` commands cover embedded-browser recording, interventio
 The production smoke test
 `node scripts/test/browser/browser-auth-transport-smoke.cjs` uses isolated packaged
 Electron fixtures, including a temporary service bound to local port 18080.
-It checks both alias names and a direct control, top-level and cross-origin iframe
-authentication, native CORS preflight, same-profile cookies, and rejection of
-unrelated local processes.
+It checks readiness of both helpers before the first navigation, both alias names
+and a direct control, top-level and cross-origin iframe authentication, native
+CORS preflight, same-profile cookies, and rejection of unrelated local processes.
 
 ### Plugin host and management
 

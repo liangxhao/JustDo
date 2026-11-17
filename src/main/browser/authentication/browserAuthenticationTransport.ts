@@ -101,6 +101,13 @@ class BrowserAuthenticationTransport {
     });
   }
 
+  warmUp(): void {
+    // First-use connections share the startup already in progress for each helper.
+    void Promise.all([this.owner.prepare(), this.getRelay()]).then(([ownerReady, relay]) => {
+      if (!ownerReady || !relay) this.reportFailure();
+    }, () => this.reportFailure());
+  }
+
   private reportFailure(): void {
     if (this.retired || this.reportedFailure) return;
     this.reportedFailure = true;
@@ -236,6 +243,7 @@ export async function prepareBrowserAuthenticationTransport(): Promise<void> {
     transport = candidate;
     // Also covers early exits before the full application cleanup is registered.
     process.once('exit', () => { void candidate.stop(); });
+    candidate.warmUp();
   } else await candidate.stop();
 }
 

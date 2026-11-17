@@ -365,6 +365,8 @@ HTTP auth challenge 绑定随机 request 与 guest，只有主窗口主 frame �
 
 Main 在正常启动取得单实例锁后绑定一个进程私有回环端口，映射本次 Chromium 运行的 `localEndpoint` 主机和端口。TCP 连接必须来自当前应用拥有的 Chromium Network Service，Main 核验其 PID 和创建时间后，将套接字交给同版本别名 EXE。该进程只连接配置的回环端口，保留浏览器原有 TLS、请求头、请求体和响应。会话请求策略允许当前受管页面从 HTTPS 来源向配置的完整接口地址发出 POST 或相应预检，并保留 SPES 服务自身的来源和跨域策略。私有中转端口由本轮运行保留。转发进程失效后只在后续新连接时尝试重启；页面仍可使用原有人工登录。
 
+映射安装后，Main 在后台并行启动 TCP 归属查询和别名转发进程。窗口可以照常打开，首个认证连接复用已经开始的准备工作，并在转发前完成归属校验。
+
 别名进程只接收 SNI 为 `localhost` 且声明支持 `h2` 的初始 TLS 握手，以区分当前 Chromium 的普通 HTTPS 与新建 WebSocket 连接。TLS 协议最终仍由浏览器和 SPES 协商。Chromium 的服务工作线程和共享工作线程的 WebSocket 可绕过 Electron 请求钩子。如果 SPES 以后支持在已有 HTTP/2 会话上建立 WebSocket，或浏览器政策关闭 HTTP/2 协议声明，需要重新验证该认证通道。
 
 Windows 原生回归测试使用打包 Electron 和合成站点，核对整页与跨源 iframe 的预检、HTTPS POST、Cookie 和实际连接进程。真实内网验收从原始业务地址开始，分别验证 HTTP 整页与 iframe 浮层。
