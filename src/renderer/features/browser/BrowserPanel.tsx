@@ -75,6 +75,7 @@ import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/own
 
 import { type BrowserPanelFocusBinding, retainBrowserPanelFocus } from './browserPanelFocus';
 import { canPresentBrowserPage, shouldPresentBrowserPopup } from './browserPanelPresentation';
+import { BrowserNoticeTone, BrowserPanelToast } from './BrowserPanelToast';
 import { reportBrowserTabCapacity } from './browserTabCapacity';
 import BrowserTabIcon from './BrowserTabIcon';
 import {
@@ -87,6 +88,9 @@ import { useBrowserRecording } from './recording/useBrowserRecording';
 import { getBrowserTabLimit, useBrowserTabLimit } from './useBrowserTabLimit';
 
 type BrowserPanelMode = 'interact' | 'inspect' | 'pen' | 'rectangle';
+type BrowserPanelNotice =
+  | { message: string; tone: BrowserNoticeTone; annotationTargetId?: never }
+  | { annotationTargetId: string; message?: never; tone: typeof BrowserNoticeTone.Success };
 type Gesture =
   | { kind: 'pen'; pointerId: number; stroke: BrowserAnnotationStroke }
   | { kind: 'rectangle'; pointerId: number; start: BrowserAnnotationPoint };
@@ -142,7 +146,7 @@ const readGuestUrl = (guest: LiveWebview | undefined, fallback: string): string 
 const BROWSER_PANEL_MIN_WIDTH = 320;
 // Zero lets the display host size the panel to half its available width.
 export const BROWSER_PANEL_DEFAULT_WIDTH = 0;
-const ANNOTATION_NOTICE_DURATION_MS = 3_500;
+const BROWSER_NOTICE_DURATION_MS = 3_500;
 // Bump this when guest creation preferences change. Besides documenting that those
 // preferences are attach-time only, the suffix makes Fast Refresh replace guests
 // that were created by an older implementation instead of reusing a broken one.
@@ -412,9 +416,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   );
   const acknowledgedExternalInteractionsRef = useRef(new Set<string>());
   const [loadErrors, setLoadErrors] = useState<Map<string, string>>(() => new Map());
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [annotationNoticeSequence, setAnnotationNoticeSequence] = useState(0);
+  const [notice, setNotice] = useState<BrowserPanelNotice | null>(null);
   const [mode, setMode] = useState<BrowserPanelMode>('interact');
   const [annotationTool, setAnnotationTool] = useState<BrowserAnnotationTool>('inspect');
   const [annotationToolMenuAnchor, setAnnotationToolMenuAnchor] = useState<{
@@ -492,14 +494,16 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   onActiveTargetChangeRef.current = onActiveTargetChange;
   const panelVisibleRef = useRef(isOpen);
   panelVisibleRef.current = isOpen;
+  const showNotice = useCallback((next: BrowserPanelNotice) => {
+    if (panelVisibleRef.current) setNotice(next);
+  }, []);
+  const showError = (message: string) => showNotice({ message, tone: BrowserNoticeTone.Error });
   const browserOperationRunningRef = useRef(false);
   const focusBindingRef = useRef<BrowserPanelFocusBinding | null>(null);
   const replacedTargetRef = useRef<string | null>(null);
   const inspectionSequenceRef = useRef(0);
   const contentEpochRef = useRef(0);
   const inspectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const annotationNoticeTargetRef = useRef<string | null>(null);
-  const annotationNoticeTextRef = useRef<string | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const addressSubmissionSequenceRef = useRef(0);
 
@@ -603,7 +607,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const detectedPdfUrl =
     activeTab && matchesPdfResponseUrl(activeTab.pdfUrl, activeTab.url) ? activeTab.url : null;
   const loading = activeTab ? loadingTargets.has(activeTab.targetId) : false;
-  const visibleError = error ?? (activeTab ? loadErrors.get(activeTab.targetId) : null);
+  const loadError = activeTab && loadErrors.get(activeTab.targetId);
   const visibleHttpAuthRequest = httpAuthRequests.find(request => {
     try {
       return activeWebview?.getWebContentsId?.() === request.guestId;
@@ -881,7 +885,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       targetId: activeTabTargetId,
     });
   }, [isOpen, activeTabTargetId, activeResourceSessionId]);
-  const annotationAddedNotice = i18nService.t('browserAnnotationAdded');
   useEffect(() => {
     if (!isOpen || !activeTabTargetId) return;
     if (
@@ -897,40 +900,28 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     // tab change should discard the address draft and its dirty state.
     const selectedTab = tabsRef.current.find(tab => tab.targetId === activeTabTargetId);
     addressDirtyRef.current = false;
-    setError(null);
+    setNotice(current => {
+      if (current?.tone === BrowserNoticeTone.Error) return null;
+      if (current?.annotationTargetId && current.annotationTargetId !== activeTabTargetId)
+        return null;
+      return current;
+    });
     setUrlDraft(getBrowserTabAddress(selectedTab));
   }, [activeTabTargetId]);
 
   useEffect(() => {
-    const noticeTargetId = annotationNoticeTargetRef.current;
-    if (!noticeTargetId || noticeTargetId === activeTabTargetId) return;
-    const noticeText = annotationNoticeTextRef.current;
-    annotationNoticeTargetRef.current = null;
-    annotationNoticeTextRef.current = null;
-    setNotice(current => (current === noticeText ? null : current));
-  }, [activeTabTargetId]);
-
-  useEffect(() => {
-    if (!annotationNoticeTargetRef.current || annotationNoticeSequence === 0) return;
-    const previousText = annotationNoticeTextRef.current;
-    annotationNoticeTextRef.current = annotationAddedNotice;
-    setNotice(current =>
-      current === previousText || current === null ? annotationAddedNotice : current,
-    );
-    const targetId = annotationNoticeTargetRef.current;
-    const timer = window.setTimeout(() => {
-      if (annotationNoticeTargetRef.current !== targetId) return;
-      annotationNoticeTargetRef.current = null;
-      annotationNoticeTextRef.current = null;
-      setNotice(current => (current === annotationAddedNotice ? null : current));
-    }, ANNOTATION_NOTICE_DURATION_MS);
-    return () => window.clearTimeout(timer);
-  }, [annotationAddedNotice, annotationNoticeSequence]);
+    if (!notice) return;
+    const timer = ownerWindow.setTimeout(() => {
+      setNotice(current => (current === notice ? null : current));
+    }, BROWSER_NOTICE_DURATION_MS);
+    return () => ownerWindow.clearTimeout(timer);
+  }, [notice, ownerWindow]);
 
   useEffect(() => clearAnnotations(), [clearAnnotations, draftKey]);
   useEffect(() => setCredentialOffer(null), [activeTabTargetId, browserOperationRunning]);
   useEffect(() => {
     if (!isOpen) {
+      setNotice(null);
       setOverflowMenuAnchor(null);
       setAnnotationToolMenuAnchor(null);
       setTabMenu(null);
@@ -1027,7 +1018,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           openerTargetId, event.presentation, presentationState(),
         );
         if (event.errorCode === 'post-navigation-blocked') {
-          if (present) setNotice(i18nService.t('browserPanelPostNavigationBlocked'));
+          if (present) {
+            showNotice({
+              message: i18nService.t('browserPanelPostNavigationBlocked'),
+              tone: BrowserNoticeTone.Warning,
+            });
+          }
           return;
         }
         guestHandlersRef.current.openTab(event.url, {
@@ -1037,7 +1033,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           notifyOnCapacity: present,
         });
       }),
-    [presentationState],
+    [presentationState, showNotice],
   );
 
   useEffect(
@@ -1719,7 +1715,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         })
         .catch(() => {
           if (sequence === inspectionSequenceRef.current)
-            setError(i18nService.t('browserPanelInspectFailed'));
+            showError(i18nService.t('browserPanelInspectFailed'));
         });
     }, 120);
   };
@@ -1793,7 +1789,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       })
       .catch(() => {
         if (epoch === contentEpochRef.current && targetId === activeTargetRef.current)
-          setError(i18nService.t('browserPanelInspectFailed'));
+          showError(i18nService.t('browserPanelInspectFailed'));
       });
   };
 
@@ -1826,7 +1822,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         const preview = await window.electron.browser.createLocalHtmlPreview(address);
         if (!isCurrentSubmission()) return;
         if (!preview.success) {
-          setError(
+          showError(
             preview.errorCode === 'not_found'
               ? i18nService.t('coworkAttachmentNotFound').replace('{filepath}', address)
               : preview.errorCode === 'invalid_type' || preview.errorCode === 'invalid_source'
@@ -1844,7 +1840,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         };
       } catch {
         if (!isCurrentSubmission()) return;
-        setError(i18nService.t('coworkFilePreviewFailed'));
+        showError(i18nService.t('coworkFilePreviewFailed'));
         return;
       }
     } else {
@@ -1852,7 +1848,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
     if (!isCurrentSubmission()) return;
     if (!url) {
-      setError(i18nService.t('browserPanelInvalidUrl'));
+      showError(i18nService.t('browserPanelInvalidUrl'));
       return;
     }
     if (activeTab && isAtSourcePreview(activeTab) && url !== activeTab.url) {
@@ -1867,7 +1863,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     if (!webview || !targetId) return;
     if (activeTargetRef.current === targetId) clearAnnotations();
     addressDirtyRef.current = false;
-    setError(null);
+    setNotice(current => (current?.tone === BrowserNoticeTone.Error ? null : current));
     setLoadErrors(current => {
       const next = new Map(current);
       next.delete(targetId);
@@ -1925,7 +1921,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         !sourceDataUrl.startsWith('data:image/png;base64,') ||
         browserAnnotationDataBytes(sourceDataUrl) > 20 * 1024 * 1024
       ) {
-        setError(i18nService.t('browserPanelCaptureFailed'));
+        showError(i18nService.t('browserPanelCaptureFailed'));
         return;
       }
       const image = await loadImage(sourceDataUrl);
@@ -1952,7 +1948,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         element: inspected,
       });
       if (browserAnnotationDataBytes(dataUrl) > 20 * 1024 * 1024) {
-        setError(i18nService.t('browserAnnotationTooLarge'));
+        showError(i18nService.t('browserAnnotationTooLarge'));
         return;
       }
       const accepted = onAddAnnotation(
@@ -1967,16 +1963,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         }),
       );
       if (!accepted) {
-        setError(i18nService.t('browserAnnotationLimitReached'));
+        showError(i18nService.t('browserAnnotationLimitReached'));
         return;
       }
-      annotationNoticeTargetRef.current = targetId;
-      annotationNoticeTextRef.current = annotationAddedNotice;
-      setNotice(annotationAddedNotice);
-      setAnnotationNoticeSequence(value => value + 1);
+      showNotice({ annotationTargetId: targetId, tone: BrowserNoticeTone.Success });
       clearAnnotations();
     } catch (captureError) {
-      setError(
+      showError(
         captureError instanceof Error
           ? captureError.message
           : i18nService.t('browserPanelCaptureFailed'),
@@ -2063,13 +2056,16 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     if (action === 'copy-url') {
       try {
         await ownerWindow.navigator.clipboard.writeText(getBrowserTabAddress({ ...tab, url }));
-        setNotice(
-          isAtSourcePreview({ ...tab, url })
-            ? i18nService.t('browserTabMenuFilePathCopied')
-            : i18nService.t('browserTabMenuUrlCopied'),
-        );
+        showNotice({
+          tone: BrowserNoticeTone.Success,
+          message: i18nService.t(
+            isAtSourcePreview({ ...tab, url })
+              ? 'browserTabMenuFilePathCopied'
+              : 'browserTabMenuUrlCopied',
+          ),
+        });
       } catch {
-        setError(i18nService.t('browserTabMenuCopyFailed'));
+        showError(i18nService.t('browserTabMenuCopyFailed'));
       }
       return;
     }
@@ -2079,7 +2075,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       const result = localFilePath
         ? await window.electron.shell.openLocalHtmlExternal(url)
         : await window.electron.shell.openExternal(url);
-      if (!result.success) setError(result.error || i18nService.t('browserPanelLoadFailed'));
+      if (!result.success) showError(result.error || i18nService.t('browserPanelLoadFailed'));
       return;
     }
     if (action === 'rename') {
@@ -2162,7 +2158,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const handleOverflowAction = async (action: BrowserOverflowAction) => {
     setOverflowMenuAnchor(null);
     if (action === 'print' && detectedPdfUrl) {
-      setNotice(i18nService.t('browserPdfUseToolbar'));
+      showNotice({ message: i18nService.t('browserPdfUseToolbar'), tone: BrowserNoticeTone.Info });
       return;
     }
     if (action === 'find') {
@@ -2176,7 +2172,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         if (!activeWebview?.print) throw new Error();
         await activeWebview.print({ silent: false });
       } catch {
-        setError(i18nService.t('browserMenuPrintFailed'));
+        showError(i18nService.t('browserMenuPrintFailed'));
       }
       return;
     }
@@ -2197,9 +2193,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         link.href = dataUrl;
         link.download = `${title || 'screenshot'}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
         link.click();
-        setNotice(i18nService.t('browserMenuScreenshotSaved'));
+        showNotice({
+          message: i18nService.t('browserMenuScreenshotSaved'),
+          tone: BrowserNoticeTone.Success,
+        });
       } catch {
-        setError(i18nService.t('browserPanelCaptureFailed'));
+        showError(i18nService.t('browserPanelCaptureFailed'));
       }
       return;
     }
@@ -2765,32 +2764,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         </form>
       )}
 
-      {visibleError && (
+      {loadError && (
         <div
           role="alert"
           className="border-b border-border bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400"
         >
-          {visibleError}
-        </div>
-      )}
-      {notice && (
-        <div
-          role="status"
-          className="flex items-start gap-2 border-b border-border bg-primary-muted py-1.5 pl-3 pr-1.5 text-xs text-primary"
-        >
-          <span className="min-w-0 flex-1 py-0.5 leading-5">{notice}</span>
-          <button
-            type="button"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-primary/70 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-            aria-label={i18nService.t('browserPanelDismissNotice')}
-            onClick={() => {
-              annotationNoticeTargetRef.current = null;
-              annotationNoticeTextRef.current = null;
-              setNotice(null);
-            }}
-          >
-            <XMarkIcon className="h-3.5 w-3.5" />
-          </button>
+          {loadError}
         </div>
       )}
       {credentialOffer && canPresentPage(credentialOffer.targetId) && (
@@ -2974,6 +2953,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             </div>
           )}
         </div>
+        {isOpen && notice && (
+          <BrowserPanelToast
+            message={notice.message ?? i18nService.t('browserAnnotationAdded')}
+            tone={notice.tone}
+            onDismiss={() => setNotice(null)}
+          />
+        )}
       </div>
       {tabMenu && menuTab && (
         <BrowserTabContextMenu
@@ -3047,7 +3033,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                       .replace('{count}', String(skippedPasswords))
                   : '',
               ].filter(Boolean);
-              setNotice([summary, ...details].join(' '));
+              showNotice({
+                message: [summary, ...details].join(' '),
+                tone: details.length ? BrowserNoticeTone.Warning : BrowserNoticeTone.Success,
+              });
               if (
                 result.imported.cookies > 0 &&
                 activeWebview &&
@@ -3069,11 +3058,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           onClose={() => setIsClearDataModalOpen(false)}
           onCleared={result => {
             clearAnnotations();
-            setNotice(
-              i18nService.t(
+            showNotice({
+              tone: result.success ? BrowserNoticeTone.Success : BrowserNoticeTone.Warning,
+              message: i18nService.t(
                 result.success ? 'browserClearDataComplete' : 'browserClearDataPartial',
               ),
-            );
+            });
           }}
         />
       )}

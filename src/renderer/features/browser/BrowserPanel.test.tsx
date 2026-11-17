@@ -3370,20 +3370,31 @@ describe('BrowserPanel embedded webview', () => {
     expect(screen.getByText(/Chromium can only clear all cookies/)).toBeTruthy();
     expect(screen.queryByLabelText('Site settings')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Delete data' }));
-    await waitFor(() => expect(clearBrowsingData).toHaveBeenCalledOnce());
-    expect(clearBrowsingData).toHaveBeenCalledWith({
-      range: 'hour',
-      selection: {
-        history: true,
-        cookiesAndSiteData: true,
-        cache: true,
-        downloads: true,
-        autofill: false,
-      },
-    });
-    expect(reload).not.toHaveBeenCalled();
-    expect(screen.getByRole('status').textContent).toContain('Selected browsing data cleared');
+    vi.useFakeTimers();
+    try {
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Delete data' })));
+
+      expect(clearBrowsingData).toHaveBeenCalledOnce();
+      expect(clearBrowsingData).toHaveBeenCalledWith({
+        range: 'hour',
+        selection: {
+          history: true,
+          cookiesAndSiteData: true,
+          cache: true,
+          downloads: true,
+          autofill: false,
+        },
+      });
+      expect(reload).not.toHaveBeenCalled();
+      const notice = screen.getByRole('status');
+      expect(notice.textContent).toContain('Selected browsing data cleared');
+      expect(notice.parentElement?.classList.contains('absolute')).toBe(true);
+
+      act(() => vi.advanceTimersByTime(3_500));
+      expect(screen.queryByRole('status')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('states clearly when protected Chrome cookies did not transfer sign-in state', async () => {
