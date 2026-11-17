@@ -92,7 +92,7 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
   const taskEntryId = useSubagentTaskEntry(
     controller,
     subagentSessionKey,
-    isDashboardConversation || subagentRuntime === 'acp' ? undefined : subagent?.parentTaskId,
+    subagentRuntime === 'acp' ? undefined : subagent?.parentTaskId,
     subagent?.sessionId,
   );
   const childRunning = isActiveSubagentStatus(displaySubagent?.status);

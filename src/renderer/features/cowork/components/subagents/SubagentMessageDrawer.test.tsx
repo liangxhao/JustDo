@@ -132,27 +132,41 @@ afterEach(() => {
 });
 
 describe('subagent transcript initialization', () => {
-  it.each(['delegated', 'human', 'stale'] as const)(
-    'attributes a markerless opening input only with matching stored task evidence (%s)',
-    async kind => {
+  it.each([
+    ['delegated', 'subagent'],
+    ['delegated', 'dashboard'],
+    ['human', 'dashboard'],
+    ['stale', 'subagent'],
+  ] as const)(
+    'attributes a %s opening input in a %s session only with matching stored task evidence',
+    async (kind, sessionKind) => {
       const parentTaskId = 'agent:reviewer:justdo:parent';
+      const sessionKey = `agent:reviewer:${sessionKind}:child`;
       const displayEntry = {
         role: 'user',
         content: 'Write one line.',
         __openclaw: { id: 'opening-input', seq: 1 },
       };
+      const history = [
+        displayEntry,
+        { role: 'assistant', content: 'First reply.', __openclaw: { id: 'reply', seq: 2 } },
+        {
+          role: 'user', content: 'My follow-up.',
+          __openclaw: { id: 'follow-up', seq: 3, senderIdentity: { type: 'profile', id: 'user' } },
+        },
+      ];
       let resolveSource!: (value: unknown) => void;
       const request = vi.fn().mockReturnValueOnce(new Promise(resolve => { resolveSource = resolve; }));
       request.mockResolvedValue({ ok: false });
       render(<SubagentMessageDrawer parentSessionId="parent"
-        subagent={{ ...task, parentTaskId, sessionId: 'native-child' }} onClose={vi.fn()} />);
+        subagent={{ ...task, sessionKey, parentTaskId, sessionId: 'native-child' }} onClose={vi.fn()} />);
       const controller = mocks.instances[0];
       act(() => {
         Object.assign(controller.state, {
           connected: true,
           currentSessionId: 'native-child',
           client: { generation: 1, request },
-          chatMessages: [displayEntry],
+          chatMessages: history,
           historyHasMore: true,
         });
         controller.notify();
@@ -163,7 +177,7 @@ describe('subagent transcript initialization', () => {
         controller.notify();
       });
       expect(request).toHaveBeenCalledExactlyOnceWith('runtimeServices.historyMessage', {
-        sessionKey: task.sessionKey,
+        sessionKey,
         sessionId: 'native-child',
         messageId: 'opening-input',
         cursor: 0,
@@ -195,7 +209,7 @@ describe('subagent transcript initialization', () => {
         subagentParentSessionKey: parentTaskId,
         subagentTaskEntryId: kind === 'delegated' ? 'opening-input' : undefined,
       });
-      expect(controller.state.chatMessages).toEqual([displayEntry]);
+      expect(controller.state.chatMessages).toEqual(history);
     },
   );
 
