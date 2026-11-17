@@ -16,12 +16,14 @@ test('isolates operation locks by bridge and plugin kind', () => {
   expect(getMarketplaceOperationOwner({}, PluginKind.SKILL).locks.size).toBe(0);
 });
 
-test('permits reinstall only after a committed installation was observed then removed', () => {
+test('permits reinstall after removal even while the last update awaits confirmation', () => {
   const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
   owner.update(() => ({ writer: { committed: true, version: '2' } }));
   owner.reconcile(new Set());
   expect(owner.snapshot().writer.committed).toBe(true);
   owner.reconcile(new Set(['writer']));
+  owner.begin('writer', 'Writer');
+  owner.update(current => ({ ...current, writer: { committed: true, version: '3' } }));
   owner.reconcile(new Set());
   expect(owner.snapshot().writer).toBeUndefined();
 });
@@ -30,7 +32,7 @@ test('bounds settled feedback without evicting an active mutation', () => {
   const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
   owner.update(() => ({ active: { busy: true } }));
   for (let index = 0; index < 110; index++)
-    owner.update(current => ({ ...current, [index]: { error: 'failed' } }));
+    owner.update(current => ({ ...current, [index]: { failed: true } }));
   expect(Object.keys(owner.snapshot())).toHaveLength(101);
   expect(owner.snapshot().active.busy).toBe(true);
 });
@@ -41,7 +43,7 @@ test.each([false, true])(
     const owner = getMarketplaceOperationOwner({}, PluginKind.SKILL);
     owner.update(() => ({ unknown: { unconfirmed: true, committed, version: '2' } }));
     for (let index = 0; index < 110; index++)
-      owner.update(current => ({ ...current, [index]: { error: 'failed' } }));
+      owner.update(current => ({ ...current, [index]: { failed: true } }));
     owner.reconcile(new Set(['unknown']));
     owner.reconcile(new Set());
     expect(owner.snapshot().unknown).toMatchObject({ unconfirmed: true, version: '2' });
@@ -116,7 +118,7 @@ test('waits for inventory refresh to finish and keeps the dismissal timer across
 test.each([
   { busy: true },
   { warning: 'Inventory refresh failed' },
-  { error: 'Activation failed' },
+  { failed: true },
   { restartRequired: true },
 ])('retains actionable feedback beyond the success timeout: %o', extra => {
   vi.useFakeTimers();

@@ -84,7 +84,7 @@ test('reports a completed skill deletion with failed inventory refresh separatel
   api.list.mockResolvedValue({ success: true, skills: [skill] });
   api.delete.mockResolvedValue({ success: true, skills: [], refreshWarning: true });
   const { skillService } = await import('./skillService');
-  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+  const { getPluginOperationOwner, isPluginOperationNotice } = await import('../shared/pluginOperationService');
   await skillService.loadSkills();
 
   await expect(skillService.deleteSkill(skill.id, skill.source)).resolves.toMatchObject({
@@ -92,12 +92,14 @@ test('reports a completed skill deletion with failed inventory refresh separatel
     skills: [],
     refreshWarning: true,
   });
-  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+  const reports = getPluginOperationOwner().failureSnapshot();
+  expect(reports).toEqual([
     expect.objectContaining({
       state: 'refresh_failed',
       failedStage: PluginOperationStage.REFRESHING_INVENTORY,
     }),
   ]);
+  expect(isPluginOperationNotice(reports[0])).toBe(true);
 });
 
 test('reports inventory failure independently of Gateway connectivity and clears it after recovery', async () => {

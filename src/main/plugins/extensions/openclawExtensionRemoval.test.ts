@@ -310,7 +310,7 @@ describe('extension removal receipts and package lifecycle', () => {
     const result = await f.service.delete('network-plugin', undefined, f.apply, { deleteData: true });
 
     expect(result).toMatchObject({
-      success: true, refreshWarning: true, failedStage: PluginOperationStage.CLEANING_UP,
+      success: true, refreshWarning: true, failedStage: PluginOperationStage.CLEANING_PLUGIN_DATA,
       error: expect.stringContaining(t('extensionDataRemovalFailed')),
     });
     expect(result.error).toContain('Model file is locked');

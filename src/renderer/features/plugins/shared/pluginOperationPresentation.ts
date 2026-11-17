@@ -3,6 +3,7 @@ import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/plu
 import { i18nService } from '@/services/i18n';
 
 import {
+  isPluginOperationCompletedRefreshFailure,
   isPluginOperationRecoveryPending,
   type PluginOperationFailure,
   PluginOperationFailureState,
@@ -17,6 +18,7 @@ type FailureContext = Pick<
   | 'installSourceInUse'
   | 'mutationCompleted'
   | 'runtimeRecoveryPending'
+  | 'inventoryRefreshOnly'
 >;
 type PresentationContext = FailureContext & Pick<PluginOperationFailure, 'items'>;
 
@@ -37,6 +39,7 @@ const guidanceByStage: Partial<Record<PluginOperationStage, string>> = {
   [PluginOperationStage.UNINSTALLING]: 'status',
   [PluginOperationStage.CONFIRMING]: 'status',
   [PluginOperationStage.REFRESHING_INVENTORY]: 'status',
+  [PluginOperationStage.CLEANING_PLUGIN_DATA]: 'removalData',
   [PluginOperationStage.CLEANING_UP]: 'recovery',
   [PluginOperationStage.ROLLING_BACK]: 'recovery',
 };
@@ -97,6 +100,15 @@ export function pluginOperationFailurePresentation(operation: PresentationContex
       nextStep: i18nService.t('pluginOperationRecoveryPendingNext'),
     };
   }
+  if (isPluginOperationCompletedRefreshFailure(operation)) {
+    const nextStep = i18nService.t('pluginOperationCompletedRefreshNext');
+    return {
+      title: i18nService.t('pluginOperationCompletedRefreshWarning')
+        .replace('{outcome}', i18nService.t(`pluginOperationCompleted.${operation.action}`)),
+      guidance: nextStep,
+      nextStep,
+    };
+  }
   if ((operation.items?.length ?? 0) > 1) {
     return {
       title: i18nService.t('pluginOperationFailureTitle.batch'),
@@ -141,6 +153,11 @@ export function pluginOperationFailurePresentation(operation: PresentationContex
         operation.failedStage === PluginOperationStage.RESTARTING_GATEWAY)
     ) {
       titleKey = 'pluginOperationFailureTitle.remove.recovery_failed';
+    } else if (
+      operation.action === PluginOperationAction.REMOVE &&
+      operation.failedStage === PluginOperationStage.CLEANING_PLUGIN_DATA
+    ) {
+      titleKey = 'pluginOperationFailureTitle.remove.data_cleanup_failed';
     } else if (
       operation.action === PluginOperationAction.REMOVE &&
       (operation.failedStage === PluginOperationStage.APPLYING_CONFIGURATION ||

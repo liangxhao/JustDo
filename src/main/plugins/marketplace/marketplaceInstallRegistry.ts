@@ -91,6 +91,7 @@ export class MarketplaceInstallRegistry {
         runtimeId: record.runtimeId,
         sourceId: record.sourceId,
         pluginId: record.marketplacePluginId,
+        ...(record.installedVersion ? { installedVersion: record.installedVersion } : {}),
       }));
   }
 
@@ -109,12 +110,13 @@ export class MarketplaceInstallRegistry {
     this.getStore().set(STORE_KEY, records);
   }
 
-  removeRuntime(kind: MarketplacePluginKind, runtimeId: string, installPath?: string): void {
-    const normalizedId = runtimeId.trim().toLowerCase();
-    if (!normalizedId) return;
+  removeRuntime(kind: MarketplacePluginKind, runtimeId: string | undefined, installPath?: string): void {
+    const normalizedId = runtimeId?.trim().toLowerCase();
+    if (!normalizedId && (runtimeId !== undefined || !installPath)) return;
     const records = this.list();
     const next = records.filter(record => {
-      if (record.kind !== kind || record.runtimeId.toLowerCase() !== normalizedId) return true;
+      if (record.kind !== kind || (normalizedId && record.runtimeId.toLowerCase() !== normalizedId))
+        return true;
       if (!installPath) return false;
       return !record.installPath || !samePath(record.installPath, installPath);
     });

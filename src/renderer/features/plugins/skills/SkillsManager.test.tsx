@@ -57,10 +57,11 @@ vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOrigi
       source: null,
       query: '',
       updateById: new Map(),
-      recentlyUpdated: new Set(),
       operations: {},
       matchesInstalled: (_id: string, matches: boolean) => matches,
       operationFor: () => undefined,
+      installedVersionFor: () => undefined,
+      checkUpdates: () => undefined,
       setFilter: () => undefined,
       refreshInventory: options.onInstalled,
     })),
@@ -74,7 +75,6 @@ vi.mock('@/services/i18n', () => ({
         pluginImportPartialSummary: '{successCount} succeeded and {failureCount} failed.',
         skillImportSuccess: 'Skill {skillId} imported successfully',
         skillDeleteSuccess: 'Skill "{name}" deleted',
-        skillResolutionUnavailable: '"{name}" is currently unavailable.',
         skillResolutionChanged: '"{name}" now uses {to} instead of {from}.',
       };
       return messages[key] ?? key;
@@ -234,6 +234,7 @@ async function openDetails(readOnly = false, skillName = skill.name) {
 }
 
 test('enables an opt-in skill from its card and refreshes the open details', async () => {
+  vi.mocked(skillService.loadSkills).mockResolvedValue([{ ...skill, version: 'v1.2.3' }]);
   let finish!: (skills: Skill[]) => void;
   vi.mocked(skillService.setSkillEnabled).mockReturnValue(
     new Promise(resolve => {
@@ -241,6 +242,8 @@ test('enables an opt-in skill from its card and refreshes the open details', asy
     }),
   );
   const store = await openDetails();
+  expect(within(screen.getByText(skill.name, { selector: 'article span' }).closest('article')!)
+    .getByText('v1.2.3')).toBeTruthy();
   expect(screen.queryByText('skillMissingRequirements')).toBeNull();
   expect(screen.queryByText('1 missing')).toBeNull();
   const close = screen.getByRole('button', { name: 'close' });
@@ -678,10 +681,11 @@ test.each(['folders', 'archives'] as const)(
   },
 );
 
-test('refreshes the list and shows a nonblocking success notice when all imports succeed', async () => {
+test('shows import success when the authoritative list supersedes an earlier refresh warning', async () => {
   vi.mocked(skillService.importSkill).mockResolvedValue({
     success: true,
     skillId: importedSkill.id,
+    refreshWarning: true,
   });
   vi.mocked(skillService.loadSkills)
     .mockResolvedValueOnce([skill])
@@ -697,10 +701,16 @@ test('refreshes the list and shows a nonblocking success notice when all imports
   expect(skillService.loadSkills).toHaveBeenLastCalledWith({ force: true });
 });
 
-test('shows every failure and keeps the list when all imports fail', async () => {
+test('shows every failure and keeps the list when all imports and the follow-up read fail', async () => {
   vi.mocked(skillService.importSkill)
     .mockResolvedValueOnce({ success: false, error: 'SKILL.md is missing' })
     .mockResolvedValueOnce({ success: false, error: 'Invalid skill name' });
+  vi.mocked(skillService.loadSkills)
+    .mockResolvedValueOnce([skill])
+    .mockImplementationOnce(async () => {
+      vi.mocked(skillService.hasInventoryReadFailed).mockReturnValue(true);
+      return [skill];
+    });
 
   const store = await startImport(['C:/imports/missing-skill', 'C:/imports/invalid-skill']);
 
@@ -711,6 +721,7 @@ test('shows every failure and keeps the list when all imports fail', async () =>
   expect(within(dialog).getByText('SKILL.md is missing')).toBeTruthy();
   expect(within(dialog).getByText('invalid-skill')).toBeTruthy();
   expect(within(dialog).getByText('Invalid skill name')).toBeTruthy();
+  expect(within(dialog).queryByText('pluginOperationRefreshFailed')).toBeNull();
   expect(store.getState().skill.skills).toEqual([skill]);
   expect(skillService.loadSkills).toHaveBeenCalledTimes(2);
   expect(screen.getByRole('button', { name: 'importSkill' }).hasAttribute('disabled')).toBe(false);

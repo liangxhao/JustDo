@@ -606,10 +606,18 @@ test('does not delete bundled skills even when their source looks user-owned', a
 });
 
 test('returns scope and action capabilities with the authoritative skill list', async () => {
-  const skill = createSkill('openclaw-custodian', { bundled: true });
+  const bundled = createSkill('openclaw-custodian', { bundled: true });
+  const linked = createSkill('openclaw-managed', {
+    skillKey: 'linked',
+    clawhub: { status: 'linked', valid: true, installedVersion: '2.6' },
+  });
+  const invalid = createSkill('openclaw-managed', {
+    skillKey: 'invalid',
+    clawhub: { status: 'invalid', valid: false, installedVersion: 'stale' },
+  });
   registerSkillHandlers({
     skillService: {
-      getStatus: vi.fn(async () => createStatus(skill)),
+      getStatus: vi.fn(async () => ({ ...createStatus(bundled), skills: [bundled, linked, invalid] })),
     } as unknown as OpenClawSkillService,
     skillFileService: { deleteDirectory: vi.fn() },
     installationService: new PluginInstallationService(),
@@ -628,6 +636,8 @@ test('returns scope and action capabilities with the authoritative skill list', 
           remove: { allowed: false, reason: 'managed-by-system' },
         },
       },
+      { id: 'linked', version: '2.6' },
+      { id: 'invalid', version: undefined },
     ],
   });
 });
@@ -1040,7 +1050,7 @@ test.each([PluginInstallOrigin.CUSTOM, PluginInstallOrigin.MARKETPLACE])(
       payload: { kind: PluginKind.SKILL, sourcePath: 'C:/source' },
     });
     if (origin === PluginInstallOrigin.CUSTOM)
-      expect(forget).toHaveBeenCalledWith(PluginKind.SKILL, 'example', 'C:/skills/example');
+      expect(forget).toHaveBeenCalledWith(PluginKind.SKILL, undefined, 'C:/skills/example');
     else expect(forget).not.toHaveBeenCalled();
   },
 );

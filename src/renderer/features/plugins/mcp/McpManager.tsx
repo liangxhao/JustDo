@@ -36,6 +36,7 @@ import { MCP_TRANSPORT_BADGE_COLORS } from '@/features/plugins/mcp/mcpTransport'
 import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import PluginActivityStatus from '@/features/plugins/shared/PluginActivityStatus';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
+import { PluginCardGrid } from '@/features/plugins/shared/PluginCard';
 import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
@@ -48,7 +49,6 @@ import ConnectorIcon from '@/shared/components/icons/ConnectorIcon';
 import SearchIcon from '@/shared/components/icons/SearchIcon';
 import ErrorMessage from '@/shared/components/ui/ErrorMessage';
 import Modal from '@/shared/components/ui/Modal';
-import Tooltip from '@/shared/components/ui/Tooltip';
 import { RootState } from '@/store';
 
 const formatSchema = (schema?: unknown): string => {
@@ -161,6 +161,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   const [serverLoadFailed, setServerLoadFailed] = useState(false);
   const [providerLoadFailed, setProviderLoadFailed] = useState(false);
   const inventoryGeneration = useRef(0);
+  const probeRequests = useRef(new Map<string, symbol>());
   const inventoryReadGeneration = useRef(0);
   const providerReadGeneration = useRef(0);
   const providerReadPending = useRef(false);
@@ -217,6 +218,7 @@ const McpManager: React.FC<McpManagerProps> = ({
   // Invalidate before and after mutations, including probes started while sync is pending.
   const invalidateConnectionResults = useCallback(() => {
     inventoryGeneration.current += 1;
+    probeRequests.current.clear();
     detailGeneration.current += 1;
     setDetailServer(null);
     setProbeResults({});
@@ -391,9 +393,7 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   const reconcileFailedMutation = async (generation: number) => {
     if (!mounted.current || generation !== inventoryReadGeneration.current) return;
-    if (mounted.current && generation === inventoryReadGeneration.current) {
-      dispatch(setMcpServers(mcpService.getServers()));
-    }
+    dispatch(setMcpServers(mcpService.getServers()));
   };
 
   const handleToggleEnabled = async (serverId: string) => {
@@ -410,7 +410,6 @@ const McpManager: React.FC<McpManagerProps> = ({
       dispatch(setMcpServers(mcpService.getServers()));
       setActionError('');
     } catch {
-      if (!mounted.current) return;
       await reconcileFailedMutation(generation);
     } finally {
       if (mounted.current) {
@@ -600,19 +599,16 @@ const McpManager: React.FC<McpManagerProps> = ({
     });
   };
 
-  const handleProbeServer = async (server: McpDetailServer, openDetail = false) => {
+  const handleProbeServer = async (server: McpDetailServer) => {
     if (probingServerIds.has(server.id)) return;
-    setActionError('');
-    if (openDetail) {
-      detailGeneration.current += 1;
-      setDetailServer(server);
-      setExpandedToolNames(new Set());
-      setExpandedPromptNames(new Set());
-      setExpandedResourceUris(new Set());
-      setReadingResourceUris(new Set());
-      setResourceContents({});
-      setResourceErrors({});
-    }
+    detailGeneration.current += 1;
+    setDetailServer(server);
+    setExpandedToolNames(new Set());
+    setExpandedPromptNames(new Set());
+    setExpandedResourceUris(new Set());
+    setReadingResourceUris(new Set());
+    setResourceContents({});
+    setResourceErrors({});
     if (isExtensionServer(server) && !server.supported) {
       setProbeResults(current => ({
         ...current,
@@ -634,12 +630,15 @@ const McpManager: React.FC<McpManagerProps> = ({
     });
     setServerProbing(server.id, true);
     const generation = inventoryGeneration.current;
+    const request = Symbol();
+    probeRequests.current.set(server.id, request);
     const result = await mcpService.probeServer(server.id);
-    if (generation !== inventoryGeneration.current) return;
+    if (generation !== inventoryGeneration.current || probeRequests.current.get(server.id) !== request)
+      return;
+    probeRequests.current.delete(server.id);
     setServerProbing(server.id, false);
 
     if (!result.success || !result.result) {
-      setActionError(result.error || i18nService.t('mcpProbeFailed'));
       setProbeResults(current => ({
         ...current,
         [server.id]: {
@@ -670,7 +669,9 @@ const McpManager: React.FC<McpManagerProps> = ({
     setIsBulkProbing(true);
     setBulkProbeResults({});
 
+    const request = Symbol();
     const pendingIds = testableServers.map(server => server.id);
+    for (const id of pendingIds) probeRequests.current.set(id, request);
     setProbingServerIds(current => new Set([...current, ...pendingIds]));
 
     for (const server of testableServers) {
@@ -705,7 +706,11 @@ const McpManager: React.FC<McpManagerProps> = ({
         ...current,
         [server.id]: normalizedResult,
       }));
-      setServerProbing(server.id, false);
+      if (probeRequests.current.get(server.id) === request) {
+        probeRequests.current.delete(server.id);
+        setProbeResults(current => ({ ...current, [server.id]: normalizedResult }));
+        setServerProbing(server.id, false);
+      }
     }
 
     setBulkProbeServerId(null);
@@ -714,10 +719,6 @@ const McpManager: React.FC<McpManagerProps> = ({
 
   const handleCloseBulkProbe = () => {
     if (isBulkProbing) return;
-    setProbeResults(current => ({
-      ...current,
-      ...bulkProbeResults,
-    }));
     setIsBulkProbeOpen(false);
   };
 
@@ -892,20 +893,19 @@ const McpManager: React.FC<McpManagerProps> = ({
         key={server.id}
         visualIndex={visualIndex}
         group="user"
+        installedVersion={marketplace.installedVersionFor(server.id)}
         onOpen={
           marketplace.operationFor(server.id)?.busy
             ? undefined
             : () => void handleOpenEditForm(server, getPluginArtworkTone('mcp:user', visualIndex))
         }
         openLabel={`${i18nService.t('editMcpServer')}: ${server.name}`}
-        onProbe={() => void handleProbeServer(server, true)}
+        onProbe={() => void handleProbeServer(server)}
         probeDisabled={probingServerIds.has(server.id)}
         probing={probingServerIds.has(server.id)}
         probeResult={probeResults[server.id]}
         supportsApps={mcpService.getAppSupport(server)}
-        title={
-          <span className="block truncate text-sm font-medium text-foreground">{server.name}</span>
-        }
+        title={server.name}
         actions={
           <InstalledMarketplaceAction
             controller={marketplace}
@@ -922,18 +922,7 @@ const McpManager: React.FC<McpManagerProps> = ({
             onToggle={() => handleToggleEnabled(server.id)}
           />
         }
-        description={
-          installedDescription ? (
-            <Tooltip
-              content={installedDescription}
-              position="bottom"
-              maxWidth="360px"
-              className="block w-full"
-            >
-              <p className="line-clamp-2 break-words">{installedDescription}</p>
-            </Tooltip>
-          ) : null
-        }
+        description={installedDescription}
       />
     );
   };
@@ -996,9 +985,9 @@ const McpManager: React.FC<McpManagerProps> = ({
         />
         {visibility !== 'available' &&
           (marketplace.filter !== MarketplaceFilter.UPDATES ||
-            marketplace.updateById.size > 0 ||
-            marketplace.recentlyUpdated.size > 0) && (
-            <section className="space-y-4">
+            filteredInstalled.length > 0 ||
+            (sharedSearchQuery === undefined && Boolean(searchQuery.trim()))) && (
+            <section className="space-y-4" aria-busy={isLoadingServers}>
               <div className="space-y-4">
                 {sharedSearchQuery === undefined && (
                   <div className="relative min-w-0 sm:max-w-md">
@@ -1015,19 +1004,13 @@ const McpManager: React.FC<McpManagerProps> = ({
                 {Boolean(searchQuery.trim()) && (
                   <div className="flex justify-end">{transferAction}</div>
                 )}
-                {isLoadingServers && (
-                  <PluginActivityStatus
-                    title={i18nService.t('mcpServers')}
-                    message={i18nService.t('mcpLoadingServers')}
-                  />
-                )}
                 {!isLoadingServers &&
                 !serverLoadFailed &&
                 !providerLoadFailed &&
                 filteredInstalled.length === 0 &&
                 filteredExtensionServers.length === 0 &&
                 searchQuery.trim() ? null : (
-                  <div className="space-y-6">
+                  <div className="space-y-5">
                     {(userServerCount > 0 || !searchQuery.trim()) && (
                       <PluginGroupSection
                         hideHeader={Boolean(searchQuery.trim())}
@@ -1044,7 +1027,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                             </p>
                           )
                         ) : (
-                          <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-x-4 gap-y-1">
+                          <PluginCardGrid>
                             {userServers.map((server, visualIndex) =>
                               'providerId' in server ? (
                                 <ExtensionMcpCard
@@ -1053,7 +1036,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                                   visualIndex={visualIndex}
                                   group="user"
                                   onOpenExtension={onOpenExtension}
-                                  onOpenDetail={() => void handleProbeServer(server, true)}
+                                  onOpenDetail={() => void handleProbeServer(server)}
                                   onOpenParameters={() => {
                                     setParameterServer(server);
                                     setDetailArtworkTone(
@@ -1070,7 +1053,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                                 renderInstalledCard(server, visualIndex)
                               ),
                             )}
-                          </div>
+                          </PluginCardGrid>
                         )}
                       </PluginGroupSection>
                     )}
@@ -1083,7 +1066,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                         defaultExpanded={false}
                         forceExpanded={Boolean(searchQuery.trim())}
                       >
-                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-x-4 gap-y-1">
+                        <PluginCardGrid>
                           {systemExtensionServers.map((server, visualIndex) => (
                             <ExtensionMcpCard
                               key={server.id}
@@ -1091,7 +1074,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                               visualIndex={visualIndex}
                               group="system"
                               onOpenExtension={onOpenExtension}
-                              onOpenDetail={() => void handleProbeServer(server, true)}
+                              onOpenDetail={() => void handleProbeServer(server)}
                               onOpenParameters={() => {
                                 setParameterServer(server);
                                 setDetailArtworkTone(
@@ -1105,7 +1088,7 @@ const McpManager: React.FC<McpManagerProps> = ({
                               supportsApps={mcpService.getAppSupport(server)}
                             />
                           ))}
-                        </div>
+                        </PluginCardGrid>
                       </PluginGroupSection>
                     )}
                   </div>
@@ -1187,7 +1170,7 @@ const McpManager: React.FC<McpManagerProps> = ({
           server={parameterServer}
           artworkTone={detailArtworkTone}
           onClose={() => setParameterServer(null)}
-          onProbe={server => void handleProbeServer(server, true)}
+          onProbe={server => void handleProbeServer(server)}
           probing={probingServerIds.has(parameterServer.id)}
           probeResult={probeResults[parameterServer.id]}
         />
@@ -1203,7 +1186,7 @@ const McpManager: React.FC<McpManagerProps> = ({
         existingNames={existingNames}
         onClose={handleCloseForm}
         onSave={handleSaveForm}
-        onProbe={editingServer ? () => void handleProbeServer(editingServer, true) : undefined}
+        onProbe={editingServer ? () => void handleProbeServer(editingServer) : undefined}
         probing={editingServer ? probingServerIds.has(editingServer.id) : false}
         probeResult={editingServer ? probeResults[editingServer.id] : undefined}
         onDelete={

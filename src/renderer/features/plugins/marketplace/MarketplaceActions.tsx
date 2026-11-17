@@ -27,11 +27,15 @@ export function MarketplaceAction({
   showText?: boolean;
 }) {
   const local = controller.localFor(item);
+  const installedVersion = local?.version?.trim()
+    ? local.version
+    : local && controller.installedVersionFor(local.id);
   const operation = controller.operations[marketplaceKey(item)];
   const updating = Boolean(local);
   const alreadyInstalled = installOnly && updating;
   const completed = operation?.committed && (!local || operation.version === item.version);
   const unavailable = item.installState === MarketplaceInstallState.UNAVAILABLE && !updating;
+  const conflict = controller.conflicts(item);
   const label = i18nService.t(
     operation?.busy
       ? updating
@@ -43,7 +47,7 @@ export function MarketplaceAction({
           ? local
             ? 'marketplaceInstalled'
             : 'marketplaceStatusPending'
-          : controller.conflicts(item)
+          : conflict
             ? 'marketplaceLocalConflict'
             : unavailable
               ? 'marketplaceUnavailable'
@@ -58,7 +62,7 @@ export function MarketplaceAction({
       aria-busy={operation?.busy || undefined}
       title={
         updating && !installOnly && item.version
-          ? `${label} · ${local?.version ?? '—'} → ${item.version}`
+          ? `${label} · ${installedVersion ?? '—'} → ${item.version}`
           : label
       }
       disabled={
@@ -69,7 +73,7 @@ export function MarketplaceAction({
         operation?.unconfirmed ||
         completed ||
         alreadyInstalled ||
-        controller.conflicts(item) ||
+        conflict ||
         unavailable ||
         (updating && !controller.updateById.has(local!.id)) ||
         !controller.identityReady
@@ -86,7 +90,7 @@ export function MarketplaceAction({
         <ClockIcon className="h-4 w-4" />
       ) : completed || alreadyInstalled ? (
         <CheckIcon className="h-4 w-4" />
-      ) : controller.conflicts(item) ? (
+      ) : conflict ? (
         <ExclamationTriangleIcon className="h-4 w-4" />
       ) : unavailable ? (
         <NoSymbolIcon className="h-4 w-4" />

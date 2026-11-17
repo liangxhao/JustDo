@@ -4,6 +4,7 @@ import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/plu
 import { HookEntry, HookListResult } from '@/features/plugins/hooks/hook';
 import {
   pluginOperationFailure,
+  pluginOperationRefreshAfterSuccess,
   pluginOperationRefreshFailure,
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import {
@@ -149,7 +150,7 @@ class HookService {
       if (result.success) {
         const applied = await this.applyMutationResult(result, generation);
         if (result.refreshWarning || this.hasHookLoadFailed())
-          operation.fail(pluginOperationRefreshFailure(result));
+          operation.fail(pluginOperationRefreshAfterSuccess(result));
         return applied;
       }
       if (generation === this.loadGeneration) this.gatewayOffline = result.gatewayOffline || false;
@@ -185,7 +186,7 @@ class HookService {
         const applied = await this.applyMutationResult(result, generation);
         const refreshFailed = result.refreshWarning || this.hasHookLoadFailed();
         if (refreshFailed && options.reportFailure !== false)
-          operation.fail(pluginOperationRefreshFailure(result));
+          operation.fail(pluginOperationRefreshAfterSuccess(result));
         return { ...applied, ...(refreshFailed ? { refreshWarning: true as const } : {}) };
       }
       if (options.reportFailure !== false)
@@ -224,7 +225,7 @@ class HookService {
         this.hooks.filter(hook => hook.id !== id),
       );
       const refreshFailed = result.refreshWarning || this.hasHookLoadFailed();
-      if (refreshFailed) operation.fail(pluginOperationRefreshFailure(result));
+      if (refreshFailed) operation.fail(pluginOperationRefreshAfterSuccess(result));
       return { ...applied, ...(refreshFailed ? { refreshWarning: true as const } : {}) };
     } catch (error) {
       operation.fail({

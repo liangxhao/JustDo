@@ -26,6 +26,7 @@ import { i18nService } from '@/services/i18n';
 import { pluginsTranslations } from '@/services/i18n/pluginsTranslations';
 
 import OperationResultModal, { OperationResultNotice } from './OperationResultModal';
+import { pluginOperationRefreshAfterSuccess } from './pluginMutationFeedback';
 import PluginOperationFeedback from './PluginOperationFeedback';
 import { pluginOperationFailurePresentation } from './pluginOperationPresentation';
 import {
@@ -910,16 +911,34 @@ test.each([
   },
 );
 
-test('a pending recovery notice never hides a later real failure and dismissal leaves the other result intact', () => {
+test.each([
+  {
+    title: 'pluginOperationCompleted.remove',
+    receipt: {
+      message: 'A newer engine preparation owns recovery',
+      mutationCompleted: true,
+      runtimeRecoveryPending: true,
+    } satisfies PluginOperationFailureInput,
+  },
+  {
+    title: 'pluginOperationFailureTitle.remove.data_cleanup_failed',
+    receipt: {
+      message: 'A plugin data file is locked',
+      failedStage: PluginOperationStage.CLEANING_PLUGIN_DATA,
+    } satisfies PluginOperationFailureInput,
+  },
+  {
+    title: 'pluginOperationCompletedRefreshWarning',
+    receipt: pluginOperationRefreshAfterSuccess(),
+  },
+])('$title leaves a later real failure visible and independently dismissible', ({ title, receipt }) => {
   const { owner } = setup();
-  const pending = owner.start({ ...options, action: PluginOperationAction.REMOVE });
-  pending.fail({
-    message: 'A newer engine preparation owns recovery',
+  const removal = owner.start({ ...options, action: PluginOperationAction.REMOVE });
+  removal.fail({
+    ...receipt,
     state: PluginOperationFailureState.REFRESH_FAILED,
-    mutationCompleted: true,
-    runtimeRecoveryPending: true,
   });
-  pending.finish();
+  removal.finish();
   const failed = owner.start({ ...options, label: 'Invalid package' });
   failed.fail({
     message: 'The package has no manifest',
@@ -930,11 +949,13 @@ test('a pending recovery notice never hides a later real failure and dismissal l
   expect(
     screen.getByRole('alertdialog', { name: 'pluginOperationFailureTitle.install' }),
   ).toBeTruthy();
-  expect(screen.getByText('pluginOperationCompleted.remove')).toBeTruthy();
+  const notice = screen.getByText(title).closest('[role="status"]');
+  expect(notice?.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
+  expect(notice?.closest('.fixed')?.classList.contains('right-4')).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'pluginOperationFailureDismiss' }));
   expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(owner.failureSnapshot().map(result => result.requestId)).toEqual([
-    pending.context.requestId,
+    removal.context.requestId,
   ]);
   fireEvent.click(screen.getByRole('button', { name: 'pluginOperationNoticeDismiss' }));
   expect(owner.failureSnapshot()).toEqual([]);

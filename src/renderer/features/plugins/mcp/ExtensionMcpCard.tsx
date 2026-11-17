@@ -50,11 +50,7 @@ const ExtensionMcpCard = ({
     probing={probing}
     probeResult={probeResult}
     supportsApps={supportsApps ?? server.supportsApps}
-    title={
-      <span className="block max-w-full truncate text-sm font-medium text-foreground">
-        {server.name}
-      </span>
-    }
+    title={server.name}
     stateAction={
       (server.enabled ? server.management?.disable.allowed : server.management?.enable.allowed) ? (
         <PluginStateButton
@@ -73,11 +69,7 @@ const ExtensionMcpCard = ({
         />
       )
     }
-    description={
-      <p className="line-clamp-2 max-w-full break-words">
-        {i18nService.t('mcpProvidedByExtension').replace('{name}', server.providerName)}
-      </p>
-    }
+    description={i18nService.t('mcpProvidedByExtension').replace('{name}', server.providerName)}
   />
 );
 

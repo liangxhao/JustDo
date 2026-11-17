@@ -1,7 +1,7 @@
 import { redactLogText } from '@shared/diagnostics/redaction';
 import { PluginKind } from '@shared/plugins/marketplace';
 import {
-  type PluginOperationAction,
+  PluginOperationAction,
   type PluginOperationContext,
   type PluginOperationProgress,
   PluginOperationStage,
@@ -55,6 +55,8 @@ export type PluginOperationFailureInput = {
   operationUnconfirmed?: true;
   mutationCompleted?: true;
   runtimeRecoveryPending?: true;
+  /** A successful mutation was followed only by an unavailable inventory read. */
+  inventoryRefreshOnly?: true;
   state?: (typeof PluginOperationFailureState)[keyof typeof PluginOperationFailureState];
   items?: PluginOperationFailureItem[];
 };
@@ -71,6 +73,7 @@ export type PluginOperationFailure = PluginOperationOptions & {
   operationUnconfirmed?: true;
   mutationCompleted?: true;
   runtimeRecoveryPending?: true;
+  inventoryRefreshOnly?: true;
   /** Presentation-only confirmation of current engine admission; original receipt flags stay intact. */
   runtimeRecovered?: true;
   items?: PluginOperationFailureInput['items'];
@@ -101,6 +104,28 @@ export const isPluginOperationRecoveryPending = (
       (item.failedStage && !item.runtimeRecoveryPending) ||
       (item.type !== 'success' && !item.runtimeRecoveryPending),
   );
+
+export const isPluginOperationCompletedRefreshFailure = (
+  operation: Pick<PluginOperationFailure,
+    'state' | 'failedStage' | 'inventoryRefreshOnly' | 'runtimeRecoveryPending' |
+    'operationUnconfirmed' | 'installSourceInUse' | 'items'>,
+) =>
+  operation.state === PluginOperationFailureState.REFRESH_FAILED &&
+  operation.failedStage === PluginOperationStage.REFRESHING_INVENTORY &&
+  operation.inventoryRefreshOnly === true &&
+  !operation.runtimeRecoveryPending &&
+  !operation.operationUnconfirmed &&
+  !operation.installSourceInUse &&
+  !operation.items?.length;
+
+export const isPluginOperationNotice = (operation: PluginOperationFailure) =>
+  isPluginOperationRecoveryPending(operation) ||
+  isPluginOperationCompletedRefreshFailure(operation) ||
+  (operation.action === PluginOperationAction.REMOVE &&
+    operation.state === PluginOperationFailureState.REFRESH_FAILED &&
+    operation.failedStage === PluginOperationStage.CLEANING_PLUGIN_DATA &&
+    !operation.operationUnconfirmed &&
+    !operation.installSourceInUse);
 
 const FAILURE_HISTORY_LIMIT = 100;
 const safeText = (value: string, limit: number) => redactLogText(value).slice(0, limit);
@@ -273,6 +298,7 @@ class PluginOperationOwner {
           ...(input.operationUnconfirmed ? { operationUnconfirmed: true as const } : {}),
           ...(input.mutationCompleted ? { mutationCompleted: true as const } : {}),
           ...(input.runtimeRecoveryPending ? { runtimeRecoveryPending: true as const } : {}),
+          ...(input.inventoryRefreshOnly ? { inventoryRefreshOnly: true as const } : {}),
           ...(input.items?.length
             ? {
                 items: input.items.slice(0, 100).map(item => ({
@@ -301,7 +327,7 @@ class PluginOperationOwner {
         if (failure) {
           // Keep the currently displayed result when bounding settled presentation data.
           const displayed =
-            this.failures.find(result => !isPluginOperationRecoveryPending(result)) ??
+            this.failures.find(result => !isPluginOperationNotice(result)) ??
             this.failures[0];
           const retained =
             this.failures.length >= FAILURE_HISTORY_LIMIT

@@ -63,7 +63,7 @@ export class PluginManager {
 
   forgetMarketplaceInstallation(
     kind: MarketplaceQuery['kind'],
-    runtimeId: string,
+    runtimeId: string | undefined,
     installPath?: string,
   ): void {
     this.marketplace.forgetInstallation(kind, runtimeId, installPath);

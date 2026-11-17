@@ -7,6 +7,7 @@ import {
 
 import {
   pluginOperationFailure,
+  pluginOperationRefreshAfterSuccess,
   pluginOperationRefreshFailure,
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import {
@@ -291,13 +292,13 @@ class SkillService {
           operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
           const skills = await this.readSkills({ force: true });
           if (this.inventoryReadFailed || result.refreshWarning)
-            operation.fail(pluginOperationRefreshFailure(result));
+            operation.fail(pluginOperationRefreshAfterSuccess(result));
           return skills;
         }
         this.invalidateListRead();
         this.skills = this.projectConfirmedDeletions(result.skills);
         this.gatewayOffline = false;
-        if (result.refreshWarning) operation.fail(pluginOperationRefreshFailure(result));
+        if (result.refreshWarning) operation.fail(pluginOperationRefreshAfterSuccess(result));
         return this.skills;
       }
       if (generation === this.loadGeneration) {
@@ -347,7 +348,7 @@ class SkillService {
           operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
           const skills = await this.loadSkills({ force: true });
           const refreshFailed = this.inventoryReadFailed || result.refreshWarning;
-          if (refreshFailed) operation.fail(pluginOperationRefreshFailure(result));
+          if (refreshFailed) operation.fail(pluginOperationRefreshAfterSuccess(result));
           return {
             ...result,
             success: true,
@@ -359,7 +360,7 @@ class SkillService {
         this.skills = result.skills.filter(
           skill => !this.deletedPaths.has(`${skill.source}\0${skill.skillPath}`),
         );
-        if (result.refreshWarning) operation.fail(pluginOperationRefreshFailure(result));
+        if (result.refreshWarning) operation.fail(pluginOperationRefreshAfterSuccess(result));
         return { ...result, success: true, skills: this.skills };
       }
       operation.fail(pluginOperationFailure(result, i18nService.t('skillDeleteFailed')));
@@ -415,7 +416,7 @@ class SkillService {
       if (options.reportFailure !== false) {
         if (!result.success)
           operation.fail(pluginOperationFailure(result, i18nService.t('skillImportFailed')));
-        else if (result.refreshWarning) operation.fail(pluginOperationRefreshFailure(result));
+        else if (result.refreshWarning) operation.fail(pluginOperationRefreshAfterSuccess(result));
       }
       return result;
     } catch (error) {

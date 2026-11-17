@@ -33,7 +33,7 @@ test('persists one marketplace identity per runtime plugin', () => {
   ]);
 });
 
-test('only removes a layered skill identity when its install path matches', () => {
+test.each(['writer', undefined])('only removes a layered skill identity when its install path matches (key %s)', runtimeId => {
   const registry = createRegistry();
   registry.upsert({
     sourceId: 'enterprise',
@@ -43,12 +43,12 @@ test('only removes a layered skill identity when its install path matches', () =
     installPath: 'C:\\managed\\skills\\writer',
   });
 
-  registry.removeRuntime(PluginKind.SKILL, 'writer', 'C:\\project\\skills\\writer');
+  registry.removeRuntime(PluginKind.SKILL, runtimeId, 'C:\\project\\skills\\writer');
   expect(registry.list()).toHaveLength(1);
 
   registry.removeRuntime(
     PluginKind.SKILL,
-    'writer',
+    runtimeId,
     process.platform === 'win32' ? 'c:\\managed\\skills\\writer' : 'C:\\managed\\skills\\writer',
   );
   expect(registry.list()).toEqual([]);

@@ -5,6 +5,7 @@ import {
   type MarketplaceInstallResponse,
   MarketplaceInstallState,
   type MarketplacePlugin,
+  type MarketplacePluginDetail,
   PluginKind,
 } from '@shared/plugins/marketplace';
 import { PluginOperationStage } from '@shared/plugins/pluginOperation';
@@ -21,7 +22,7 @@ import { type InstalledMarketplacePlugin, usePluginMarketplace } from './usePlug
 
 vi.mock('@/services/i18n', () => ({
   i18nService: {
-    t: (key: string) => (key === 'pluginOperationFailedAt' ? 'Step not completed: {stage}' : key),
+    t: (key: string) => key,
     getLanguage: () => 'en',
   },
 }));
@@ -43,7 +44,7 @@ const local: InstalledMarketplacePlugin = {
 };
 const EMPTY: InstalledMarketplacePlugin[] = [];
 const INSTALLED = [local];
-const identity = { runtimeId: 'writer', sourceId: 'enterprise', pluginId: 'catalog-writer' };
+const identity = { runtimeId: 'writer', sourceId: 'enterprise', pluginId: 'catalog-writer', installedVersion: 'stable-1' };
 function setup() {
   const api = {
     listSources: vi.fn(async () => ({
@@ -128,12 +129,13 @@ function Harness({
       </button>
     </article>
   );
+  const localMatches = installed.filter(item =>
+    c.matchesInstalled(item.id, item.id.includes(query)),
+  );
   return (
     <>
-      <MarketplaceToolbar controller={c} />
-      {installed
-        .filter(item => c.matchesInstalled(item.id, item.id.includes(query)))
-        .map(item => card(item.id))}
+      <MarketplaceToolbar controller={c} hasLocalMatches={localMatches.length > 0} />
+      {localMatches.map(item => card(item.id))}
       <MarketplaceResults controller={c} icon={<span>icon</span>} renderInstalled={card} />
     </>
   );
@@ -173,7 +175,7 @@ test('keeps completed marketplace installation with pending recovery nonblocking
   expect(api.install).toHaveBeenCalledOnce();
 });
 
-test('keeps market loading in the bottom progress stack until results arrive', async () => {
+test('loads market results without a floating status card', async () => {
   let finish!: () => void;
   api.search.mockImplementationOnce(
     () =>
@@ -182,16 +184,13 @@ test('keeps market loading in the bottom progress stack until results arrive', a
           resolve({ success: true, result: { items: [writer], nextCursor: undefined } });
       }),
   );
-  const view = render(<Harness />);
+  render(<Harness />);
   await waitFor(() => expect(api.search).toHaveBeenCalledOnce());
-  const loading = screen.getByText('marketplaceLoading');
-  expect(loading.closest('article, section')).toBeNull();
-  expect(loading.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
-  expect(view.container.contains(loading)).toBe(false);
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(screen.queryByText('marketplaceSearchEmpty')).toBeNull();
 
   await act(async () => finish());
   expect(screen.getByText(writer.name)).toBeTruthy();
-  expect(screen.queryByText('marketplaceLoading')).toBeNull();
 });
 
 test('searches the market and includes installed matches found only in market metadata once', async () => {
@@ -216,6 +215,19 @@ test('does not repeat identity and update queries for an unchanged inventory pro
   await act(async () => undefined);
   expect(api.resolveInstalled).toHaveBeenCalledTimes(identityReads);
   expect(api.checkUpdates).toHaveBeenCalledOnce();
+});
+
+test('uses the verified installed version in updates and drops it for a same-name replacement', async () => {
+  const unversioned = { ...local, version: undefined };
+  const view = render(<Harness installed={[unversioned]} />);
+  expect((await screen.findByRole('button', { name: 'marketplaceUpdate' })).title)
+    .toBe('marketplaceUpdate · stable-1 → 2.0');
+
+  api.resolveInstalled.mockResolvedValueOnce({ success: true, installations: [] });
+  view.rerender(<Harness installed={[{ ...unversioned, installPath: '/project/writer' }]} />);
+
+  expect(screen.queryByTitle('marketplaceUpdate · stable-1 → 2.0')).toBeNull();
+  expect(await screen.findByRole('button', { name: 'marketplaceLocalConflict' })).toBeTruthy();
 });
 
 test('keeps installation failure details in the result queue without displaying them on the card', async () => {
@@ -357,7 +369,7 @@ test('retains a market failure after switching away before the request settles',
   ]);
 });
 
-test('explains a controlled committed activation failure without guessing a configuration cause', async () => {
+test('the standalone marketplace explains a committed activation failure once', async () => {
   api.install.mockResolvedValueOnce({
     success: false,
     installationCommitted: true,
@@ -366,12 +378,15 @@ test('explains a controlled committed activation failure without guessing a conf
     errorCode: MarketplaceErrorCode.INTERNAL,
     failedStage: PluginOperationStage.ENABLING,
   });
-  render(<Harness />);
+  render(<MarketplaceView kind={PluginKind.SKILL} icon={<span>icon</span>} />);
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
-  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(1));
-  expect(screen.queryByRole('alert')).toBeNull();
-  expect(screen.queryByText('marketplaceActivationIncomplete')).toBeNull();
-  expect(screen.queryByText(/Marketplace installation failed/)).toBeNull();
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'pluginOperationFailureTitle.install.committed',
+  });
+  expect(screen.getAllByText('marketplaceActivationIncomplete')).toEqual([
+    within(dialog).getByText('marketplaceActivationIncomplete'),
+  ]);
+  expect(screen.queryByRole('button', { name: 'marketplaceRefreshStatus' })).toBeNull();
   expect(getPluginOperationOwner().failureSnapshot()).toEqual([
     expect.objectContaining({
       state: 'committed',
@@ -450,9 +465,12 @@ test('retains a native refresh warning when a successful install settles after i
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
   view.unmount();
   await act(async () => finish({ success: true, pluginId: 'writer', refreshWarning: true }));
-  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
-    expect.objectContaining({ state: 'refresh_failed', failedStage: 'refreshing_inventory' }),
-  ]);
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
+
+  const refresh = vi.fn().mockRejectedValue(new Error('offline'));
+  render(<Harness onInstalled={refresh} />);
+  expect(await screen.findByRole('button', { name: 'marketplaceRefreshStatus' })).toBeTruthy();
+  expect(api.install).toHaveBeenCalledOnce();
 });
 
 test('a final successful inventory read resolves a native post-install refresh warning', async () => {
@@ -484,7 +502,7 @@ test('keeps committed installation protection after dismissing its failure resul
     details: 'marketplaceRefreshAfterInstallFailed',
   });
   act(() => owner.dismissFailure(owner.failureSnapshot()[0].requestId));
-  expect(screen.getByText(/Activation refused/).closest('article')).toBeNull();
+  expect(screen.queryByText(/Activation refused/)).toBeNull();
   expect(screen.getByText('marketplaceRefreshAfterInstallFailed')).toBeTruthy();
   const pending = screen.getByRole('button', { name: 'marketplaceStatusPending' });
   expect(pending.hasAttribute('disabled')).toBe(true);
@@ -492,24 +510,40 @@ test('keeps committed installation protection after dismissing its failure resul
   expect(api.install).toHaveBeenCalledOnce();
 });
 
-test('an explicitly unconfirmed installation offers status refresh without replaying the install', async () => {
+test('switching between skill and extension pages does not restore a pending status card', async () => {
   api.install.mockResolvedValueOnce({
     success: false,
     installSourceInUse: true,
     failedStage: PluginOperationStage.INSTALLING,
     error: 'Installation result is unavailable',
   });
-  render(<Harness />);
+  const refresh = vi.fn(async () => undefined);
+  const panel = (kind: typeof PluginKind.SKILL | typeof PluginKind.EXTENSION) => (
+    <>
+      <Harness key={kind} kind={kind} onInstalled={refresh} />
+      <PluginOperationFeedback />
+    </>
+  );
+  const view = render(panel(PluginKind.SKILL));
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
-  await waitFor(() => expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(1));
-  expect(getPluginOperationOwner().failureSnapshot()[0].state).toBe('unconfirmed');
-  const pending = screen.getByRole('button', { name: 'marketplaceStatusPending' });
+  const dialog = await screen.findByRole('alertdialog', {
+    name: 'pluginOperationFailureTitle.unconfirmed',
+  });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'pluginOperationFailureDismiss' }));
+  expect(screen.queryByText('marketplaceStatusPending')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'marketplaceRefreshStatus' })).toBeNull();
+
+  view.rerender(panel(PluginKind.EXTENSION));
+  await screen.findByRole('button', { name: 'marketplaceInstall' });
+  expect(screen.queryByRole('status')).toBeNull();
+  view.rerender(panel(PluginKind.SKILL));
+  const pending = await screen.findByRole('button', { name: 'marketplaceStatusPending' });
+  expect(screen.queryByText('marketplaceStatusPending')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'marketplaceRefreshStatus' })).toBeNull();
   expect(pending.hasAttribute('disabled')).toBe(true);
   fireEvent.click(pending);
+  expect(refresh).toHaveBeenCalledOnce();
   expect(api.install).toHaveBeenCalledOnce();
-  expect(
-    screen.getByRole('button', { name: 'marketplaceRefreshStatus' }).closest('article'),
-  ).toBeNull();
 });
 
 test.each([false, true])(
@@ -563,10 +597,7 @@ test.each([false, true])('preserves an unknown outcome when manual refresh fails
     ...(committed ? { installationCommitted: true } : {}),
     error: 'Installation receipt is unavailable',
   });
-  const refresh = vi
-    .fn()
-    .mockResolvedValueOnce(undefined)
-    .mockRejectedValueOnce(new Error('offline'));
+  const refresh = vi.fn().mockRejectedValue(new Error('offline'));
   render(
     <>
       <Harness installed={INSTALLED} onInstalled={refresh} />
@@ -793,35 +824,42 @@ test.each([PluginKind.EXTENSION, PluginKind.SKILL, PluginKind.MCP])(
   },
 );
 
-test('keeps status refresh available after changing to a query with no cards', async () => {
-  api.install.mockResolvedValueOnce({
-    success: false,
-    operationUnconfirmed: true,
-    error: 'Installation result is unavailable',
-  });
-  const refresh = vi.fn(async () => undefined);
+test('keeps a failed inventory refresh retryable after changing to a query with no cards', async () => {
+  const refresh = vi.fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockRejectedValueOnce(new Error('still offline'))
+    .mockResolvedValue(undefined);
   const view = render(<Harness onInstalled={refresh} />);
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
   await screen.findByRole('button', { name: 'marketplaceRefreshStatus' });
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
   api.search.mockResolvedValue({ success: true, result: { items: [], nextCursor: undefined } });
   view.rerender(<Harness query="no matches" onInstalled={refresh} />);
   await waitFor(() => expect(screen.queryByRole('article')).toBeNull());
   expect(screen.getByText('Market writer')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'marketplaceRefreshStatus' }));
   await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole('button', { name: 'marketplaceRefreshStatus' })).toBeTruthy();
+  expect(getPluginOperationOwner().failureSnapshot()).toEqual([]);
+  fireEvent.click(screen.getByRole('button', { name: 'marketplaceRefreshStatus' }));
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'marketplaceRefreshStatus' })).toBeNull());
   expect(api.install).toHaveBeenCalledOnce();
 });
 
-test('keeps standalone marketplace status feedback outside cards before inventory confirms installation', async () => {
-  render(<MarketplaceView kind={PluginKind.SKILL} icon={<span>icon</span>} />);
+test('waits for marketplace inventory confirmation before showing installation feedback', async () => {
+  const view = render(<MarketplaceView kind={PluginKind.SKILL} icon={<span>icon</span>} />);
   fireEvent.click(await screen.findByRole('button', { name: 'marketplaceInstall' }));
-  const refreshButton = await screen.findByRole('button', { name: 'marketplaceRefreshStatus' });
-  expect(refreshButton.closest('article')).toBeNull();
+  const pending = await screen.findByRole('button', { name: 'marketplaceStatusPending' });
+  expect(pending.hasAttribute('disabled')).toBe(true);
   expect(within(screen.getByRole('article')).queryByRole('status')).toBeNull();
-  expect(
-    screen.getByRole('button', { name: 'marketplaceStatusPending' }).hasAttribute('disabled'),
-  ).toBe(true);
-  fireEvent.click(refreshButton);
+  expect(screen.queryByText('marketplaceStatusPending')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'marketplaceRefreshStatus' })).toBeNull();
+  expect(screen.queryByText('marketplaceInstallSucceeded')).toBeNull();
+
+  view.rerender(
+    <MarketplaceView kind={PluginKind.SKILL} icon={<span>icon</span>} installed={INSTALLED} />,
+  );
+  expect((await screen.findByText('marketplaceInstallSucceeded')).closest('article')).toBeNull();
   expect(api.install).toHaveBeenCalledOnce();
 });
 
@@ -857,7 +895,7 @@ test.each([
   { updating: true, updatesOnly: false },
   { updating: true, updatesOnly: true },
 ])(
-  'refreshes a committed failure without replaying installation ($updating, updates filter: $updatesOnly)',
+  'reports a committed failure once after a successful refresh ($updating, updates filter: $updatesOnly)',
   async ({ updating, updatesOnly }) => {
     api.install.mockResolvedValue({
       success: false,
@@ -867,7 +905,12 @@ test.each([
       error: 'Runtime activation failed after publishing',
     });
     const refresh = vi.fn(async () => undefined);
-    render(<Harness installed={updating ? INSTALLED : EMPTY} onInstalled={refresh} />);
+    render(
+      <>
+        <Harness installed={updating ? INSTALLED : EMPTY} onInstalled={refresh} />
+        <PluginOperationFeedback />
+      </>,
+    );
     if (updatesOnly)
       fireEvent.click(screen.getByRole('button', { name: /marketplaceFilter.updates/ }));
     fireEvent.click(
@@ -875,29 +918,23 @@ test.each([
         name: updating ? 'marketplaceUpdate' : 'marketplaceInstall',
       }),
     );
-    expect(
-      (await screen.findByText('Runtime activation failed after publishing')).closest('article'),
-    ).toBeNull();
-    expect(screen.getByText('Runtime activation failed after publishing')).toBeTruthy();
-    expect(getPluginOperationOwner().failureSnapshot()).toEqual([
-      expect.objectContaining({
-        message: 'Runtime activation failed after publishing',
-        state: 'committed',
-      }),
-    ]);
-    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    const dialog = await screen.findByRole('alertdialog', {
+      name: `pluginOperationFailureTitle.${updating ? 'update' : 'install'}.committed`,
+    });
+    const reason = 'Runtime activation failed after publishing';
+    expect(screen.getAllByText(reason)).toEqual([within(dialog).getByText(reason)]);
+    expect(refresh).toHaveBeenCalledOnce();
     expect(screen.queryByText('marketplaceUpdateSucceeded')).toBeNull();
     expect(screen.queryByText('marketplaceInstallSucceeded')).toBeNull();
-    expect(screen.getByText('Runtime activation failed after publishing')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'marketplaceRefreshStatus' }));
-    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
-    expect(screen.getByText('Runtime activation failed after publishing')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'marketplaceRefreshStatus' })).toBeNull();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'pluginOperationFailureDismiss' }));
+    expect(screen.queryByText(reason)).toBeNull();
     if (updatesOnly) {
       vi.useFakeTimers();
       await act(async () => vi.advanceTimersByTimeAsync(2000));
       vi.useRealTimers();
       expect(screen.getByTestId('local-writer')).toBeTruthy();
-      expect(screen.getByText('Runtime activation failed after publishing')).toBeTruthy();
+      expect(screen.queryByText('marketplaceNoKnownUpdates')).toBeNull();
     }
     expect(screen.queryByRole('button', { name: 'marketplaceUpdate' })).toBeNull();
     if (!updating) {
@@ -922,6 +959,7 @@ test('reports update check failures distinctly and allows a manual retry', async
   api.checkUpdates.mockRejectedValueOnce(new Error('offline'));
   render(<Harness installed={INSTALLED} />);
   expect(await screen.findByText('marketplaceCheckFailed')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'marketplaceCheckUpdates' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'marketplaceRetry' }));
   await waitFor(() => expect(api.checkUpdates).toHaveBeenCalledTimes(2));
 });
@@ -1104,7 +1142,7 @@ test('a completed update does not suppress a subsequently discovered newer versi
   );
 });
 
-test('opens optional native details without making installation depend on them', async () => {
+test('dismisses marketplace details during loading and ignores a late read failure', async () => {
   api.listSources.mockResolvedValue({
     success: true,
     sources: [
@@ -1118,8 +1156,18 @@ test('opens optional native details without making installation depend on them',
       },
     ],
   });
+  let failDetail!: (error: Error) => void;
+  api.detail.mockImplementationOnce(
+    () =>
+      new Promise((_, reject) => {
+        failDetail = reject;
+      }),
+  );
+  const detail: MarketplacePluginDetail = { ...writer, requirements: { bins: [], env: [] } };
+  api.detail.mockResolvedValueOnce({ success: true, detail });
   render(<Harness />);
-  fireEvent.click(await screen.findByRole('button', { name: 'subtaskShowInfo: Market writer' }));
+  const openDetail = await screen.findByRole('button', { name: 'subtaskShowInfo: Market writer' });
+  fireEvent.click(within(openDetail.closest('article')!).getByText(writer.description));
   await waitFor(() =>
     expect(api.detail).toHaveBeenCalledWith({
       sourceId: 'enterprise',
@@ -1127,9 +1175,17 @@ test('opens optional native details without making installation depend on them',
       pluginId: 'catalog-writer',
     }),
   );
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
+  await act(async () => failDetail(new Error('obsolete detail read')));
+  expect(screen.queryByRole('button', { name: 'close' })).toBeNull();
+  expect(screen.queryByText('marketplaceDetailFailed')).toBeNull();
+
+  fireEvent.click(openDetail);
   await waitFor(() =>
     expect(screen.getAllByRole('button', { name: 'marketplaceInstall' })).toHaveLength(2),
   );
+  expect(screen.queryByText('marketplaceRequirements')).toBeNull();
+  expect(screen.queryByText('0')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'close' }));
   expect(screen.getAllByRole('button', { name: 'marketplaceInstall' })).toHaveLength(1);
 });
@@ -1141,7 +1197,7 @@ test('allows retry when identity refresh interrupts a pending update check', asy
   api.resolveInstalled.mockRejectedValueOnce(new Error('inventory unavailable'));
   view.rerender(<Harness installed={[{ ...local, version: '1.1' }]} />);
   await screen.findByText('marketplaceCheckFailed');
-  const retry = screen.getByRole('button', { name: 'marketplaceCheckUpdates' });
+  const retry = screen.getByRole('button', { name: 'marketplaceRetry' });
   expect(retry.hasAttribute('disabled')).toBe(false);
   fireEvent.click(retry);
   await waitFor(() => expect(api.checkUpdates).toHaveBeenCalledTimes(2));
@@ -1169,12 +1225,23 @@ test('keeps an updated card visible throughout a slow inventory refresh', async 
   expect(screen.getByText('marketplaceUpdateSucceeded').closest('article')).toBeNull();
 });
 
-test('briefly retains updated cards without success text in the updates filter', async () => {
+test('waits for fresh update confirmation and then briefly retains the updated card', async () => {
   render(<Harness installed={INSTALLED} />);
   fireEvent.click(screen.getByRole('button', { name: /marketplaceFilter.updates/ }));
   const update = await screen.findByRole('button', { name: 'marketplaceUpdate' });
+  let confirmUpdate!: () => void;
+  api.resolveInstalled.mockImplementationOnce(
+    () => new Promise(resolve => {
+      confirmUpdate = () => resolve({ success: true, installations: [identity] });
+    }),
+  );
   vi.useFakeTimers();
   await act(async () => fireEvent.click(update));
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(screen.getByTestId('local-writer')).toBeTruthy();
+  expect(screen.queryByText('marketplaceUpdateSucceeded')).toBeNull();
+
+  await act(async () => confirmUpdate());
   expect(screen.getByText('marketplaceUpdateSucceeded').closest('article')).toBeNull();
 
   await act(async () => vi.advanceTimersByTimeAsync(2000));

@@ -12,7 +12,7 @@ export interface Skill {
   updatedAt: number; // Timestamp
   prompt: string; // System prompt content (empty for Gateway skills)
   skillPath: string; // Absolute path to SKILL.md
-  version?: string; // Skill version from SKILL.md frontmatter
+  version?: string; // Version reported by Gateway
   // Gateway extended fields
   source?: SkillSource;
   eligible?: boolean; // Can be used right now (requirements met)

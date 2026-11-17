@@ -57,10 +57,10 @@ vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOrigi
       source: null,
       query: '',
       updateById: new Map(),
-      recentlyUpdated: new Set(),
       operations: {},
       matchesInstalled: (_id: string, matches: boolean) => matches,
       operationFor: () => undefined,
+      installedVersionFor: (id: string) => (id === 'market-server' ? 'stable-4' : undefined),
       setFilter: () => undefined,
       refreshInventory: options.onInstalled,
     }),
@@ -133,24 +133,7 @@ const findCardProbe = async (name = 'personal-mcp') => {
   return within(card).getByRole('button', { name: 'mcpTestServer' });
 };
 
-test('shows inventory loading in the corner status stack without an empty-list claim', async () => {
-  let finishLoading!: (servers: ExtensionProvidedMcpServer[]) => void;
-  vi.mocked(mcpService.loadExtensionServers).mockReturnValue(
-    new Promise(resolve => {
-      finishLoading = resolve;
-    }),
-  );
-  renderManager();
-
-  const activity = screen.getByText('mcpLoadingServers');
-  expect(activity.closest('.fixed.bottom-4.right-4')).toBeTruthy();
-  expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
-
-  await act(async () => finishLoading([demoServer('personal')]));
-
-  expect(await screen.findByText('personal-mcp')).toBeTruthy();
-  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
-});
+const isInventoryLoading = () => document.querySelector('section[aria-busy="true"]') !== null;
 
 test('moves sync activity to the corner while retaining the full-window pointer gate until completion', async () => {
   renderManager();
@@ -255,6 +238,53 @@ test('shows compact App labels for confirmed user and extension capabilities onl
   expect(mcpService.probeServer).not.toHaveBeenCalled();
 });
 
+test('shows an installed marketplace version and a user server version reported by its test', async () => {
+  const marketServer = { ...customServer, id: 'market-server', name: 'Market server' };
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer, marketServer]);
+  vi.mocked(mcpService.probeServer).mockResolvedValue({
+    success: true,
+    result: { available: true, serverVersion: '1.2.3', latencyMs: 5, tools: [], resources: [], prompts: [] },
+  });
+  renderManager();
+
+  const marketCard = (await screen.findByText(marketServer.name)).closest('article')!;
+  const customCard = screen.getByText(customServer.name).closest('article')!;
+  expect(within(marketCard).getByText('stable-4')).toBeTruthy();
+  expect(within(customCard).queryByText('1.2.3')).toBeNull();
+  expect(mcpService.probeServer).not.toHaveBeenCalled();
+
+  fireEvent.click(await findCardProbe(customServer.name));
+
+  expect(await within(customCard).findByText('1.2.3')).toBeTruthy();
+});
+
+test('keeps the newer MCP version when a single test completes after its bulk test', async () => {
+  vi.mocked(mcpService.loadServers).mockResolvedValue([customServer]);
+  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([]);
+  const makeResult = (serverVersion: string) => ({
+    success: true,
+    result: { available: true, serverVersion, latencyMs: 5, tools: [], resources: [], prompts: [] },
+  });
+  let finishSingle!: () => void;
+  vi.mocked(mcpService.probeServer)
+    .mockImplementationOnce(() => new Promise(resolve => {
+      finishSingle = () => resolve(makeResult('1.2.3'));
+    }))
+    .mockResolvedValueOnce(makeResult('1.2.4'));
+  renderManager();
+  const card = (await screen.findByText(customServer.name)).closest('article')!;
+
+  fireEvent.click(await findCardProbe(customServer.name));
+  fireEvent.keyDown(document, { key: 'Escape' });
+  fireEvent.click(screen.getByRole('button', { name: 'mcpTestAll' }));
+  await screen.findByText('mcpProbeStatusAvailable');
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
+  await act(async () => finishSingle());
+
+  expect(within(card).getByText('1.2.4')).toBeTruthy();
+  expect(within(card).queryByText('1.2.3')).toBeNull();
+});
+
 test('live tool metadata adds an App label and supersedes a declaration when support is removed', async () => {
   vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([
     { ...demoServer('personal'), supportsApps: true },
@@ -328,7 +358,7 @@ test('an extension switch supersedes a late initial provider read and finishes l
   renderManager();
   fireEvent.click(screen.getByRole('switch', { name: 'disableMcpServer' }));
   await screen.findByRole('switch', { name: 'enableMcpServer' });
-  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
   await act(async () => finishInitial([server]));
   expect(screen.getByRole('switch', { name: 'enableMcpServer' })).toBeTruthy();
 });
@@ -582,7 +612,7 @@ test('a late initial read cannot restore the old MCP switch state or leave loadi
   });
 
   expect(store.getState().mcp.servers[0].enabled).toBe(false);
-  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
 });
 
 test('an extension refresh started during an MCP switch is consumed after the switch ends', async () => {
@@ -612,7 +642,7 @@ test('an extension refresh started during an MCP switch is consumed after the sw
   await act(async () => finishRead([disabled, added]));
 
   expect(screen.getByText('Added MCP')).toBeTruthy();
-  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
 });
 
 test.each([true, false])(
@@ -720,7 +750,7 @@ test('a failed creation reconciles the inventory when it superseded the initial 
   expect((screen.getByPlaceholderText('mcpServerNamePlaceholder') as HTMLInputElement).value).toBe(
     'Another MCP',
   );
-  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
   await act(async () => finishRead([]));
 
   expect(screen.getByText(customServer.name)).toBeTruthy();
@@ -755,11 +785,11 @@ test('saving a user MCP does not discard an in-flight extension-provided invento
     });
   });
   await act(async () => fireEvent.click(screen.getByRole('button', { name: 'saveMcpServer' })));
-  expect(screen.getByText('mcpLoadingServers')).toBeTruthy();
+  expect(isInventoryLoading()).toBe(true);
   await act(async () => finishProviderRead([provider]));
 
   expect(screen.getByText(provider.name)).toBeTruthy();
-  expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
   await act(async () => finishUserRead([]));
   expect(screen.getByText(customServer.name)).toBeTruthy();
   expect(screen.getByText(provider.name)).toBeTruthy();
@@ -826,7 +856,7 @@ test('keeps disabled imported MCP visible and searches by its parent extension',
 });
 
 test.each(['', 'personal'])(
-  'shows animated loading with search "%s" while discovery is pending',
+  'loads MCP servers with search "%s" without a floating status card or a premature empty state',
   async search => {
     let finish!: (servers: ExtensionProvidedMcpServer[]) => void;
     vi.mocked(mcpService.loadExtensionServers).mockReturnValue(
@@ -835,14 +865,30 @@ test.each(['', 'personal'])(
       }),
     );
     renderManager(search);
-    expect(screen.getByText('mcpLoadingServers')).toBeTruthy();
-    expect(screen.getByRole('status').querySelector('.animate-spin')).toBeTruthy();
+    expect(isInventoryLoading()).toBe(true);
+    expect(screen.queryByRole('status')).toBeNull();
     expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
     finish([demoServer('personal')]);
     await screen.findByText('personal-mcp');
-    expect(screen.queryByText('mcpLoadingServers')).toBeNull();
+    expect(isInventoryLoading()).toBe(false);
   },
 );
+
+test('shows a failed connection test once in its result window', async () => {
+  vi.mocked(mcpService.probeServer).mockResolvedValueOnce({
+    success: false,
+    error: 'Connection refused',
+  });
+  renderManager();
+  const probe = await findCardProbe();
+  fireEvent.click(probe);
+
+  await screen.findByText('mcpDetailErrorReason');
+  expect(screen.getAllByText('Connection refused')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'close' }));
+  expect(screen.queryByText('Connection refused')).toBeNull();
+  expect(probe.getAttribute('title')).toContain('mcpProbeUnavailable');
+});
 
 test('retesting replaces cached results with animated connection progress', async () => {
   renderManager();
@@ -887,7 +933,7 @@ test('an older load failure cannot end a refresh or display an empty inventory',
   await act(async () => {
     rejectOld(new Error('outdated request failed'));
   });
-  expect(screen.getByText('mcpLoadingServers')).toBeTruthy();
+  expect(isInventoryLoading()).toBe(true);
   expect(screen.queryByText('mcpNoInstalledServers')).toBeNull();
   expect(screen.queryByText('mcpLoadFailed')).toBeNull();
   await act(async () => {

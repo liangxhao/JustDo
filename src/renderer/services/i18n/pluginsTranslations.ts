@@ -25,6 +25,8 @@ export const pluginsTranslations = {
     'pluginOperationCompleted.disable': '关闭设置已保存',
     'pluginOperationCompleted.save': '配置已保存',
     'pluginOperationCompleted.sync': '配置已同步',
+    pluginOperationCompletedRefreshWarning: '{outcome}，清单未能立即刷新',
+    pluginOperationCompletedRefreshNext: '重新进入对应的插件分类可刷新清单。',
     pluginOperationRecoveryPending: 'AI 引擎状态待确认',
     pluginOperationRecoveryPendingNext: '请查看标题栏的 AI 引擎状态，无需重复操作插件。',
     pluginOperationPendingStage: '待确认环节',
@@ -43,6 +45,7 @@ export const pluginsTranslations = {
     'pluginOperationFailureTitle.update': '更新未完成',
     'pluginOperationFailureTitle.remove': '卸载未完成',
     'pluginOperationFailureTitle.remove.recovery_failed': '插件已卸载，运行环境恢复失败',
+    'pluginOperationFailureTitle.remove.data_cleanup_failed': '插件已卸载，数据清理未完成',
     'pluginOperationFailureTitle.remove.followup_failed': '插件已卸载，但{problem}',
     'pluginOperationFailureTitle.enable': '启用未完成',
     'pluginOperationFailureTitle.enable.followup_failed': '启用设置已保存，但无法确认插件状态',
@@ -93,6 +96,7 @@ export const pluginsTranslations = {
       '插件已卸载，无需再次卸载。请复制错误详情，联系管理员核对卸载后的网络策略或运行配置。',
     'pluginOperationFailureGuidance.removalConfiguration':
       '插件已卸载，无需再次卸载。请复制错误详情，联系管理员核对卸载后的插件允许加载列表及剩余配置。',
+    'pluginOperationFailureGuidance.removalData': '请复制错误详情，联系管理员处理剩余插件数据。',
     'pluginOperationFailureGuidance.recovery':
       '请复制错误详情，联系管理员处理临时文件或配置恢复问题。不要通过重复安装、卸载或手动删除插件目录尝试修复。',
     'pluginOperationFailureGuidance.missingStage':
@@ -122,6 +126,7 @@ export const pluginsTranslations = {
       '无需再次卸载。请复制错误详情，联系管理员检查网络策略或运行配置。',
     'pluginOperationFailureShortNext.removalConfiguration':
       '无需再次卸载。请复制错误详情，联系管理员检查插件允许加载列表及剩余配置。',
+    'pluginOperationFailureShortNext.removalData': '请联系管理员处理剩余插件数据。',
     'pluginOperationFailureShortNext.recovery':
       '请复制错误详情，联系管理员处理；不要重复安装、卸载或手动删除目录。',
     'pluginOperationFailureShortNext.missingStage':
@@ -156,10 +161,10 @@ export const pluginsTranslations = {
     'pluginOperationStageLabel.restarting_gateway': '重启运行环境并重新连接',
     'pluginOperationStageLabel.confirming': '确认插件实际状态',
     'pluginOperationStageLabel.refreshing_inventory': '刷新插件列表',
+    'pluginOperationStageLabel.cleaning_plugin_data': '清理插件数据',
     'pluginOperationStageLabel.cleaning_up': '清理临时文件',
     'pluginOperationStageLabel.rolling_back': '恢复此前配置',
     pluginOperationElapsed: '已用时 {seconds} 秒',
-    pluginOperationFailedAt: '未完成的步骤：{stage}',
     'pluginOperationAction.install': '安装中',
     'pluginOperationAction.update': '更新中',
     'pluginOperationAction.remove': '卸载中',
@@ -187,6 +192,7 @@ export const pluginsTranslations = {
     'pluginOperationStage.confirming': '正在确认插件的实际状态…',
     'pluginOperationStage.refreshing_inventory': '正在刷新插件列表…',
     'pluginOperationStage.cleaning_up': '正在清理临时文件…',
+    'pluginOperationStage.cleaning_plugin_data': '正在清理插件数据…',
     'pluginOperationStage.rolling_back': '正在恢复此前的配置…',
     // Extension ownership
     extensionManagedApplication: '由应用管理，不能在此更改启用状态',
@@ -272,7 +278,6 @@ export const pluginsTranslations = {
     missingOs: '不支持的操作系统',
     skillMissingRequirements: '技能缺少必要依赖',
     // Security scan
-    skillDetailVersion: '版本',
     deleteSkill: '删除技能',
     skillDeleteConfirm: '确定删除技能“{name}”吗？',
     skillDeleting: '正在删除…',
@@ -353,7 +358,6 @@ export const pluginsTranslations = {
     mcpTestServer: '测试 MCP 服务',
     mcpTestSavedConfiguration: '测试已保存的配置',
     mcpTestShort: '测试',
-    mcpLoadingServers: '正在加载 MCP 服务…',
     mcpLoadFailed: 'MCP 服务列表加载失败，请重新打开此页面重试。',
     mcpTestingServer: '正在测试 MCP 连接…',
     mcpTestAll: '全部测试',
@@ -399,7 +403,6 @@ export const pluginsTranslations = {
     disableHook: '关闭 Hook',
     skillStatusUpdated: '技能状态已更新',
     skillResolutionChanged: '“{name}”的当前来源已从“{from}”切换为“{to}”。',
-    skillResolutionUnavailable: '“{name}”当前不可用。',
     'pluginScope.system': '系统提供',
     'pluginScope.organization': '组织提供',
     'pluginScope.personal': '我的',
@@ -444,7 +447,6 @@ export const pluginsTranslations = {
     extensionDeleteData: '同时删除插件数据',
     extensionDataSize: '预计可释放 {size}',
     extensionDataRetained: '插件运行记录会在卸载后保留，供任务恢复使用。',
-    extensionDataCleanupUnavailable: '暂时无法安全清理数据，仍可保留数据并卸载插件。',
     extensionDataPreserved: '不勾选将保留插件数据，供重新安装时使用。',
     extensionEnable: '启用扩展',
     extensionDisable: '关闭扩展',
@@ -544,6 +546,8 @@ export const pluginsTranslations = {
     'pluginOperationCompleted.disable': 'Disable setting saved',
     'pluginOperationCompleted.save': 'Configuration saved',
     'pluginOperationCompleted.sync': 'Configuration synchronized',
+    pluginOperationCompletedRefreshWarning: '{outcome}. The plugin list could not be refreshed immediately.',
+    pluginOperationCompletedRefreshNext: 'Reopen the plugin category to refresh the list.',
     pluginOperationRecoveryPending: 'AI engine status needs confirmation',
     pluginOperationRecoveryPendingNext:
       'Check the AI engine status in the title bar. Do not repeat the plugin operation.',
@@ -565,6 +569,7 @@ export const pluginsTranslations = {
     'pluginOperationFailureTitle.remove': 'Removal incomplete',
     'pluginOperationFailureTitle.remove.recovery_failed':
       'Plugin uninstalled; runtime recovery failed',
+    'pluginOperationFailureTitle.remove.data_cleanup_failed': 'Plugin uninstalled, but data cleanup is incomplete',
     'pluginOperationFailureTitle.remove.followup_failed': 'Plugin uninstalled, but {problem}',
     'pluginOperationFailureTitle.enable': 'Enabling incomplete',
     'pluginOperationFailureTitle.enable.followup_failed':
@@ -617,6 +622,8 @@ export const pluginsTranslations = {
       'The plugin was uninstalled; do not remove it again. Copy the error details and ask your administrator to check network policy or runtime configuration after removal.',
     'pluginOperationFailureGuidance.removalConfiguration':
       'The plugin was uninstalled; do not remove it again. Copy the error details and ask your administrator to check the allowed-plugin list and remaining configuration after removal.',
+    'pluginOperationFailureGuidance.removalData':
+      'Copy the error details and ask your administrator to handle the remaining plugin data.',
     'pluginOperationFailureGuidance.recovery':
       'Copy the error details and ask your administrator to handle temporary-file cleanup or configuration recovery. Do not try to repair this by reinstalling, removing or manually deleting plugin folders.',
     'pluginOperationFailureGuidance.missingStage':
@@ -651,6 +658,7 @@ export const pluginsTranslations = {
       'Do not remove it again. Copy error details and ask your administrator to check network policy or runtime configuration.',
     'pluginOperationFailureShortNext.removalConfiguration':
       'Do not remove it again. Copy error details and ask your administrator to check the allowed-plugin list and remaining configuration.',
+    'pluginOperationFailureShortNext.removalData': 'Ask your administrator to handle the remaining plugin data.',
     'pluginOperationFailureShortNext.recovery':
       'Copy error details for your administrator. Do not reinstall, remove or manually delete plugin folders.',
     'pluginOperationFailureShortNext.missingStage':
@@ -689,10 +697,10 @@ export const pluginsTranslations = {
     'pluginOperationStageLabel.restarting_gateway': 'Restart and reconnect to the runtime',
     'pluginOperationStageLabel.confirming': 'Confirm actual plugin status',
     'pluginOperationStageLabel.refreshing_inventory': 'Refresh the plugin list',
+    'pluginOperationStageLabel.cleaning_plugin_data': 'Clean up plugin data',
     'pluginOperationStageLabel.cleaning_up': 'Clean up temporary files',
     'pluginOperationStageLabel.rolling_back': 'Restore the previous configuration',
     pluginOperationElapsed: '{seconds}s elapsed',
-    pluginOperationFailedAt: 'Step not completed: {stage}',
     'pluginOperationAction.install': 'Installing',
     'pluginOperationAction.update': 'Updating',
     'pluginOperationAction.remove': 'Uninstalling',
@@ -722,6 +730,7 @@ export const pluginsTranslations = {
     'pluginOperationStage.confirming': 'Confirming the actual plugin state…',
     'pluginOperationStage.refreshing_inventory': 'Refreshing the plugin list…',
     'pluginOperationStage.cleaning_up': 'Cleaning up temporary files…',
+    'pluginOperationStage.cleaning_plugin_data': 'Cleaning up plugin data…',
     'pluginOperationStage.rolling_back': 'Restoring the previous configuration…',
     // Extension ownership
     extensionManagedApplication:
@@ -816,7 +825,6 @@ export const pluginsTranslations = {
     missingOs: 'Unsupported operating system',
     skillMissingRequirements: 'Skill missing required dependencies',
     // Security scan
-    skillDetailVersion: 'Version',
     deleteSkill: 'Delete Skill',
     skillDeleteConfirm: 'Delete skill "{name}"?',
     skillDeleting: 'Deleting…',
@@ -902,7 +910,6 @@ export const pluginsTranslations = {
     mcpTestServer: 'Test MCP Server',
     mcpTestSavedConfiguration: 'Test saved configuration',
     mcpTestShort: 'Test',
-    mcpLoadingServers: 'Loading MCP servers…',
     mcpLoadFailed: 'Failed to load MCP servers. Reopen this page to try again.',
     mcpTestingServer: 'Testing MCP connection…',
     mcpTestAll: 'Test All',
@@ -950,7 +957,6 @@ export const pluginsTranslations = {
     disableHook: 'Disable Hook',
     skillStatusUpdated: 'Skill status updated',
     skillResolutionChanged: 'The active source for “{name}” changed from “{from}” to “{to}”.',
-    skillResolutionUnavailable: '“{name}” is currently unavailable.',
     'pluginScope.system': 'System',
     'pluginScope.organization': 'Organization',
     'pluginScope.personal': 'Mine',
@@ -997,7 +1003,6 @@ export const pluginsTranslations = {
     extensionDeleteData: 'Also delete plugin data',
     extensionDataSize: 'Estimated space to free: {size}',
     extensionDataRetained: 'Plugin execution records are retained after uninstall for recovery.',
-    extensionDataCleanupUnavailable: 'Data cannot be safely removed right now. You can still uninstall and keep it.',
     extensionDataPreserved: 'Leave unchecked to retain plugin data for reinstallation.',
     extensionEnable: 'Enable extension',
     extensionDisable: 'Disable extension',

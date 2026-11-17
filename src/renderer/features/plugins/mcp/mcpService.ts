@@ -21,6 +21,7 @@ import {
 import {
   pluginOperationErrorMessage,
   pluginOperationFailure,
+  pluginOperationRefreshAfterSuccess,
   pluginOperationRefreshFailure,
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import { startPluginOperation } from '@/features/plugins/shared/pluginOperationService';
@@ -250,7 +251,7 @@ class McpService {
         try {
           return await this.loadExtensionServers();
         } catch (error) {
-          operation.fail(pluginOperationRefreshFailure());
+          operation.fail(pluginOperationRefreshAfterSuccess());
           throw error;
         }
       }
@@ -311,7 +312,7 @@ class McpService {
         this.serverLoadFailed = true;
       }
       if (this.serverLoadFailed) {
-        operation.fail(pluginOperationRefreshFailure({ mutationCompleted: true }));
+        operation.fail(pluginOperationRefreshAfterSuccess());
         return { success: true, value: { ...receipt, refreshWarning: true } };
       }
       return result;
@@ -334,11 +335,11 @@ class McpService {
       if (result.success && result.servers) {
         const servers = await this.applyMutationServers(result.servers, generation);
         if (result.refreshWarning || this.serverLoadFailed)
-          operation.fail(pluginOperationRefreshFailure(result));
+          operation.fail(pluginOperationRefreshAfterSuccess(result));
         return { ...result, servers };
       }
       if (result.success && result.refreshWarning) {
-        operation.fail(pluginOperationRefreshFailure(result));
+        operation.fail(pluginOperationRefreshAfterSuccess(result));
         return result;
       }
       operation.fail(pluginOperationFailure(result, i18nService.t('mcpCreateFailed')));
@@ -369,11 +370,11 @@ class McpService {
       if (result.success && result.servers) {
         const servers = await this.applyMutationServers(result.servers, generation);
         if (result.refreshWarning || this.serverLoadFailed)
-          operation.fail(pluginOperationRefreshFailure(result));
+          operation.fail(pluginOperationRefreshAfterSuccess(result));
         return { ...result, servers };
       }
       if (result.success && result.refreshWarning) {
-        operation.fail(pluginOperationRefreshFailure(result));
+        operation.fail(pluginOperationRefreshAfterSuccess(result));
         return result;
       }
       operation.fail(pluginOperationFailure(result, i18nService.t('mcpUpdateFailed')));
@@ -404,11 +405,11 @@ class McpService {
       if (result.success && result.servers) {
         const servers = await this.applyMutationServers(result.servers, generation);
         if (result.refreshWarning || this.serverLoadFailed)
-          operation.fail(pluginOperationRefreshFailure(result));
+          operation.fail(pluginOperationRefreshAfterSuccess(result));
         return { ...result, servers };
       }
       if (result.success && result.refreshWarning) {
-        operation.fail(pluginOperationRefreshFailure(result));
+        operation.fail(pluginOperationRefreshAfterSuccess(result));
         return result;
       }
       operation.fail(pluginOperationFailure(result, i18nService.t('mcpDeleteFailed')));
@@ -439,11 +440,11 @@ class McpService {
       if (result.success && result.servers) {
         const servers = await this.applyMutationServers(result.servers, generation);
         if (result.refreshWarning || this.serverLoadFailed)
-          operation.fail(pluginOperationRefreshFailure(result));
+          operation.fail(pluginOperationRefreshAfterSuccess(result));
         return servers;
       }
       if (result.success && result.refreshWarning) {
-        operation.fail(pluginOperationRefreshFailure(result));
+        operation.fail(pluginOperationRefreshAfterSuccess(result));
         return this.servers;
       }
       operation.fail(pluginOperationFailure(result, i18nService.t('mcpUpdateFailed')));

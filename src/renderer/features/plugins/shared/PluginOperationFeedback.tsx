@@ -11,14 +11,14 @@ import {
   pluginOperationFailurePresentation,
   pluginOperationHasPendingRecovery,
 } from './pluginOperationPresentation';
-import { getPluginOperationOwner } from './pluginOperationService';
+import { getPluginOperationOwner, isPluginOperationNotice } from './pluginOperationService';
 
 const PluginOperationFeedback = () => {
   const engine = useEngineReadiness();
   const owner = getPluginOperationOwner();
   const failures = useSyncExternalStore(owner.subscribeFailures, owner.failureSnapshot);
-  const pendingRecoveries = failures.filter(pluginOperationHasPendingRecovery);
-  const failure = failures.find(operation => !pluginOperationHasPendingRecovery(operation));
+  const notices = failures.filter(isPluginOperationNotice);
+  const failure = failures.find(operation => !isPluginOperationNotice(operation));
   const title = failure ? pluginOperationFailurePresentation(failure).title : '';
 
   useEffect(() => {
@@ -46,10 +46,13 @@ const PluginOperationFeedback = () => {
 
   return (
     <>
-      {pendingRecoveries.map(operation => (
+      {notices.map(operation => (
         <OperationResultNotice
           key={operation.requestId}
-          result={{ type: 'success', title: pluginOperationFailurePresentation(operation).title }}
+          result={{
+            type: pluginOperationHasPendingRecovery(operation) ? 'success' : 'error',
+            title: pluginOperationFailurePresentation(operation).title,
+          }}
           operation={operation}
           runtimeRecovered={operation.runtimeRecovered}
           onClose={() => owner.dismissFailure(operation.requestId)}

@@ -37,6 +37,7 @@ export const PluginOperationStage = {
   RESTARTING_GATEWAY: 'restarting_gateway',
   CONFIRMING: 'confirming',
   REFRESHING_INVENTORY: 'refreshing_inventory',
+  CLEANING_PLUGIN_DATA: 'cleaning_plugin_data',
   CLEANING_UP: 'cleaning_up',
   ROLLING_BACK: 'rolling_back',
 } as const;

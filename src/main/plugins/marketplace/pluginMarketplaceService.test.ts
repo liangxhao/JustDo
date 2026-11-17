@@ -425,7 +425,7 @@ test('persists marketplace identity and maps update checks back to the runtime i
   });
 });
 
-test('records a committed update even when its runtime application fails', async () => {
+test.each(['2.0.0', undefined])('records the current version %s after a committed update with an application failure', async version => {
   const provider = createProvider();
   provider.source.supportedKinds = [PluginKind.EXTENSION];
   vi.mocked(provider.prepareInstall).mockResolvedValue({
@@ -457,13 +457,13 @@ test('records a committed update even when its runtime application fails', async
     sourceId: provider.source.id,
     pluginId: 'catalog-writer',
     kind: PluginKind.EXTENSION,
-    version: '2.0.0',
+    version,
     operation: MarketplaceInstallOperation.UPDATE,
   });
 
   expect(result).toMatchObject({ success: false, installationCommitted: true });
   expect(registry.list(PluginKind.EXTENSION)).toEqual([
-    expect.objectContaining({ installedVersion: '2.0.0', runtimeId: 'writer-runtime' }),
+    expect.objectContaining({ installedVersion: version, runtimeId: 'writer-runtime' }),
   ]);
   expect(
     service.resolveInstalled({
@@ -475,6 +475,7 @@ test('records a committed update even when its runtime application fails', async
       runtimeId: 'writer-runtime',
       sourceId: provider.source.id,
       pluginId: 'catalog-writer',
+      ...(version ? { installedVersion: version } : {}),
     },
   ]);
 });

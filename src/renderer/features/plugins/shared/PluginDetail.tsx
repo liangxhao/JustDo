@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
+import PluginVersion from './PluginVersion';
+
 export const PLUGIN_DETAIL_MODAL_CLASS_NAME =
   'mx-4 flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl';
 export const PLUGIN_DETAIL_BODY_CLASS_NAME =
@@ -35,7 +37,7 @@ export const PluginDetailHeader = ({
       <h2 className="text-base font-semibold leading-snug text-foreground [overflow-wrap:anywhere]">
         {title}
       </h2>
-      {version && <span className="text-[11px] text-secondary">v{version}</span>}
+      <PluginVersion version={version} />
     </div>
     {onClose && (
       <button

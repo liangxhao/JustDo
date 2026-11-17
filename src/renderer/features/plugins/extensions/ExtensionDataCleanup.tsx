@@ -27,35 +27,41 @@ const ExtensionDataCleanup: React.FC<{
         const result = await window.electron.extensions.dataInfo({ extensionId });
         if (current) setInfo(result);
       } catch {
-        if (current) setInfo({ success: false });
+        // Cleanup is optional; leave the control hidden when inspection fails.
       }
     })();
     return () => { current = false; };
   }, [extensionId, onChange]);
 
-  if (!info || (info.success && info.exists === false && info.canDelete === true)) return null;
+  if (!info?.success || info.exists !== true) return null;
 
-  const available = info.success === true && info.canDelete === true && info.exists === true &&
-    typeof info.bytes === 'number' && Number.isSafeInteger(info.bytes) && info.bytes >= 0;
-  const status = info.success && info.retained
-    ? i18nService.t('extensionDataRetained')
-    : !available
-      ? i18nService.t('extensionDataCleanupUnavailable')
-      : i18nService.t('extensionDataSize').replace('{size}', formatDataSize(info.bytes ?? 0));
+  if (info.retained) {
+    return (
+      <p className="mt-4 rounded-lg border border-border p-3 text-xs text-secondary" aria-live="polite">
+        {i18nService.t('extensionDataRetained')}
+      </p>
+    );
+  }
+
+  const { bytes } = info;
+  if (info.canDelete !== true || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0)
+    return null;
 
   return (
     <div className="mt-4 rounded-lg border border-border p-3">
       <label className="flex items-start gap-2 text-sm text-foreground">
         <input
           type="checkbox"
-          checked={checked && available}
-          disabled={disabled || !available}
-          onChange={event => onChange(event.target.checked && available)}
+          checked={checked}
+          disabled={disabled}
+          onChange={event => onChange(event.target.checked)}
           className="mt-0.5 accent-primary"
         />
         <span>{i18nService.t('extensionDeleteData')}</span>
       </label>
-      <p className="mt-2 text-xs text-secondary" aria-live="polite">{status}</p>
+      <p className="mt-2 text-xs text-secondary" aria-live="polite">
+        {i18nService.t('extensionDataSize').replace('{size}', formatDataSize(bytes))}
+      </p>
       <p className="mt-1 text-xs text-secondary">{i18nService.t('extensionDataPreserved')}</p>
     </div>
   );

@@ -9,7 +9,7 @@ import type {
 } from '@shared/plugins/extensions';
 import { getExtensionManagement } from '@shared/plugins/management';
 import { PluginOperationStage } from '@shared/plugins/pluginOperation';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
@@ -50,6 +50,7 @@ function publishAppViews(epoch: string | null) {
 import ExtensionsManager from './ExtensionsManager';
 
 const engineReadiness = vi.hoisted(() => ({ ready: true }));
+const marketplaceFilter = vi.hoisted(() => ({ value: 'all' }));
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
   getEngineReadinessSnapshot: () => engineReadiness,
   subscribeEngineReadiness: () => vi.fn(),
@@ -58,6 +59,7 @@ vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
 }));
 beforeEach(() => {
   engineReadiness.ready = true;
+  marketplaceFilter.value = 'all';
 });
 
 vi.mock('@/features/plugins/marketplace/MarketplaceView', () => ({
@@ -76,14 +78,15 @@ vi.mock('@/features/plugins/marketplace/usePluginMarketplace', async importOrigi
   return {
     ...actual,
     usePluginMarketplace: (options: { onInstalled?: () => Promise<void> }) => ({
-      filter: 'all',
+      filter: marketplaceFilter.value,
       source: null,
       query: '',
       updateById: new Map(),
-      recentlyUpdated: new Set(),
       operations: {},
       matchesInstalled: (_id: string, matches: boolean) => matches,
       operationFor: () => undefined,
+      installedVersionFor: () => undefined,
+      checkUpdates: () => undefined,
       setFilter: () => undefined,
       refreshInventory: options.onInstalled,
     }),
@@ -324,7 +327,6 @@ test('finishes each selected source once and retains accumulated failures after 
   expect(getPluginOperationOwner().failureSnapshot()).toEqual([
     expect.objectContaining({
       message: '1 succeeded and 2 failed.',
-      details: 'pluginOperationRefreshFailed',
       items: [
         expect.objectContaining({ label: 'third-extension', type: 'success' }),
         expect.objectContaining({
@@ -342,6 +344,7 @@ test('finishes each selected source once and retains accumulated failures after 
       ],
     }),
   ]);
+  expect(getPluginOperationOwner().failureSnapshot()[0].details).toBeUndefined();
   expect(importPath.mock.calls.map(([request]) => request.sourcePath)).toEqual([
     'C:/imports/first', 'C:/imports/second', 'C:/imports/third',
   ]);
@@ -363,7 +366,30 @@ describe('ExtensionsManager extension toggle', () => {
     cleanup();
   });
 
-  test('keeps inventory loading outside the Extension list until it finishes', async () => {
+  test('keeps matching extensions in the updates filter after their update action disappears', async () => {
+    marketplaceFilter.value = 'updates';
+    Object.defineProperty(window, 'electron', {
+      configurable: true,
+      value: {
+        extensions: {
+          list: vi.fn().mockResolvedValue({ success: true, extensions: [extension] }),
+          onChanged: () => () => undefined,
+        },
+      },
+    });
+
+    render(<ExtensionsManager />);
+
+    expect((await screen.findByText(extension.name)).closest('article')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'marketplaceUpdate' })).toBeNull();
+    const search = screen.getByPlaceholderText('searchExtensions');
+    fireEvent.change(search, { target: { value: 'no match' } });
+    expect(screen.queryByText(extension.name)).toBeNull();
+    fireEvent.change(screen.getByPlaceholderText('searchExtensions'), { target: { value: '' } });
+    expect(screen.getByText(extension.name)).toBeTruthy();
+  });
+
+  test('loads extensions without a floating status card or a premature empty state', async () => {
     const pending = deferred<{ success: boolean; extensions: InstalledOpenClawExtension[] }>();
     Object.defineProperty(window, 'electron', {
       configurable: true,
@@ -374,15 +400,15 @@ describe('ExtensionsManager extension toggle', () => {
         },
       },
     });
-    const view = render(<ExtensionsManager />);
-    const loading = await screen.findByText('loading');
-    expect(loading.closest('article, section')).toBeNull();
-    expect(loading.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
-    expect(view.container.contains(loading)).toBe(false);
+    render(<ExtensionsManager />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('noExtensionsInstalled')).toBeNull();
 
-    await act(async () => pending.resolve({ success: true, extensions: [extension] }));
-    expect(screen.getByText(extension.name)).toBeTruthy();
-    expect(screen.queryByText('loading')).toBeNull();
+    await act(async () =>
+      pending.resolve({ success: true, extensions: [{ ...extension, version: '1.2.3' }] }),
+    );
+    const card = screen.getByText(extension.name).closest('article')!;
+    expect(within(card).getByText('1.2.3')).toBeTruthy();
   });
 
   test.each([true, false])('shows a confirmed toggle separately from a failed follow-up (enabled: %s)', async enabled => {
@@ -512,9 +538,12 @@ describe('ExtensionsManager extension toggle', () => {
       },
     });
     const view = render(<ExtensionsManager />);
-    await screen.findByText('Gateway unavailable');
+    const notice = (await screen.findByText('Gateway unavailable')).closest('[role="status"]');
+    expect(notice).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     act(() => ready.forEach(listener => listener([])));
     await screen.findByText(extension.name);
+    expect(screen.queryByText('Gateway unavailable')).toBeNull();
     act(() => ready.forEach(listener => listener([])));
     expect(list).toHaveBeenCalledTimes(2);
     view.unmount();
@@ -616,7 +645,7 @@ describe('ExtensionsManager extension toggle', () => {
       value: {
         extensions: {
           list,
-          updateConfiguration: vi.fn().mockResolvedValue({ success: true }),
+          updateConfiguration: vi.fn().mockResolvedValue({ success: true, refreshWarning: true }),
           onChanged: vi.fn((listener: typeof changed) => {
             changed = listener;
             return vi.fn();
@@ -826,25 +855,31 @@ describe('ExtensionsManager extension toggle', () => {
     },
   );
 
-  test('confirms deletion without relabeling the removed extension unavailable', async () => {
+  test.each([
+    { refreshWarning: false, inventoryAvailable: true },
+    { refreshWarning: true, inventoryAvailable: true },
+    { refreshWarning: true, inventoryAvailable: false },
+  ])('confirms deletion (earlier warning: $refreshWarning, latest list available: $inventoryAvailable)', async ({ refreshWarning, inventoryAvailable }) => {
     let installed = true;
     const dataInfo = vi.fn(async () => ({ success: true, exists: false, bytes: 0, canDelete: true }));
     const deleteExtension = vi.fn(async () => {
       installed = false;
-      return { success: true };
+      return { success: true, ...(refreshWarning ? { refreshWarning: true } : {}) };
     });
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
         extensions: {
-          list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
+          list: vi.fn(async () => installed || inventoryAvailable
+            ? { success: true, extensions: installed ? [extension] : [] }
+            : { success: false, error: 'Inventory unavailable' }),
           dataInfo,
           delete: deleteExtension,
           onChanged: vi.fn(() => () => undefined),
         },
       },
     });
-    render(<ExtensionsManager />);
+    render(<><ExtensionsManager /><PluginOperationFeedback /></>);
 
     fireEvent.click(
       await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }),
@@ -855,10 +890,13 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.queryByText('extensionDataPreserved')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'delete' }));
 
-    await screen.findByText('Extension "Sample Extension" deleted');
-    await waitFor(() => expect(screen.queryByText('Sample Extension')).toBeNull());
+    const title = inventoryAvailable ? 'Extension "Sample Extension" deleted' : 'pluginOperationCompletedRefreshWarning';
+    expect((await screen.findByText(title)).closest('[role="status"]')).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'subtaskShowInfo: Sample Extension' })).toBeNull();
     expect(screen.queryByText('extensionDeleteFailed')).toBeNull();
     expect(screen.queryByText(/unavailable/i)).toBeNull();
+    expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(inventoryAvailable ? 0 : 1);
     expect(deleteExtension).toHaveBeenCalledWith(
       { extensionId: extension.id },
       { requestId: expect.any(String) },
@@ -897,6 +935,9 @@ describe('ExtensionsManager extension toggle', () => {
 
   test('shows completed removal with pending recovery outside the modal even when inventory cannot yet refresh', async () => {
     engineReadiness.ready = false;
+    const otherExtension = {
+      ...extension, id: 'other-extension', name: 'Other Extension', installPath: 'C:\\extensions\\other-extension',
+    };
     let removed = false;
     const deleteExtension = vi.fn(async () => {
       removed = true;
@@ -913,7 +954,7 @@ describe('ExtensionsManager extension toggle', () => {
         extensions: {
           list: vi.fn(async () => removed
             ? { success: false, error: 'Engine inventory not ready' }
-            : { success: true, extensions: [extension] }),
+            : { success: true, extensions: [extension, otherExtension] }),
           delete: deleteExtension,
           onChanged: vi.fn(() => () => undefined),
         },
@@ -930,17 +971,32 @@ describe('ExtensionsManager extension toggle', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(deleteExtension).toHaveBeenCalledOnce();
     expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'subtaskShowInfo: Sample Extension' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'subtaskShowInfo: Other Extension' })).toBeTruthy();
   });
 
-  test('reports runtime recovery failure after confirmed removal without offering another removal', async () => {
+  test.each([
+    {
+      failedStage: PluginOperationStage.PREPARING_RUNTIME,
+      title: 'pluginOperationFailureTitle.remove.recovery_failed',
+      error: 'Plugin uninstalled; runtime environment recovery failed.',
+      notice: false,
+    },
+    {
+      failedStage: PluginOperationStage.CLEANING_PLUGIN_DATA,
+      title: 'pluginOperationFailureTitle.remove.data_cleanup_failed',
+      error: 'Plugin uninstalled; plugin data could not be fully removed.',
+      notice: true,
+    },
+  ])('reports $failedStage after confirmed removal without offering another removal', async ({ failedStage, title, error, notice }) => {
     let installed = true;
     const deleteExtension = vi.fn(async () => {
       installed = false;
       return {
         success: true,
         refreshWarning: true,
-        failedStage: PluginOperationStage.PREPARING_RUNTIME,
-        error: 'Plugin uninstalled; runtime environment recovery failed. Do not repeat removal.',
+        failedStage,
+        error,
       };
     });
     Object.defineProperty(window, 'electron', {
@@ -958,9 +1014,20 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
     fireEvent.click(screen.getByRole('button', { name: 'delete' }));
 
-    await screen.findByRole('alertdialog', { name: 'pluginOperationFailureTitle.remove.recovery_failed' });
-    expect(screen.getByText('Plugin uninstalled; runtime environment recovery failed. Do not repeat removal.')).toBeTruthy();
-    expect(screen.getByText(/pluginOperationStageLabel.preparing_runtime/)).toBeTruthy();
+    if (notice) {
+      const titleElement = await screen.findByText(title);
+      expect(titleElement.closest('[role="status"]')).toBeTruthy();
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByText('pluginOperationRecoveryPending')).toBeNull();
+      const summary = screen.getByText('pluginOperationFailureDetails');
+      fireEvent.click(summary);
+      expect(summary.closest('details')?.open).toBe(true);
+      expect(screen.getByRole('button', { name: 'pluginOperationFailureCopy' })).toBeTruthy();
+    } else {
+      await screen.findByRole('alertdialog', { name: title });
+    }
+    expect(screen.getByText(error)).toBeTruthy();
+    expect(screen.getByText(`pluginOperationStageLabel.${failedStage}`)).toBeTruthy();
     expect(screen.queryByText('Extension "Sample Extension" deleted')).toBeNull();
     expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
     expect(deleteExtension).toHaveBeenCalledOnce();
@@ -971,12 +1038,15 @@ describe('ExtensionsManager extension toggle', () => {
     async success => {
       const reply = deferred<{ success: boolean; error?: string }>();
       let installed = true;
+      let inventoryAvailable = true;
       const deleteExtension = vi.fn(() => reply.promise);
       Object.defineProperty(window, 'electron', {
         configurable: true,
         value: {
           extensions: {
-            list: vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] })),
+            list: vi.fn(async () => inventoryAvailable
+              ? { success: true, extensions: installed ? [extension] : [] }
+              : { success: false, error: 'Inventory temporarily unavailable' }),
             delete: deleteExtension,
             onChanged: vi.fn(() => vi.fn()),
           },
@@ -1008,6 +1078,7 @@ describe('ExtensionsManager extension toggle', () => {
 
       await act(async () => {
         installed = !success;
+        inventoryAvailable = success;
         reply.resolve({ success, error: success ? undefined : 'Delete refused' });
       });
 
@@ -1019,6 +1090,7 @@ describe('ExtensionsManager extension toggle', () => {
         expect(screen.getByText('Extension "Sample Extension" deleted')).toBeTruthy();
       } else {
         expect(screen.getByText('Delete refused')).toBeTruthy();
+        expect(getPluginOperationOwner().failureSnapshot()[0]?.details).toBeUndefined();
         const retry = screen.getByRole('button', { name: 'delete' });
         expect(retry.getAttribute('aria-busy')).toBeNull();
         expect(retry.hasAttribute('disabled')).toBe(false);
@@ -1720,8 +1792,6 @@ describe('ExtensionsManager extension toggle', () => {
     });
     render(<ExtensionsManager />);
     const warning = await screen.findByRole('button', { name: 'extensionMissingConfiguration' });
-    // The card suppresses pointer events; the tooltip anchor must explicitly restore them.
-    expect(warning.parentElement?.classList.contains('pointer-events-auto')).toBe(true);
     fireEvent.mouseEnter(warning.parentElement!);
     expect(await screen.findByRole('tooltip')).toHaveProperty(
       'textContent',
@@ -1950,7 +2020,7 @@ test.each([false, true])('keeps completed custom installations with pending reco
   cleanup();
 });
 
-test('retains an earlier refresh warning when a later import unexpectedly requests review', async () => {
+test('drops a superseded catalog warning and reports the later unexpected import review', async () => {
   const importPath = vi
     .fn()
     .mockResolvedValueOnce({
@@ -1985,7 +2055,6 @@ test('retains an earlier refresh warning when a later import unexpectedly reques
     expect.objectContaining({
       state: 'failed',
       message: '1 succeeded and 1 failed.',
-      details: 'pluginOperationRefreshFailed',
       items: [
         expect.objectContaining({ label: 'installed-first', type: 'success' }),
         expect.objectContaining({
@@ -1996,6 +2065,7 @@ test('retains an earlier refresh warning when a later import unexpectedly reques
       ],
     }),
   ]));
+  expect(getPluginOperationOwner().failureSnapshot()[0].details).toBeUndefined();
   expect(importPath).toHaveBeenCalledTimes(2);
   expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
   expect(screen.queryByRole('button', { name: 'extensionCapabilityAccept' })).toBeNull();
@@ -2038,7 +2108,7 @@ test.each([true, false])('reports an unexpected installation review once without
     ? /pluginOperationStageLabel.preparing_runtime/
     : 'pluginOperationFailureStageUnavailable').length).toBeGreaterThan(0);
   const failure = getPluginOperationOwner().failureSnapshot()[0];
-  expect(failure.details).toBe('pluginOperationRefreshFailed');
+  expect(failure.details).toBeUndefined();
   expect(failure).not.toHaveProperty('installationCommitted', true);
   expect(screen.queryByText('extensionCapabilityReviewTitle')).toBeNull();
   expect(screen.queryByRole('button', { name: 'extensionCapabilityAccept' })).toBeNull();

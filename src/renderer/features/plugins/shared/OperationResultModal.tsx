@@ -375,6 +375,9 @@ export const OperationResultNotice: React.FC<{
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const paused = hovered || focused;
+  const isWarning = result.type === 'error';
+  const NoticeIcon = isWarning ? ExclamationTriangleIcon : CheckCircleIcon;
+  const recoveryPending = operation && pluginOperationHasPendingRecovery(operation) && !runtimeRecovered;
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
@@ -401,9 +404,11 @@ export const OperationResultNotice: React.FC<{
         }}
       >
         <div className="flex items-start gap-2.5">
-          <CheckCircleIcon
+          <NoticeIcon
             aria-hidden="true"
-            className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400"
+            className={`mt-0.5 h-5 w-5 shrink-0 ${
+              isWarning ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-400'
+            }`}
           />
           <div className="min-w-0 flex-1" role="status" aria-live="polite">
             <p className="break-words text-sm font-semibold text-foreground [overflow-wrap:anywhere]">
@@ -419,7 +424,7 @@ export const OperationResultNotice: React.FC<{
                 {result.message}
               </p>
             )}
-            {operation && !runtimeRecovered && (
+            {recoveryPending && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
                 <ClockIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
                 {i18nService.t('pluginOperationRecoveryPending')}

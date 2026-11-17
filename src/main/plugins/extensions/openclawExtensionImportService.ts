@@ -1843,7 +1843,7 @@ export class OpenClawExtensionImportService {
             extensionId, onProgress, installed, mode, !!applyPackageMutation,
           );
           if (!removal || !result.success || result.operationUnconfirmed) return result;
-          onProgress?.(PluginOperationStage.CLEANING_UP);
+          onProgress?.(PluginOperationStage.CLEANING_PLUGIN_DATA);
           try {
             await (this.deps.pluginData?.remove ?? removePluginData)(removal);
             return result;
@@ -1854,7 +1854,7 @@ export class OpenClawExtensionImportService {
             return {
               ...result,
               refreshWarning: true as const,
-              failedStage: result.failedStage ?? PluginOperationStage.CLEANING_UP,
+              failedStage: result.failedStage ?? PluginOperationStage.CLEANING_PLUGIN_DATA,
               error: [result.error, t('extensionDataRemovalFailed'), detail].filter(Boolean).join('\n'),
             };
           }
@@ -2157,7 +2157,6 @@ export class OpenClawExtensionImportService {
       if (result.exitCode !== 0) {
         const failedStage = currentStage;
         const error = command.error ?? formatCommandError(result);
-        console.error('[OpenClawExtensionImportService] OpenClaw uninstaller failed:', error);
         const convergenceError = await convergePolicy(gatewayMayNeedRestore);
         if (result.nativeReceiptObserved && !fs.existsSync(installed.installPath)) {
           return completedRemoval({
@@ -2165,6 +2164,7 @@ export class OpenClawExtensionImportService {
             error: appendRecoveryFailure(error, convergenceError?.error),
           });
         }
+        console.error('[OpenClawExtensionImportService] OpenClaw uninstaller failed:', error);
         return {
           success: false,
           failedStage,

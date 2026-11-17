@@ -38,7 +38,7 @@ interface SkillHandlerDependencies {
   getOpenClawEngineManager?: () => OpenClawEngineManager;
   onMarketplacePluginDeleted?: (
     kind: typeof PluginKind.SKILL,
-    runtimeId: string,
+    runtimeId: string | undefined,
     installPath: string,
   ) => void;
 }
@@ -54,7 +54,10 @@ const mapGatewaySkill = (entry: GatewaySkillEntry, manager?: OpenClawEngineManag
   updatedAt: 0,
   prompt: '',
   skillPath: entry.filePath,
-  version: undefined as string | undefined,
+  version:
+    entry.clawhub?.status === 'linked' && entry.clawhub.valid
+      ? entry.clawhub.installedVersion
+      : undefined,
   source: entry.source,
   eligible: entry.eligible,
   missing: entry.missing,
@@ -113,9 +116,9 @@ export const registerSkillHandlers = ({
           request.origin === PluginInstallOrigin.MARKETPLACE ? undefined : result.skillId;
         let refreshWarning = false;
         if (result.success) {
-          if (result.skillId && installPath && request.origin === PluginInstallOrigin.CUSTOM) {
-            // Invalidate only the replaced managed installation, not a same-name project layer.
-            onMarketplacePluginDeleted?.(PluginKind.SKILL, result.skillId, installPath);
+          if (installPath && request.origin === PluginInstallOrigin.CUSTOM) {
+            // The replaced managed directory may have been installed under a custom native skill key.
+            onMarketplacePluginDeleted?.(PluginKind.SKILL, undefined, installPath);
           }
           try {
             report(PluginOperationStage.REFRESHING_INVENTORY);

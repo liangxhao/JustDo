@@ -15,6 +15,7 @@ class MarketplaceOperationOwner {
   private readonly refreshers = new Set<() => Promise<void>>();
   private readonly pendingRefresh = new Set<string>();
   private readonly observedInstalled = new Set<string>();
+  private readonly confirmedFeedback = new Set<string>();
   private readonly feedbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   subscribe = (listener: () => void) => {
@@ -24,6 +25,10 @@ class MarketplaceOperationOwner {
     };
   };
   snapshot = () => this.operations;
+  begin = (key: string, label: string) => {
+    this.confirmedFeedback.delete(key);
+    this.update(current => ({ ...current, [key]: { busy: true, label } }));
+  };
   update = (
     change: (current: Record<string, MarketplaceOperation>) => Record<string, MarketplaceOperation>,
   ) => {
@@ -36,6 +41,7 @@ class MarketplaceOperationOwner {
       delete this.operations[key];
       this.pendingRefresh.delete(key);
       this.observedInstalled.delete(key);
+      this.confirmedFeedback.delete(key);
     }
     this.syncFeedbackTimers();
     for (const listener of this.listeners) listener();
@@ -44,8 +50,12 @@ class MarketplaceOperationOwner {
     const retired: string[] = [];
     for (const [key, operation] of Object.entries(this.operations)) {
       if (!operation.committed || operation.unconfirmed) continue;
-      if (installedKeys.has(key)) this.observedInstalled.add(key);
-      else if (!operation.busy && this.observedInstalled.has(key)) retired.push(key);
+      if (installedKeys.has(key)) {
+        this.observedInstalled.add(key);
+        if (!this.pendingRefresh.has(key)) this.confirmedFeedback.add(key);
+      } else if (!operation.busy && this.observedInstalled.has(key)) {
+        retired.push(key);
+      }
     }
     if (!retired.length) {
       this.syncFeedbackTimers();
@@ -56,6 +66,7 @@ class MarketplaceOperationOwner {
       for (const key of retired) {
         delete next[key];
         this.observedInstalled.delete(key);
+        this.confirmedFeedback.delete(key);
         this.pendingRefresh.delete(key);
       }
       return next;
@@ -81,10 +92,10 @@ class MarketplaceOperationOwner {
         operation?.committed &&
         operation.message &&
         !operation.busy &&
-        !operation.error &&
+        !operation.failed &&
         !operation.warning &&
         !operation.restartRequired &&
-        this.observedInstalled.has(key) &&
+        this.confirmedFeedback.has(key) &&
         !this.pendingRefresh.has(key)
       );
     };

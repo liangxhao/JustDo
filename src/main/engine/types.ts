@@ -42,6 +42,9 @@ export interface GatewaySkillStatus {
 export interface GatewaySkillEntry {
   name: string;
   description: string;
+  clawhub?:
+    | { status: 'linked'; valid: true; installedVersion: string }
+    | { status: 'invalid'; valid: false; installedVersion?: string };
   source: OpenClawSkillSource;
   bundled: boolean;
   filePath: string;

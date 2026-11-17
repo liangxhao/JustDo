@@ -27,7 +27,7 @@ import OperationResultModal, {
   type OperationResult,
 } from '@/features/plugins/shared/OperationResultModal';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
-import PluginCard from '@/features/plugins/shared/PluginCard';
+import PluginCard, { PluginCardGrid } from '@/features/plugins/shared/PluginCard';
 import {
   PLUGIN_DETAIL_BODY_CLASS_NAME,
   PLUGIN_DETAIL_FOOTER_CLASS_NAME,
@@ -39,7 +39,7 @@ import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubT
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
 import {
   pluginOperationFailure,
-  pluginOperationRefreshFailure,
+  pluginOperationRefreshAfterSuccess,
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import { reportPluginOperationFailure } from '@/features/plugins/shared/pluginOperationService';
 import { comparePluginNames } from '@/features/plugins/shared/pluginOrdering';
@@ -221,9 +221,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
 
   const getResolutionChangeMessage = (before: Skill, after: Skill[]): string | null => {
     const resolved = after.find(skill => skill.name === before.name);
-    if (!resolved)
-      return i18nService.t('skillResolutionUnavailable').replace('{name}', before.name);
-    if (resolved.source === before.source && resolved.skillPath === before.skillPath) return null;
+    if (!resolved || (resolved.source === before.source && resolved.skillPath === before.skillPath))
+      return null;
     const sameSource = resolved.source === before.source;
     const beforeLabel = sameSource
       ? `${getSourceLabel(before)} · ${before.skillPath}`
@@ -265,9 +264,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       if (!mounted.current) return;
       dispatch(setSkills(updatedSkills));
       setGatewayOffline(skillService.isGatewayOffline());
-      const resolutionMessage = updatedSkills.some(skill => skill.name === targetSkill.name)
-        ? getResolutionChangeMessage(targetSkill, updatedSkills)
-        : null;
+      const resolutionMessage = getResolutionChangeMessage(targetSkill, updatedSkills);
       if (resolutionMessage && !skillService.hasInventoryReadFailed()) {
         setActionOutcome({
           type: 'success',
@@ -347,8 +344,13 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       // Check results
       const succeeded = results.filter(r => r.success);
       const failed = results.filter(r => !r.success);
+      if (succeeded.length > 0 || results.some(item => item.installationCommitted)) {
+        marketplace.checkUpdates();
+      }
       const refreshSucceeded = await refreshSkillList({ force: true });
-      const refreshFailed = !refreshSucceeded || results.some(item => item.refreshWarning);
+      // The custom installer may report that its own read failed. The fresh
+      // authoritative list above supersedes that warning once it succeeds.
+      const refreshFailed = !refreshSucceeded;
 
       if (succeeded.length > 0 && failed.length === 0 && !refreshFailed && mounted.current) {
         const skillIds = succeeded
@@ -374,7 +376,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                 .replace('{successCount}', String(succeeded.length))
                 .replace('{failureCount}', String(failed.length))
             : i18nService.t('skillImportFailed'),
-          ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
+          ...(partial && refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
           items: [
             ...succeeded.map(r => ({
               label: r.skillId || r.path.split(/[/\\]/).pop() || r.path,
@@ -390,7 +392,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
         });
       }
 
-      if (failed.length === 0 && refreshFailed) reportFailure(pluginOperationRefreshFailure());
+      if (succeeded.length > 0 && failed.length === 0 && refreshFailed)
+        reportFailure(pluginOperationRefreshAfterSuccess());
     } catch (error) {
       reportFailure({
         message: error instanceof Error ? error.message : i18nService.t('skillImportFailed'),
@@ -430,9 +433,7 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       if (result.success && result.skills) {
         dispatch(setSkills(result.skills));
         setSelectedSkillId(null);
-        const resolutionMessage = result.skills.some(skill => skill.name === pendingSkill.name)
-          ? getResolutionChangeMessage(pendingSkill, result.skills)
-          : null;
+        const resolutionMessage = getResolutionChangeMessage(pendingSkill, result.skills);
         const deleteMessage = i18nService
           .t('skillDeleteSuccess')
           .replace('{name}', pendingSkill.name);
@@ -518,17 +519,11 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           setDetailArtworkTone(artworkTone);
         }}
         openLabel={`${i18nService.t('subtaskShowInfo')}: ${skill.name}`}
-        icon={
-          <div
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${artworkTone}`}
-          >
-            <SparklesIcon className="h-4 w-4" />
-          </div>
-        }
+        icon={<SparklesIcon className="h-4 w-4" />}
+        artworkTone={artworkTone}
         iconBadge={skill.scope === PluginHubScope.EXTENSION ? <ExtensionBadge /> : undefined}
-        title={
-          <span className="block truncate text-sm font-medium text-foreground">{skill.name}</span>
-        }
+        title={skill.name}
+        version={skill.version || marketplace.installedVersionFor(skill.id)}
         actions={
           <>
             <InstalledMarketplaceAction
@@ -553,43 +548,19 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                   updatingSkillIds.has(skill.id)
                 }
                 busy={updatingSkillIds.has(skill.id)}
-                onToggle={() => {
-                  if (!readOnly && !gatewayOffline && toggleAllowed) {
-                    void handleToggleSkill(skill.id);
-                  }
-                }}
+                onToggle={() => void handleToggleSkill(skill.id)}
               />
             )}
           </>
         }
-        description={
-          <Tooltip
-            content={skillService.getLocalizedSkillDescription(
-              skill.id,
-              skill.name,
-              skill.description,
-            )}
-            position="bottom"
-            maxWidth="360px"
-            className="block w-full"
-          >
-            <p className="line-clamp-2 break-words">
-              {skillService.getLocalizedSkillDescription(skill.id, skill.name, skill.description)}
-            </p>
-          </Tooltip>
-        }
+        description={skillService.getLocalizedSkillDescription(skill.id, skill.name, skill.description)}
         footer={
-          status || showScope || skill.version ? (
+          status || showScope ? (
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {status}
               {showScope && (
                 <span className="shrink-0 rounded-full bg-surface-raised px-1.5 py-0.5 font-medium">
                   {getScopeLabel(skill.scope)}
-                </span>
-              )}
-              {skill.version && (
-                <span className="px-1.5 py-0.5 rounded bg-surface-raised font-medium">
-                  v{skill.version}
                 </span>
               )}
             </div>
@@ -611,8 +582,8 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
       <MarketplaceToolbar controller={marketplace} hasLocalMatches={filteredSkills.length > 0} />
       {visibility !== 'available' &&
         (marketplace.filter !== MarketplaceFilter.UPDATES ||
-          marketplace.updateById.size > 0 ||
-          marketplace.recentlyUpdated.size > 0) && (
+          filteredSkills.length > 0 ||
+          (sharedSearchQuery === undefined && Boolean(skillSearchQuery.trim()))) && (
           <section className="space-y-4">
             <div className="space-y-4">
               {sharedSearchQuery === undefined && (
@@ -660,9 +631,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                           {i18nService.t('noSkillsAvailable')}
                         </p>
                       ) : (
-                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-x-4 gap-y-1">
+                        <PluginCardGrid>
                           {group.skills.map(renderInstalledCard)}
-                        </div>
+                        </PluginCardGrid>
                       )}
                     </PluginGroupSection>
                   ))}
@@ -696,6 +667,9 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
           >
             <PluginDetailHeader
               title={selectedSkill.name}
+              version={
+                selectedSkill.version || marketplace.installedVersionFor(selectedSkill.id)
+              }
               icon={<SparklesIcon className="h-5 w-5" />}
               artworkTone={detailArtworkTone}
               onClose={() => setSelectedSkillId(null)}
@@ -743,19 +717,6 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                   )}
                 </div>
               )}
-
-              <div className="space-y-2">
-                {selectedSkill.version && (
-                  <div className="flex items-center text-xs">
-                    <span className="w-16 flex-shrink-0 text-secondary">
-                      {i18nService.t('skillDetailVersion')}
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded bg-surface-raised text-foreground font-medium">
-                      v{selectedSkill.version}
-                    </span>
-                  </div>
-                )}
-              </div>
             </div>
 
             <div className={PLUGIN_DETAIL_FOOTER_CLASS_NAME}>

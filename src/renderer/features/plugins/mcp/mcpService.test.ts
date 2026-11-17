@@ -64,6 +64,7 @@ test.each(['create', 'update', 'delete', 'setEnabled', 'syncConfig'] as const)(
 
 test('keeps confirmed MCP inventory when a completed mutation cannot refresh its list', async () => {
   const { service, api, owner } = await mutationFailureFixture();
+  const { isPluginOperationNotice } = await import('../shared/pluginOperationService');
   const server = {
     id: 'example',
     name: 'Example MCP',
@@ -78,12 +79,14 @@ test('keeps confirmed MCP inventory when a completed mutation cannot refresh its
   await expect(service.setServerEnabled(server.id, true)).resolves.toEqual([server]);
 
   expect(service.getServers()).toEqual([server]);
-  expect(owner.failureSnapshot()).toEqual([
+  const reports = owner.failureSnapshot();
+  expect(reports).toEqual([
     expect.objectContaining({
       state: 'refresh_failed',
       failedStage: PluginOperationStage.REFRESHING_INVENTORY,
     }),
   ]);
+  expect(isPluginOperationNotice(reports[0])).toBe(true);
 });
 
 test('preserves an explicit unknown extension MCP result rather than claiming its write failed', async () => {

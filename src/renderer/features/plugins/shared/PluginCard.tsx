@@ -1,77 +1,95 @@
 import type { ReactNode } from 'react';
 
+import Tooltip from '@/shared/components/ui/Tooltip';
+
+import PluginVersion from './PluginVersion';
+
 interface PluginCardProps {
   icon: ReactNode;
+  artworkTone: string;
   iconBadge?: ReactNode;
-  title: ReactNode;
-  description: ReactNode;
-  reserveDescriptionSpace?: boolean;
-  compact?: boolean;
+  title: string;
+  version?: string;
+  titleBadge?: ReactNode;
+  description?: string;
   actions?: ReactNode;
   footer?: ReactNode;
   onOpen?: () => void;
-  openLabel?: string;
+  openLabel: string;
 }
+
+export const PluginCardGrid = ({ children }: { children: ReactNode }) => (
+  <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-x-4 gap-y-1">
+    {children}
+  </div>
+);
 
 const PluginCard = ({
   icon,
+  artworkTone,
   iconBadge,
   title,
+  version,
+  titleBadge,
   description,
-  reserveDescriptionSpace = true,
-  compact = false,
   actions,
   footer,
   onOpen,
   openLabel,
 }: PluginCardProps) => (
   <article
-    className={`group relative flex h-full min-w-0 flex-col rounded-xl ${compact ? 'p-3' : 'p-4'} transition-colors hover:bg-surface-raised focus-within:bg-surface-raised${onOpen ? ' cursor-pointer' : ''}`}
+    className={`group relative min-h-14 min-w-0 rounded-xl px-3 py-2 transition-colors hover:bg-surface-raised focus-within:bg-surface-raised${onOpen ? ' cursor-pointer' : ''}`}
     onClick={onOpen}
   >
-    {onOpen && (
-      <button
-        type="button"
-        className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-        aria-label={openLabel}
-        onClick={event => {
-          event.stopPropagation();
-          onOpen();
-        }}
-      />
-    )}
-    <div className="relative flex min-w-0 items-center gap-2">
-      <div className="relative shrink-0">
-        {icon}
+    <button
+      type="button"
+      disabled={!onOpen}
+      className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+      aria-label={openLabel}
+      onClick={event => {
+        event.stopPropagation();
+        onOpen?.();
+      }}
+    />
+    <div className="relative grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] items-start gap-x-2">
+      <div className="relative">
+        <div
+          className={`flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br text-sm ${artworkTone}`}
+        >
+          {icon}
+        </div>
         {iconBadge && <div className="absolute -bottom-1 -right-1 z-10 flex">{iconBadge}</div>}
       </div>
-      <div className="min-w-0 flex-1">
-        {title}
-        {compact && description && (
-          <div className="mt-1 min-w-0 text-xs text-secondary">{description}</div>
-        )}
-      </div>
-      {actions && (
-        <div
-          className="flex shrink-0 items-center gap-1.5"
-          onClick={event => event.stopPropagation()}
-        >
-          {actions}
+      <div className="min-w-0">
+        <div className="flex min-h-8 min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="truncate text-sm font-medium text-foreground">{title}</span>
+            <PluginVersion version={version} />
+            {titleBadge}
+          </div>
+          {actions && (
+            <div
+              className="flex shrink-0 items-center gap-1.5"
+              onClick={event => event.stopPropagation()}
+            >
+              {actions}
+            </div>
+          )}
         </div>
-      )}
+        {description && (
+          <Tooltip
+            content={description}
+            position="bottom"
+            maxWidth="360px"
+            className="block w-full text-xs leading-4 text-secondary"
+            renderInPortal
+          >
+            <p className="line-clamp-2 break-words">{description}</p>
+          </Tooltip>
+        )}
+        {footer && <div className="mt-1.5 text-[10px] text-secondary">{footer}</div>}
+      </div>
     </div>
-    {!compact && (reserveDescriptionSpace || description) && (
-      <div
-        className={`relative mt-2 min-w-0 text-xs text-secondary${reserveDescriptionSpace ? ' h-8' : ''}`}
-      >
-        {description}
-      </div>
-    )}
-    {footer && (
-      <div className="relative mt-1.5 flex min-w-0 items-center justify-between gap-3 text-[10px] text-secondary">
-        {footer}
-      </div>
-    )}
   </article>
 );
 

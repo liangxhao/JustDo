@@ -373,7 +373,7 @@ export class PluginMarketplaceService {
                 kind: request.kind,
                 marketplacePluginId: pluginId,
                 runtimeId: result.pluginId,
-                installedVersion: normalizedRequest.version || previous?.installedVersion,
+                installedVersion: normalizedRequest.version,
                 installPath: result.installPath || previous?.installPath,
               });
             } catch {
@@ -413,7 +413,7 @@ export class PluginMarketplaceService {
     }
   }
 
-  forgetInstallation(kind: MarketplacePluginKind, runtimeId: string, installPath?: string): void {
+  forgetInstallation(kind: MarketplacePluginKind, runtimeId: string | undefined, installPath?: string): void {
     try {
       this.installRegistry.removeRuntime(kind, runtimeId, installPath);
     } catch {

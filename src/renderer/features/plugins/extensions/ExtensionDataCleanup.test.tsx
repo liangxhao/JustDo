@@ -48,30 +48,27 @@ test('hides the entire data section while inspecting and when no directory exist
 test.each([
   { success: false },
   { success: true, exists: false, canDelete: false, bytes: 0 },
-])('does not mistake a failed inspection for an absent directory: %j', async result => {
-  bridge(async () => result);
-  render(<ExtensionDataCleanup extensionId="sample" checked={false} disabled={false} onChange={vi.fn()} />);
-
-  await screen.findByText('extensionDataCleanupUnavailable');
-  expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
-});
-
-test('unreadable data cannot be selected for deletion', async () => {
-  bridge(async () => ({ success: true, exists: true, canDelete: false, bytes: 0 }));
+  { success: true, exists: true, canDelete: false, bytes: 0 },
+])('hides the data section when optional cleanup is unavailable: %j', async result => {
+  let finish!: (result: ExtensionDataInfoResult) => void;
+  bridge(() => new Promise(resolve => { finish = resolve; }));
   const onChange = vi.fn();
-  render(<ExtensionDataCleanup extensionId="sample" checked={false} disabled={false} onChange={onChange} />);
-  await screen.findByText('extensionDataCleanupUnavailable');
-  expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+  const { container } = render(
+    <ExtensionDataCleanup extensionId="sample" checked={false} disabled={false} onChange={onChange} />,
+  );
+
+  await act(async () => finish(result));
+
+  expect(container.innerHTML).toBe('');
   expect(onChange).not.toHaveBeenCalledWith(true);
 });
 
-test('retained execution records show their retention policy instead of a temporary failure', async () => {
+test('retained execution records show their retention policy without offering cleanup', async () => {
   bridge(async () => ({ success: true, exists: true, canDelete: false, bytes: 1024, retained: true }));
   const onChange = vi.fn();
   render(<ExtensionDataCleanup extensionId="sample" checked={false} disabled={false} onChange={onChange} />);
   await screen.findByText('extensionDataRetained');
-  expect(screen.queryByText('extensionDataCleanupUnavailable')).toBeNull();
-  expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+  expect(screen.queryByRole('checkbox')).toBeNull();
   expect(onChange).not.toHaveBeenCalledWith(true);
 });
 
@@ -82,9 +79,10 @@ test('a late estimate from the previous plugin cannot enable the new deletion ch
     : Promise.resolve({ success: false }));
   const onChange = vi.fn();
   const view = render(<ExtensionDataCleanup extensionId="old" checked={false} disabled={false} onChange={onChange} />);
-  view.rerender(<ExtensionDataCleanup extensionId="new" checked={false} disabled={false} onChange={onChange} />);
-  await screen.findByText('extensionDataCleanupUnavailable');
+  await act(async () => {
+    view.rerender(<ExtensionDataCleanup extensionId="new" checked={false} disabled={false} onChange={onChange} />);
+  });
   await act(async () => finishOld({ success: true, exists: true, canDelete: true, bytes: 2 ** 30 }));
   expect(screen.queryByText('Free 1.0 GiB')).toBeNull();
-  expect((screen.getByRole('checkbox') as HTMLInputElement).disabled).toBe(true);
+  expect(screen.queryByRole('checkbox')).toBeNull();
 });

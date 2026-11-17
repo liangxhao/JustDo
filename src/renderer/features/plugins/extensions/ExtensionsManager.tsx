@@ -17,7 +17,11 @@ import {
 } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import { OpenClawExtensionId } from '@shared/plugins/nativeIds';
-import { PluginOperationAction, PluginOperationStage } from '@shared/plugins/pluginOperation';
+import {
+  PluginOperationAction,
+  type PluginOperationFeedback,
+  PluginOperationStage,
+} from '@shared/plugins/pluginOperation';
 import { LocalSpeechModelKind } from '@shared/speech/localSpeechModels';
 import { LOCAL_TTS_PROVIDER_ID } from '@shared/speech/localTts';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -45,9 +49,10 @@ import {
 import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import OperationResultModal, {
   type OperationResult,
+  OperationResultNotice,
 } from '@/features/plugins/shared/OperationResultModal';
-import PluginActivityStatus from '@/features/plugins/shared/PluginActivityStatus';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
+import PluginCard, { PluginCardGrid } from '@/features/plugins/shared/PluginCard';
 import {
   PLUGIN_DETAIL_BODY_CLASS_NAME,
   PLUGIN_DETAIL_FOOTER_CLASS_NAME,
@@ -58,8 +63,10 @@ import PluginGroupSection from '@/features/plugins/shared/PluginGroupSection';
 import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubTypes';
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
 import {
+  hasPluginOperationFollowupIssue,
   pluginOperationErrorMessage,
   pluginOperationFailure,
+  pluginOperationRefreshAfterSuccess,
   pluginOperationRefreshFailure,
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import {
@@ -159,6 +166,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [extensions, setExtensions] = useState<InstalledOpenClawExtension[]>([]);
   const [loadingExtensions, setLoadingExtensions] = useState(true);
   const [inventoryReady, setInventoryReady] = useState(false);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
   useEffect(() => {
     if (!speechSettingsKind || !inventoryReady) return;
     const id =
@@ -229,11 +237,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             throw new Error(result.error || i18nService.t('extensionListFailed'));
           if (!isCurrent())
             return inventoryMounted.current ? latestInventoryRead.current : result.extensions;
-          if (inventoryUnavailable.current) {
-            setActionOutcome(current =>
-              current?.title === i18nService.t('extensionListFailed') ? null : current,
-            );
-          }
+          if (inventoryUnavailable.current) setInventoryError(null);
           inventoryUnavailable.current = false;
           setExtensions(result.extensions);
           setSelectedExtension(current => {
@@ -249,12 +253,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           inventoryUnavailable.current = true;
           setInventoryReady(false);
           if (options.reportFailure !== false && getEngineReadinessSnapshot().ready)
-            setActionOutcome({
-              type: 'error',
-              title: i18nService.t('extensionListFailed'),
-              message:
-                error instanceof Error ? error.message : i18nService.t('extensionListFailed'),
-            });
+            setInventoryError(error instanceof Error ? error.message : i18nService.t('extensionListFailed'));
           return null;
         } finally {
           if (isCurrent()) setLoadingExtensions(false);
@@ -343,9 +342,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     searchQuery: searchQuery,
     readOnly: localExtensionActionBusy,
     onInstalled: async () => {
-      if (!(await loadExtensions())) throw new Error('Inventory unavailable');
+      if (!(await loadExtensions({ reportFailure: false })))
+        throw new Error('Inventory unavailable');
     },
   });
+  const getExtensionVersion = ({ id, version }: InstalledOpenClawExtension) =>
+    version?.trim() ? version : marketplace.installedVersionFor(id);
 
   const extensionActionBusy =
     localExtensionActionBusy ||
@@ -447,7 +449,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                   .replace('{successCount}', String(completedLabels.length))
                   .replace('{failureCount}', String(failures.length))
               : failures[0].message || i18nService.t('extensionImportFailed'),
-          ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
+          ...(refreshFailed && completed.length > 0
+            ? { details: i18nService.t('pluginOperationRefreshFailed') }
+            : {}),
           elapsedMs: Date.now() - startedAt,
           items: [
             ...completed.map(item => ({
@@ -461,7 +465,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           ],
         },
       );
-    } else if (refreshFailed) {
+    } else if (completed.length > 0 && (refreshFailed || warnings.length > 0)) {
       reportPluginOperationFailure(
         {
           kind: PluginKind.EXTENSION,
@@ -469,7 +473,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           label: completed.length === 1 ? completed[0].label : i18nService.t('importExtension'),
         },
         {
-          ...pluginOperationRefreshFailure(),
+          ...(warnings.length === 0
+            ? pluginOperationRefreshAfterSuccess()
+            : pluginOperationRefreshFailure()),
           ...(warnings.length === 1 && completed.length === 1 ? warnings[0] : {}),
           ...(warnings.length > 0 ? { items: completed } : {}),
           elapsedMs: Date.now() - startedAt,
@@ -535,26 +541,27 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         !item.operationUnconfirmed && !item.installSourceInUse && !item.capabilityReview;
       const succeeded = results.filter(item => item.success || completedWithPendingRecovery(item));
       const failed = results.filter(item => !item.success && !completedWithPendingRecovery(item));
+      if (succeeded.length > 0 || results.some(item => item.installationCommitted)) {
+        marketplace.checkUpdates();
+      }
       // Reconcile with disk even when a later installer step reports failure. OpenClaw
       // may have already published the extension before its CLI or Gateway restart fails.
       const inventory = await refreshAfterImport();
+      const inventoryNeedsRefresh = !inventory && inventoryUnavailable.current;
+      if (inventoryNeedsRefresh && succeeded.length > 0 && inventoryMounted.current)
+        setInventoryError(null);
       finishImportBatch(
         succeeded.map(item => ({
           label: item.extensionId || pluginSourceLabel(item.sourcePath),
-          ...(item.refreshWarning || completedWithPendingRecovery(item)
+          ...(hasPluginOperationFollowupIssue(item)
             ? pluginOperationFailure(item, i18nService.t('pluginOperationRefreshFailed'))
-            : {
-                message: i18nService.t('pluginImportItemSuccess'),
-                ...(!item.error && !item.failedStage && !item.operationUnconfirmed && !item.installSourceInUse
-                  ? { mutationCompleted: true as const }
-                  : {}),
-              }),
+            : { message: i18nService.t('pluginImportItemSuccess'), mutationCompleted: true as const }),
         })),
         failed.map(item => ({
           label: pluginSourceLabel(item.sourcePath),
           ...pluginOperationFailure(item, i18nService.t('extensionImportFailed')),
         })),
-        inventory === null || results.some(item => item.refreshWarning === true),
+        inventoryNeedsRefresh,
         startedAt,
       );
     } catch (error) {
@@ -576,6 +583,18 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     }
   };
 
+  const reportFollowupAfterSuccess = (
+    operation: ReturnType<typeof startPluginOperation>,
+    result: PluginOperationFeedback & { error?: string },
+    inventoryNeedsRefresh: boolean,
+  ): boolean => {
+    // A fresh catalog supersedes a bare notification refresh warning.
+    if (!inventoryNeedsRefresh && !hasPluginOperationFollowupIssue(result)) return false;
+    if (inventoryNeedsRefresh && inventoryMounted.current) setInventoryError(null);
+    operation.fail(pluginOperationRefreshAfterSuccess(result));
+    return true;
+  };
+
   const handleConfirmDelete = async () => {
     if (!pendingDelete || extensionActionBusy) return;
     const extension = pendingDelete;
@@ -595,7 +614,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       mutationResult = result;
       if (!result.success) {
         operation.fail(pluginOperationFailure(result, i18nService.t('extensionDeleteFailed')));
-        throw new Error(result.error || i18nService.t('extensionDeleteFailed'));
+        return;
       }
       setPendingDelete(null);
     } catch (error) {
@@ -608,18 +627,27 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     } finally {
       operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
       const latestExtensions = await loadExtensions({ reportFailure: false });
-      if (!latestExtensions || mutationResult?.refreshWarning)
-        operation.fail(pluginOperationRefreshFailure(mutationResult));
-      else if (mutationResult?.success && inventoryMounted.current)
-        setActionOutcome({
-          type: 'success',
-          title: i18nService.t('extensionDelete'),
-          ...(mutationResult.warnings?.length ? { persistent: true as const } : {}),
-          message: [
-            i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
-            ...(mutationResult.warnings ?? []),
-          ].join('\n'),
-        });
+      if (mutationResult?.success) {
+        const { operationUnconfirmed, warnings } = mutationResult;
+        const inventoryNeedsRefresh = !latestExtensions && inventoryUnavailable.current;
+        if (inventoryNeedsRefresh && inventoryMounted.current && !operationUnconfirmed) {
+          // A confirmed removal invalidates the stale entry until the next catalog read.
+          setExtensions(current => current.filter(item =>
+            item.id !== extension.id || item.installPath !== extension.installPath,
+          ));
+        }
+        if (!reportFollowupAfterSuccess(operation, mutationResult, inventoryNeedsRefresh) && inventoryMounted.current) {
+          setActionOutcome({
+            type: 'success',
+            title: i18nService.t('extensionDelete'),
+            ...(warnings?.length ? { persistent: true as const } : {}),
+            message: [
+              i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
+              ...(warnings ?? []),
+            ].join('\n'),
+          });
+        }
+      }
       if (latestExtensions && !latestExtensions.some(item => item.id === extension.id)) {
         setPendingDelete(null);
       }
@@ -653,7 +681,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       );
       mutationResult = result;
       if (result.capabilityReview) {
-        if (result.refreshWarning) {
+        if (result.refreshWarning && hasPluginOperationFollowupIssue(result)) {
           const failure = pluginOperationFailure(result, i18nService.t('pluginOperationFailureTitle.refresh'));
           operation.fail({
             ...failure,
@@ -668,7 +696,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         operation.fail(
           pluginOperationFailure(result, i18nService.t('extensionStatusUpdateFailed')),
         );
-        throw new Error(result.error || i18nService.t('extensionStatusUpdateFailed'));
       }
     } catch (error) {
       operation.fail({
@@ -680,18 +707,16 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     } finally {
       operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
       const inventory = await loadExtensions({ reportFailure: false });
-      if (!inventory || mutationResult?.refreshWarning)
-        operation.fail(pluginOperationRefreshFailure(mutationResult));
-      else if (
-        mutationResult?.success &&
-        mutationResult.warnings?.length &&
-        inventoryMounted.current
-      )
-        setActionOutcome({
-          type: 'success',
-          title: i18nService.t('extensionStatusUpdatedWithWarnings'),
-          message: mutationResult.warnings.join('\n'),
-        });
+      if (mutationResult?.success) {
+        const followupReported = reportFollowupAfterSuccess(operation, mutationResult, !inventory && inventoryUnavailable.current);
+        if (!followupReported && mutationResult.warnings?.length && inventoryMounted.current) {
+          setActionOutcome({
+            type: 'success',
+            title: i18nService.t('extensionStatusUpdatedWithWarnings'),
+            message: mutationResult.warnings.join('\n'),
+          });
+        }
+      }
       setTogglingExtensionId(null);
       operation.finish();
     }
@@ -751,17 +776,8 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       }
       operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
       const latestExtensions = await loadExtensions({ reportFailure: false });
-      if (!latestExtensions || result.refreshWarning) {
-        operation.fail(pluginOperationRefreshFailure(result));
-        return;
-      }
+      if (reportFollowupAfterSuccess(operation, result, !latestExtensions && inventoryUnavailable.current)) return;
       if (!isCurrentDetail()) return;
-      const updatedExtension = latestExtensions?.find(item => item.id === selectedExtension.id);
-      if (updatedExtension) {
-        setSelectedExtension(current =>
-          current?.id === updatedExtension.id ? updatedExtension : current,
-        );
-      }
       setConfigurationValues({});
       setConfigurationSaved(true);
       setConfigurationPending(result.pending === true);
@@ -773,8 +789,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             : i18nService.t('extensionConfigurationSaveFailed'),
       });
       operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
-      if (!(await loadExtensions({ reportFailure: false })))
-        operation.fail(pluginOperationRefreshFailure());
+      await loadExtensions({ reportFailure: false });
     } finally {
       setSavingConfiguration(false);
       operation.finish();
@@ -823,30 +838,17 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
     const canToggle = canToggleExtension(extension);
     const artworkTone = getPluginArtworkTone(`extensions:${extension.origin}`, visualIndex);
     return (
-      <article
+      <PluginCard
         key={extension.id}
-        onClick={() => openExtensionDetails(extension, artworkTone)}
-        className="group relative flex min-h-16 min-w-0 cursor-pointer flex-col rounded-xl px-2 py-2 transition-colors hover:bg-surface-raised focus-within:bg-surface-raised"
-      >
-        <button
-          type="button"
-          className="absolute inset-0 z-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
-          aria-label={`${i18nService.t('subtaskShowInfo')}: ${extension.name}`}
-          onClick={event => {
-            event.stopPropagation();
-            openExtensionDetails(extension, artworkTone);
-          }}
-        />
-        <div className="pointer-events-none relative z-10 flex items-center justify-between gap-2 [&_button]:pointer-events-auto">
-          <div className="flex min-w-0 items-center gap-2">
-            <div
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${artworkTone}`}
-            >
-              <PuzzleIcon className="h-4 w-4" />
-            </div>
-            <h3 className="truncate text-sm font-medium text-foreground">{extension.name}</h3>
-          </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+        onOpen={() => openExtensionDetails(extension, artworkTone)}
+        openLabel={`${i18nService.t('subtaskShowInfo')}: ${extension.name}`}
+        icon={<PuzzleIcon className="h-4 w-4" />}
+        artworkTone={artworkTone}
+        title={extension.name}
+        version={getExtensionVersion(extension)}
+        description={extension.description}
+        actions={
+          <>
             <InstalledMarketplaceAction
               controller={marketplace}
               id={extension.id}
@@ -897,7 +899,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 content={extension.error}
                 position="bottom"
                 maxWidth="360px"
-                className="pointer-events-auto"
                 renderInPortal
                 dismissOnClick
               >
@@ -918,7 +919,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
               <Tooltip
                 content={i18nService.t('extensionMissingConfiguration')}
                 position="top"
-                className="pointer-events-auto"
                 renderInPortal
                 dismissOnClick
               >
@@ -935,23 +935,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 </button>
               </Tooltip>
             ) : null}
-          </div>
-        </div>
-
-        <div className="pointer-events-none relative z-10 ml-10 min-w-0 pr-2">
-          {extension.description && (
-            <Tooltip
-              content={extension.description}
-              position="bottom"
-              maxWidth="360px"
-              className="pointer-events-auto block w-full"
-              renderInPortal
-            >
-              <p className="truncate text-xs text-secondary">{extension.description}</p>
-            </Tooltip>
-          )}
-        </div>
-      </article>
+          </>
+        }
+      />
     );
   };
 
@@ -964,9 +950,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       />
       {visibility !== 'available' &&
         (marketplace.filter !== MarketplaceFilter.UPDATES ||
-          marketplace.updateById.size > 0 ||
-          marketplace.recentlyUpdated.size > 0) && (
-          <section className="space-y-4">
+          filteredExtensions.length > 0 ||
+          (sharedSearchQuery === undefined && Boolean(searchQuery.trim()))) && (
+          <section className="space-y-4" aria-busy={loadingExtensions}>
             <div className="space-y-4">
               {sharedSearchQuery === undefined && (
                 <div className="relative min-w-0 sm:max-w-md">
@@ -981,12 +967,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 </div>
               )}
 
-              {loadingExtensions ? (
-                <PluginActivityStatus
-                  title={i18nService.t('extensions')}
-                  message={i18nService.t('loading')}
-                />
-              ) : filteredExtensions.length === 0 && searchQuery.trim() ? null : (
+              {loadingExtensions || (filteredExtensions.length === 0 && searchQuery.trim()) ? null : (
                 <div className="space-y-5">
                   {displayExtensionGroups.map(group => (
                     <PluginGroupSection
@@ -1006,9 +987,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                           {i18nService.t('noExtensionsInstalled')}
                         </p>
                       ) : (
-                        <div className="grid min-w-0 grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-1 gap-x-4">
+                        <PluginCardGrid>
                           {group.extensions.map(renderInstalledCard)}
-                        </div>
+                        </PluginCardGrid>
                       )}
                     </PluginGroupSection>
                   ))}
@@ -1096,7 +1077,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           >
             <PluginDetailHeader
               title={selectedExtension.name}
-              version={selectedExtension.version}
+              version={getExtensionVersion(selectedExtension)}
               icon={<PuzzleIcon className="h-5 w-5" />}
               artworkTone={detailArtworkTone}
               onClose={closeExtensionDetails}
@@ -1573,6 +1554,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
 
       <AppExtensionDialog selection={appAction} onClose={() => setAppAction(null)} />
       <OperationResultModal result={actionOutcome} onClose={() => setActionOutcome(null)} />
+      {inventoryError && (
+        <OperationResultNotice
+          result={{ type: 'error', title: i18nService.t('extensionListFailed'), message: inventoryError, persistent: true }}
+          onClose={() => setInventoryError(null)}
+        />
+      )}
     </div>
   );
 };

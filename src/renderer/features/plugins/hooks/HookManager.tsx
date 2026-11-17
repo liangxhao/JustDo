@@ -15,9 +15,8 @@ import { HookEntry, HookListResult } from '@/features/plugins/hooks/hook';
 import { hookService } from '@/features/plugins/hooks/hookService';
 import { observeDeferredInventoryRefresh } from '@/features/plugins/shared/deferredInventoryRefresh';
 import ExtensionBadge from '@/features/plugins/shared/ExtensionBadge';
-import PluginActivityStatus from '@/features/plugins/shared/PluginActivityStatus';
 import { getPluginArtworkTone } from '@/features/plugins/shared/pluginArtwork';
-import PluginCard from '@/features/plugins/shared/PluginCard';
+import PluginCard, { PluginCardGrid } from '@/features/plugins/shared/PluginCard';
 import {
   PLUGIN_DETAIL_BODY_CLASS_NAME,
   PLUGIN_DETAIL_FOOTER_CLASS_NAME,
@@ -29,7 +28,7 @@ import type { PluginHubManagerProps } from '@/features/plugins/shared/pluginHubT
 import PluginMarkdownDescription from '@/features/plugins/shared/PluginMarkdownDescription';
 import {
   pluginOperationFailure,
-  pluginOperationRefreshFailure,
+  pluginOperationRefreshAfterSuccess,
 } from '@/features/plugins/shared/pluginMutationFeedback';
 import { reportPluginOperationFailure } from '@/features/plugins/shared/pluginOperationService';
 import { PluginOperationStatusContent } from '@/features/plugins/shared/PluginOperationStatusSlot';
@@ -287,8 +286,8 @@ const HookManager: React.FC<HookManagerProps> = ({
       }
       if (results.some(result => !result.success)) await reconcileFailedMutation(generation);
 
-      const importedIds = results
-        .filter(result => result.success)
+      const succeeded = results.filter(result => result.success);
+      const importedIds = succeeded
         .map(result => result.hookId)
         .filter((id): id is string => Boolean(id));
       const failed = results.filter(result => !result.success);
@@ -310,7 +309,9 @@ const HookManager: React.FC<HookManagerProps> = ({
                   .replace('{successCount}', String(importedIds.length))
                   .replace('{failureCount}', String(failed.length))
               : i18nService.t('hookImportFailed'),
-          ...(refreshFailed ? { details: i18nService.t('pluginOperationRefreshFailed') } : {}),
+          ...(refreshFailed && succeeded.length > 0
+            ? { details: i18nService.t('pluginOperationRefreshFailed') }
+            : {}),
           items: results.map(result => ({
             label: result.hookId || result.sourcePath.split(/[/\\]/).pop() || result.sourcePath,
             ...(result.success
@@ -321,7 +322,8 @@ const HookManager: React.FC<HookManagerProps> = ({
                 }),
           })),
         });
-      else if (refreshFailed) reportFailure(pluginOperationRefreshFailure());
+      else if (refreshFailed && succeeded.length > 0)
+        reportFailure(pluginOperationRefreshAfterSuccess(succeeded.find(result => result.refreshWarning)));
       if (mounted.current) {
         setGatewayOffline(hookService.isGatewayOffline());
       }
@@ -392,9 +394,7 @@ const HookManager: React.FC<HookManagerProps> = ({
         label={i18nService.t(hook.enabled ? 'disableHook' : 'enableHook')}
         disabled={disabled}
         busy={updatingHookIds.has(hook.id)}
-        onToggle={() => {
-          if (!disabled) void handleToggleHook(hook);
-        }}
+        onToggle={() => void handleToggleHook(hook)}
       />
     );
   };
@@ -463,7 +463,7 @@ const HookManager: React.FC<HookManagerProps> = ({
       )}
 
       {visibility !== 'available' ? (
-        <section className="space-y-4">
+        <section className="space-y-4" aria-busy={isLoading}>
           <div className="space-y-4">
             {sharedSearchQuery === undefined && (
               <div className="relative min-w-0 sm:max-w-md">
@@ -478,12 +478,7 @@ const HookManager: React.FC<HookManagerProps> = ({
                 />
               </div>
             )}
-            {isLoading ? (
-              <PluginActivityStatus
-                title={i18nService.t('hooks')}
-                message={i18nService.t('loading')}
-              />
-            ) : filteredHooks.length === 0 && searchQuery.trim() ? (
+            {isLoading ? null : filteredHooks.length === 0 && searchQuery.trim() ? (
               <div className="py-8 text-center text-sm text-secondary">
                 {gatewayOffline
                   ? i18nService.t('gatewayOffline')
@@ -506,7 +501,7 @@ const HookManager: React.FC<HookManagerProps> = ({
                         {i18nService.t('noHooksAvailable')}
                       </p>
                     ) : (
-                      <div className="grid min-w-0 auto-rows-fr grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-4">
+                      <PluginCardGrid>
                         {group.hooks.map((hook, visualIndex) => {
                           const artworkTone = getPluginArtworkTone(
                             `hooks:${group.id}`,
@@ -520,13 +515,8 @@ const HookManager: React.FC<HookManagerProps> = ({
                                 setDetailArtworkTone(artworkTone);
                               }}
                               openLabel={`${i18nService.t('subtaskShowInfo')}: ${hook.name}`}
-                              icon={
-                                <div
-                                  className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-sm ${artworkTone}`}
-                                >
-                                  {hook.emoji || <ConnectorIcon className="h-4 w-4" />}
-                                </div>
-                              }
+                              icon={hook.emoji || <ConnectorIcon className="h-4 w-4" />}
+                              artworkTone={artworkTone}
                               iconBadge={
                                 hook.managedByPlugin ? (
                                   <ExtensionBadge
@@ -545,26 +535,13 @@ const HookManager: React.FC<HookManagerProps> = ({
                                   />
                                 ) : undefined
                               }
-                              title={
-                                <span className="block truncate text-sm font-medium text-foreground">
-                                  {hook.name}
-                                </span>
-                              }
+                              title={hook.name}
                               actions={renderToggle(hook)}
-                              description={
-                                <Tooltip
-                                  content={hook.description}
-                                  position="bottom"
-                                  maxWidth="360px"
-                                  className="block w-full"
-                                >
-                                  <p className="line-clamp-2 break-words">{hook.description}</p>
-                                </Tooltip>
-                              }
+                              description={hook.description}
                             />
                           );
                         })}
-                      </div>
+                      </PluginCardGrid>
                     )}
                   </PluginGroupSection>
                 ))}

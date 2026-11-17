@@ -50,22 +50,20 @@ beforeEach(() => {
   });
 });
 
-test('keeps Hook loading in the bottom progress stack until inventory arrives', async () => {
+const isInventoryLoading = () => document.querySelector('section[aria-busy="true"]') !== null;
+
+test('loads hooks without a floating status card or a premature empty state', async () => {
   let finish!: (value: { success: boolean; hooks: HookEntry[] }) => void;
   vi.mocked(hookService.loadHooks).mockReturnValueOnce(
     new Promise(resolve => {
       finish = resolve;
     }),
   );
-  const view = render(<HookManager />);
-  const loading = await screen.findByText('loading');
-  expect(loading.closest('article, section')).toBeNull();
-  expect(loading.closest('.fixed')?.classList.contains('bottom-4')).toBe(true);
-  expect(view.container.contains(loading)).toBe(false);
+  render(<HookManager />);
+  expect(screen.queryByRole('status')).toBeNull();
   expect(screen.queryByText('noHooksAvailable')).toBeNull();
 
   await act(async () => finish({ success: true, hooks: [] }));
-  expect(screen.queryByText('loading')).toBeNull();
   expect(screen.getByText('noHooksAvailable')).toBeTruthy();
 });
 
@@ -272,7 +270,7 @@ test('a read consumed during a switch cannot restore the old Hook state or leave
   expect(screen.getByRole('switch', { name: 'enableHook' }).getAttribute('aria-checked')).toBe(
     'false',
   );
-  expect(screen.queryByText('loading')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
 });
 
 test('a provider refresh started during a Hook switch remains eligible after the switch ends', async () => {
@@ -304,7 +302,7 @@ test('a provider refresh started during a Hook switch remains eligible after the
   expect(screen.getByRole('switch', { name: 'enableHook' }).getAttribute('aria-checked')).toBe(
     'false',
   );
-  expect(screen.queryByText('loading')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
 });
 
 test.each([true, false])(
@@ -397,7 +395,7 @@ test('cancelling the Hook picker leaves the in-flight provider refresh eligible'
   expect(screen.getByText(added.name)).toBeTruthy();
   expect(hookService.loadHooks).toHaveBeenCalledTimes(2);
   expect(hookService.importHook).not.toHaveBeenCalled();
-  expect(screen.queryByText('loading')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
 });
 
 test.each(['toggle', 'delete'] as const)(
@@ -438,7 +436,7 @@ test.each(['toggle', 'delete'] as const)(
 
     expect(screen.getByText(added.name)).toBeTruthy();
     expect(screen.queryByText(`Native ${operation} refused`)).toBeNull();
-    expect(screen.queryByText('loading')).toBeNull();
+    expect(isInventoryLoading()).toBe(false);
   },
 );
 
@@ -483,7 +481,7 @@ test('a failed Hook import refreshes native provider metadata without claiming s
   await act(async () => finishRead({ success: true, hooks: [] }));
 
   expect(screen.getByText(added.name)).toBeTruthy();
-  expect(screen.queryByText('loading')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
 });
 
 test('Hook failure reconciliation does not consume an older projection after a newer provider read starts', async () => {
@@ -509,9 +507,9 @@ test('Hook failure reconciliation does not consume an older projection after a n
     });
   });
   await act(async () => finishMutationRead({ success: true, hooks: [customHook] }));
-  expect(screen.getByText('loading')).toBeTruthy();
+  expect(isInventoryLoading()).toBe(true);
   await act(async () => finishProviderRead({ success: true, hooks: [customHook, added] }));
 
   expect(screen.getByText(added.name)).toBeTruthy();
-  expect(screen.queryByText('loading')).toBeNull();
+  expect(isInventoryLoading()).toBe(false);
 });

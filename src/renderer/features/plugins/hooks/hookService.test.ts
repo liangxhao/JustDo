@@ -81,7 +81,7 @@ test('propagates a failed fresh read after Hook deletion as a refresh warning', 
     }),
   );
   const { hookService } = await import('./hookService');
-  const { getPluginOperationOwner } = await import('../shared/pluginOperationService');
+  const { getPluginOperationOwner, isPluginOperationNotice } = await import('../shared/pluginOperationService');
   await hookService.loadHooks();
   const deletion = hookService.deleteHook('removed');
   await hookService.loadHooks({ force: true });
@@ -90,9 +90,9 @@ test('propagates a failed fresh read after Hook deletion as a refresh warning', 
   resolve({ success: true, hooks: [nativeHook('retained')] });
 
   await expect(deletion).resolves.toMatchObject({ success: true, refreshWarning: true });
-  expect(getPluginOperationOwner().failureSnapshot()).toEqual([
-    expect.objectContaining({ state: 'refresh_failed' }),
-  ]);
+  const reports = getPluginOperationOwner().failureSnapshot();
+  expect(reports).toEqual([expect.objectContaining({ state: 'refresh_failed' })]);
+  expect(isPluginOperationNotice(reports[0])).toBe(true);
 });
 
 test.each([false, true])(

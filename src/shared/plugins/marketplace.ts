@@ -138,6 +138,7 @@ export interface MarketplaceInstallationIdentity {
   runtimeId: string;
   sourceId: string;
   pluginId: string;
+  installedVersion?: string;
 }
 
 export interface MarketplaceResolveResponse {

@@ -10,10 +10,10 @@ import { MarketplaceFilter, type PluginMarketplaceController } from './usePlugin
 
 export default function MarketplaceToolbar({
   controller,
-  hasLocalMatches = true,
+  hasLocalMatches,
 }: {
   controller: PluginMarketplaceController;
-  hasLocalMatches?: boolean;
+  hasLocalMatches: boolean;
 }) {
   const slot = useContext(MarketplaceToolbarSlot);
   const controls = (
@@ -32,7 +32,7 @@ export default function MarketplaceToolbar({
             : ''}
         </button>
       ))}
-      {controller.source?.supportsUpdates && (
+      {controller.source?.supportsUpdates && !controller.updateError && (
         <button
           type="button"
           disabled={controller.checking}
@@ -74,7 +74,7 @@ export default function MarketplaceToolbar({
         controller.identityReady &&
         !controller.checking &&
         !controller.updateById.size &&
-        !controller.recentlyUpdated.size &&
+        !hasLocalMatches &&
         !controller.updateError && (
           <p className="text-sm text-secondary">{i18nService.t('marketplaceNoKnownUpdates')}</p>
         )}
