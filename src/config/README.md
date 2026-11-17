@@ -27,22 +27,23 @@
 
 ## 登录信息目录
 
-`loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 分别配置目录和用户信息文件：
+`loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG` 配置登录存储和续期周期。
 
 - `directoryName`：产品数据目录下的存储子目录，还可存放其他业务文件。
 - `userInfoFileName`：上述目录中的用户信息文件名，独立于目录名配置。
+- `cookieRefreshIntervalMs`：SDK Cookie 自动续期周期，单位毫秒，默认半小时。配置值应为至少 1000 的整数。
 
 部署时直接修改配置文件中的值；实际目录名与文件名以该配置为准。
 
 Windows 路径为 `%APPDATA%/<productName>/<directoryName>/<userInfoFileName>`；
-产品根目录继续由 `package.json.productName` 决定。两项均只填写单个非空名称，
+产品根目录继续由 `package.json.productName` 决定。目录名和文件名均只填写单个非空名称，
 不填写绝对路径、路径分隔符、`.` 或 `..`。
 
 登录读写、内置模型换证和出站请求头缓存共用同一路径解析器；隔离开发 profile 的 `userData`
 不改变此路径。更改目录或文件名不会自动迁移或回退读取旧文件；
 需要完全退出应用后自行移动或重命名原文件，或启动应用后重新登录。
 退出登录只删除配置指定的用户信息文件，不删除整个目录或其中的其他文件。
-修改配置需重启 Electron 开发进程或重新打包；此配置文件只保存名称，不保存凭据。
+修改配置需重启 Electron 开发进程或重新打包。凭据保存在用户信息文件中。
 
 ## 活动上报
 

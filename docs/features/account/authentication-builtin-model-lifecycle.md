@@ -125,7 +125,7 @@ macOS/Linux 保留既有用户所有的私有启动脚本，以满足原生 comm
 | `networkCode`    | 固定白名单中的 DNS、连接、TLS 错误码；有界读取 Error/cause 和聚合连接异常 | 不允许记录原异常或未知错误码             |
 | `credentialCode` | 编码、必需字段、账号、audience、算法、时间、期限上限、`expires_in` 不一致 | 不输出 claims 的值，也不表示客户端已验签 |
 
-URL、请求/响应体、mtoken、JWT、Cookie、MAC 和原始异常均不写日志。对外仍返回统一失败错误，诊断字段不放宽凭据校验。
+URL、请求/响应体、mtoken、JWT、Cookie、MAC 和原始异常均不写日志。换证异常使用统一消息，并在 Main 内保留受控原因。设置页手动刷新通过固定错误码区分设备网卡地址不可用、换证超时和换证服务的 HTTP 错误，HTTP 错误可附带实际状态码，界面按当前语言显示提示。
 
 认证链路日志使用 `[BuiltinModelAuth]` 前缀与紧凑 JSON，每条记录只有一行，
 不传递 Error、stack 或凭据对象。保留实际换证成功、快照发布／撤销、原生重载 ACK，
@@ -261,7 +261,9 @@ builtin provider 在 SQLite/Renderer 中 apiKey 为空，只保存 base URL、�
 
 ## 6. 退出、失效与发现失败
 
-凭据缺失/失效时清内存、中止旧发现，移除 builtin provider、相关 memory search 引用与受管 SecretRef，同步 Gateway 并通知 Renderer；不继续请求模型服务。
+登录发现完成或退出清理本地目录后，Renderer 立即从 SQLite 配置刷新内置模型列表。Gateway 应用配置并完成验证后，或其认证连接建立或恢复后，聊天模型选择器通过当前连接重新读取可用性和输入能力。连接断开时回退到本地目录，界面的目录读取不会启动 Gateway。
+
+凭据缺失或失效时清空内存凭据、中止旧发现、移除本地内置提供商并通知 Renderer。Gateway 同步清理对应的提供商、记忆检索引用和受管 SecretRef。
 
 必需的 `/models` 失败但凭据有效且 generation 仍最新时，保留最近成功目录及最新模型启用状态，避免把暂时网络失败误判为模型下架。账号切换必须先完成退出清理，再写入新账号并调用登录入口，避免继承上一账号缓存。成功返回空目录则真实清空，已失效默认模型按可用列表回退。
 

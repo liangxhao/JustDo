@@ -73,13 +73,28 @@ export const registerOpenClawModelHandlers = ({ getRuntime }: Dependencies): voi
         if (!runtime) {
           return { success: false, models: [], error: 'OpenClaw runtime is not available' };
         }
+        // Refreshing the menu must not start Gateway while auth cleanup is pending.
+        const client = runtime.getGatewayClient();
+        if (!client) {
+          return { success: false, models: [], error: 'OpenClaw Gateway is not connected' };
+        }
+        const assertCurrent = () => {
+          if (getRuntime() !== runtime || runtime.getGatewayClient() !== client) {
+            throw new Error('OpenClaw Gateway connection changed');
+          }
+        };
         const agentId = nonEmptyString(options?.agentId);
-        const result = await runtime.requestGateway<{ models?: unknown }>('models.list', {
-          ...(agentId ? { agentId } : {}),
-          // This view reflects only models authored in JustDo's provider config while
-          // retaining the v2026.9.2 runtime availability and input-capability projection.
-          view: 'provider-config',
-        });
+        const result = await runtime.requestGateway<{ models?: unknown }>(
+          'models.list',
+          {
+            ...(agentId ? { agentId } : {}),
+            // This view reflects only models authored in JustDo's provider config while
+            // retaining the v2026.9.2 runtime availability and input-capability projection.
+            view: 'provider-config',
+          },
+          { assertBeforeSend: assertCurrent },
+        );
+        assertCurrent();
         return { success: true, models: normalizeOpenClawModelChoices(result?.models) };
       } catch (error) {
         return {

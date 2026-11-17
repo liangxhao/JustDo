@@ -7,17 +7,17 @@
 
 ## SDK 续期应使用现有账号租约
 
-已有 `LoginService` 接入的 SDK 不应先自行改登录文件、再调用缓存函数。
-应在开始异步续期之前捕获 `captureCredentialLease()`，取得结果后交给
+已有 `LoginService` 接入的 SDK 可提供 `refreshCredentials` 交给 Main 自动调度。
+调度周期统一使用 `src/config/loginStorage.ts` 中的 `cookieRefreshIntervalMs`。
+SDK 自行调度时，在开始异步续期之前捕获 `captureCredentialLease()`，取得结果后交给
 `updateCredentials(lease, update)`。服务会重新核对账号身份、操作代次和文件凭据版本，
 原子提交到现有文件。应用内的 `LoginService` 用已提交的值直接刷新请求头缓存。`mtoken` 变化时也重新执行模型认证。
 
 ```ts
-// Main 中续期协调器的接入示意；loginService、sdkAdapter 和 signal 由现有装配层持有。
-if (!sdkAdapter.available || !sdkAdapter.refreshCredentials) return;
+// SDK 自行续期时，loginService 和 signal 由 Main 装配层持有。
 const lease = loginService.captureCredentialLease();
 if (!lease) return;
-const update = await sdkAdapter.refreshCredentials({ signal });
+const update = await renewThroughSdk({ signal });
 const result = await loginService.updateCredentials(lease, update);
 // 根据 result.success / errorCode 展示或记录安全状态，不记录 update 中的凭据。
 ```
@@ -25,8 +25,8 @@ const result = await loginService.updateCredentials(lease, update);
 只有 SDK 已确认该租约对应的登录会话失效时，才调用 `expireSession(lease)`；
 旧账号的迟到失效事件不能清除新账号。单次网络错误不等于身份失效。
 `mtoken` 轮换会重新进入模型认证；仅 Cookie 更新保留 mtoken，不重新执行完整登录。
-真实 SDK 及其续期调度仍待部署方接入，以上现有方法不是自动定时续期服务。
-实现位于 `src/main/core/app/auth/loginService.ts`，适配器类型见同目录 `loginSdkAdapter.ts`。
+Main 调度的实现位于 `src/main/core/app/auth/loginService.ts`，真实 SDK 的续期请求接入同目录的
+`loginSdkAdapter.ts`。具体行为见[自动续期约定](../features/account/login-sdk-template.md#main-自动续期)。
 
 Main 日志中的 `[LoginService] Credential update` 记录提交结果和两个布尔值。
 `cookieProvided` 表示此次提交是否包含 `headerValues['X-Cookie']`，`cookieChanged` 表示已保存的同名字段是否变化。

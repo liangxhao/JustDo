@@ -844,6 +844,11 @@ export const settingsTranslations = {
     // 模型提供商设置
     modelProviders: '模型提供商',
     builtinModelsProvider: '内置模型',
+    builtinModelRefreshFailed: '无法刷新内置模型，请重试。',
+    builtinModelRefreshDeviceUnavailable: '无法获取用于模型换证的设备网卡地址。',
+    builtinModelRefreshExchangeTimeout: '模型换证请求超时，请重试。',
+    builtinModelRefreshExchangeHttpError: '模型换证服务返回错误。',
+    builtinModelRefreshExchangeHttpStatus: '模型换证服务返回 HTTP {status}。',
     editModel: '编辑模型',
     deleteModel: '删除模型',
     addNewModel: '添加新模型',
@@ -1967,6 +1972,11 @@ export const settingsTranslations = {
     // Model Provider Settings
     modelProviders: 'Model Providers',
     builtinModelsProvider: 'Built-in Models',
+    builtinModelRefreshFailed: 'Could not refresh built-in models. Try again.',
+    builtinModelRefreshDeviceUnavailable: 'Could not obtain a device MAC address for model authentication.',
+    builtinModelRefreshExchangeTimeout: 'The model authentication request timed out. Try again.',
+    builtinModelRefreshExchangeHttpError: 'The model authentication service returned an error.',
+    builtinModelRefreshExchangeHttpStatus: 'The model authentication service returned HTTP {status}.',
     editModel: 'Edit Model',
     deleteModel: 'Delete Model',
     addNewModel: 'Add New Model',

@@ -1,3 +1,4 @@
+import { LOGIN_STORAGE_CONFIG } from '../../../../config/loginStorage';
 import {
   type AuthActionResult,
   AuthErrorCode,
@@ -11,7 +12,11 @@ import {
 import { type CredentialUpdate, type LoginSdkAdapter, LoginSdkStatus } from './loginSdkAdapter';
 import { LoginStorageError, LoginUserInfoStore, type StoredLogin } from './loginUserInfoStore';
 
-const COOKIE_HEADER_NAME = 'X-Cookie';
+const COOKIE_REFRESH_MIN_INTERVAL_MS = 1_000;
+const COOKIE_REFRESH_TIMEOUT_MS = 15_000;
+const COOKIE_REFRESH_RETRY_MS = 5_000;
+const COOKIE_REFRESH_MAX_RETRY_MS = 5 * 60_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 type Dependencies = {
   store: LoginUserInfoStore;
@@ -31,6 +36,12 @@ export type AuthCredentialLease = Readonly<{
   credentialVersion: string;
 }>;
 
+type CookieRenewal = {
+  lease: AuthCredentialLease;
+  refreshAt: number;
+  retryDelayMs: number;
+};
+
 export class LoginService {
   private state: AuthState;
   private generation = 0;
@@ -39,6 +50,10 @@ export class LoginService {
   private queue: Promise<unknown> = Promise.resolve();
   private loginAttempt: { controller: AbortController; promise: Promise<AuthActionResult> } | null =
     null;
+  private cookieRenewal: CookieRenewal | null = null;
+  private cookieRenewalPaused = true;
+  private cookieRenewalTimer: ReturnType<typeof setTimeout> | null = null;
+  private cookieRenewalRequest: { controller: AbortController | null } | null = null;
   private disposed = false;
   private readonly lifetime = new AbortController();
 
@@ -50,8 +65,10 @@ export class LoginService {
     return this.state;
   }
 
-  /** File import restores display state only; existing startup owns JWT/model recovery. */
+  /** File import restores display state; only an SDK-confirmed session can renew its Cookie. */
   async restoreFromFile(): Promise<void> {
+    if (this.disposed) return;
+    this.pauseCookieRenewal();
     const generation = ++this.generation;
     const login = this.dependencies.store.read();
     this.applyLogin(login, AuthStatus.LocalCredentials);
@@ -62,14 +79,12 @@ export class LoginService {
         signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)]),
         profile: login.profile,
       });
-      if (
-        !this.disposed &&
-        generation === this.generation &&
-        confirmed &&
-        this.dependencies.store.read()?.identity === login.identity
-      ) {
-        this.setState({ status: AuthStatus.SignedIn });
-      }
+      if (!confirmed || this.disposed || generation !== this.generation) return;
+      const current = this.dependencies.store.read();
+      if (current?.identity !== login.identity) return;
+      this.applyLogin(current, AuthStatus.SignedIn);
+      this.scheduleCookieRenewal(current, { restored: true });
+      this.publishHeaders(current);
     } catch {
       // Local credentials can still drive native model recovery while SDK restoration is unavailable.
     }
@@ -84,6 +99,7 @@ export class LoginService {
     if (!this.dependencies.adapter.available) {
       return Promise.resolve(this.failure(AuthErrorCode.SdkUnavailable));
     }
+    this.pauseCookieRenewal();
     const generation = ++this.generation;
     const controller = new AbortController();
     this.setState({
@@ -92,7 +108,10 @@ export class LoginService {
       errorCode: null,
     });
     const promise = this.runLogin(generation, controller).finally(() => {
-      if (this.loginAttempt?.controller === controller) this.loginAttempt = null;
+      if (this.loginAttempt?.controller === controller) {
+        this.loginAttempt = null;
+        this.scheduleCookieRenewal(this.dependencies.store.read());
+      }
     });
     this.loginAttempt = { controller, promise };
     return promise;
@@ -105,6 +124,7 @@ export class LoginService {
 
   private beginLogout(): number {
     const generation = ++this.generation;
+    this.pauseCookieRenewal();
     this.loginAttempt?.controller.abort();
     this.loginAttempt = null;
     return generation;
@@ -118,6 +138,7 @@ export class LoginService {
       this.dependencies.store.clear();
     } catch {
       this.setState({ operation: AuthOperation.Idle });
+      this.scheduleCookieRenewal(this.dependencies.store.read());
       return this.failure(AuthErrorCode.StorageFailed);
     }
     this.applyLogin(null, AuthStatus.SignedOut);
@@ -167,8 +188,16 @@ export class LoginService {
     lease: AuthCredentialLease,
     update: CredentialUpdate,
   ): Promise<AuthActionResult> {
+    return this.commitCredentials(lease, update);
+  }
+
+  private commitCredentials(
+    lease: AuthCredentialLease,
+    update: CredentialUpdate,
+    renewal?: CookieRenewal,
+  ): Promise<AuthActionResult> {
     return this.enqueue(async () => {
-      const cookieProvided = Object.hasOwn(update?.headerValues ?? {}, COOKIE_HEADER_NAME);
+      const cookieProvided = Object.hasOwn(update?.headerValues ?? {}, 'X-Cookie');
       const report = (result: AuthActionResult, cookieChanged = false): AuthActionResult => {
         const message = `[LoginService] Credential update ${JSON.stringify({
           result: result.success ? 'success' : result.errorCode,
@@ -183,15 +212,31 @@ export class LoginService {
       if (!this.matchesCredentialLease(lease, current)) {
         return report(this.failure(AuthErrorCode.SessionChanged));
       }
+      if (renewal) {
+        if (this.cookieRenewalPaused || this.cookieRenewal !== renewal) {
+          return this.failure(AuthErrorCode.SessionChanged);
+        }
+        const cookie = update?.headerValues?.['X-Cookie'];
+        if (!cookieProvided || typeof cookie !== 'string' || !cookie.trim()) {
+          return { success: false, errorCode: AuthErrorCode.SyncFailed, state: this.state };
+        }
+      }
       let next: StoredLogin;
       try {
         next = this.dependencies.store.update(current, update);
       } catch {
         return report(this.failure(AuthErrorCode.StorageFailed));
       }
-      const cookieChanged = current.values[COOKIE_HEADER_NAME] !== next.values[COOKIE_HEADER_NAME];
+      const previousCookie = current.values['X-Cookie'];
+      const nextCookie = next.values['X-Cookie'];
+      const cookieChanged = previousCookie !== nextCookie;
+      const outboundCookieChanged =
+        (typeof previousCookie === 'string' ? previousCookie.trim() : '') !==
+        (typeof nextCookie === 'string' ? nextCookie.trim() : '');
       this.identity = next.identity;
       this.credentialVersion = next.credentialVersion;
+      if (renewal || outboundCookieChanged) this.cookieRenewal = null;
+      this.scheduleCookieRenewal(next);
       if (next.identity !== current.identity) {
         this.setState({ operation: AuthOperation.Sync, errorCode: null });
         const synced = await this.sync(next);
@@ -202,11 +247,7 @@ export class LoginService {
         );
       }
       try {
-        if ('onHeadersCommitted' in this.dependencies) {
-          this.dependencies.onHeadersCommitted();
-        } else {
-          this.dependencies.publishCommittedHeaders(next.values);
-        }
+        this.publishHeaders(next);
       } catch {
         this.setState({ syncStatus: AuthSyncStatus.Failed });
         return report(this.failure(AuthErrorCode.SyncFailed), cookieChanged);
@@ -229,12 +270,105 @@ export class LoginService {
     if (this.disposed) return;
     this.disposed = true;
     this.generation += 1;
+    this.cookieRenewal = null;
+    this.pauseCookieRenewal();
     this.loginAttempt?.controller.abort();
     this.lifetime.abort();
     try {
       this.dependencies.adapter.dispose?.();
     } catch {
       console.warn('[LoginService] SDK cleanup did not complete.');
+    }
+  }
+
+  onSystemResume(): void {
+    this.armCookieRenewal();
+  }
+
+  private pauseCookieRenewal(): void {
+    this.cookieRenewalPaused = true;
+    this.armCookieRenewal();
+    this.cookieRenewalRequest?.controller?.abort();
+  }
+
+  private scheduleCookieRenewal(
+    login: StoredLogin | null,
+    { restored = false }: { restored?: boolean } = {},
+  ): void {
+    this.pauseCookieRenewal();
+    if (this.loginAttempt) return;
+    const previous = restored ? null : this.cookieRenewal;
+    this.cookieRenewal = null;
+    const adapter = this.dependencies.adapter;
+    const lease = this.captureCredentialLease();
+    if (
+      this.state.status !== AuthStatus.SignedIn ||
+      !adapter.available || !adapter.refreshCredentials || !lease || !this.matchesCredentialLease(lease, login)
+    ) return;
+
+    const cookie = login.values['X-Cookie'];
+    if (typeof cookie !== 'string' || !cookie.trim()) return;
+    const intervalMs = LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs;
+    if (!Number.isSafeInteger(intervalMs) || intervalMs < COOKIE_REFRESH_MIN_INTERVAL_MS) return;
+    const now = Date.now();
+    this.cookieRenewal = {
+      lease,
+      refreshAt: previous?.refreshAt ?? (restored ? now : now + intervalMs),
+      retryDelayMs: previous?.retryDelayMs ?? COOKIE_REFRESH_RETRY_MS,
+    };
+    this.cookieRenewalPaused = false;
+    this.armCookieRenewal();
+  }
+
+  private armCookieRenewal(): void {
+    if (this.cookieRenewalTimer !== null) clearTimeout(this.cookieRenewalTimer);
+    this.cookieRenewalTimer = null;
+    const renewal = this.cookieRenewal;
+    if (!renewal || this.cookieRenewalPaused || this.cookieRenewalRequest) return;
+    const delayMs = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, renewal.refreshAt - Date.now()));
+    this.cookieRenewalTimer = setTimeout(() => {
+      this.cookieRenewalTimer = null;
+      if (this.cookieRenewalPaused || this.cookieRenewal !== renewal) return;
+      if (Date.now() < renewal.refreshAt) this.armCookieRenewal();
+      else void this.renewCookie(renewal);
+    }, delayMs);
+    this.cookieRenewalTimer.unref();
+  }
+
+  private async renewCookie(renewal: CookieRenewal): Promise<void> {
+    const adapter = this.dependencies.adapter;
+    if (!adapter.available || !adapter.refreshCredentials || !this.matchesCredentialLease(renewal.lease, this.dependencies.store.read())) {
+      this.cookieRenewal = null;
+      this.pauseCookieRenewal();
+      return;
+    }
+    const controller = new AbortController();
+    const request: { controller: AbortController | null } = { controller };
+    this.cookieRenewalRequest = request;
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(COOKIE_REFRESH_TIMEOUT_MS)]);
+    try {
+      const update = await adapter.refreshCredentials({ signal });
+      request.controller = null;
+      if (!signal.aborted && !this.cookieRenewalPaused && this.cookieRenewal === renewal) {
+        const result = await this.commitCredentials(renewal.lease, update, renewal);
+        if (!result.success && result.errorCode === AuthErrorCode.SessionChanged && this.cookieRenewal === renewal) {
+          this.cookieRenewal = null;
+          this.pauseCookieRenewal();
+        }
+      }
+    } catch {
+      // Retries below are confined to this still-current schedule.
+    } finally {
+      if (this.cookieRenewalRequest === request) {
+        this.cookieRenewalRequest = null;
+        if (!this.cookieRenewalPaused && this.cookieRenewal === renewal) {
+          const delayMs = renewal.retryDelayMs;
+          renewal.refreshAt = Date.now() + delayMs;
+          renewal.retryDelayMs = Math.min(COOKIE_REFRESH_MAX_RETRY_MS, delayMs * 2);
+          console.warn(`[LoginService] Cookie renewal retry scheduled ${JSON.stringify({ delayMs })}`);
+        }
+        this.armCookieRenewal();
+      }
     }
   }
 
@@ -325,12 +459,25 @@ export class LoginService {
   }
 
   private applyLogin(login: StoredLogin | null, status: AuthState['status']): void {
+    // A cleared identity releases a canceled SDK request even if it never settles.
+    if (!login) {
+      this.cookieRenewal = null;
+      this.cookieRenewalRequest = null;
+    }
     this.identity = login?.identity ?? null;
     this.credentialVersion = login?.credentialVersion ?? null;
     this.setState({
       status: login ? status : AuthStatus.SignedOut,
       profile: login?.profile ?? null,
     });
+  }
+
+  private publishHeaders(login: StoredLogin): void {
+    if ('onHeadersCommitted' in this.dependencies) {
+      this.dependencies.onHeadersCommitted();
+    } else {
+      this.dependencies.publishCommittedHeaders(login.values);
+    }
   }
 
   private matchesCredentialLease(

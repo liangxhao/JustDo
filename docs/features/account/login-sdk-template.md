@@ -23,8 +23,8 @@ SDK 会话清理期间保持该状态。退出完成后恢复“登录”，失�
 ### 已实现与待接入
 
 模板已实现账号状态投影、可信 SDK 结果的提交、凭据原子写入、登录/退出后的服务更新、
-取消与迟到结果保护、失败重试，以及 Cookie 更新与 mtoken 轮换的 Main 内部接入点。
-真实登录 UI、身份服务、远端撤销和 Cookie 自动续期调度由后续开发者接入。
+取消与迟到结果保护、失败重试、Cookie 自动续期调度，以及 Cookie 更新与 mtoken 轮换的 Main 内部接入点。
+真实登录 UI、身份服务、远端撤销与续期请求由 SDK 适配器接入。
 
 ## 所有权与数据流
 
@@ -88,15 +88,16 @@ Main 注入现有 `refreshAfterLogin`、`refreshAfterLogout` 和请求头值刷�
 - `restoreSession({ signal, profile })`：可选；使用 SDK 自己的会话验证能力确认身份。
   不可仅根据传入的显示资料返回 true。
 - `logout({ signal })`：可选；清理 SDK 自己的会话/远端会话。本地凭据清理由产品负责。
-- `refreshCredentials({ signal })`：可选；供后续 Main 续期协调器使用，不向 Renderer 开放。
+- `refreshCredentials({ signal })`：可选；提供后由 Main 调度。调用 SDK 的续期能力，在 `headerValues` 中返回 `X-Cookie`，
+  取消时应结束请求，凭据提交由 Main 负责。SDK 自行调度时不提供此方法，使用下文的租约接口提交。
 - `dispose()`：可选；应用退出时取消 SDK 自己的续期任务并移除会话监听器。
 
 ### SDK 结果与设备标识
 
 SDK session 必须提供 `account` 与长期 `mtoken`，可提供 `displayName`、HTTP(S) `avatarUrl`、
-`headerValues`（例如 `X-Cookie`）和 `cookieExpiresAt`（Unix 毫秒）。产品映射为
+`headerValues`（Cookie 使用 `X-Cookie` 源字段）。产品映射为
 `X-User-Account`、`mtoken`、`userName`、`avatarUrl` 和对应 Header 字段，并记录 loginTime。
-Header 值不允许控制字符；SDK 不能通过 headerValues 覆盖账号、mtoken、Authorization、派生 JWT 或显示/有效期元数据。
+Header 值不允许控制字符；SDK 不能通过 headerValues 覆盖账号、mtoken、Authorization、派生 JWT 或登录元数据。
 如果 SDK 只能在 Renderer 运行，后续开发者必须在 Main 交换或验证其结果；不得新增接受
 `loggedIn: true` 或任意凭据对象即启用模型的接口。
 
@@ -106,13 +107,14 @@ SDK 登录需要设备标识时，应与模型换证共用 Main 的 `src/main/co
 
 ## Cookie 与 mtoken 更新
 
-Cookie 有效期、长期 mtoken 与模型 JWT 分别管理；JWT 由已有模型凭据监控器续期。Cookie 的实际到期时间以接入 SDK/服务端返回为准，不能用账号仍登录推断 Cookie 有效。
-每次异步续期开始前，Main 协调器从 LoginService 捕获 credential lease，完成后提交：
+Cookie、长期 mtoken 与模型 JWT 分别管理。JWT 由已有模型凭据监控器续期，Cookie 由登录 SDK 刷新。
+每次自动续期开始前，`LoginService` 捕获 credential lease，收到 SDK 结果后使用同一个租约提交。
+SDK 自行调度时，同样必须在异步请求之前捕获租约，取得结果后提交：
 
 ```ts
 const lease = service.captureCredentialLease();
-if (!lease || !adapter.refreshCredentials) return;
-const update = await adapter.refreshCredentials({ signal });
+if (!lease) return;
+const update = await renewThroughSdk({ signal }); // SDK 自行调度的请求
 await service.updateCredentials(lease, update);
 ```
 
@@ -123,18 +125,22 @@ mtoken 改变则重新执行完整登录刷新以换取新 JWT。lease 同时绑
 SDK 确认会话失效时可调用 `expireSession(lease)`；队列执行时会重新检查 lease 和磁盘版本后才删除
 凭据，避免清理等待期间替换的文件。不能把一次网络失败当成退出。
 
-### 后续续期调度的要求
+### Main 自动续期
 
-后续续期调度必须先确认 SDK 是否自行自动续期。应用自己调度时，在 Main 根据 SDK/服务端提供的
-过期时间提前刷新；登录后开始，退出/销毁时停止，恢复启动与休眠唤醒时检查。失败采用有界退避，
-Cookie 真正过期后停止使用过期值；Cookie 过期不等同于 mtoken 或账号会话失效。
-未配置 SDK 时不启动模拟定时器。当前接口不自动判断 Cookie 到期，也不能替身份服务获取新 Cookie。
+SDK 确认登录或恢复会话，且已保存 Cookie 并提供 `refreshCredentials` 时，Main 使用 `src/config/loginStorage.ts` 中的
+`cookieRefreshIntervalMs` 固定周期续期。默认半小时，启动恢复确认后立即补查一次。续期结果包含非空的
+`headerValues['X-Cookie']` 即可，Cookie 字符串可以与上次相同。
+
+系统唤醒时按当前时间核对计划。账号切换和退出会取消旧请求，退出清理失败后恢复原账号的调度，应用销毁时停止。
+请求使用 15 秒取消信号，适配器需响应取消并结束请求。同一会话一次只发一个续期请求，失败从 5 秒退避，最长 5 分钟。
+续期失败时保留上次已提交的 Cookie 值。续期成功后写入登录文件，再直接发布已提交的请求头值。
+SDK 未确认的手工导入会话仅恢复显示，应用不自行获取 Cookie。
 
 ## 手工凭据联调
 
 无需为了手动导入新增开发入口。现有启动流程继续读取由 `resolveOutboundHeaderUserInfoPath()`
-解析的文件、换取 JWT、发现模型、同步 Gateway 并启动模型凭据监控。账号模板在其后仅恢复显示，
-不重复启动换证或轮询，也不以 SDK 可用性限制模型启动。
+解析的文件、换取 JWT、发现模型、同步 Gateway 并启动模型凭据监控。账号模板在其后恢复显示，
+SDK 确认会话后可安排 Cookie 续期。模型启动继续使用原有的 JWT 生命周期。
 
 文件路径是 `<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`，
 目录名与用户信息文件名分别来自 `src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG`，
@@ -158,7 +164,8 @@ Cookie 真正过期后停止使用过期值；Cookie 过期不等同于 mtoken �
 ## 验收
 
 自动测试覆盖 SDK 缺失、手工导入、取消、原子写入失败、登录后刷新失败与重试、退出清理失败、
-账号替换、重复点击、迟到回调、Cookie 保留 mtoken、mtoken 轮换、过时 lease、应用销毁、
+账号替换、重复点击、迟到回调、Cookie 固定周期续期、唤醒补查、退出失败后的续期恢复、
+Cookie 保留 mtoken、mtoken 轮换、过时 lease、应用销毁、
 状态脱敏、IPC 来源限制、界面 revision 竞态和登录阶段切换。真实 SDK 接入后另验弹窗父子关系、
 提交并隐藏弹窗时的阶段通知、远端身份验证、
-abort 清理、会话恢复、过期时间与休眠唤醒调度。现阶段不承诺真实服务已联调。
+abort 清理、会话恢复、续期周期与休眠唤醒调度。现阶段不承诺真实服务已联调。

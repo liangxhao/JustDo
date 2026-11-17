@@ -9,7 +9,6 @@ export type AuthenticatedLogin = Readonly<{
   displayName?: string;
   avatarUrl?: string;
   headerValues?: Readonly<Record<string, string>>;
-  cookieExpiresAt?: number;
 }>;
 
 export const LoginSdkStatus = {
@@ -24,7 +23,6 @@ export type LoginSdkResult =
 export type CredentialUpdate = Readonly<{
   mtoken?: string;
   headerValues?: Readonly<Record<string, string>>;
-  cookieExpiresAt?: number;
 }>;
 
 export interface LoginSdkAdapter {
@@ -34,7 +32,7 @@ export interface LoginSdkAdapter {
   /** Optional SDK session restoration; must verify, not infer login from file presence. */
   restoreSession?: (options: { signal: AbortSignal; profile: AuthProfile }) => Promise<boolean>;
   logout?: (options: { signal: AbortSignal }) => Promise<void>;
-  /** Future renewal coordinator uses expiry metadata, never a fixed half-day interval. */
+  /** Opt into Main scheduling. Settle on abort and return X-Cookie in headerValues. */
   refreshCredentials?: (options: { signal: AbortSignal }) => Promise<CredentialUpdate>;
   /** Remove session listeners and stop SDK-owned renewal when the app shuts down. */
   dispose?: () => void;

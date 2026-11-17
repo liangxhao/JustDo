@@ -45,6 +45,7 @@ import {
 } from '../shared/cowork/workspaceWindow';
 import type { ProxySettings } from '../shared/network/proxy';
 import { EngineFailureReason, EnginePhase } from '../shared/openclaw/engineStatus';
+import { OpenClawModelsIpc } from '../shared/openclaw/models';
 import { WorkboardIpc } from '../shared/openclaw/workboard';
 import { OpenClawExtensionId } from '../shared/plugins/nativeIds';
 import { HOME_WORKSPACE_SESSION_ID } from '../shared/preview/filePreview';
@@ -1028,13 +1029,15 @@ const getLocalSpeechModelService = (): LocalSpeechModelService => {
   return localSpeechModelService;
 };
 
-const notifyBuiltinModelsChanged = (): void => {
+const notifyModelChange = (
+  channel: typeof BuiltinModelIpc.Changed | typeof OpenClawModelsIpc.Changed,
+): void => {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (window.isDestroyed()) {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) {
       continue;
     }
     try {
-      window.webContents.send(BuiltinModelIpc.Changed);
+      window.webContents.send(channel);
     } catch (error) {
       writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.NotificationFailed, {
         errorCode: getBuiltinModelAuthErrorCode(error),
@@ -1043,12 +1046,15 @@ const notifyBuiltinModelsChanged = (): void => {
   }
 };
 
+const notifyRuntimeModelsChanged = (): void => notifyModelChange(OpenClawModelsIpc.Changed);
+
 const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
   if (!builtinModelLifecycle) {
     builtinModelLifecycle = new BuiltinModelLifecycle({
       getStore,
       syncOpenClawConfig,
-      notifyModelsChanged: notifyBuiltinModelsChanged,
+      notifyCatalogChanged: () => notifyModelChange(BuiltinModelIpc.Changed),
+      notifyRuntimeModelsChanged,
     });
   }
   return builtinModelLifecycle;
@@ -1158,6 +1164,10 @@ const getCoworkEngineService = (): CoworkEngineService => {
         runtime.on('gatewayEvent', event => diagnostics.observe(event));
         runtime.on('diagnosticCancellation', event => diagnostics.recordCancellation(event));
         runtime.on('diagnosticConnection', event => diagnostics.recordConnection(event));
+        runtime.on('gatewayReady', () => {
+          if (runtime.getGatewayClient()) notifyRuntimeModelsChanged();
+        });
+        runtime.on('gatewayDisconnected', notifyRuntimeModelsChanged);
       },
     });
   }
@@ -3185,6 +3195,7 @@ if (agentBridgeArgv) {
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
     powerMonitor.on('resume', () => {
+      loginService?.onSystemResume();
       getOpenClawRuntimeAdapter()?.onSystemResume();
     });
 

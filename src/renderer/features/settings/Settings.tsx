@@ -38,6 +38,7 @@ import {
   parseGatewayPortInput,
 } from '@shared/openclaw/gatewayPort';
 import { normalizeOpenClawProviderId } from '@shared/providers';
+import { BuiltinModelRefreshErrorCode } from '@shared/providers/builtinModels';
 import {
   buildProviderModelsUrl,
   DEFAULT_MODEL_CONTEXT_LENGTH,
@@ -170,6 +171,12 @@ interface SettingsProps extends SettingsOpenOptions {
 }
 const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const SAVE_SUCCESS_FEEDBACK_DURATION_MS = 1_800;
+const builtinModelRefreshMessages: Record<BuiltinModelRefreshErrorCode, string> = {
+  [BuiltinModelRefreshErrorCode.DeviceUnavailable]: 'builtinModelRefreshDeviceUnavailable',
+  [BuiltinModelRefreshErrorCode.ExchangeTimeout]: 'builtinModelRefreshExchangeTimeout',
+  [BuiltinModelRefreshErrorCode.ExchangeHttpError]: 'builtinModelRefreshExchangeHttpError',
+  [BuiltinModelRefreshErrorCode.Failed]: 'builtinModelRefreshFailed',
+};
 const buildModelDiscoveryHeaders = (
   apiKey: string,
   customHeaders?: Record<string, string>,
@@ -914,7 +921,11 @@ const Settings: React.FC<SettingsProps> = ({
     try {
       const result = await window.electron.builtinModels.refresh();
       if (!result.success) {
-        setError(result.error || i18nService.t('connectionFailed'));
+        const message = result.errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError &&
+          result.httpStatus !== undefined
+          ? i18nService.t('builtinModelRefreshExchangeHttpStatus').replace('{status}', String(result.httpStatus))
+          : i18nService.t(builtinModelRefreshMessages[result.errorCode] ?? 'builtinModelRefreshFailed');
+        setError(message);
       } else {
         const refreshedConfig = await configService.reloadFromStore();
         if (refreshedConfig.providers) {
@@ -929,9 +940,8 @@ const Settings: React.FC<SettingsProps> = ({
           );
         }
       }
-    } catch (error) {
-      console.error('[Settings] Failed to refresh builtin models:', error);
-      setError(error instanceof Error ? error.message : i18nService.t('connectionFailed'));
+    } catch {
+      setError(i18nService.t('builtinModelRefreshFailed'));
     } finally {
       setIsRefreshingBuiltinModels(false);
     }

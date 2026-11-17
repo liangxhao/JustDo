@@ -11,7 +11,7 @@ import {
   getOutboundHeaderUserInfo,
   publishOutboundHeaderUserInfoCache,
 } from '../../network/outboundHeaderPolicyConfig';
-import type { AuthenticatedLogin, LoginSdkAdapter, LoginSdkResult } from './loginSdkAdapter';
+import type { AuthenticatedLogin, CredentialUpdate, LoginSdkAdapter, LoginSdkResult } from './loginSdkAdapter';
 import { LoginService } from './loginService';
 import { LoginUserInfoStore } from './loginUserInfoStore';
 
@@ -24,6 +24,7 @@ const session: AuthenticatedLogin = {
 };
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   for (const directory of directories.splice(0))
     fs.rmSync(directory, { recursive: true, force: true });
@@ -254,7 +255,6 @@ test('Cookie renewal preserves long-lived mtoken and other tool fields and refre
     (
       await context.service.updateCredentials(lease, {
         headerValues: { 'X-Cookie': 'renewed-cookie' },
-        cookieExpiresAt: 1_800_000_000_000,
       })
     ).success,
   ).toBe(true);
@@ -263,11 +263,158 @@ test('Cookie renewal preserves long-lived mtoken and other tool fields and refre
     'X-User-Account': 'alice',
     'X-Cookie': 'renewed-cookie',
     'X-Tool-Token': 'synthetic-tool-token',
-    cookieExpiresAt: 1_800_000_000_000,
   });
   expect(context.onHeadersCommitted).toHaveBeenCalledTimes(1);
   expect(context.onHeadersCommitted).toHaveBeenCalledWith();
   expect(context.onLoginCommitted).not.toHaveBeenCalled();
+});
+
+test('drops obsolete Cookie expiry metadata when saving a credential update', async () => {
+  const context = setup();
+  const login = context.store.writeLogin(session);
+  fs.writeFileSync(context.file, JSON.stringify({ ...login.values, cookieExpiresAt: 1_800_000_000_000 }));
+  await context.service.restoreFromFile();
+
+  await expect(context.service.updateCredentials(context.service.captureCredentialLease()!, {
+    headerValues: { 'X-Cookie': 'replacement-cookie' },
+  })).resolves.toMatchObject({ success: true });
+  expect(context.store.read()?.values).not.toHaveProperty('cookieExpiresAt');
+});
+
+test('backs off on failed renewal, preserves committed headers, and publishes the replacement', async () => {
+  vi.useFakeTimers();
+  const refresh = vi.fn()
+    .mockRejectedValueOnce(new Error('private-renewal-error'))
+    .mockResolvedValueOnce({ headerValues: { 'X-Cookie': ' ' } })
+    .mockResolvedValueOnce({ headerValues: { 'X-Cookie': 'renewed-cookie' } });
+  const context = setup({ refreshCredentials: refresh }, values => {
+    publishOutboundHeaderUserInfoCache(values, ['X-Cookie', 'X-Tool-Token']);
+  });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+  await context.service.login();
+  await vi.advanceTimersByTimeAsync(LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs);
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(getOutboundHeaderUserInfo(context.file)['X-Cookie']).toBe('synthetic-cookie');
+
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(refresh).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(getOutboundHeaderUserInfo(context.file)).toEqual({
+    'X-Cookie': 'synthetic-cookie',
+    'X-Tool-Token': 'synthetic-tool-token',
+  });
+  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(refresh).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(refresh).toHaveBeenCalledTimes(3);
+  expect(context.store.read()?.values).toMatchObject({
+    'X-Cookie': 'renewed-cookie', mtoken: session.mtoken,
+  });
+  expect(getOutboundHeaderUserInfo(context.file)['X-Cookie']).toBe('renewed-cookie');
+  expect(context.onLoginCommitted).toHaveBeenCalledOnce();
+  expect(JSON.stringify(warn.mock.calls)).not.toContain('private-renewal-error');
+  context.service.dispose();
+});
+
+test('renews on the configured interval and checks a missed renewal on wake', async () => {
+  vi.useFakeTimers();
+  const interval = LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs;
+  const refresh = vi.fn()
+    .mockResolvedValueOnce({ headerValues: { 'X-Cookie': 'first-renewal' } })
+    .mockResolvedValueOnce({ headerValues: { 'X-Cookie': 'second-renewal' } });
+  const context = setup({ refreshCredentials: refresh });
+
+  await context.service.login();
+  await vi.advanceTimersByTimeAsync(interval - 1);
+  expect(refresh).not.toHaveBeenCalled();
+  await context.service.updateCredentials(context.service.captureCredentialLease()!, {
+    headerValues: { 'X-Tool-Token': 'updated-tool-token', 'X-Cookie': ' synthetic-cookie ' },
+  });
+  await vi.advanceTimersByTimeAsync(1);
+  expect(context.store.read()?.values['X-Cookie']).toBe('first-renewal');
+  vi.setSystemTime(Date.now() + interval + 1);
+  context.service.onSystemResume();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(context.store.read()?.values['X-Cookie']).toBe('second-renewal');
+  expect(refresh).toHaveBeenCalledTimes(2);
+  expect(context.onLoginCommitted).toHaveBeenCalledOnce();
+  context.service.dispose();
+});
+
+test.each([false, true])('only resumes automatic renewal after verified SDK restore (%s)', async confirmed => {
+  vi.useFakeTimers();
+  const response = Promise.withResolvers<CredentialUpdate>();
+  const refresh = vi.fn((_options: { signal: AbortSignal }) => response.promise);
+  const context = setup({ restoreSession: async () => confirmed, refreshCredentials: refresh });
+  context.store.writeLogin(session);
+
+  await context.service.restoreFromFile();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(refresh).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+  context.service.onSystemResume();
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(refresh).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+  expect(context.onLoginCommitted).not.toHaveBeenCalled();
+
+  context.service.dispose();
+  expect(refresh.mock.calls[0]?.[0].signal.aborted).toBe(confirmed ? true : undefined);
+  response.resolve({ headerValues: { 'X-Cookie': 'too-late' } });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(context.store.read()?.values['X-Cookie']).toBe('synthetic-cookie');
+});
+
+test('aborts a pending Cookie renewal on logout and discards its late result after signing in again', async () => {
+  vi.useFakeTimers();
+  const interval = LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs;
+  const response = Promise.withResolvers<CredentialUpdate>();
+  const refresh = vi.fn((_options: { signal: AbortSignal }) => response.promise)
+    .mockImplementationOnce(() => response.promise)
+    .mockResolvedValueOnce({
+      headerValues: { 'X-Cookie': 'bob-renewed-cookie' },
+    });
+  const context = setup({ refreshCredentials: refresh });
+
+  await context.service.login();
+  await vi.advanceTimersByTimeAsync(interval);
+  expect(refresh).toHaveBeenCalledOnce();
+  await context.service.logout();
+  expect(refresh.mock.calls[0][0].signal.aborted).toBe(true);
+
+  context.adapter.login = async () => ({ status: 'authenticated', session: {
+    ...session, account: 'bob', mtoken: 'bob-fixture-token', headerValues: { 'X-Cookie': 'bob-cookie' },
+  } });
+  await context.service.login();
+  await vi.advanceTimersByTimeAsync(interval);
+  expect(context.store.read()?.values['X-Cookie']).toBe('bob-renewed-cookie');
+  expect(refresh).toHaveBeenCalledTimes(2);
+  response.resolve({ headerValues: { 'X-Cookie': 'late-cookie' } });
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(context.store.read()?.profile.account).toBe('bob');
+  expect(context.store.read()?.values['X-Cookie']).toBe('bob-renewed-cookie');
+  expect(context.onHeadersCommitted).toHaveBeenCalledOnce();
+  context.service.dispose();
+});
+
+test('resumes Cookie renewal when logout cannot clear the signed-in credentials', async () => {
+  vi.useFakeTimers();
+  const refresh = vi.fn(async () => ({ headerValues: { 'X-Cookie': 'renewed-cookie' } }));
+  const context = setup({ refreshCredentials: refresh });
+  await context.service.login();
+  await vi.advanceTimersByTimeAsync(LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs - 1);
+  vi.spyOn(context.store, 'clear').mockImplementationOnce(() => { throw new Error('fixture'); });
+
+  expect((await context.service.logout()).errorCode).toBe(AuthErrorCode.StorageFailed);
+  await vi.advanceTimersByTimeAsync(1);
+
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
+  expect(context.store.read()?.values['X-Cookie']).toBe('renewed-cookie');
+  expect(context.onLogoutCommitted).not.toHaveBeenCalled();
+  context.service.dispose();
 });
 
 test.each([false, true])('Cookie renewal publishes committed values without reopening the login file (mtoken rotated: %s)', async rotateMtoken => {
@@ -443,6 +590,21 @@ test('restoring a verified SDK session does not create a second model refresh', 
   context.store.writeLogin(session);
   await context.service.restoreFromFile();
   expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
+  expect(context.onLoginCommitted).not.toHaveBeenCalled();
+});
+
+test('restoration publishes the latest committed Cookie for the verified account', async () => {
+  const verification = Promise.withResolvers<boolean>();
+  const publish = vi.fn();
+  const context = setup({ restoreSession: () => verification.promise }, publish);
+  context.store.writeLogin(session);
+  const restoration = context.service.restoreFromFile();
+  context.store.writeLogin({ ...session, headerValues: { 'X-Cookie': 'updated-during-restore' } });
+
+  verification.resolve(true);
+  await restoration;
+
+  expect(publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ 'X-Cookie': 'updated-during-restore' }));
   expect(context.onLoginCommitted).not.toHaveBeenCalled();
 });
 

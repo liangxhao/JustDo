@@ -265,6 +265,7 @@ import {
   SystemPromptReplacementIpc,
   type SystemPromptReplacementRule,
 } from '../../shared/prompts/systemPromptReplacements';
+import { BuiltinModelIpc, type BuiltinModelRefreshResult } from '../../shared/providers/builtinModels';
 import {
   type MediaGenerationModelConfiguration,
   type MediaGenerationModelKind,
@@ -782,6 +783,11 @@ contextBridge.exposeInMainWorld('electron', {
     },
     models: {
       list: (options?: { agentId?: string }) => ipcRenderer.invoke(OpenClawModelsIpc.List, options),
+      onChanged: (callback: () => void) => {
+        const handler = () => callback();
+        ipcRenderer.on(OpenClawModelsIpc.Changed, handler);
+        return () => ipcRenderer.removeListener(OpenClawModelsIpc.Changed, handler);
+      },
     },
     memory: {
       getOverview: (agentId?: string) => ipcRenderer.invoke(MemoryIpc.GetOverview, agentId),
@@ -1347,7 +1353,7 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   builtinModels: {
-    refresh: () => ipcRenderer.invoke('builtinModels:refresh'),
+    refresh: (): Promise<BuiltinModelRefreshResult> => ipcRenderer.invoke(BuiltinModelIpc.Refresh),
   },
   storageDirectory: {
     info: () => ipcRenderer.invoke(StorageDirectoryIpc.Info),

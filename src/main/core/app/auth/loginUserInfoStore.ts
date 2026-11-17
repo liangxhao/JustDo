@@ -90,12 +90,6 @@ function applyHeaders(
   }
 }
 
-function applyExpiry(values: Record<string, unknown>, expiry?: number): void {
-  if (expiry === undefined) return;
-  if (!Number.isSafeInteger(expiry) || expiry <= 0) throw new LoginStorageError();
-  values.cookieExpiresAt = expiry;
-}
-
 /** Owns atomic writes to the SAME resolved file used by the model exchange and header cache. */
 export class LoginUserInfoStore {
   constructor(private readonly filePath: string) {}
@@ -139,7 +133,6 @@ export class LoginUserInfoStore {
       const avatar = avatarUrl(session.avatarUrl);
       if (avatar) values.avatarUrl = avatar;
     }
-    applyExpiry(values, session.cookieExpiresAt);
     return values;
   }
 
@@ -147,9 +140,10 @@ export class LoginUserInfoStore {
     const values = { ...current.values };
     // JWT is derived by Main, never owned by the login SDK or written back here.
     delete values['X-ACCESS-JWT'];
+    // Drop retired metadata when updating an older login file.
+    delete values.cookieExpiresAt;
     if (update.mtoken !== undefined) values.mtoken = requiredString(update.mtoken, 32_768);
     applyHeaders(values, update.headerValues);
-    applyExpiry(values, update.cookieExpiresAt);
     return this.write(values);
   }
 

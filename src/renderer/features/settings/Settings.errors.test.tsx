@@ -2,6 +2,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { createDefaultAgentRuntimeSettings } from '@shared/agents/agentRuntimeSettings';
 import { createDefaultExternalAgentSettings } from '@shared/integrations/externalAgents';
+import { BuiltinModelRefreshErrorCode } from '@shared/providers/builtinModels';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -9,7 +10,11 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { LanguageModelSettingsProps } from './models/LanguageModelSettings';
 import Settings from './Settings';
 
-const { fetchModels } = vi.hoisted(() => ({ fetchModels: vi.fn() }));
+const { fetchModels, refreshBuiltinModels, locale } = vi.hoisted(() => ({
+  fetchModels: vi.fn(),
+  refreshBuiltinModels: vi.fn(),
+  locale: { language: 'zh' as 'zh' | 'en' },
+}));
 
 vi.mock('@/app/shell/window/WindowHeader', () => ({ default: () => null }));
 vi.mock('@/services/config', async () => {
@@ -38,19 +43,27 @@ vi.mock('@/theme/themeService', () => ({
     restoreTheme: vi.fn(),
   },
 }));
-vi.mock('@/services/i18n', () => ({
-  i18nService: {
-    t: (key: string) => key,
-    getLanguage: () => 'zh',
-    setLanguage: vi.fn(),
-    subscribe: () => () => {},
-  },
-}));
+vi.mock('@/services/i18n', async () => {
+  const { settingsTranslations } = await import('@/services/i18n/settingsTranslations');
+  const dictionary: Record<'zh' | 'en', Record<string, string>> = settingsTranslations;
+  return {
+    i18nService: {
+      t: (key: string) => key.startsWith('builtinModelRefresh')
+        ? dictionary[locale.language][key] ?? key : key,
+      getLanguage: () => locale.language,
+      setLanguage: vi.fn(),
+      subscribe: () => () => {},
+    },
+  };
+});
 vi.mock('./models/ModelSettingsTab', () => ({
   default: ({ languageSettings }: { languageSettings: LanguageModelSettingsProps }) => (
     <>
       <button type="button" onClick={languageSettings.handleDetectModels}>
         detect
+      </button>
+      <button type="button" onClick={languageSettings.handleRefreshBuiltinModels}>
+        refresh built-in models
       </button>
       <button
         type="button"
@@ -68,8 +81,11 @@ vi.mock('./models/ModelSettingsTab', () => ({
 
 beforeEach(() => {
   fetchModels.mockReset();
+  refreshBuiltinModels.mockReset();
+  locale.language = 'zh';
   vi.stubGlobal('electron', {
     api: { fetch: fetchModels },
+    builtinModels: { refresh: refreshBuiltinModels },
     cowork: {
       getAgentRuntimeSettings: vi
         .fn()
@@ -100,6 +116,47 @@ const renderSettings = (props: { notice?: string } = {}) =>
       <Settings initialTab="model" onClose={vi.fn()} {...props} />
     </Provider>,
   );
+
+test.each([
+  {
+    language: 'zh',
+    result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeTimeout },
+    message: '模型换证请求超时，请重试。',
+  },
+  {
+    language: 'en',
+    result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeHttpError, httpStatus: 403 },
+    message: 'The model authentication service returned HTTP 403.',
+  },
+  {
+    language: 'zh',
+    result: { errorCode: BuiltinModelRefreshErrorCode.DeviceUnavailable },
+    message: '无法获取用于模型换证的设备网卡地址。',
+  },
+] as const)('localizes the $result.errorCode built-in refresh failure in $language', async ({
+  language, result, message,
+}) => {
+  locale.language = language;
+  refreshBuiltinModels.mockResolvedValue({ success: false, error: 'opaque-fixture', ...result });
+
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'refresh built-in models' }));
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'settingsOperationFailed' });
+  expect(dialog.textContent).toContain(message);
+  expect(dialog.textContent).not.toContain('opaque-fixture');
+});
+
+test('shows a localized fallback when the built-in refresh bridge rejects', async () => {
+  refreshBuiltinModels.mockRejectedValue(new Error('private failure detail'));
+
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'refresh built-in models' }));
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'settingsOperationFailed' });
+  expect(dialog.textContent).toContain('无法刷新内置模型，请重试。');
+  expect(dialog.textContent).not.toContain('private failure detail');
+});
 
 test('shows the real HTTP status and server reason in a dialog and preserves the model draft', async () => {
   fetchModels.mockResolvedValue({

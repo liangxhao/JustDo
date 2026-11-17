@@ -449,36 +449,40 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const selectedAgentId = useSelector((state: RootState) => state.agent.currentAgentId);
     const effectiveAgentId =
       modelAgentId ?? (allowMainAgentSwitch ? selectedAgentId : MAIN_USER_AGENT_ID);
-    const loadOpenClawModelCatalog = useCallback(async () => {
-      const requestId = ++modelCatalogRequestRef.current;
+    useEffect(() => {
+      setOpenClawModelCatalog([]);
       if (
         !showModelSelector ||
         remoteManaged ||
         !effectiveAgentId ||
         availableModels.length === 0
       ) {
-        setOpenClawModelCatalog([]);
         return;
       }
-      try {
-        const [result] = await Promise.all([
-          coworkService.listModels({ agentId: effectiveAgentId }),
-          sessionId ? coworkService.refreshSessionModel(sessionId, effectiveAgentId) : undefined,
-        ]);
-        if (requestId === modelCatalogRequestRef.current) {
+      const loadOpenClawModelCatalog = async (onLoaded?: () => void) => {
+        const requestId = ++modelCatalogRequestRef.current;
+        try {
+          const result = await coworkService.listModels({ agentId: effectiveAgentId });
+          if (requestId !== modelCatalogRequestRef.current) return;
           setOpenClawModelCatalog(result.success ? result.models : []);
+          if (result.success) onLoaded?.();
+        } catch {
+          if (requestId === modelCatalogRequestRef.current) setOpenClawModelCatalog([]);
         }
-      } catch {
-        if (requestId === modelCatalogRequestRef.current) setOpenClawModelCatalog([]);
-      }
-    }, [availableModels, effectiveAgentId, remoteManaged, sessionId, showModelSelector]);
-    useEffect(() => {
-      setOpenClawModelCatalog([]);
+      };
+      const refreshSessionModel = () => {
+        if (sessionId) void coworkService.refreshSessionModel(sessionId, effectiveAgentId);
+      };
+      const unsubscribe = window.electron?.openclaw?.models?.onChanged?.(() => {
+        void loadOpenClawModelCatalog(refreshSessionModel);
+      });
       void loadOpenClawModelCatalog();
+      refreshSessionModel();
       return () => {
+        unsubscribe?.();
         modelCatalogRequestRef.current += 1;
       };
-    }, [loadOpenClawModelCatalog]);
+    }, [availableModels, effectiveAgentId, remoteManaged, sessionId, showModelSelector]);
     const selectableModels = useMemo(
       () => enrichModelsFromOpenClawCatalog(availableModels, openClawModelCatalog),
       [availableModels, openClawModelCatalog],

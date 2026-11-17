@@ -75,6 +75,16 @@ class TokenExchangeError extends Error {
   }
 }
 
+export class BuiltinModelTokenExchangeError extends Error {
+  constructor(
+    readonly reason: BuiltinModelAuthDiagnosticReason,
+    readonly httpStatus?: number,
+  ) {
+    super('Model authentication token exchange failed.');
+    this.name = 'BuiltinModelTokenExchangeError';
+  }
+}
+
 type Login = { mtoken: string; account: string; identity: string };
 type Dependencies = {
   userInfoPath: string;
@@ -296,11 +306,11 @@ export class BuiltinModelTokenExchange {
       if (generation !== this.generation) return null;
       const networkCode = stage === 'request' && !(error instanceof TokenExchangeError) && !timeoutSignal?.aborted
         ? resolveNetworkErrorCode(error) : undefined;
+      const reason = error instanceof TokenExchangeError
+        ? error.diagnosticReason
+        : timeoutSignal?.aborted ? BuiltinModelAuthDiagnosticReason.RequestTimeout : EXCHANGE_STAGE_REASONS[stage];
       writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.ExchangeFailed, {
-        generation, elapsedMs: Date.now() - startedAt, stage,
-        reason: error instanceof TokenExchangeError
-          ? error.diagnosticReason
-          : timeoutSignal?.aborted ? BuiltinModelAuthDiagnosticReason.RequestTimeout : EXCHANGE_STAGE_REASONS[stage],
+        generation, elapsedMs: Date.now() - startedAt, stage, reason,
         ...(httpStatus !== undefined ? { httpStatus } : {}),
         ...(networkCode !== undefined ? { networkCode } : {}),
         ...(credentialCode !== undefined ? { credentialCode } : {}),
@@ -312,7 +322,7 @@ export class BuiltinModelTokenExchange {
       }
       // Clear locally expired credentials even when the exchange server is unavailable.
       getActiveBuiltinModelCredential();
-      throw new Error('Model authentication token exchange failed.');
+      throw new BuiltinModelTokenExchangeError(reason, httpStatus);
     }
   }
 }

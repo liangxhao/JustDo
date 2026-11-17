@@ -3,12 +3,22 @@ import { ipcMain } from 'electron';
 import { AppConfigIpc, type AppConfigPatch } from '../../../shared/app/appConfig';
 import { buildCustomProviderRenameAliases, ProviderName } from '../../../shared/providers';
 import {
+  BuiltinModelIpc,
+  BuiltinModelRefreshErrorCode,
+  type BuiltinModelRefreshResult,
+} from '../../../shared/providers/builtinModels';
+import {
   mergeLocalSpeechExtensionSettingsPatch,
   reconcileLocalSpeechExtensionCatalog,
 } from '../../../shared/speech/localSpeechExtensionSettings';
 import { reconcileLocalSpeechCatalog } from '../../../shared/speech/localSpeechSettings';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { SqliteStore } from '../../data/sqliteStore';
+import {
+  BuiltinModelAuthDiagnosticReason,
+  getBuiltinModelAuthErrorCode,
+} from '../../providers/builtinModelAuthDiagnostics';
+import { BuiltinModelTokenExchangeError } from '../../providers/builtinModelTokenExchange';
 
 interface StoreHandlerDependencies {
   getStore: () => SqliteStore;
@@ -19,6 +29,14 @@ interface StoreHandlerDependencies {
   ) => Promise<void>;
   refreshBuiltinModels: () => Promise<void>;
 }
+
+const builtinModelRefreshErrorCodes: Partial<
+  Record<BuiltinModelAuthDiagnosticReason, BuiltinModelRefreshErrorCode>
+> = {
+  [BuiltinModelAuthDiagnosticReason.DeviceUnavailable]: BuiltinModelRefreshErrorCode.DeviceUnavailable,
+  [BuiltinModelAuthDiagnosticReason.RequestTimeout]: BuiltinModelRefreshErrorCode.ExchangeTimeout,
+  [BuiltinModelAuthDiagnosticReason.HttpRejected]: BuiltinModelRefreshErrorCode.ExchangeHttpError,
+};
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -152,15 +170,27 @@ export const registerStoreHandlers = ({
     getStore().delete(key);
   });
 
-  ipcMain.handle('builtinModels:refresh', async () => {
+  ipcMain.handle(BuiltinModelIpc.Refresh, async (): Promise<BuiltinModelRefreshResult> => {
     try {
       await refreshBuiltinModels();
       return { success: true };
     } catch (error) {
-      console.error('[BuiltinModelProvider] Manual refresh failed:', error);
+      const exchangeError = error instanceof BuiltinModelTokenExchangeError ? error : undefined;
+      const errorCode = exchangeError
+        ? builtinModelRefreshErrorCodes[exchangeError.reason] ?? BuiltinModelRefreshErrorCode.Failed
+        : BuiltinModelRefreshErrorCode.Failed;
+      const status = exchangeError?.httpStatus;
+      const httpStatus = errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError &&
+        status !== undefined && Number.isInteger(status) && status >= 300 && status <= 599
+        ? status : undefined;
+      console.error(`[BuiltinModelProvider] Manual refresh failed ${JSON.stringify({
+        errorCode, httpStatus, diagnosticCode: getBuiltinModelAuthErrorCode(error),
+      })}`);
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to refresh builtin models',
+        error: 'Failed to refresh builtin models',
+        errorCode,
+        ...(httpStatus === undefined ? {} : { httpStatus }),
       };
     }
   });

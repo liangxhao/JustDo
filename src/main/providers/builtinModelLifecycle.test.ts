@@ -17,14 +17,16 @@ afterEach(() => vi.restoreAllMocks());
 
 const createHarness = () => {
   const store = {} as SqliteStore;
-  const syncOpenClawConfig = vi.fn().mockResolvedValue({ success: true });
-  const notifyModelsChanged = vi.fn();
+  const syncOpenClawConfig = vi.fn().mockResolvedValue({ success: true, hostPolicyVerified: true });
+  const notifyCatalogChanged = vi.fn();
+  const notifyRuntimeModelsChanged = vi.fn();
   const lifecycle = new BuiltinModelLifecycle({
     getStore: () => store,
     syncOpenClawConfig,
-    notifyModelsChanged,
+    notifyCatalogChanged,
+    notifyRuntimeModelsChanged,
   });
-  return { lifecycle, store, syncOpenClawConfig, notifyModelsChanged };
+  return { lifecycle, store, syncOpenClawConfig, notifyCatalogChanged, notifyRuntimeModelsChanged };
 };
 
 describe('BuiltinModelLifecycle', () => {
@@ -34,28 +36,28 @@ describe('BuiltinModelLifecycle', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
-  test('refreshes enabled models, syncs OpenClaw, and notifies renderers after login', async () => {
+  test.each([
+    ['refreshAfterLogin', BuiltinModelAccess.Enabled, 'auth-login'],
+    ['refreshAfterLogout', BuiltinModelAccess.Disabled, 'auth-logout'],
+  ] as const)('publishes the local catalog before Gateway finishes %s', async (method, access, reason) => {
     const harness = createHarness();
+    const persistCatalog = Promise.withResolvers<void>();
+    const applyConfig = Promise.withResolvers<{ success: true; hostPolicyVerified: true }>();
+    syncBuiltinModelProviderMock.mockReturnValueOnce(persistCatalog.promise);
+    harness.syncOpenClawConfig.mockReturnValueOnce(applyConfig.promise);
 
-    await expect(harness.lifecycle.refreshAfterLogin()).resolves.toBeUndefined();
+    const refresh = harness.lifecycle[method]();
+    expect(syncBuiltinModelProviderMock).toHaveBeenCalledWith(harness.store, { access });
+    expect(harness.notifyCatalogChanged).not.toHaveBeenCalled();
+    persistCatalog.resolve();
+    await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason }));
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
 
-    expect(syncBuiltinModelProviderMock).toHaveBeenCalledWith(harness.store, {
-      access: BuiltinModelAccess.Enabled,
-    });
-    expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-login' });
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
-  });
-
-  test('removes built-in models, syncs OpenClaw, and notifies renderers after logout', async () => {
-    const harness = createHarness();
-
-    await harness.lifecycle.refreshAfterLogout();
-
-    expect(syncBuiltinModelProviderMock).toHaveBeenCalledWith(harness.store, {
-      access: BuiltinModelAccess.Disabled,
-    });
-    expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-logout' });
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    applyConfig.resolve({ success: true, hostPolicyVerified: true });
+    await refresh;
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
   });
 
   test('publishes rotated credentials without requesting the model catalog', async () => {
@@ -66,7 +68,8 @@ describe('BuiltinModelLifecycle', () => {
 
     expect(syncBuiltinModelProviderMock).not.toHaveBeenCalled();
     expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-login' });
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).not.toHaveBeenCalled();
+    expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
   });
 
   test('publishes credentials during discovery and then projects the refreshed catalog', async () => {
@@ -81,7 +84,7 @@ describe('BuiltinModelLifecycle', () => {
     const projectedCatalogs: string[] = [];
     harness.syncOpenClawConfig.mockImplementation(async () => {
       projectedCatalogs.push(catalog);
-      return { success: true };
+      return { success: true, hostPolicyVerified: true };
     });
 
     const catalogRefresh = harness.lifecycle.refreshAfterLogin();
@@ -92,7 +95,8 @@ describe('BuiltinModelLifecycle', () => {
     await catalogRefresh;
 
     expect(projectedCatalogs).toEqual(['old', 'new']);
-    expect(harness.notifyModelsChanged).toHaveBeenCalledTimes(2);
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledTimes(2);
   });
 
   test.each([true, false])('rejects an unconfirmed rotation even if configSynced is %s', async configSynced => {
@@ -105,14 +109,14 @@ describe('BuiltinModelLifecycle', () => {
 
     await expect(harness.lifecycle.refreshAfterCredentialRotation()).rejects.toThrow('credential reload pending');
 
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
   });
 
   test('serializes logout after an in-flight rotation and discards its obsolete notification', async () => {
     const harness = createHarness();
     let releaseRotation!: () => void;
     harness.syncOpenClawConfig.mockImplementationOnce(() => new Promise(resolve => {
-      releaseRotation = () => resolve({ success: true });
+      releaseRotation = () => resolve({ success: true, hostPolicyVerified: true });
     }));
     const rotation = harness.lifecycle.refreshAfterCredentialRotation();
     await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledOnce());
@@ -125,7 +129,8 @@ describe('BuiltinModelLifecycle', () => {
       [{ reason: 'auth-login' }],
       [{ reason: 'auth-logout' }],
     ]);
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
   });
 
   test('does not sync or notify from an enabled refresh superseded by logout', async () => {
@@ -148,7 +153,8 @@ describe('BuiltinModelLifecycle', () => {
     await expect(logout).resolves.toBeUndefined();
     expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
     expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-logout' });
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
   });
 
   test('serializes OpenClaw config writes so logout is the final write', async () => {
@@ -158,10 +164,10 @@ describe('BuiltinModelLifecycle', () => {
       .mockImplementationOnce(
         () =>
           new Promise(resolve => {
-            releaseLoginSync = () => resolve({ success: true });
+            releaseLoginSync = () => resolve({ success: true, hostPolicyVerified: true });
           }),
       )
-      .mockResolvedValueOnce({ success: true });
+      .mockResolvedValueOnce({ success: true, hostPolicyVerified: true });
 
     const login = harness.lifecycle.refreshAfterLogin();
     await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1));
@@ -176,7 +182,21 @@ describe('BuiltinModelLifecycle', () => {
       [{ reason: 'auth-login' }],
       [{ reason: 'auth-logout' }],
     ]);
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledTimes(2);
+    expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
+  });
+
+  test.each([
+    { success: true, configSynced: true },
+    { success: true, configSynced: true, hostPolicyVerified: true, gatewayRestartDeferred: true },
+  ])('publishes only the catalog when Gateway application remains pending (%j)', async result => {
+    const harness = createHarness();
+    harness.syncOpenClawConfig.mockResolvedValue(result);
+
+    await harness.lifecycle.refreshAfterLogin();
+
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
   });
 
   test('notifies renderers before reporting an OpenClaw sync failure', async () => {
@@ -188,7 +208,8 @@ describe('BuiltinModelLifecycle', () => {
 
     await expect(harness.lifecycle.refreshAfterLogin()).rejects.toThrow('write failed');
 
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
   });
 
   test('completes logout when config was synced but Gateway health check failed', async () => {
@@ -201,7 +222,7 @@ describe('BuiltinModelLifecycle', () => {
 
     await expect(harness.lifecycle.refreshAfterLogout()).resolves.toBeUndefined();
 
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
   });
 
   test('completes login when config was synced but the required Gateway restart failed', async () => {
@@ -214,7 +235,7 @@ describe('BuiltinModelLifecycle', () => {
 
     await expect(harness.lifecycle.refreshAfterLogin()).resolves.toBeUndefined();
 
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
   });
 
   test('still rejects logout when OpenClaw config itself was not synced', async () => {
@@ -227,7 +248,7 @@ describe('BuiltinModelLifecycle', () => {
 
     await expect(harness.lifecycle.refreshAfterLogout()).rejects.toThrow('write failed');
 
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
   });
 
   test('notifies renderers when OpenClaw config sync throws', async () => {
@@ -236,7 +257,8 @@ describe('BuiltinModelLifecycle', () => {
 
     await expect(harness.lifecycle.refreshAfterLogout()).rejects.toThrow('unexpected failure');
 
-    expect(harness.notifyModelsChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
+    expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
   });
 
   test('records configuration rejection without raw multiline error or credentials', async () => {

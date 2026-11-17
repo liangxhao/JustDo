@@ -14,13 +14,16 @@ import {
 type OpenClawConfigSyncResult = {
   success: boolean;
   configSynced?: boolean;
+  gatewayRestartDeferred?: true;
+  hostPolicyVerified?: boolean;
   error?: string;
 };
 
 type BuiltinModelLifecycleDependencies = {
   getStore: () => SqliteStore;
   syncOpenClawConfig: (options: { reason: string }) => Promise<OpenClawConfigSyncResult>;
-  notifyModelsChanged: () => void;
+  notifyCatalogChanged: () => void;
+  notifyRuntimeModelsChanged: () => void;
 };
 
 export class BuiltinModelLifecycle {
@@ -52,6 +55,7 @@ export class BuiltinModelLifecycle {
     if (generation !== this.generation) {
       return;
     }
+    this.dependencies.notifyCatalogChanged();
     await this.applyConfig(generation, reason);
   }
 
@@ -69,18 +73,17 @@ export class BuiltinModelLifecycle {
         reason: BuiltinModelAuthDiagnosticReason.ConfigApplicationFailed,
         errorCode: getBuiltinModelAuthErrorCode(error),
       });
-      if (generation === this.generation) {
-        this.dependencies.notifyModelsChanged();
-      }
       throw error;
     }
     if (generation !== this.generation) return;
 
+    if (syncResult.success && syncResult.hostPolicyVerified && !syncResult.gatewayRestartDeferred) {
+      this.dependencies.notifyRuntimeModelsChanged();
+    }
     if (!syncResult.success) writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ConfigSyncFailed, {
       generation, requireApplication, configSynced: syncResult.configSynced === true,
       reason: BuiltinModelAuthDiagnosticReason.ConfigApplicationFailed,
     });
-    this.dependencies.notifyModelsChanged();
     if (!syncResult.success) {
       if (syncResult.configSynced && !requireApplication) {
         return;

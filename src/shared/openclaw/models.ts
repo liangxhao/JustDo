@@ -1,5 +1,6 @@
 export const OpenClawModelsIpc = {
   List: 'openclaw:models:list',
+  Changed: 'openclaw:models:changed',
 } as const;
 
 export type OpenClawModelUnavailableReason = 'missing-auth' | 'auth-failed';

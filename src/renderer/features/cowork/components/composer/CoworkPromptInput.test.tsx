@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import type { OpenClawModelsListResult } from '@shared/openclaw/models';
+import { ProviderName } from '@shared/providers/constants';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { flushSync } from 'react-dom';
 import { Provider, useSelector } from 'react-redux';
@@ -800,6 +802,110 @@ test('keeps model clicks immediate and skips intermediate choices while native c
   await waitFor(() =>
     expect(store.getState().cowork.pendingModelSelectionTaskIds['__home__\0main']).toBeUndefined(),
   );
+});
+
+test('shows configured built-in models immediately and refreshes their Gateway capabilities', async () => {
+  const customModel = { id: 'custom', name: 'Custom Model', provider: 'Acme', providerKey: 'acme' };
+  const builtinModel = {
+    id: 'managed',
+    name: 'Managed Model',
+    provider: 'Built-in',
+    providerKey: ProviderName.BuiltinModels,
+  };
+  const early = Promise.withResolvers<OpenClawModelsListResult>();
+  const sessionModel = Promise.withResolvers<{ success: false }>();
+  const getSessionModel = vi.fn(() => sessionModel.promise);
+  const list = vi.fn<() => Promise<OpenClawModelsListResult>>()
+    .mockResolvedValue({ success: true, models: [] });
+  const listeners = new Set<() => void>();
+  const onChanged = (listener: () => void) => {
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+    };
+  };
+  const notifyRuntimeChange = () => {
+    act(() => listeners.forEach(listener => listener()));
+  };
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: () => () => {},
+    },
+    cowork: {
+      getSessionModel,
+      getSessionGoal: vi.fn().mockResolvedValue({ success: true, goal: null }),
+      getGoalExecution: vi.fn().mockResolvedValue({ success: true }),
+      onSessionGoalChanged: () => () => {},
+      onGoalExecutionChanged: () => () => {},
+    },
+    openclaw: { models: { list, onChanged } },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  store.dispatch(setAvailableModels([customModel]));
+  store.dispatch(setSelectedModel(customModel));
+  const view = render(
+    <Provider store={store}>
+      <CoworkPromptInput
+        size="large"
+        sessionId="managed-model-refresh"
+        sessionModelRef="acme/custom"
+        modelAgentId="main"
+        showModelSelector
+        onSubmit={() => false}
+      />
+    </Provider>,
+  );
+  fireEvent.click(screen.getByRole('button', { name: customModel.name }));
+
+  list.mockReturnValueOnce(early.promise);
+  act(() => {
+    store.dispatch(setAvailableModels([customModel, builtinModel]));
+  });
+  expect(screen.getByText(builtinModel.name)).toBeTruthy();
+  const imageInput = i18nService.t('imageInput');
+  expect(screen.queryByTitle(imageInput)).toBeNull();
+
+  const appliedCatalog: OpenClawModelsListResult = {
+    success: true,
+    models: [{
+      id: builtinModel.id,
+      name: builtinModel.name,
+      provider: ProviderName.BuiltinModels,
+      input: ['text', 'image'],
+    }],
+  };
+  list.mockResolvedValueOnce(appliedCatalog);
+  notifyRuntimeChange();
+  await screen.findByTitle(imageInput);
+  expect(getSessionModel).toHaveBeenCalled();
+
+  await act(async () => {
+    early.resolve({ success: true, models: [] });
+  });
+  expect(screen.getByTitle(imageInput)).toBeTruthy();
+
+  const sessionReads = getSessionModel.mock.calls.length;
+  list.mockResolvedValueOnce({ success: false, models: [] });
+  notifyRuntimeChange();
+  await waitFor(() => expect(screen.queryByTitle(imageInput)).toBeNull());
+  expect(screen.getByText(builtinModel.name)).toBeTruthy();
+  expect(getSessionModel).toHaveBeenCalledTimes(sessionReads);
+
+  list.mockResolvedValueOnce(appliedCatalog);
+  notifyRuntimeChange();
+  await screen.findByTitle(imageInput);
+  act(() => {
+    store.dispatch(setAvailableModels([customModel]));
+  });
+  expect(screen.queryByText(builtinModel.name)).toBeNull();
+
+  view.unmount();
+  expect(listeners.size).toBe(0);
+  await act(async () => {
+    sessionModel.resolve({ success: false });
+  });
 });
 
 test.each(['home', 'session'] as const)(

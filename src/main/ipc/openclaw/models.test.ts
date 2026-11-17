@@ -83,16 +83,17 @@ describe('registerOpenClawModelHandlers', () => {
         },
       ],
     });
-    registerOpenClawModelHandlers({
-      getRuntime: () => ({ requestGateway }) as never,
-    });
+    const client = {};
+    const runtime = { getGatewayClient: () => client, requestGateway };
+    registerOpenClawModelHandlers({ getRuntime: () => runtime as never });
 
     const result = await handlers.get(OpenClawModelsIpc.List)?.({}, { agentId: 'writer' });
 
-    expect(requestGateway).toHaveBeenCalledWith('models.list', {
-      agentId: 'writer',
-      view: 'provider-config',
-    });
+    expect(requestGateway).toHaveBeenCalledWith(
+      'models.list',
+      { agentId: 'writer', view: 'provider-config' },
+      { assertBeforeSend: expect.any(Function) },
+    );
     expect(result).toEqual({
       success: true,
       models: [
@@ -112,15 +113,42 @@ describe('registerOpenClawModelHandlers', () => {
   });
 
   test('returns a safe empty result when the Gateway request fails', async () => {
-    registerOpenClawModelHandlers({
-      getRuntime: () =>
-        ({ requestGateway: vi.fn().mockRejectedValue(new Error('gateway disconnected')) }) as never,
-    });
+    const client = {};
+    const runtime = {
+      getGatewayClient: () => client,
+      requestGateway: vi.fn().mockRejectedValue(new Error('gateway disconnected')),
+    };
+    registerOpenClawModelHandlers({ getRuntime: () => runtime as never });
 
     await expect(handlers.get(OpenClawModelsIpc.List)?.({}, { agentId: ' ' })).resolves.toEqual({
       success: false,
       models: [],
       error: 'gateway disconnected',
     });
+  });
+
+  test('does not start Gateway to read model metadata while disconnected', async () => {
+    const requestGateway = vi.fn();
+    const runtime = { getGatewayClient: () => null, requestGateway };
+    registerOpenClawModelHandlers({ getRuntime: () => runtime as never });
+
+    await expect(handlers.get(OpenClawModelsIpc.List)?.({})).resolves.toMatchObject({
+      success: false,
+      models: [],
+    });
+    expect(requestGateway).not.toHaveBeenCalled();
+  });
+
+  test('discards a late catalog response from a replaced Gateway connection', async () => {
+    let client = {};
+    const response = Promise.withResolvers<{ models: unknown[] }>();
+    const runtime = { getGatewayClient: () => client, requestGateway: () => response.promise };
+    registerOpenClawModelHandlers({ getRuntime: () => runtime as never });
+
+    const result = handlers.get(OpenClawModelsIpc.List)?.({});
+    client = {};
+    response.resolve({ models: [{ id: 'old', name: 'Old', provider: 'builtin_models' }] });
+
+    await expect(result).resolves.toMatchObject({ success: false, models: [] });
   });
 });

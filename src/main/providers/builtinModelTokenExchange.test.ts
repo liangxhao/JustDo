@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { BUILTIN_MODEL_AUTH_CONFIG } from '../../config/builtinModelAuth';
+import { BuiltinModelAuthDiagnosticReason } from './builtinModelAuthDiagnostics';
 import { clearActiveBuiltinModelCredential, getActiveBuiltinModelCredential } from './builtinModelCredential';
 import { resolveBuiltinModelCredentialExpiryDelayMs } from './builtinModelCredentialMonitor';
 import { BuiltinModelTokenExchange } from './builtinModelTokenExchange';
@@ -227,7 +228,10 @@ test('does not send an exchange request when no valid MAC is available', async (
   vi.mocked(os.networkInterfaces).mockReturnValue({});
   const { service, fetch } = setup();
 
-  await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
+  await expect(service.refresh()).rejects.toMatchObject({
+    message: 'Model authentication token exchange failed.',
+    reason: BuiltinModelAuthDiagnosticReason.DeviceUnavailable,
+  });
 
   expect(fetch).not.toHaveBeenCalled();
   expect(getActiveBuiltinModelCredential()).toBeNull();
@@ -391,7 +395,10 @@ test('reports a timeout separately from a network failure', async () => {
   const { service } = setup(vi.fn(async () => {
     throw Object.assign(new Error('private transport error'), { code: 'ECONNRESET' });
   }));
-  await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
+  await expect(service.refresh()).rejects.toMatchObject({
+    message: 'Model authentication token exchange failed.',
+    reason: BuiltinModelAuthDiagnosticReason.RequestTimeout,
+  });
   expectExchangeFailure({
     stage: 'request', reason: 'Token exchange timed out',
   });
@@ -477,7 +484,11 @@ test('revokes on rejected mtoken and does not leak the server response', async (
   await service.refresh();
   vi.setSystemTime((NOW + 241) * 1000);
   fetch.mockResolvedValue(new Response('mtoken-fixture cookie-fixture', { status: 401 }));
-  await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
+  await expect(service.refresh()).rejects.toMatchObject({
+    message: 'Model authentication token exchange failed.',
+    reason: BuiltinModelAuthDiagnosticReason.HttpRejected,
+    httpStatus: 401,
+  });
   expect(getActiveBuiltinModelCredential()).toBeNull();
   expectExchangeFailure({
     stage: 'request', reason: 'Token exchange HTTP 401', httpStatus: 401,

@@ -940,6 +940,7 @@ interface IElectronAPI {
       list: (options?: {
         agentId?: string;
       }) => Promise<import('@shared/openclaw/models').OpenClawModelsListResult>;
+      onChanged: (callback: () => void) => () => void;
     };
     memory: {
       getOverview: (agentId?: string) => Promise<MemoryOverviewResult>;
@@ -1595,7 +1596,7 @@ interface IElectronAPI {
   };
   auth: import('../../shared/app/auth').AuthApi;
   builtinModels: {
-    refresh: () => Promise<{ success: boolean; error?: string }>;
+    refresh: () => Promise<import('../../shared/providers/builtinModels').BuiltinModelRefreshResult>;
   };
   storageDirectory: StorageDirectoryApi;
   storageRelocation: StorageRelocationApi;

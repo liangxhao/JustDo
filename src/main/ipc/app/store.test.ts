@@ -11,8 +11,11 @@ vi.mock('electron', () => ({
 }));
 
 import { AppConfigIpc } from '../../../shared/app/appConfig';
+import { BuiltinModelIpc, BuiltinModelRefreshErrorCode } from '../../../shared/providers/builtinModels';
 import { defaultLocalSpeechExtensionSettings } from '../../../shared/speech/localSpeechExtensionSettings';
 import { applyManagedSpeechModelConfiguration } from '../../openclaw/config/speech/speechModelConfig';
+import { BuiltinModelAuthDiagnosticReason } from '../../providers/builtinModelAuthDiagnostics';
+import { BuiltinModelTokenExchangeError } from '../../providers/builtinModelTokenExchange';
 import { registerDefaultModelHandlers } from '../cowork/defaultModel';
 import { registerStoreHandlers } from './store';
 
@@ -35,6 +38,43 @@ describe('store IPC', () => {
       onAppConfigChanged,
       refreshBuiltinModels,
     });
+  });
+
+  it.each([
+    {
+      error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.RequestTimeout),
+      result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeTimeout },
+    },
+    {
+      error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.DeviceUnavailable),
+      result: { errorCode: BuiltinModelRefreshErrorCode.DeviceUnavailable },
+    },
+    {
+      error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.HttpRejected, 403),
+      result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeHttpError, httpStatus: 403 },
+    },
+    {
+      error: Object.assign(new Error('private-refresh-fixture\nprivate-cause'), {
+        reason: BuiltinModelAuthDiagnosticReason.HttpRejected,
+        httpStatus: 403,
+      }),
+      result: { errorCode: BuiltinModelRefreshErrorCode.Failed },
+    },
+  ])('returns only safe manual refresh details for $result.errorCode', async ({ error, result }) => {
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      refreshBuiltinModels.mockRejectedValueOnce(error);
+
+      await expect(handlers.get(BuiltinModelIpc.Refresh)!({})).resolves.toEqual({
+        success: false,
+        error: 'Failed to refresh builtin models',
+        ...result,
+      });
+      expect(logError.mock.calls).toEqual([[expect.any(String)]]);
+      expect(logError.mock.calls[0][0]).not.toMatch(/private-refresh-fixture|private-cause|[\r\n]/);
+    } finally {
+      logError.mockRestore();
+    }
   });
 
   it('merges each extension model independently without replacing voice settings', async () => {
