@@ -249,7 +249,7 @@ describe('DisplayPanelLauncher', () => {
   });
 
   it('deletes a recent page from history, fills its place, and keeps it removed on reopening', async () => {
-    let entries = [5, 4, 3, 2, 1].map(lastVisitAt => ({
+    let entries = [9, 8, 7, 6, 5, 4, 3, 2, 1].map(lastVisitAt => ({
       url: `https://example.com/${lastVisitAt}`,
       title: `Page ${lastVisitAt}`,
       lastVisitAt,
@@ -262,18 +262,20 @@ describe('DisplayPanelLauncher', () => {
     });
     const props = { onCreateBrowser: vi.fn(), onCreateTerminal: vi.fn() };
     const view = render(<DisplayPanelLauncher {...props} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete visit to Page 5' }));
+    const deleteButton = await screen.findByRole('button', { name: 'Delete visit to Page 9' });
+    expect(screen.queryByRole('button', { name: 'Page 1' })).toBeNull();
+    fireEvent.click(deleteButton);
 
-    expect(deleteHistory).toHaveBeenCalledWith(['https://example.com/5']);
+    expect(deleteHistory).toHaveBeenCalledWith(['https://example.com/9']);
     expect(await screen.findByRole('button', { name: 'Page 1' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Page 5' })).toBeNull();
-    expect(screen.getAllByRole('button', { name: /^Delete visit to / })).toHaveLength(4);
+    expect(screen.queryByRole('button', { name: 'Page 9' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /^Delete visit to / })).toHaveLength(8);
     expect(props.onCreateBrowser).not.toHaveBeenCalled();
 
     view.rerender(<DisplayPanelLauncher {...props} visible={false} />);
     view.rerender(<DisplayPanelLauncher {...props} visible />);
     expect(await screen.findByRole('button', { name: 'Page 1' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Page 5' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Page 9' })).toBeNull();
   });
 
   it.each(['declined', 'rejected'])(
@@ -586,4 +588,23 @@ describe('DisplayPanelLauncher', () => {
     act(() => window.dispatchEvent(new Event('config-updated')));
     expect(screen.getByRole('button', { name: 'Terminal' }).querySelector('kbd')).toBeNull();
   });
+});
+
+it('offers delete and persistent pin actions in the recent visit context menu', async () => {
+  listHistory.mockResolvedValue({ success: true, entries: [
+    { url: 'https://example.com/pin', title: 'Pinned page', lastVisitAt: 1, visitCount: 1 },
+  ] });
+  const props = { onCreateBrowser: vi.fn(), onCreateTerminal: vi.fn() };
+  const view = render(<DisplayPanelLauncher {...props} />);
+  fireEvent.contextMenu(await screen.findByRole('button', { name: 'Pinned page' }));
+  expect(screen.getAllByRole('menuitem')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Pin' }));
+  view.unmount();
+  render(<DisplayPanelLauncher {...props} />);
+  fireEvent.contextMenu(await screen.findByRole('button', { name: /📌 Pinned page/ }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Unpin' }));
+  fireEvent.contextMenu(await screen.findByRole('button', { name: 'Pinned page' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: i18nService.t('browserHistoryDeleteOne') }));
+  await waitFor(() => expect(deleteHistory).toHaveBeenCalledWith(['https://example.com/pin']));
+  expect(props.onCreateBrowser).not.toHaveBeenCalled();
 });

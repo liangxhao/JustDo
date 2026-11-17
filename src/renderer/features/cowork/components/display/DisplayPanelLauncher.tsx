@@ -11,6 +11,7 @@ import {
   Square2StackIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { PINNED_BROWSER_VISITS_PREFERENCE_KEY } from '@shared/app/rendererPreferences';
 import { isBrowserFaviconDataUrl, resolveBrowserAddressInput } from '@shared/browser/browser';
 import { getBrowserLocalFilePath } from '@shared/browser/browserHistory';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -18,9 +19,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { defaultConfig } from '@/app/config';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
+import { rendererPreferences } from '@/services/rendererPreferences';
 
 import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { type RecentBrowserVisit, selectRecentBrowserVisits } from './displayPanelRecentVisits';
+
+const readPins = (): string[] => {
+  try {
+    const value: unknown = JSON.parse(rendererPreferences.getItem(PINNED_BROWSER_VISITS_PREFERENCE_KEY) ?? '[]');
+    return Array.isArray(value) ? value.filter((url): url is string => typeof url === 'string') : [];
+  } catch {
+    return [];
+  }
+};
 
 interface DisplayPanelLauncherProps {
   appItems?: readonly ComposerFeatureItem[];
@@ -173,6 +184,12 @@ const DisplayPanelLauncher = ({
   visible = true,
 }: DisplayPanelLauncherProps) => {
   const [config, setConfig] = useState(() => configService.getConfig());
+  const [visitMenu, setVisitMenu] = useState<{ url: string; x: number; y: number } | null>(null);
+  const [pinnedUrls, setPinnedUrls] = useState(readPins);
+  const savePins = (urls: string[]) => {
+    rendererPreferences.setItem(PINNED_BROWSER_VISITS_PREFERENCE_KEY, JSON.stringify(urls));
+    setPinnedUrls(urls);
+  };
   const [address, setAddress] = useState('');
   const [visits, setVisits] = useState<RecentBrowserVisit[] | null>(null);
   const [historyFailed, setHistoryFailed] = useState(false);
@@ -196,7 +213,7 @@ const DisplayPanelLauncher = ({
     try {
       const result = await window.electron.browser.listHistory();
       if (epoch !== historyEpoch.current) return;
-      setVisits(selectRecentBrowserVisits(result.entries ?? []));
+      setVisits(selectRecentBrowserVisits(result.entries ?? [], readPins()));
       setHistoryFailed(!result.success);
     } catch {
       if (epoch !== historyEpoch.current) return;
@@ -207,6 +224,7 @@ const DisplayPanelLauncher = ({
 
   useEffect(() => {
     historyVisible.current = visible;
+    setVisitMenu(null);
     if (!visible) return;
     setVisits(null);
     setHistoryFailed(false);
@@ -230,6 +248,7 @@ const DisplayPanelLauncher = ({
         setDeleteFailed(true);
         return;
       }
+      savePins(readPins().filter(pinnedUrl => pinnedUrl !== url));
       setVisits(current => current?.filter(visit => visit.url !== url) ?? null);
       await loadHistory();
     } catch {
@@ -273,6 +292,26 @@ const DisplayPanelLauncher = ({
             </button>
           </div>
         </form>
+      )}
+      {visitMenu && (
+        <div className="fixed inset-0 z-[110]" onClick={() => setVisitMenu(null)}
+          onContextMenu={event => { event.preventDefault(); setVisitMenu(null); }}>
+          <div role="menu" aria-label={i18nService.t('coworkLauncherRecentVisits')}
+            className="fixed w-40 rounded-lg border border-border bg-background p-1.5 shadow-xl"
+            style={{ left: Math.max(8, Math.min(visitMenu.x, window.innerWidth - 168)), top: Math.max(8, Math.min(visitMenu.y, window.innerHeight - 100)) }}
+            onKeyDown={event => { if (event.key === 'Escape') setVisitMenu(null); }}>
+            <button type="button" role="menuitem" autoFocus disabled={deletingUrl !== null}
+              className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-surface-raised"
+              onClick={() => void deleteVisit(visitMenu.url)}>{i18nService.t('browserHistoryDeleteOne')}</button>
+            <button type="button" role="menuitem"
+              className="block w-full rounded px-3 py-2 text-left text-sm hover:bg-surface-raised"
+              onClick={() => {
+                const pins = readPins();
+                savePins(pins.includes(visitMenu.url) ? pins.filter(url => url !== visitMenu.url) : [...pins, visitMenu.url]);
+                void loadHistory();
+              }}>{i18nService.t(pinnedUrls.includes(visitMenu.url) ? 'coworkLauncherUnpinVisit' : 'coworkLauncherPinVisit')}</button>
+          </div>
+        </div>
       )}
       <div className="display-launcher__content mx-auto max-w-3xl space-y-9 px-6 py-7">
         <section aria-label={i18nService.t('coworkLauncherTools')}>
@@ -358,7 +397,12 @@ const DisplayPanelLauncher = ({
           {visits && visits.length > 0 && !historyFailed ? (
             <div className="display-launcher__visits">
               {visits.map(visit => (
-                <div key={visit.url} className="group relative min-w-0">
+                <div key={visit.url} className="display-launcher__visit group relative min-w-0"
+                  onContextMenu={event => {
+                    event.preventDefault();
+                    setVisitMenu({ url: visit.url, x: event.clientX, y: event.clientY });
+                  }}
+                >
                   <button
                     type="button"
                     disabled={navigationDisabled || deletingUrl === visit.url}
@@ -367,7 +411,7 @@ const DisplayPanelLauncher = ({
                     className="flex w-full min-w-0 flex-col items-center gap-3 rounded-xl px-2 py-3 text-center transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <RecentVisitIcon key={visit.faviconUrl} visit={visit} visible={visible} />
-                    <span className="w-full truncate text-xs font-medium">{visit.title}</span>
+                    <span className="w-full truncate text-xs font-medium">{pinnedUrls.includes(visit.url) ? '📌 ' : ''}{visit.title}</span>
                   </button>
                   <button
                     type="button"

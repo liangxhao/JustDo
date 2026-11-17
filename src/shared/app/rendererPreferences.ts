@@ -1,10 +1,12 @@
 export const RENDERER_PREFERENCES_KEY = 'app.renderer-preferences.v1';
 export const SESSION_LIST_WIDTH_PREFERENCE_KEY = 'shell.session-list-width';
+export const PINNED_BROWSER_VISITS_PREFERENCE_KEY = 'browser.pinned-visits';
 export const RENDERER_PREFERENCE_FIXED_KEYS = [
   'justdo-theme-id',
   'justdo-pet-floating-position',
   'justdo-scheduled-task-result-preferences-v1',
   SESSION_LIST_WIDTH_PREFERENCE_KEY,
+  PINNED_BROWSER_VISITS_PREFERENCE_KEY,
 ] as const;
 export const RENDERER_PREFERENCE_LIMITS = {
   entries: 128,

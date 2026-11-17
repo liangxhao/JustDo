@@ -3,19 +3,23 @@ import { expect, test } from 'vitest';
 
 import { selectRecentBrowserVisits } from './displayPanelRecentVisits';
 
-test('selects four newest distinct web pages without mutating source history', () => {
-  const entries: BrowserHistoryEntry[] = [1, 3, 2, 6, 5, 4].map(lastVisitAt => ({
+test('selects eight newest distinct web pages without mutating source history', () => {
+  const entries: BrowserHistoryEntry[] = [1, 3, 2, 9, 5, 4, 8, 7, 6].map(lastVisitAt => ({
     url: `https://example.com/${lastVisitAt}`,
     title: `Page ${lastVisitAt}`,
     lastVisitAt,
     visitCount: 1,
   }));
-  entries.push({ ...entries[3], lastVisitAt: 7 });
+  entries.push({ ...entries[3], lastVisitAt: 10 });
   expect(selectRecentBrowserVisits(entries).map(visit => visit.title)).toEqual([
+    'Page 9',
+    'Page 8',
+    'Page 7',
     'Page 6',
     'Page 5',
     'Page 4',
     'Page 3',
+    'Page 2',
   ]);
   expect(entries[0].lastVisitAt).toBe(1);
 });
@@ -96,4 +100,17 @@ test.each([
     { url: 'https://example.com/docs', title: 'Docs', faviconUrl, lastVisitAt: 1, visitCount: 1 },
   ]);
   expect(visit.faviconUrl).toBe('https://example.com/favicon.ico');
+});
+
+test('keeps pinned pages ahead of newer history within the eight visit limit', () => {
+  const entries = Array.from({ length: 10 }, (_, index) => ({
+    url: `https://example.com/${index}`,
+    title: `Page ${index}`,
+    lastVisitAt: index,
+    visitCount: 1,
+  }));
+  const visits = selectRecentBrowserVisits(entries, ['https://example.com/0']);
+  expect(visits).toHaveLength(8);
+  expect(visits[0].title).toBe('Page 0');
+  expect(visits[1].title).toBe('Page 9');
 });

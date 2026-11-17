@@ -11,14 +11,18 @@ export interface RecentBrowserVisit {
   faviconUrl: string;
 }
 
-const MAX_RECENT_VISITS = 4;
+const MAX_RECENT_VISITS = 8;
 
 export function selectRecentBrowserVisits(
   entries: readonly BrowserHistoryEntry[],
+  pinnedUrls: readonly string[] = [],
 ): RecentBrowserVisit[] {
   const visits: RecentBrowserVisit[] = [];
   const seen = new Set<string>();
-  for (const entry of [...entries].sort((a, b) => b.lastVisitAt - a.lastVisitAt)) {
+  for (const entry of [...entries].sort((a, b) =>
+    Number(pinnedUrls.includes(b.url)) - Number(pinnedUrls.includes(a.url)) ||
+    b.lastVisitAt - a.lastVisitAt,
+  )) {
     try {
       const parsed = new URL(entry.url);
       const localFilePath = getBrowserLocalFilePath(entry.url);

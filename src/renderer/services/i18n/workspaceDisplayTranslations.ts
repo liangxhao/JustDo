@@ -1,5 +1,7 @@
 export const workspaceDisplayTranslations = {
   zh: {
+    coworkLauncherPinVisit: '固定',
+    coworkLauncherUnpinVisit: '取消固定',
     coworkNewDisplayTab: '新建标签页',
     coworkNewTerminalTab: '终端',
     coworkLauncherTools: '工具',
@@ -24,6 +26,8 @@ export const workspaceDisplayTranslations = {
     coworkDisplayTabListDismiss: '关闭标签页列表',
   },
   en: {
+    coworkLauncherPinVisit: 'Pin',
+    coworkLauncherUnpinVisit: 'Unpin',
     coworkNewDisplayTab: 'New tab',
     coworkNewTerminalTab: 'Terminal',
     coworkLauncherTools: 'Tools',
