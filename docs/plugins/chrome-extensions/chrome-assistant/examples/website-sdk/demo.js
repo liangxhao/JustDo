@@ -70,7 +70,11 @@ async function bindExample(section) {
       receipt.execution.executionSettled === true &&
       receipt.execution.status === 'completed' &&
       receipt.output.status === 'available';
-    result.textContent = available ? (receipt.output.text ?? '') : '';
+    result.textContent = available
+      ? [receipt.output.text, ...(receipt.output.artifacts ?? []).map(artifact => artifact.name)]
+          .filter(Boolean)
+          .join('\n')
+      : '';
     result.hidden = !available;
   }
 

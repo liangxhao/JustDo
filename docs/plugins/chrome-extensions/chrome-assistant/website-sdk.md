@@ -28,7 +28,7 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 
 在扩展设置的 **Website message sending mode** 保留 **Follow website (default)**，可以比较两个按钮的行为。
 
-- **请求打开草稿并返回结果**使用 `draft + final`。在侧栏点击发送，最终文本会显示在网页上。
+- **请求打开草稿并返回结果**使用 `draft + final`。在侧栏点击发送，最终文本和交付件名称会显示在网页上。
 - **请求自动发送**使用 `send + final`。如果这是本站首次连接，先在侧栏允许连接，再发送这次草稿。等当前请求结束后再次点击，即可体验直接发送和回传。
 
 示例服务从组装目录读取 SDK。要把示例搬到自己的网站，把 `index.html`、`demo.js` 和组装后的 `chrome-assistant.js` 放在同一目录。[示例页面](examples/website-sdk/index.html) · [绑定与回调代码](examples/website-sdk/demo.js)
@@ -71,7 +71,12 @@ async function bindAssistant() {
             receipt.execution.status === 'completed' &&
             receipt.output.status === 'available'
           ) {
-            output.textContent = receipt.output.text ?? '';
+            output.textContent = [
+              receipt.output.text,
+              ...(receipt.output.artifacts ?? []).map(artifact => artifact.name),
+            ]
+              .filter(Boolean)
+              .join('\n');
           }
         },
       },
@@ -107,7 +112,7 @@ void bindAssistant();
 | `prompt`  | 必填、非空字符串                    | 本次待发送文字，最多 16,000 个字符；不接受以 `/` 开头的会话控制命令。 |
 | `context` | 可选 `{ text: string }`             | 显式业务快照，最多 24,000 个字符；会在侧栏单独展示。                  |
 | `mode`    | `'draft' \| 'send'`，默认 `'draft'` | 放入独立草稿，或请求直接发送。                                        |
-| `result`  | `'none' \| 'final'`，默认 `'final'` | 回传本轮最终文本。显式传入 `none` 时只接收状态。                      |
+| `result`  | `'none' \| 'final'`，默认 `'final'` | 回传本轮最终结果。显式传入 `none` 时只接收状态。                      |
 
 每次点击的请求 ID 由扩展分配。网页可提供消息和文本上下文，不能指定已有会话、模型、助手、工作目录、权限模式、附件或回调 URL。
 
@@ -116,11 +121,11 @@ void bindAssistant();
 | 组合            | 用户看到的行为                                           |
 | --------------- | -------------------------------------------------------- |
 | `draft + none`  | 打开独立草稿，用户编辑并发送；网页只收到状态。           |
-| `draft + final` | 打开独立草稿。用户点击发送，执行完成后回传本轮最终文本。 |
+| `draft + final` | 打开独立草稿。用户点击发送，执行完成后回传本轮最终结果。 |
 | `send + none`   | 准入检查通过后自动发送，网页只收到状态。                 |
-| `send + final`  | 准入检查通过后自动发送，执行完成后回传本轮最终文本。     |
+| `send + final`  | 准入检查通过后自动发送，执行完成后回传本轮最终结果。     |
 
-用户选择 **Send directly** 或 **Open as draft** 时，该设置优先于网页的 `mode`，适用于所有已连接网站的新请求。回传仍按网页的 `result` 处理。省略 `result` 时回传最终文本，显式传 `none` 时只返回状态。
+用户选择 **Send directly** 或 **Open as draft** 时，该设置优先于网页的 `mode`，适用于所有已连接网站的新请求。回传仍按网页的 `result` 处理。省略 `result` 时回传最终结果，显式传 `none` 时只返回状态。
 
 整条请求最多 128 KiB UTF-8，最终文本最多 256 KiB UTF-8。上下文在加入说明、JSON 和特殊字符转义后仍须在 24,000 字符内。收到 `CONTEXT_TOO_LARGE` 时，请缩短文本再绑定或更新。
 
@@ -164,7 +169,7 @@ try {
 
 `onConnection` 可用来提示用户到侧栏授权。任务准备开始后，SDK 先调用 `onRequest`，再传回该请求的状态与结果。根据 `requestId` 关联回执，用 `receiptRevision` 忽略比当前显示更旧的回执。
 
-下面是一次成功返回文本的回执。新增字段应由旧调用方忽略。
+下面的回执同时包含最终文本和一个 Excel 交付件。
 
 ```js
 {
@@ -173,7 +178,18 @@ try {
   receiptRevision: 7,
   request: { status: 'submitted' },
   execution: { status: 'completed', executionSettled: true },
-  output: { status: 'available', text: '本轮最终文本', format: 'text' },
+  output: {
+    status: 'available',
+    text: '已生成报表。',
+    format: 'text',
+    artifacts: [
+      {
+        name: 'report.xlsx',
+        kind: 'document',
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+    ],
+  },
   delivery: { status: 'connected' },
   // error: { code: 'PUBLIC_CODE', messageKey: 'safe-message-key' }
 }
@@ -189,20 +205,22 @@ try {
 
 连接状态为 `pending`、`granting`、`connected`、`rejected`、`expired`。`connected` 表示网站已连接。任务是否发送或完成要看对应请求的回执。
 
-`bind`、`update`、`unbind`、`read` 和 `cancel` 的 Promise 拒绝在调用处捕获。回执内的 `error` 也要单独处理。收到 `onResult` 后，只有 `execution.status === 'completed'`、`executionSettled === true` 且 `output.status === 'available'` 时才读取 `output.text`。用 `textContent` 将结果显示为普通文本。
+`bind`、`update`、`unbind`、`read` 和 `cancel` 的 Promise 拒绝在调用处捕获。回执内的 `error` 也要单独处理。收到 `onResult` 后，只有 `execution.status === 'completed'`、`executionSettled === true` 且 `output.status === 'available'` 时才读取 `output.text` 和 `output.artifacts`。用 `textContent` 显示结果。
+
+`output.artifacts` 为可选数组，最多包含 32 项。每项包含文件名 `name`、类别 `kind`（`image`、`audio`、`video` 或 `document`）和可选的 `mimeType`。数组只提供文件描述。本地路径、下载地址和文件内容均不会作为交付件字段提供。仅有交付件时，`output.text` 和 `output.format` 可以省略。
 
 `onError` 是绑定级提示，不能单凭它将某个业务请求判为执行失败。各请求以回执中的 requestId 关联，read/cancel 的直接响应也需按 receiptRevision 防止覆盖已收到的新状态。
 
-| 状态层    | 常见值与处理                                                                                                                                                          |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| request   | drafted / awaiting-confirmation 等待用户；submitting / submitted 表示提交阶段；cancelled / expired / rejected 表示请求已关闭。                                        |
-| execution | not-started / running / unknown / completed / failed / interrupted；只有 executionSettled 为 true 才能把执行视为已结算。unknown 不代表失败。                          |
-| output    | not-requested 不分享；awaiting-consent 等待许可；pending 等待可靠结果；available 可读取 text；unsupported / unavailable 没有可用文本；withheld 表示未获准或撤回分享。 |
-| delivery  | connected / revoked；投递关闭不表示执行已停止。                                                                                                                       |
+| 状态层    | 常见值与处理                                                                                                                                                                 |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| request   | drafted / awaiting-confirmation 等待用户；submitting / submitted 表示提交阶段；cancelled / expired / rejected 表示请求已关闭。                                               |
+| execution | not-started / running / unknown / completed / failed / interrupted；只有 executionSettled 为 true 才能把执行视为已结算。unknown 不代表失败。                                 |
+| output    | not-requested 不分享；awaiting-consent 等待许可；pending 等待可靠结果；available 可读取文本或交付件；unsupported / unavailable 没有可用结果；withheld 表示未获准或撤回分享。 |
+| delivery  | connected / revoked；投递关闭不表示执行已停止。                                                                                                                              |
 
 SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；不能把缺少文本、silent 或 unavailable 当作成功空值。`withheld`、`pending` 等只通过 `onStatus` 通知，不要创建一个只等 `onResult` 才结束的页面等待流程。
 
-一次点击只关联该输入的首轮结果，不包括后续追问、其他会话、Thinking、工具输出或媒体文件。执行完成时 output 仍可能 pending/unavailable；自然语言答复也不能替代网站自己的业务校验。回调可能重复，按 requestId/launchId 和 receiptRevision 处理，业务写回另做幂等，不保证网页副作用恰好一次。
+一次点击只关联该输入的首轮结果，不包括后续追问、其他会话、Thinking、工具输出或文件内容。执行完成时 output 仍可能 pending/unavailable；自然语言答复也不能替代网站自己的业务校验。回调可能重复，按 requestId/launchId 和 receiptRevision 处理，业务写回另做幂等，不保证网页副作用恰好一次。
 
 ### 页面容量
 

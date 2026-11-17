@@ -85,6 +85,22 @@ test('native percent sequences stay literal and file URLs decode exactly once', 
   }
 });
 
+test('rejects a replaced file before reusing an internal prepared identity', async () => {
+  const { file } = fixture();
+  const filePath = file('report.pdf');
+  const replacement = file('replacement.pdf');
+  let isCurrent: (() => boolean) | undefined;
+  await expect(prepareMessageFileLink(
+    { sourceKind: MessageFileLinkSourceKind.NativePath, target: filePath },
+    { captureFileIdentity: identity => { isCurrent = identity.isCurrent; } },
+  )).resolves.toEqual({ success: true, filePath });
+  expect(isCurrent?.()).toBe(true);
+
+  fs.renameSync(replacement, filePath);
+
+  expect(isCurrent?.()).toBe(false);
+});
+
 test('relative paths require the source binding and match the expected directory', async () => {
   const { workspace, file } = fixture();
   const filePath = file('report.pdf');

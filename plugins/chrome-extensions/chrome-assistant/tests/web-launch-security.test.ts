@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import {
   normalizeInput,
   publicReceipt,
@@ -95,5 +96,36 @@ describe('web launch trust boundaries', () => {
       publicReceipt({ ...source, execution: { status: 'running', executionSettled: false } }, true)
         ?.output,
     ).toEqual({ status: 'available' });
+  });
+
+  it('limits artifact-only output to authorized completed results and safe metadata', () => {
+    const artifact = { name: 'table.csv', kind: 'document', mimeType: 'text/csv' };
+    const source = {
+      requestId: 'request-1',
+      launchId: 'launch-1',
+      receiptRevision: 3,
+      request: { status: 'submitted' },
+      execution: { status: 'completed', executionSettled: true },
+      output: {
+        status: 'available',
+        artifacts: [
+          { ...artifact, path: 'C:/private/table.csv', source: 'private', bytes: 'private' },
+          { ...artifact, name: 'C:/private/file.txt' },
+          { ...artifact, name: 'file%3A%2F%2Fsecret.txt' },
+          { ...artifact, name: 'z'.repeat(256) },
+        ],
+      },
+      delivery: { status: 'connected' },
+    };
+    expect(publicReceipt(source, true)?.output).toEqual({
+      status: 'available', artifacts: [artifact],
+    });
+    expect(publicReceipt(source, false)?.output).toEqual({ status: 'available' });
+    expect(publicReceipt({ ...source, delivery: { status: 'revoked' } }, true)?.output)
+      .toEqual({ status: 'available' });
+    expect(publicReceipt({ ...source, execution: { status: 'failed', executionSettled: true } }, true)
+      ?.output).toEqual({ status: 'available' });
+    const many = { ...source, output: { status: 'available', artifacts: Array(40).fill(artifact) } };
+    expect(publicReceipt(many, true)?.output.artifacts).toHaveLength(32);
   });
 });

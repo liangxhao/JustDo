@@ -1,4 +1,10 @@
-import { messageCopyText, pendingInputLabel, renderRichContent, retryRichImages } from './sidepanel-rich-content.js';
+import {
+  isIncompleteFileLinkSource,
+  messageCopyText,
+  pendingInputLabel,
+  renderRichContent,
+  retryRichImages,
+} from './sidepanel-rich-content.js';
 import { createCopyController } from './sidepanel-copy.js';
 import { sidePanelText as t } from './sidepanel-i18n.js';
 import { toolInputSummary } from './sidepanel-state.js';
@@ -29,7 +35,7 @@ function toolStatus(process) {
 /** A keyed DOM view with temporary, scoped disclosure and reading preferences. */
 export function createMessageRenderer(
   container,
-  { readImage, latestButton, processDetailsButton },
+  { readImage, openDelivery, openMessageFile, latestButton, processDetailsButton },
 ) {
   const document = container.ownerDocument;
   const copyController = createCopyController(container);
@@ -44,6 +50,22 @@ export function createMessageRenderer(
   let entryNodes = new Map();
   let processRows = new Map();
   let interactionAnchor = null;
+
+  function renderContent(host, entry) {
+    const scope = currentScope;
+    const isCurrent = () => scope === currentScope && container.contains(host);
+    renderRichContent(
+      host,
+      entry,
+      source => readImage(scope, source),
+      openDelivery && (async source => {
+        if (isCurrent()) await openDelivery(scope, source);
+      }),
+      openMessageFile && (async link => {
+        if (isCurrent()) await openMessageFile(scope, link);
+      }),
+    );
+  }
 
   function updateProcessDetailsButton() {
     const label = t(
@@ -498,8 +520,7 @@ export function createMessageRenderer(
     if (signature !== node.renderSignature) {
       copyController.invalidate(bubble);
       bubble.replaceChildren();
-      const scope = currentScope;
-      renderRichContent(bubble, content, source => readImage(scope, source));
+      renderContent(bubble, content);
       bubble.hidden = !bubble.hasChildNodes();
       node.renderSignature = signature;
     } else retryRichImages(bubble);
@@ -547,12 +568,15 @@ export function createMessageRenderer(
       node.append(content, actions);
     }
     // Footer enrichment must preserve body selection and in-flight copy feedback.
-    const signature = JSON.stringify({ role: entry.role, text: entry.text, rawMessage: entry.rawMessage });
+    const signature = JSON.stringify({
+      text: entry.text,
+      rawMessage: entry.rawMessage,
+      incompleteFileLinkSource: openMessageFile && isIncompleteFileLinkSource(entry),
+    });
     if (signature !== node.renderSignature) {
       copyController.invalidate(node);
       content.replaceChildren();
-      const scope = currentScope;
-      renderRichContent(content, entry, source => readImage(scope, source));
+      renderContent(content, entry);
       const copy = node.querySelector(':scope > .message-actions > .message-copy');
       copy.copyText = messageCopyText(entry);
       copy.hidden = !copy.copyText.trim();
@@ -631,8 +655,7 @@ export function createMessageRenderer(
         // Compaction uses the App's Lit renderer. Keep its host and render
         // anchors so native enrichment patches the same disclosure in place.
         if (entry.role !== 'compaction' && entry.role !== 'question-presentation') node.replaceChildren();
-        const scope = currentScope;
-        renderRichContent(node, entry, source => readImage(scope, source));
+        renderContent(node, entry);
         node.renderSignature = signature;
       } else retryRichImages(node);
     }
@@ -728,6 +751,7 @@ export function createMessageRenderer(
       showLatestButton();
     },
     dispose() {
+      currentScope = '';
       copyController.dispose();
       resizeObserver?.disconnect();
       container.removeEventListener('wheel', onWheel);

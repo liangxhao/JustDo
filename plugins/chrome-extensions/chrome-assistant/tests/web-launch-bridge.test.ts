@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { webcrypto } from 'node:crypto';
 import { TextEncoder } from 'node:util';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { installWebLaunchContent } from '../conversation-overlay/modules/web-launch-content.js';
 import { createChromeAssistant } from '../conversation-overlay/modules/web-launch-sdk.js';
 import { inputDigest } from '../conversation-overlay/modules/web-launch-security.js';
@@ -123,6 +125,38 @@ describe('webpage button bridge', () => {
     expect(
       runtime.sendMessage.mock.calls.some(([message]) => message.type.endsWith('revoke')),
     ).toBe(true);
+  });
+
+  it('delivers an artifact-only exact result through the existing onResult callback', async () => {
+    const onRequest = vi.fn();
+    const onResult = vi.fn();
+    const original = runtime.sendMessage.getMockImplementation()!;
+    const artifacts = [{ name: 'report.pdf', kind: 'document', mimeType: 'application/pdf' }];
+    runtime.sendMessage.mockImplementation(async message => {
+      if (!message.type.endsWith('read')) return original(message);
+      return {
+        ok: true,
+        receipt: {
+          requestId: message.requestId,
+          launchId: 'launch-1',
+          receiptRevision: 2,
+          request: { status: 'submitted' },
+          execution: { status: 'completed', executionSettled: true },
+          output: { status: 'available', artifacts },
+          delivery: { status: 'connected' },
+        },
+      };
+    });
+    const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
+    await sdk.bind(document.getElementById('business'), { prompt: 'Create a report' }, { onRequest, onResult });
+    click();
+    await vi.waitFor(() => expect(onRequest).toHaveBeenCalledOnce());
+    poll();
+    await vi.waitFor(() => expect(onResult).toHaveBeenCalledOnce());
+    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: onRequest.mock.calls[0][0].requestId,
+      output: { status: 'available', artifacts },
+    }));
   });
 
   it('times out without an installed bridge rather than queueing a later click', async () => {

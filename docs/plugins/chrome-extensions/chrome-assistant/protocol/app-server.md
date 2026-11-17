@@ -121,14 +121,16 @@ thread.chrome = {
 
 ## 浏览器方法与通知
 
-| 显式附加接口              | 用途                                                      |
-| ------------------------- | --------------------------------------------------------- |
-| `chrome/composer/options` | 当前会话模型选择与权限模式；模型目录使用标准 `model/list` |
-| `chrome/thread/image`     | 读取原生授权媒体或历史明确引用的图片，保留目录与来源验证  |
-| `chrome/extension/pair`   | 已鉴权的浏览器自动化配对，不创建聊天会话                  |
-| `chrome/webLaunch/*`      | 已有网页关联操作，继续保留文档／草稿／单次发送身份边界    |
-| `chrome/thread/stream`    | 按来源、原生身份和连接代次准入的原生 Agent／Chat 增强事件 |
-| `chrome/thread/updated`   | `{threadId, display, activeTurn?}` 富视图及运行状态校准   |
+| 显式附加接口                    | 用途                                                                                                                                                                   |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chrome/composer/options`       | 当前会话模型选择与权限模式；模型目录使用标准 `model/list`                                                                                                              |
+| `chrome/thread/image`           | 读取原生授权媒体或历史明确引用的图片，保留目录与来源验证                                                                                                               |
+| `chrome/extension/pair`         | 已鉴权的浏览器自动化配对，不创建聊天会话                                                                                                                               |
+| `chrome/webLaunch/*`            | 已有网页关联操作，继续保留文档／草稿／单次发送身份边界                                                                                                                 |
+| `chrome/thread/openDelivery`    | `{threadId,source}` 打开已订阅 Chrome 会话中由助手交付的文件。核验原生历史和文件来源后，由系统默认应用打开，成功返回 `{opened:true}`。                                 |
+| `chrome/thread/openMessageFile` | 侧栏在用户点击文件链接时发送 `{threadId,link:{sourceKind,target}}`。按桌面链接的路径语义解析，在已订阅会话中用系统默认应用打开受支持的文件，成功返回 `{opened:true}`。 |
+| `chrome/thread/stream`          | 按来源、原生身份和连接代次准入的原生 Agent／Chat 增强事件                                                                                                              |
+| `chrome/thread/updated`         | `{threadId, display, activeTurn?}` 富视图及运行状态校准                                                                                                                |
 
 旧的 `composer/options`、`thread/image`、`thread/stream`、`thread/updated` 不再是当前协议名称，
 不保留按客户端名字切换的隐式兼容分支。

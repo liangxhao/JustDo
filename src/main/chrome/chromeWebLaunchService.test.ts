@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ app: { getAppPath: () => '/mock' } }));
 
-import { canonicalWebLaunchInput, type WebLaunchInput, type WebLaunchSource } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
+import { canonicalWebLaunchInput, type WebLaunchInput, type WebLaunchReceipt, type WebLaunchSource } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import { CoworkStore } from '../data/coworkStore';
 import type { NativeRunTerminalReceipt } from '../engine/gateway/types';
@@ -86,10 +86,11 @@ function fixture() {
   const actual = { prompt: input.prompt, context: input.context, permissionMode: 'full' };
   const submit = (prepared: ReturnType<typeof prepare>, extra: Record<string, unknown> = {}) => service.submit({ launchId: prepared.receipt.launchId, composeRevision: prepared.internal.composeRevision, input: actual, submission: 'automatic', shareResult: true, ...extra });
   const ref = (prepared: ReturnType<typeof prepare>, changedSource = source) => ({ launchId: prepared.receipt.launchId, documentLeaseId: prepared.internal.documentLeaseId, source: changedSource });
-  const finish = (text = 'SYNTHETIC_FINAL', status: 'completed' | 'failed' = 'completed', accepted = latestBinding) => {
+  const finish = (text = 'SYNTHETIC_FINAL', status: 'completed' | 'failed' = 'completed', accepted = latestBinding, mediaUrls?: string[]) => {
     expect(accepted).toBeDefined();
     terminal = { runId: accepted!.nativeRunId, sessionKey: binding.sessionKey, sessionId: binding.nativeSessionId, lifecycleGeneration: null, clientGeneration: 3, agentSeq: 9, status, executionSettled: true, endedAt: now };
-    history = [{ role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop', __openclaw: { id: 'message-final', runId: accepted!.nativeRunId } }];
+    history = [{ role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop', __openclaw: { id: 'message-final', runId: accepted!.nativeRunId },
+      ...(mediaUrls ? { openclawDelivery: { mediaUrls } } : {}) }];
     stream?.({ kind: 'agent', event: { ...binding, sessionId: binding.nativeSessionId, runId: accepted!.nativeRunId, agentSeq: 9, stream: 'lifecycle', data: { phase: status === 'completed' ? 'end' : 'error', executionSettled: true, terminalReply: { disposition: 'visible', text } } } } as never);
   };
   return { db, cowork, service, deps, prepare, submit, ref, chat, wire, changed, threadCreated, runtime, request, finish,
@@ -570,14 +571,20 @@ describe('webpage owned sender and exact results', () => {
     await tick();
     expect(f.wire).toHaveBeenCalledOnce();
     expect(f.service.sites()).toEqual(policy);
-    f.finish();
+    f.finish(undefined, undefined, undefined, ['/private/final-report.pdf']);
     const result = await f.service.read(f.ref(prepared));
     expect(result.receipt.execution).toEqual({ status: 'completed', executionSettled: true });
-    expect(result.receipt.output).toEqual({ status: 'available', text: 'SYNTHETIC_FINAL', format: 'text' });
+    expect(result.receipt.output).toEqual({
+      status: 'available', text: 'SYNTHETIC_FINAL', format: 'text',
+      artifacts: [{ name: 'final-report.pdf', kind: 'document', mimeType: 'application/pdf' }],
+    });
+    expect(JSON.stringify(result.receipt)).not.toContain('/private/');
     expect(JSON.stringify(f.state())).not.toContain('SYNTHETIC_FINAL');
+    expect(JSON.stringify(f.state())).not.toContain('final-report.pdf');
     expect(JSON.stringify(await f.service.observations())).not.toContain('SYNTHETIC_FINAL');
+    expect(JSON.stringify(await f.service.observations())).not.toContain('final-report.pdf');
     const repeated = await f.service.read(f.ref(prepared));
-    expect(repeated.receipt.output.text).toBe('SYNTHETIC_FINAL');
+    expect(repeated.receipt.output).toEqual(result.receipt.output);
   });
 
   it('holds a terminal that precedes the ACK without admitting or losing its exact final candidate', async () => {
@@ -616,14 +623,15 @@ describe('webpage owned sender and exact results', () => {
     const f = fixture(); const prepared = f.prepare();
     f.submit(prepared); await tick(); f.finish();
     await f.service.read(f.ref(prepared));
-    const access = f.service as unknown as { readResult: (id: string) => Promise<string | undefined> };
+    const access = f.service as unknown as {
+      readResult: (id: string) => Promise<Pick<WebLaunchReceipt['output'], 'text' | 'artifacts'> | undefined>;
+    };
     vi.spyOn(access, 'readResult').mockImplementation(async () => {
       queueMicrotask(() => f.service.cancel(f.ref(prepared)));
-      return 'SYNTHETIC_FINAL';
+      return { artifacts: [{ name: 'chart.png', kind: 'image' }] };
     });
     const result = await f.service.read(f.ref(prepared));
-    expect(result.receipt.output.text).toBeUndefined();
-    expect(result.receipt.output.status).toBe('withheld');
+    expect(result.receipt.output).toEqual({ status: 'withheld' });
   });
 
   it('retires body candidates and owner metadata when an old complete receipt is pruned', async () => {

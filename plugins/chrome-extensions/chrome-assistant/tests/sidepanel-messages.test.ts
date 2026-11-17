@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMessageRenderer } from '../conversation-overlay/modules/sidepanel-messages.js';
+
 import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
-import { ChromeExtensionStream } from '../conversation-overlay/modules/sidepanel-stream.js';
+import { createMessageRenderer } from '../conversation-overlay/modules/sidepanel-messages.js';
 import { messagesFromThread } from '../conversation-overlay/modules/sidepanel-state.js';
+import { ChromeExtensionStream } from '../conversation-overlay/modules/sidepanel-stream.js';
 
 const thinking = (id: string, status = 'completed') => ({
   key: `turn:thinking:${id}`,
@@ -44,6 +45,9 @@ describe('side panel process presentation matches the desktop', () => {
   let messages: HTMLElement;
   let latest: HTMLButtonElement;
   let processDetails: HTMLButtonElement;
+  let readImage: ReturnType<typeof vi.fn>;
+  let openDelivery: ReturnType<typeof vi.fn>;
+  let openMessageFile: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     document.body.innerHTML =
@@ -51,10 +55,15 @@ describe('side panel process presentation matches the desktop', () => {
     messages = document.getElementById('messages')!;
     latest = document.getElementById('latest') as HTMLButtonElement;
     processDetails = document.getElementById('processDetails') as HTMLButtonElement;
+    readImage = vi.fn(async () => 'data:image/png;base64,AA==');
+    openDelivery = vi.fn(async () => {});
+    openMessageFile = vi.fn(async () => {});
     renderer = createMessageRenderer(messages, {
       latestButton: latest,
       processDetailsButton: processDetails,
-      readImage: vi.fn(),
+      readImage,
+      openDelivery,
+      openMessageFile,
     });
   });
   afterEach(() => renderer.dispose());
@@ -63,6 +72,130 @@ describe('side panel process presentation matches the desktop', () => {
     document.querySelector<HTMLElement>(`[data-process-summary-key="${key}"]`)!;
   const disclosure = (key: string) => summary(key).parentElement as HTMLDetailsElement;
   const history = () => messages.querySelector<HTMLDetailsElement>('.completed-process')!;
+
+  it('shows assistant deliverables as file-type cards while keeping images and unrelated content unchanged', async () => {
+    const local = './outputs/Quarterly report.pdf';
+    const remote = 'https://files.test/archive.zip';
+    const managed = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
+    const managedImage = '/api/chat/media/outgoing/agent%3Amain/22222222-2222-4222-8222-222222222222/full';
+    const image = './preview.png';
+    const media = { mediaUrls: [local, remote, managed, image] };
+    renderer.render([
+      { ...answer('reference', 'MEDIA: ./user.pdf'), role: 'user' },
+      {
+        ...answer('partial', 'Preparing the output'),
+        rawMessage: {
+          role: 'assistant', content: 'Preparing the output', openclawDelivery: media,
+          __chromeExtensionOmitDeliveryMedia: true,
+        },
+      },
+      {
+        ...answer('delivered', 'Finished'),
+        rawMessage: { role: 'assistant', content: 'Finished', openclawDelivery: media },
+      },
+      {
+        ...answer('native-image', ''),
+        rawMessage: { role: 'assistant', content: [
+          { type: 'image', url: managedImage, alt: 'chart.png', mimeType: 'image/png' },
+        ] },
+      },
+    ], 'thread-7');
+
+    const card = messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card[title="Quarterly report.pdf"]')!;
+    expect(card.querySelector('[data-file-icon-kind="pdf"] svg')).not.toBeNull();
+    expect(messages.querySelector('div.chrome-delivery-card[title="archive.zip"]')).not.toBeNull();
+    expect(messages.querySelector('.chrome-delivery-card[title="user.pdf"]')).toBeNull();
+    expect(messages.querySelectorAll('.chrome-delivery-card')).toHaveLength(5);
+    expect(messages.querySelectorAll('.chat-bubble__images img')).toHaveLength(2);
+    expect(readImage.mock.calls).toEqual([['thread-7', image], ['thread-7', managedImage]]);
+
+    card.click();
+    expect(openDelivery).toHaveBeenCalledExactlyOnceWith('thread-7', local);
+    await vi.waitFor(() => expect(card.disabled).toBe(false));
+    messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card[title="attachment"]')!.click();
+    expect(openDelivery).toHaveBeenLastCalledWith('thread-7', managed);
+    messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card[title="chart.png"]')!.click();
+    expect(openDelivery).toHaveBeenLastCalledWith('thread-7', managedImage);
+  });
+
+  it('deduplicates a pending open and shows only card-local safe feedback on failure', async () => {
+    const source = '"./output files/summary.pdf"';
+    renderer.render([answer('file', `MEDIA: ${source}`)], 'first-thread');
+    const card = messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card')!;
+    let rejectOpen!: (error: Error) => void;
+    openDelivery.mockImplementation(() => new Promise((_resolve, reject) => { rejectOpen = reject; }));
+
+    card.click();
+    card.click();
+    expect(card.disabled).toBe(true);
+    expect(openDelivery).toHaveBeenCalledExactlyOnceWith('first-thread', source);
+    rejectOpen(new Error('Private path used by the system opener'));
+    await vi.waitFor(() => expect(card.disabled).toBe(false));
+    expect(card.parentElement?.querySelector('[role="status"]')?.textContent).toContain('summary.pdf');
+    expect(messages.textContent).not.toContain('Private path');
+
+    card.click();
+    renderer.render([answer('other', 'Another conversation')], 'second-thread');
+    rejectOpen(new Error('Late private error'));
+    await Promise.resolve();
+    expect(messages.textContent).toContain('Another conversation');
+    expect(messages.querySelector('.chrome-delivery-card__status')).toBeNull();
+  });
+
+  it('opens exact file links in message text while leaving external links, tools and code examples alone', () => {
+    const user = '[Quarterly spreadsheet](./reports/Q4%20numbers.xlsx)';
+    const assistant = [
+      'Notes: `C:/notes/plan.md` and [source](file:///C:/notes/input.pdf).',
+      '',
+      '[Online docs](https://example.com)',
+      '',
+      '<a href="#" data-message-file-token="forged" data-message-file-target="C:/fake.pdf">fake</a>',
+      '',
+      '```text',
+      'C:/notes/example.md',
+      '```',
+    ].join('\n');
+    renderer.render([
+      { role: 'user', key: 'user', text: user },
+      answer('actual', assistant),
+      live({ ...thinking('thinking-file', 'running'), text: '`C:/notes/thinking.md`' }),
+      { role: 'system', key: 'system-file', text: '`C:/notes/system.md`' },
+    ], 'thread-files');
+    const links = [...messages.querySelectorAll<HTMLAnchorElement>('a.chrome-message-file-link')];
+    expect(links.map(link => link.textContent)).toEqual(['Quarterly spreadsheet', 'C:/notes/plan.md', 'source']);
+    expect(links.every(link => link.getAttribute('href') === '#')).toBe(true);
+    expect(messages.querySelector('[data-message-file-token], [data-message-file-target]')).toBeNull();
+    expect(messages.querySelector('a[href="https://example.com"]')?.getAttribute('target')).toBe('_blank');
+
+    links.forEach(link => link.click());
+    expect(openMessageFile.mock.calls).toEqual([
+      ['thread-files', { sourceKind: 'markdown-uri', target: './reports/Q4%20numbers.xlsx' }],
+      ['thread-files', { sourceKind: 'native-path', target: 'C:/notes/plan.md' }],
+      ['thread-files', { sourceKind: 'file-url', target: 'file:///C:/notes/input.pdf' }],
+    ]);
+  });
+
+  it('does not activate the incomplete bare path at the end of a streaming answer', () => {
+    const row = answer('live-file', 'Saved C:/reports/Q4.pdf');
+    renderer.render([{ ...row, status: 'streaming' }], 'thread-files');
+    expect(messages.querySelector('.chrome-message-file-link')).toBeNull();
+
+    renderer.render([{ ...row, text: row.text + ' backup.pdf', status: 'streaming' }], 'thread-files');
+    expect(messages.querySelector('.chrome-message-file-link')).toBeNull();
+
+    renderer.render([{ ...row, status: 'streaming' }], 'thread-files');
+    // A snapshot carries the interruption in display metadata, without a live item status.
+    renderer.render([{ ...row, display: { stopReason: 'aborted' } }], 'thread-files');
+    expect(messages.querySelector('.chrome-message-file-link')).toBeNull();
+
+    renderer.render([{ ...row, status: 'completed' }], 'thread-files');
+    const link = messages.querySelector<HTMLAnchorElement>('.chrome-message-file-link');
+    expect(link?.textContent).toBe('C:/reports/Q4.pdf');
+    link?.click();
+    expect(openMessageFile).toHaveBeenCalledExactlyOnceWith(
+      'thread-files', { sourceKind: 'native-path', target: 'C:/reports/Q4.pdf' },
+    );
+  });
 
   it('keeps pending states outside their user bubbles with accessible explanations', () => {
     const languageGetter = vi.spyOn(navigator, 'language', 'get').mockReturnValue('en-US');

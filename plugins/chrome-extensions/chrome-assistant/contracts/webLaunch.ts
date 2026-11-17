@@ -130,6 +130,12 @@ export type WebLaunchOutputStatus =
   | 'not-requested' | 'awaiting-consent' | 'pending' | 'available'
   | 'empty' | 'unsupported' | 'unavailable' | 'withheld';
 
+export interface WebLaunchArtifact {
+  name: string;
+  kind: 'image' | 'audio' | 'video' | 'document';
+  mimeType?: string;
+}
+
 /** Only this whitelist may be projected into an untrusted webpage. */
 export interface WebLaunchReceipt {
   requestId: string;
@@ -137,7 +143,7 @@ export interface WebLaunchReceipt {
   receiptRevision: number;
   request: { status: WebLaunchRequestStatus };
   execution: { status: WebLaunchExecutionStatus; executionSettled: boolean };
-  output: { status: WebLaunchOutputStatus; text?: string; format?: 'text' };
+  output: { status: WebLaunchOutputStatus; text?: string; format?: 'text'; artifacts?: WebLaunchArtifact[] };
   delivery: { status: 'connected' | 'disconnected' | 'acknowledged' | 'revoked' };
   error?: { code: string; messageKey: string };
 }
@@ -188,11 +194,34 @@ export const WebLaunchLimits = {
   contextCharacters: 24_000,
   requestBytes: 128 * 1024,
   resultBytes: 256 * 1024,
+  resultArtifacts: 32,
+  resultArtifactNameCharacters: 255,
+  resultArtifactMimeCharacters: 127,
   activeReceipts: 100,
   automaticAdmissionMs: 120_000,
   confirmationMs: 15 * 60_000,
   bridgeMs: 5_000,
 } as const;
+
+export function publicWebLaunchArtifact(value: unknown): WebLaunchArtifact | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { name, kind, mimeType } = value as Partial<WebLaunchArtifact>;
+  if (
+    typeof name !== 'string' || !name.trim() ||
+    name.length > WebLaunchLimits.resultArtifactNameCharacters ||
+    /[\\/:?\u0000-\u001f\u007f]|%(?:2f|5c|3a)/iu.test(name) || name === '.' || name === '..' ||
+    (kind !== 'image' && kind !== 'audio' && kind !== 'video' && kind !== 'document')
+  ) return undefined;
+  return {
+    name,
+    kind,
+    ...(typeof mimeType === 'string' &&
+      mimeType.length <= WebLaunchLimits.resultArtifactMimeCharacters &&
+      /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/iu.test(mimeType)
+      ? { mimeType }
+      : {}),
+  };
+}
 
 /** Stable serialization; callers hash its UTF-8 bytes in their owning realm. */
 export function canonicalWebLaunchInput(input: WebLaunchInput): string {

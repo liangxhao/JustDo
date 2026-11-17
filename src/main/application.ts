@@ -10,6 +10,7 @@ import {
   powerMonitor,
   powerSaveBlocker,
   session,
+  shell,
   webContents,
 } from 'electron';
 import fs from 'fs';
@@ -286,6 +287,7 @@ import {
   buildLocalSpeechExtensionTtsConfig,
 } from './openclaw/config/speech/localSpeechExtensionConfig';
 import { buildManagedLocalTtsConfig } from './openclaw/config/speech/localTtsConfig';
+import { readManagedAssistantDelivery } from './openclaw/media/readManagedAssistantDelivery';
 import { SessionPermissionModeCoordinator } from './openclaw/permissions/sessionPermissionModeCoordinator';
 import { createEngineDiagnosticsCollector } from './openclaw/runtime/engineDiagnostics';
 import { ensureExecutionReady } from './openclaw/runtime/executionReadiness';
@@ -2797,6 +2799,10 @@ if (agentBridgeArgv) {
         getDefaultModelRef: resolveDefaultAgentModelRef,
         readAssistantMedia: request =>
           readOpenClawAssistantMedia(getOpenClawEngineManager(), request),
+        readManagedDelivery: request =>
+          readManagedAssistantDelivery(getOpenClawEngineManager(), request),
+        managedDeliveryDirectory: path.join(userDataPath, 'opened-deliveries'),
+        openDeliveryPath: filePath => shell.openPath(filePath),
       });
       let extensionChatServer: ChromeExtensionChatServer | undefined;
       try {

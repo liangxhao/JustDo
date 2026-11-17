@@ -8,6 +8,8 @@ export const ChromeAppServerMethod = {
   WorkspaceSelect: 'chrome/workspace/select',
   ThreadWorkspaceSet: 'chrome/thread/workspace/set',
   ThreadImage: 'chrome/thread/image',
+  ThreadOpenDelivery: 'chrome/thread/openDelivery',
+  ThreadOpenMessageFile: 'chrome/thread/openMessageFile',
   ComposerOptions: 'chrome/composer/options',
   ChromePair: 'chrome/extension/pair',
   WebLaunchSitesRead: WebLaunchMethod.SitesRead,

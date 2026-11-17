@@ -252,6 +252,20 @@ main {
 .markdown-content ol,
 .markdown-content blockquote,
 .markdown-content pre,
+.chrome-message-file-link {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+.chrome-message-file-link code {
+  color: inherit;
+}
+.chrome-message-file-link__status {
+  color: var(--chat-error);
+  margin-inline-start: 0.4em;
+}
+.chrome-message-file-link__status:empty {
+  display: none;
+}
 .markdown-content table {
   margin: 0 0 0.8em;
 }
@@ -1090,6 +1104,64 @@ footer {
   --text-primary: var(--chat-text);
   --text-secondary: var(--chat-muted);
   --surface-raised: var(--chat-surface);
+}
+.chrome-delivery-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: fit-content;
+  max-width: 100%;
+  margin: 6px 0;
+  padding: 6px 10px 6px 8px;
+  border: 1px solid var(--chat-border);
+  border-radius: 10px;
+  color: var(--chat-text);
+  background: var(--chat-surface);
+  text-align: left;
+}
+button.chrome-delivery-card:hover:not(:disabled) {
+  border-color: var(--chat-link);
+  background: var(--chat-hover);
+}
+button.chrome-delivery-card:focus-visible {
+  outline: 2px solid var(--chat-link);
+  outline-offset: 2px;
+}
+button.chrome-delivery-card:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+.chrome-delivery-card .message-attachment__icon {
+  display: grid;
+  flex: 0 0 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  place-items: center;
+}
+.chrome-delivery-card .message-attachment__icon svg {
+  width: 16px;
+  height: 16px;
+}
+.chrome-delivery-card .message-attachment__glyph {
+  font: 700 12px ui-monospace, monospace;
+}
+.chrome-delivery-card__name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chrome-delivery-card__status {
+  display: block;
+  color: var(--chat-error);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.chrome-delivery-card__status:empty {
+  display: none;
 }
 .chat-bubble__images {
   display: grid;

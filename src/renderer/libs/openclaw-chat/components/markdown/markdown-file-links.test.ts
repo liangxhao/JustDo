@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 
+import MarkdownIt from 'markdown-it';
 import { describe, expect, test } from 'vitest';
 
 import { toSanitizedMarkdownHtml, toStreamingMarkdownHtml } from './markdown';
+import { consumeMessageFileLinkNode, installMessageFileLinks, type MessageFileLinkRegistry } from './markdown-file-links';
 
 const render = (source: string, options: { fileLinks?: boolean; streaming?: boolean } = { fileLinks: true }) => {
   const container = document.createElement('div');
@@ -107,5 +109,23 @@ describe('controlled chat file links', () => {
       const container = render(source, { fileLinks: true, streaming: true });
       expect(container.querySelector('[data-message-file-target]')).not.toBeNull();
     }
+  });
+
+  test('a host without the Desktop HTML rules can consume the same typed targets without placing them in the DOM', () => {
+    const markdown = new MarkdownIt({ html: false });
+    installMessageFileLinks(markdown, { localHtmlRules: false });
+    const messageFileLinkRegistry: MessageFileLinkRegistry = new Map();
+    const source = '[report](<./folder/May report.pdf>) and [HTML](output/report.html#chart)';
+    const container = document.createElement('div');
+    container.innerHTML = markdown.render(source, { fileLinks: true, messageFileLinksMode: true, messageFileLinkRegistry });
+    const anchor = container.querySelector('a')!;
+    expect(container.querySelectorAll('a')).toHaveLength(1);
+    expect(anchor.getAttribute('href')).toBe('#');
+    expect(consumeMessageFileLinkNode(anchor, messageFileLinkRegistry)).toEqual({
+      sourceKind: 'markdown-uri',
+      target: './folder/May%20report.pdf',
+    });
+    expect(consumeMessageFileLinkNode(anchor, messageFileLinkRegistry)).toBeUndefined();
+    expect(anchor.getAttributeNames()).toEqual(['href']);
   });
 });

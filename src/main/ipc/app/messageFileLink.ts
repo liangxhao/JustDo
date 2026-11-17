@@ -14,6 +14,7 @@ import { isWorkspaceFileName } from '../../../shared/preview/workspaceFiles';
 interface MessageFileLinkPreparationOptions {
   resolveWorkspaceRoot?: (sessionId: string) => string | null | undefined;
   isCurrent?: () => boolean;
+  captureFileIdentity?: (identity: { mode: number; isCurrent: () => boolean }) => void;
 }
 
 interface SourceDirectory {
@@ -113,7 +114,7 @@ const failure = (error: MessageFileLinkPreparationError): PrepareMessageFileLink
 /** Prepares identity only; every consuming reader retains its own access checks. */
 export async function prepareMessageFileLink(
   input: unknown,
-  { resolveWorkspaceRoot, isCurrent = () => true }: MessageFileLinkPreparationOptions = {},
+  { resolveWorkspaceRoot, isCurrent = () => true, captureFileIdentity }: MessageFileLinkPreparationOptions = {},
 ): Promise<PrepareMessageFileLinkResult> {
   if (!isCurrent()) return failure(MessageFileLinkPreparationError.Unavailable);
   if (!isPrepareMessageFileLinkRequest(input))
@@ -175,6 +176,24 @@ export async function prepareMessageFileLink(
         return failure(MessageFileLinkPreparationError.SourceChanged);
     }
     if (!isCurrent()) return failure(MessageFileLinkPreparationError.Unavailable);
+    captureFileIdentity?.({
+      mode: canonicalStats.mode,
+      isCurrent: () => {
+        if (!isCurrent()) return false;
+        if (source) {
+          const root = fs.realpathSync.native(source.requestedRoot);
+          const stats = fs.statSync(source.canonicalRoot);
+          if (normalizeRoot(root) !== normalizeRoot(source.canonicalRoot) || !stats.isDirectory() ||
+              stats.dev !== source.stats.dev || stats.ino !== source.stats.ino ||
+              !sourceMatches(input, source, resolveWorkspaceRoot)) return false;
+        }
+        const currentPath = fs.realpathSync.native(requestedPath);
+        if (normalizeRoot(currentPath) !== normalizeRoot(filePath)) return false;
+        const stats = fs.lstatSync(currentPath);
+        return stats.isFile() && !stats.isSymbolicLink() && stats.dev === canonicalStats.dev &&
+          stats.ino === canonicalStats.ino && stats.mode === canonicalStats.mode && isCurrent();
+      },
+    });
     return {
       success: true,
       filePath,

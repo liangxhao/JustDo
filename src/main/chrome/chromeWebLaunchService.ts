@@ -23,7 +23,7 @@ import type { GatewayClientLike } from '../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../engine/openclaw/openclawRuntimeAdapter';
 import type { CoworkNativeSendBinding } from '../engine/types';
 import type { ChromeExtensionChatController } from './chromeExtensionChatController';
-import { readWebLaunchFinal, type WebLaunchResultCandidate } from './chromeWebLaunchResult';
+import { readWebLaunchFinal, type WebLaunchFinalOutput, type WebLaunchResultCandidate } from './chromeWebLaunchResult';
 import {
   type ChromeWebLaunchState,
   ChromeWebLaunchStore,
@@ -82,7 +82,7 @@ export class ChromeWebLaunchService {
   private readonly store: ChromeWebLaunchStore;
   private readonly owners = new Map<string, Owner>();
   private readonly refreshing = new Map<string, Promise<void>>();
-  private readonly resultReads = new Map<string, Promise<string | undefined>>();
+  private readonly resultReads = new Map<string, Promise<WebLaunchFinalOutput | undefined>>();
   private readonly resultAttempts = new Map<string, number>();
   private closed = false;
 
@@ -173,12 +173,16 @@ export class ChromeWebLaunchService {
     const session = this.deps.getStore().getSession(receipt.threadId);
     return session?.id === receipt.threadId && session.source === CoworkSessionSource.ChromeExtension;
   }
-  private metadata(receipt: WebLaunchStoredReceipt, text?: string): WebLaunchResponse {
+  private metadata(receipt: WebLaunchStoredReceipt, output?: WebLaunchFinalOutput): WebLaunchResponse {
     const receiptValue: WebLaunchReceipt = {
       requestId: receipt.requestId, launchId: receipt.launchId, receiptRevision: receipt.receiptRevision,
       request: { status: receipt.requestStatus },
       execution: { status: receipt.executionStatus, executionSettled: receipt.executionSettled },
-      output: { status: receipt.outputStatus, ...(text !== undefined ? { text, format: 'text' as const } : {}) },
+      output: {
+        status: receipt.outputStatus,
+        ...(output?.text !== undefined ? { text: output.text, format: 'text' as const } : {}),
+        ...(output?.artifacts?.length ? { artifacts: output.artifacts } : {}),
+      },
       delivery: { status: receipt.deliveryRevoked ? 'revoked' : 'connected' },
       ...(receipt.errorCode ? { error: { code: receipt.errorCode, messageKey: `webLaunchError${receipt.errorCode}` } } : {}),
     };
@@ -606,6 +610,7 @@ export class ChromeWebLaunchService {
     const candidate: WebLaunchResultCandidate = { agentSeq: event.agentSeq };
     if (receipt.result === 'final' && receipt.shareResult && !receipt.shareRevoked) {
       candidate.disposition = typeof reply?.disposition === 'string' ? reply.disposition : undefined;
+      candidate.emptyWithReason = candidate.disposition === 'empty' && reply?.code !== undefined;
       if (typeof reply?.text === 'string' && Buffer.byteLength(reply.text) <= WebLaunchLimits.resultBytes) candidate.text = reply.text;
       else if (typeof reply?.text === 'string') candidate.disposition = 'oversized';
     }
@@ -728,15 +733,15 @@ export class ChromeWebLaunchService {
       this.closeUnsent(receipt.launchId, 'EXPIRED');
       receipt = this.get(this.store.read(), receipt.launchId);
     }
-    let text: string | undefined;
+    let output: WebLaunchFinalOutput | undefined;
     if (receipt.executionStatus === 'completed' && receipt.result === 'final' && receipt.shareResult && !receipt.shareRevoked && !receipt.deliveryRevoked
-      && !['unavailable', 'unsupported', 'empty', 'withheld'].includes(receipt.outputStatus)) text = await this.readResult(receipt.launchId);
+      && !['unavailable', 'unsupported', 'empty', 'withheld'].includes(receipt.outputStatus)) output = await this.readResult(receipt.launchId);
     this.reference(raw); // Recheck source/channel/grant after every awaited read.
     const state = this.store.read();
     receipt = this.get(state, receipt.launchId);
-    // This synchronous block is the plaintext release boundary. Inner readers
+    // This synchronous block is the result release boundary. Inner readers
     // cannot cover a revoke/cancel queued between their return and our await.
-    if (text !== undefined) {
+    if (output !== undefined) {
       const policy = state.sites.find(item => item.origin === receipt.source.origin);
       const owner = this.owners.get(receipt.launchId);
       const native = owner?.binding;
@@ -747,7 +752,7 @@ export class ChromeWebLaunchService {
         && owner && native && native.clientTurnId === receipt.clientTurnId && native.nativeRunId === receipt.nativeBinding?.nativeRunId
         && this.bindingCurrent(owner, native) && this.ownsProduct(receipt);
       if (!allowed) {
-        text = undefined;
+        output = undefined;
         if (receipt.outputStatus === 'available') {
           this.store.mutate(next => {
             const item = this.get(next, receipt.launchId);
@@ -758,10 +763,10 @@ export class ChromeWebLaunchService {
         }
       }
     }
-    return this.metadata(receipt, text);
+    return this.metadata(receipt, output);
   }
 
-  private readResult(launchId: string): Promise<string | undefined> {
+  private readResult(launchId: string): Promise<WebLaunchFinalOutput | undefined> {
     const existing = this.resultReads.get(launchId);
     if (existing) return existing;
     const promise = this.readResultOnce(launchId).finally(() => { if (this.resultReads.get(launchId) === promise) this.resultReads.delete(launchId); });
@@ -769,7 +774,7 @@ export class ChromeWebLaunchService {
     return promise;
   }
 
-  private async readResultOnce(launchId: string): Promise<string | undefined> {
+  private async readResultOnce(launchId: string): Promise<WebLaunchFinalOutput | undefined> {
     const receipt = this.get(this.store.read(), launchId);
     const owner = this.owners.get(launchId);
     const binding = owner?.binding;
@@ -800,10 +805,10 @@ export class ChromeWebLaunchService {
         if ('reference' in result && result.reference) item.resultRef = result.reference;
         this.bump(item);
       });
-      if ('text' in result && typeof result.text === 'string') {
+      if (result.status === 'available' && result.output) {
         owner.candidates.clear();
         clearTimeout(owner.candidateExpiry);
-        return result.text;
+        return result.output;
       }
       if (result.status !== 'pending' || attempts >= 10) { owner.candidates.clear(); clearTimeout(owner.candidateExpiry); }
     } catch {

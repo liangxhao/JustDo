@@ -49,6 +49,14 @@ describe('Chrome extension side panel markdown', () => {
     expect(html).toContain('rel="noopener noreferrer"');
   });
 
+  it('leaves local files inactive in Markdown used outside conversation bodies', () => {
+    const html = renderMarkdownHtml('C:/report.xlsx and `C:/notes.md` and [file](file:///C:/notes.md)');
+
+    expect(html).not.toContain('data-message-file-token');
+    expect(html).not.toContain('href="file:');
+    expect(html).toContain('<code>C:/notes.md</code>');
+  });
+
   it('wraps fenced and indented code with safe language labels and copy actions', () => {
     const html = renderMarkdownHtml('```ts\"<img src=x>\n<script>literal</script>\n```\n\n    indented');
 

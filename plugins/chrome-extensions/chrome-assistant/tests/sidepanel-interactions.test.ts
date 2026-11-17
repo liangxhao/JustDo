@@ -7,6 +7,8 @@ const mock = vi.hoisted(() => ({
   notify: (_method: string, _params: unknown) => {},
   request: vi.fn(),
   disconnect: vi.fn(),
+  openDelivery: null as null | ((threadId: string, source: string) => Promise<void>),
+  openMessageFile: null as null | ((threadId: string, link: { sourceKind: string; target: string }) => Promise<void>),
   questionOptions: null as null | {
     respond: (threadId: string, requestId: string, response: unknown) => Promise<unknown>;
   },
@@ -31,7 +33,14 @@ vi.mock('../conversation-overlay/modules/sidepanel-questions.js', () => ({
   },
 }));
 vi.mock('../conversation-overlay/modules/sidepanel-messages.js', () => ({
-  createMessageRenderer: () => ({ render: vi.fn(), dispose: vi.fn() }),
+  createMessageRenderer: (_element: HTMLElement, options: {
+    openDelivery: typeof mock.openDelivery;
+    openMessageFile: typeof mock.openMessageFile;
+  }) => {
+    mock.openDelivery = options.openDelivery;
+    mock.openMessageFile = options.openMessageFile;
+    return { render: vi.fn(), dispose: vi.fn() };
+  },
 }));
 vi.mock('../conversation-overlay/modules/sidepanel-activity.js', () => ({
   createRunActivityView: () => ({ render: vi.fn(), dispose: vi.fn() }),
@@ -109,6 +118,41 @@ function sendPromptWithPageContext() {
 }
 
 describe('side panel interactions', () => {
+  it.each([
+    ['openDelivery', { source: './reports/file.pdf' }],
+    ['openMessageFile', { link: { sourceKind: 'markdown-uri', target: './reports/file.pdf' } }],
+  ] as const)('scopes %s to the selected, subscribed chat during thread changes', async (operation, reference) => {
+    await mount();
+    await selectThread('one');
+    const method = `chrome/thread/${operation}`;
+    const open = (threadId: string) => 'source' in reference
+      ? mock.openDelivery!(threadId, reference.source)
+      : mock.openMessageFile!(threadId, reference.link);
+    const pendingOpen = deferred<{ opened: boolean }>();
+    const pendingThread = deferred<unknown>();
+    const original = mock.request.getMockImplementation()!;
+    mock.request.mockImplementation((name, params) => {
+      if (name === method) return pendingOpen.promise;
+      if (name === 'thread/resume' && params.threadId === 'two') return pendingThread.promise;
+      return original(name, params);
+    });
+    const opening = open('one');
+    expect(mock.request).toHaveBeenCalledWith(method, { threadId: 'one', ...reference });
+
+    const session = element<HTMLSelectElement>('session');
+    session.value = 'two';
+    session.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(mock.request).toHaveBeenCalledWith('thread/resume', expect.objectContaining({ threadId: 'two' })));
+    await open('one');
+    await open('two');
+    expect(mock.request.mock.calls.filter(([name]) => name === method)).toHaveLength(1);
+
+    pendingOpen.reject(new Error('Private native error'));
+    await expect(opening).resolves.toBeUndefined();
+    pendingThread.resolve(await original('thread/resume', { threadId: 'two' }));
+    await flush();
+  });
+
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();

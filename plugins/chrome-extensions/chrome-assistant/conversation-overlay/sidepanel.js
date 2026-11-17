@@ -50,7 +50,24 @@ const messageRenderer = createMessageRenderer(messages, {
   processDetailsButton: document.getElementById('processDetails'),
   readImage: async (threadId, source) =>
     (await client.request('chrome/thread/image', { threadId, source })).dataUrl,
+  openDelivery: (threadId, source) =>
+    openThreadFile('chrome/thread/openDelivery', { threadId, source }),
+  openMessageFile: (threadId, link) =>
+    openThreadFile('chrome/thread/openMessageFile', { threadId, link }),
 });
+
+async function openThreadFile(method, params) {
+  const { threadId } = params;
+  const isCurrentThread = () => threadId && threadId === sessionSelect.value && threadId === subscribedThreadId;
+  if (!isCurrentThread()) return;
+  try {
+    const result = await client.request(method, params);
+    if (result?.opened !== true) throw new Error('Unable to open conversation file');
+  } catch (error) {
+    if (isCurrentThread()) throw error;
+  }
+}
+
 let webLaunchPanel;
 let sending = false;
 let transportReady = false;

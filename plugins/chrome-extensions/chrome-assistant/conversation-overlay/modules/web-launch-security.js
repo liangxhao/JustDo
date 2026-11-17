@@ -1,4 +1,5 @@
 import {
+  publicWebLaunchArtifact,
   WebLaunchErrorCode,
   WebLaunchLimits,
   canonicalWebLaunchInput,
@@ -252,12 +253,21 @@ export function publicReceipt(value, allowResult = false) {
   if (
     allowResult &&
     value.execution.executionSettled === true &&
-    typeof value.output.text === 'string' &&
-    bytes(value.output.text) <= WebLaunchLimits.resultBytes &&
-    value.output.status === 'available'
+    value.execution.status === 'completed' &&
+    value.output.status === 'available' &&
+    value.delivery.status === 'connected'
   ) {
-    output.text = value.output.text;
-    output.format = 'text';
+    if (typeof value.output.text === 'string' && bytes(value.output.text) <= WebLaunchLimits.resultBytes) {
+      output.text = value.output.text;
+      output.format = 'text';
+    }
+    if (Array.isArray(value.output.artifacts)) {
+      const artifacts = value.output.artifacts.slice(0, WebLaunchLimits.resultArtifacts).flatMap(value => {
+        const artifact = publicWebLaunchArtifact(value);
+        return artifact ? [artifact] : [];
+      });
+      if (artifacts.length) output.artifacts = artifacts;
+    }
   }
   const result = {
     requestId: value.requestId,

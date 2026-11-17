@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { ChromeExtensionStream } from '../../renderer/chrome/chat/chrome-extension-stream';
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
+import { MessageFileLinkSourceKind } from '../../shared/preview/messageFileLink';
 import { ChromeExtensionChatController } from './chromeExtensionChatController';
 import {
   CHROME_EXTENSION_ID,
@@ -506,6 +507,75 @@ describe('ChromeExtensionChatServer', () => {
         'one',
         'media://outbound/large.png',
       );
+    } finally {
+      socket.close();
+    }
+  });
+
+
+  it('opens deliveries only for initialized Chrome RPC requests and suppresses native errors', async () => {
+    const api = createApi();
+    let release!: () => void;
+    const waitForClose = new Promise<void>(resolve => { release = resolve; });
+    const open = vi.fn();
+    api.openDelivery = vi.fn(async (_threadId, source, assertCurrent) => {
+      if (source === 'wait.pdf') await waitForClose;
+      assertCurrent();
+      if (source === 'missing.pdf') throw new Error('private local path');
+      open(source);
+    });
+    server = new ChromeExtensionChatServer(api, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    const method = 'chrome/thread/openDelivery';
+    const params = { threadId: 'one', source: 'report.pdf' };
+    try {
+      expect(await request(socket, 'early', method, params)).toHaveProperty('error');
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      expect(await request(socket, 'unsubscribed', method, params)).toHaveProperty('error');
+      expect(await request(socket, 'resume', 'thread/resume', { threadId: 'one' })).toHaveProperty('result');
+      socket.send(JSON.stringify({ method, params }));
+      expect(await request(socket, 'delivery', method, params)).toMatchObject({
+        result: { opened: true },
+      });
+      expect(api.openDelivery).toHaveBeenCalledExactlyOnceWith('one', 'report.pdf', expect.any(Function));
+      const unavailable = await request(socket, 'unavailable', method, { ...params, source: 'missing.pdf' });
+      expect(unavailable.error).toMatchObject({ message: 'Unable to open this delivery.' });
+      expect(JSON.stringify(unavailable)).not.toContain('private');
+
+      const pending = request(socket, 'pending', method, { ...params, source: 'wait.pdf' });
+      await vi.waitFor(() => expect(api.openDelivery).toHaveBeenCalledTimes(3));
+      await request(socket, 'detach', 'thread/unsubscribe', { threadId: 'one' });
+      await request(socket, 'resume-again', 'thread/resume', { threadId: 'one' });
+      release();
+      expect(await pending).toHaveProperty('error');
+      expect(open).toHaveBeenCalledExactlyOnceWith('report.pdf');
+    } finally {
+      socket.close();
+    }
+  });
+
+  it('requires an active Chrome thread and a typed message file link before opening', async () => {
+    const api = createApi();
+    api.openMessageFile = vi.fn(async (_threadId, _link, assertCurrent) => { assertCurrent(); });
+    server = new ChromeExtensionChatServer(api, token, 'test');
+    await server.start();
+    const socket = await connect(server.getCapability().localAppServerUrl);
+    const method = 'chrome/thread/openMessageFile';
+    const link = { sourceKind: MessageFileLinkSourceKind.MarkdownUri, target: './report.xlsx' };
+    const params = { threadId: 'one', link };
+    try {
+      expect(await request(socket, 'early', method, params)).toHaveProperty('error');
+      await request(socket, 'init', 'initialize');
+      socket.send(JSON.stringify({ method: 'initialized' }));
+      expect(await request(socket, 'unsubscribed', method, params)).toHaveProperty('error');
+      expect(await request(socket, 'resume', 'thread/resume', { threadId: 'one' })).toHaveProperty('result');
+      socket.send(JSON.stringify({ method, params }));
+      expect(await request(socket, 'invalid-link', method, { ...params, link: link.target }))
+        .toMatchObject({ error: { code: -32602 } });
+      expect(await request(socket, 'open-link', method, params)).toMatchObject({ result: { opened: true } });
+      expect(api.openMessageFile).toHaveBeenCalledExactlyOnceWith('one', link, expect.any(Function));
     } finally {
       socket.close();
     }

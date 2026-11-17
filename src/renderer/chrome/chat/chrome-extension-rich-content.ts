@@ -1,17 +1,28 @@
-import { render } from 'lit';
-
 import {
-  getTranscriptMedia,
-  isTranscriptImage,
-} from '@/libs/openclaw-chat/attachments';
+  type AssistantDeliverable,
+  getAssistantDeliverables,
+  isLocalAssistantDeliverableSource,
+  unwrapAssistantDeliverableSource,
+} from '@shared/openclaw/assistantDeliverables';
+import { parseManagedOutgoingMediaSource } from '@shared/openclaw/assistantMedia';
+import type { MessageFileLinkTarget } from '@shared/preview/messageFileLink';
+import { html, render } from 'lit';
+
+import { getTranscriptMedia, isTranscriptImage } from '@/libs/openclaw-chat/attachments';
+import {
+  consumeMessageFileLinkNode,
+  installMessageFileLinks,
+  type MessageFileLinkRegistry,
+} from '@/libs/openclaw-chat/components/markdown/markdown-file-links';
 import { renderBrowserAnnotation } from '@/libs/openclaw-chat/components/message/browser-annotation-message';
 import { renderBrowserRecording } from '@/libs/openclaw-chat/components/message/browser-recording-message';
+import { renderMessageFileIcon } from '@/libs/openclaw-chat/components/message/message-file-icon';
 import { renderCompactionMessage } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
 import { projectProgressReceipt } from '@/libs/openclaw-chat/model/tools/progress-receipt';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
-import { renderMarkdownHtml } from '../../../../plugins/chrome-extensions/chrome-assistant/scripts/chrome-extension-markdown-entry.mjs';
+import { createMarkdownRenderer } from '../../../../plugins/chrome-extensions/chrome-assistant/scripts/chrome-extension-markdown-entry.mjs';
 import {
   questionPresentationResponse,
   renderQuestionPresentation,
@@ -23,6 +34,21 @@ import {
 import { i18nService } from './chrome-extension-i18n';
 
 const imageRetries = new WeakMap<HTMLImageElement, () => void>();
+const renderMessageMarkdown = createMarkdownRenderer(markdown =>
+  installMessageFileLinks(markdown, { localHtmlRules: false }),
+);
+const incompleteMessageStatuses = new Set([
+  'streaming', 'inProgress', 'running', 'unknown', 'interrupted',
+]);
+
+export function isIncompleteFileLinkSource(entry: {
+  status?: string;
+  display?: { stopReason?: string };
+}): boolean {
+  const stopReason = entry.display?.stopReason;
+  return incompleteMessageStatuses.has(entry.status ?? '') ||
+    stopReason === 'aborted' || stopReason === 'error';
+}
 
 /** Copy the same normalized text that is rendered, excluding cards and attachments. */
 export function messageCopyText(entry: {
@@ -31,8 +57,8 @@ export function messageCopyText(entry: {
   rawMessage?: Record<string, unknown>;
 }): string {
   const raw = entry.rawMessage ?? { role: entry.role, content: entry.text };
-  return normalizeMessage(raw).content
-    .flatMap(item => item.type === 'text' ? [item.text] : [])
+  return normalizeMessage(raw)
+    .content.flatMap(item => (item.type === 'text' ? [item.text] : []))
     .join('\n\n');
 }
 
@@ -69,6 +95,8 @@ export function renderRichContent(
   entry: {
     role: string;
     text?: string;
+    status?: string;
+    display?: { stopReason?: string };
     rawMessage?: Record<string, unknown>;
     item?: {
       id?: string;
@@ -79,6 +107,8 @@ export function renderRichContent(
     };
   },
   loadImage: (source: string) => Promise<string>,
+  openDelivery?: (source: string) => Promise<void>,
+  openMessageFile?: (link: MessageFileLinkTarget) => Promise<void>,
 ) {
   if (entry.role === 'question-presentation' && entry.item) {
     const result =
@@ -142,6 +172,12 @@ export function renderRichContent(
   }
   const raw = entry.rawMessage ?? { role: entry.role, content: entry.text };
   const content = normalizeMessage(raw).content.slice();
+  const deliverables = new Map(
+    (entry.role === 'assistant' ? getAssistantDeliverables(raw) : []).map(delivery => [
+      delivery.source,
+      delivery,
+    ]),
+  );
   for (const media of getTranscriptMedia(raw)) {
     if (
       isTranscriptImage(media) &&
@@ -157,15 +193,35 @@ export function renderRichContent(
       });
     }
   }
+  for (const delivery of deliverables.values()) {
+    if (content.some(item => item.type === 'attachment' && item.attachment.url === delivery.source))
+      continue;
+    content.push({
+      type: 'attachment',
+      attachment: {
+        kind: delivery.kind,
+        label: delivery.name,
+        url: delivery.source,
+        mimeType: delivery.mimeType,
+      },
+    });
+  }
   const delivery = raw.openclawDelivery as { mediaUrls?: unknown } | undefined;
   const omitted =
     raw.__chromeExtensionOmitDeliveryMedia === true && Array.isArray(delivery?.mediaUrls)
       ? new Set(delivery.mediaUrls)
       : new Set();
+  const canOpenMessageFile =
+    entry.role === 'user' || entry.role === 'assistant' ? openMessageFile : undefined;
+  const incomplete = entry.role === 'assistant' && isIncompleteFileLinkSource(entry);
   let images: HTMLElement | null = null;
   for (const item of content) {
     if (item.type === 'attachment' && omitted.has(item.attachment.url)) continue;
-    if (item.type === 'attachment' && item.attachment.kind === 'image') {
+    const delivery = item.type === 'attachment' ? deliverables.get(item.attachment.url) : undefined;
+    if (
+      item.type === 'attachment' &&
+      (item.attachment.kind === 'image' || delivery?.kind === 'image')
+    ) {
       if (!images) {
         images = document.createElement('div');
         images.className = 'chat-bubble__images';
@@ -173,10 +229,19 @@ export function renderRichContent(
       }
       const img = document.createElement('img');
       img.className = 'chat-bubble__image';
-      img.alt = item.attachment.label;
+      img.alt = delivery?.name ?? item.attachment.label;
       images.append(img);
       images.style.setProperty('--image-columns', String(images.childElementCount));
-      hydrateImage(img, item.attachment.url, loadImage);
+      hydrateImage(
+        img,
+        delivery ? unwrapAssistantDeliverableSource(delivery.source) : item.attachment.url,
+        loadImage,
+      );
+      if (delivery && openDelivery && canOpenDeliverySource(delivery.source)) {
+        const actions = document.createElement('div');
+        renderDelivery(actions, delivery, openDelivery);
+        host.append(actions);
+      }
       continue;
     }
     images = null;
@@ -184,9 +249,13 @@ export function renderRichContent(
     if (item.type === 'browser_annotation') render(renderBrowserAnnotation(item), node);
     else if (item.type === 'browser_recording')
       render(renderBrowserRecording(item.recording), node);
-    else if (item.type === 'text' && item.text) node.innerHTML = renderMarkdownHtml(item.text);
-    else if (item.type === 'attachment') node.textContent = item.attachment.label;
-    else continue;
+    else if (item.type === 'text' && item.text) {
+      if (canOpenMessageFile) renderMessageFileLinks(node, item.text, incomplete, canOpenMessageFile);
+      else node.innerHTML = renderMessageMarkdown(item.text);
+    } else if (item.type === 'attachment') {
+      if (delivery) renderDelivery(node, delivery, openDelivery);
+      else node.textContent = item.attachment.label;
+    } else continue;
     host.append(node);
     for (const img of node.querySelectorAll('img'))
       hydrateImage(
@@ -195,6 +264,101 @@ export function renderRichContent(
         loadImage,
       );
   }
+}
+
+function renderMessageFileLinks(
+  host: HTMLElement,
+  text: string,
+  streaming: boolean,
+  openFile: (link: MessageFileLinkTarget) => Promise<void>,
+) {
+  const registry: MessageFileLinkRegistry = new Map();
+  host.innerHTML = renderMessageMarkdown(text, {
+    fileLinks: true,
+    messageFileLinksMode: true,
+    fileLinksStreaming: streaming,
+    messageFileLinkRegistry: registry,
+  });
+  for (const anchor of host.querySelectorAll<HTMLAnchorElement>('a[data-message-file-token]')) {
+    const link = consumeMessageFileLinkNode(anchor, registry);
+    if (!link) continue;
+    anchor.classList.add('chrome-message-file-link');
+    const status = host.ownerDocument.createElement('span');
+    status.className = 'chrome-message-file-link__status';
+    status.setAttribute('role', 'status');
+    anchor.after(status);
+    anchor.addEventListener('auxclick', event => event.preventDefault());
+    anchor.addEventListener('click', async event => {
+      event.preventDefault();
+      if (!anchor.isConnected || anchor.hasAttribute('aria-busy')) return;
+      status.textContent = '';
+      anchor.setAttribute('aria-busy', 'true');
+      try {
+        await openFile(link);
+      } catch {
+        if (anchor.isConnected) status.textContent = i18nService.t('coworkUnsupportedFileOpenFailed');
+      } finally {
+        anchor.removeAttribute('aria-busy');
+      }
+    });
+  }
+}
+
+function canOpenDeliverySource(source: string): boolean {
+  return (
+    isLocalAssistantDeliverableSource(source) ||
+    parseManagedOutgoingMediaSource(unwrapAssistantDeliverableSource(source)) !== null
+  );
+}
+
+function renderDelivery(
+  host: HTMLElement,
+  delivery: AssistantDeliverable,
+  openDelivery?: (source: string) => Promise<void>,
+) {
+  const document = host.ownerDocument;
+  const button =
+    openDelivery && canOpenDeliverySource(delivery.source)
+      ? document.createElement('button')
+      : null;
+  const card = button ?? document.createElement('div');
+  card.className = 'chrome-delivery-card';
+  card.title = delivery.name;
+  render(
+    html`
+      ${renderMessageFileIcon(delivery.name)}
+      <span class="chrome-delivery-card__name">${delivery.name}</span>
+    `,
+    card,
+  );
+  host.append(card);
+  if (!button || !openDelivery) return;
+
+  button.type = 'button';
+  button.setAttribute('aria-label', `${i18nService.t('coworkOpenAttachment')} ${delivery.name}`);
+  const status = document.createElement('span');
+  status.className = 'chrome-delivery-card__status';
+  status.setAttribute('role', 'status');
+  host.append(status);
+  button.addEventListener('click', async () => {
+    if (button.disabled || !button.isConnected) return;
+    status.textContent = '';
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    try {
+      await openDelivery(delivery.source);
+    } catch {
+      if (button.isConnected)
+        status.textContent = i18nService
+          .t('coworkAttachmentUnavailable')
+          .replace('{filename}', delivery.name);
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+      }
+    }
+  });
 }
 
 function hydrateImage(

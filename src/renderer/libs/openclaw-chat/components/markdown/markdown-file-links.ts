@@ -45,19 +45,29 @@ function trustedLinkOpening(reference: MessageFileLinkTarget, env: Record<string
   return `<a href="#" ${TOKEN_ATTRIBUTE}="${nonce}">`;
 }
 
-/** Called by DOMPurify only while sanitizing this render's generated HTML. */
-export function sanitizeMessageFileLinkNode(
+/** Resolve one anchor from this render without leaving a file target in the DOM. */
+export function consumeMessageFileLinkNode(
   node: Element,
   registry: MessageFileLinkRegistry | undefined,
-): boolean {
+): MessageFileLinkTarget | undefined {
   const nonce = node.getAttribute(TOKEN_ATTRIBUTE);
   const reference = nonce ? registry?.get(nonce) : undefined;
   for (const attribute of [...node.attributes]) {
     if (attribute.name.startsWith('data-message-file-')) node.removeAttribute(attribute.name);
   }
-  if (!reference || node.tagName.toLowerCase() !== 'a') return false;
+  if (!reference || node.tagName.toLowerCase() !== 'a') return undefined;
   // A nonce can admit exactly one generated anchor, never another raw node.
   registry?.delete(nonce!);
+  return reference;
+}
+
+/** Called by DOMPurify only while sanitizing this render's generated HTML. */
+export function sanitizeMessageFileLinkNode(
+  node: Element,
+  registry: MessageFileLinkRegistry | undefined,
+): boolean {
+  const reference = consumeMessageFileLinkNode(node, registry);
+  if (!reference) return false;
   node.setAttribute('href', '#');
   node.setAttribute('data-message-file-target', reference.target);
   node.setAttribute('data-message-file-kind', reference.sourceKind);
@@ -66,8 +76,11 @@ export function sanitizeMessageFileLinkNode(
   return true;
 }
 
-/** Install only after the legacy HTML rules, whose compatibility stays intact. */
-export function installMessageFileLinks(md: MarkdownIt): void {
+/** Desktop installs after its legacy HTML rules. Narrow hosts can use Markdown defaults. */
+export function installMessageFileLinks(
+  md: MarkdownIt,
+  { localHtmlRules = true }: { localHtmlRules?: boolean } = {},
+): void {
   md.core.ruler.at('inline', state => {
     const sourceLineCount = state.src.split('\n').length;
     for (const token of state.tokens) {
@@ -83,7 +96,7 @@ export function installMessageFileLinks(md: MarkdownIt): void {
     }
   });
 
-  md.inline.ruler.before('local_html_path', 'message_file_path', (state, silent) => {
+  md.inline.ruler.before(localHtmlRules ? 'local_html_path' : 'text', 'message_file_path', (state, silent) => {
     if (!state.env.fileLinks || isInLink(state)) return false;
     let matches = INLINE_MATCHES.get(state);
     if (!matches) {
@@ -142,7 +155,7 @@ export function installMessageFileLinks(md: MarkdownIt): void {
     return true;
   });
 
-  md.core.ruler.after('local_html_link', 'message_file_link_targets', state => {
+  md.core.ruler.after(localHtmlRules ? 'local_html_link' : 'linkify', 'message_file_link_targets', state => {
     if (!state.env.messageFileLinksMode) return;
     for (const block of state.tokens) {
       if (block.type !== 'inline' || !block.children) continue;
@@ -150,7 +163,7 @@ export function installMessageFileLinks(md: MarkdownIt): void {
       for (const token of block.children) {
         if (token.type === 'link_open') {
           const href = token.attrGet('href') ?? '';
-          const reject = !getReference(token) && !parseLocalHtmlLink(href) &&
+          const reject = !getReference(token) && !(localHtmlRules && parseLocalHtmlLink(href)) &&
             !/^(?:https?:|mailto:|#)/iu.test(href);
           suppressed.push(reject);
           if (reject) { token.tag = 'span'; token.attrs = null; }

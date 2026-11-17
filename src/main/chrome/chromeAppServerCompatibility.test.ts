@@ -162,7 +162,7 @@ it('does not mix capabilities or same-ID execution ownership between chrome and 
   await chrome.initialize();
   await consolePeer.initialize();
   expect(await chrome.request('thread/list')).toHaveProperty('result.data');
-  for (const method of ['chrome/thread/image', 'chrome/composer/options', 'chrome/extension/pair'])
+  for (const method of ['chrome/thread/image', 'chrome/thread/openMessageFile', 'chrome/composer/options', 'chrome/extension/pair'])
     expect(await consolePeer.request(method, { threadId: h.thread.id })).toHaveProperty('error');
   expect(await consolePeer.request('thread/read', { threadId: h.thread.id }))
     .toMatchObject({ result: { thread: { name: 'Console conversation', turns: [] } } });

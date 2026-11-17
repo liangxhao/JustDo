@@ -92,7 +92,16 @@ type Receipt = {
   receiptRevision: number;
   request: { status: string };
   execution: { status: string; executionSettled: boolean };
-  output: { status: string; text?: string; format?: 'text' };
+  output: {
+    status: string;
+    text?: string;
+    format?: 'text';
+    artifacts?: Array<{
+      name: string;
+      kind: 'image' | 'audio' | 'video' | 'document';
+      mimeType?: string;
+    }>;
+  };
   delivery: { status: string };
   error?: { code: string; messageKey: string };
 };
@@ -116,7 +125,7 @@ Main 返回 `{receipt, internal}`，后台仅用 `receipt` 的允许字段逐项
   当前侧栏对 `result:'final'` 提交 `shareResult:true`，人工发送同时确认本轮回传。后续真实点击在站点授权范围内按 `effectiveMode` 和网页的 `result` 处理。已有 `rememberSend`、`rememberResult` 字段保留以兼容旧侧栏。用户在侧栏手动发送时，侧栏提交 `confirmNewTask:true`，授权当前这次请求独立执行。旧任务的状态仍由原回执跟踪。
 - Main 为新草稿写入 `full` 权限，旧回执缺少该字段时按 `ask` 读取。自动发送核验准备时的实际输入和权限。可信侧栏可以通过 `revise` 修改权限或模型，修改后由用户手动发送。草稿权限只传给扩展，网页无法提供或读取此字段。
 - `chrome/webLaunch/changed` 向当前连接发送空参数，只提示重读策略或观察。正文、凭据、终态及发送权限均不通过该通知交付。
-- 只有当前原文档租约的 `read` 在最后一次权限核验后可以返回正文。
+- 只有当前原文档租约的 `read` 在最后一次权限核验后可以返回最终文本和交付件描述。交付件描述只含文件名、类别和可选 MIME 类型。
 
 ### 错误数据
 

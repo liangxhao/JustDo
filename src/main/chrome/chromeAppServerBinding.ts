@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
+import { isMessageFileLinkTarget } from '../../shared/preview/messageFileLink';
 import type { PermissionMode } from '../../shared/security/approvals';
 import { assertCodexHistoryFullSize, paginateCodexHistoryItems, paginateCodexHistoryTurns, projectCodexHistory } from '../clients/appServer/protocol/appServerHistory';
 import { prepareAppServerInput } from '../clients/appServer/protocol/appServerInput';
@@ -152,6 +153,8 @@ export class ChromeAppServerHub {
         [ChromeAppServerMethod.QuestionsRespond]: operation(params => this.respondQuestion(peer, params)),
         [ChromeAppServerMethod.ComposerOptions]: operation(params => this.composerOptions(peer, params)),
         [ChromeAppServerMethod.ThreadImage]: operation(params => this.readImage(peer, params)),
+        [ChromeAppServerMethod.ThreadOpenDelivery]: operation(params => this.openDelivery(peer, params)),
+        [ChromeAppServerMethod.ThreadOpenMessageFile]: operation(params => this.openMessageFile(peer, params)),
         [ChromeAppServerMethod.ChromePair]: operation(params => this.pairBrowser(peer, params)),
         ...Object.fromEntries(chromeWebLaunchMethods.flatMap(method => {
           const run = webLaunchOperations?.[method];
@@ -558,6 +561,37 @@ export class ChromeAppServerHub {
     return { dataUrl };
   }
 
+  private async openDelivery(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
+    const threadId = this.threadId(params);
+    const source = optionalString(params, 'source');
+    if (!source || source.length > 4096 || /[\x00-\x1f\x7f]/u.test(source)) {
+      invalidParams('Invalid delivery reference.');
+    }
+    try {
+      if (!this.api.openDelivery) throw new Error('Delivery opening unavailable.');
+      const assertCurrent = this.subscriptionScope(peer, threadId, 'Subscribe to the conversation before opening its deliveries.');
+      await this.api.openDelivery(threadId, source, assertCurrent);
+      return { opened: true };
+    } catch {
+      // Native file and Gateway failures can include local paths or transport details.
+      throw new Error('Unable to open this delivery.');
+    }
+  }
+
+  private async openMessageFile(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
+    const threadId = this.threadId(params);
+    const { link } = params;
+    if (!isMessageFileLinkTarget(link)) invalidParams('Invalid message file link.');
+    try {
+      if (!this.api.openMessageFile) throw new Error('Message file opening unavailable.');
+      const assertCurrent = this.subscriptionScope(peer, threadId, 'Subscribe to the conversation before opening its file links.');
+      await this.api.openMessageFile(threadId, link, assertCurrent);
+      return { opened: true };
+    } catch {
+      throw new Error('Unable to open this message file.');
+    }
+  }
+
   private async readThread(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
     const threadId = this.threadId(params);
     const thread = this.selectedThread(peer, await this.requireThread(threadId));
@@ -739,12 +773,12 @@ export class ChromeAppServerHub {
     return { ...(await this.api.getComposerOptions(threadId)) };
   }
 
-  private questionScope(peer: ChromePeer, threadId: string): () => void {
+  private subscriptionScope(peer: ChromePeer, threadId: string, errorMessage: string): () => void {
     const token = peer.subscriptionTokens.get(threadId);
     const assertCurrent = () => {
       this.assertPeerActive(peer);
       if (!token || !peer.subscriptions.has(threadId) || peer.subscriptionTokens.get(threadId) !== token)
-        invalidParams('Subscribe to the conversation before reading or answering its questions.');
+        invalidParams(errorMessage);
     };
     assertCurrent();
     return assertCurrent;
@@ -752,7 +786,7 @@ export class ChromeAppServerHub {
 
   private async listQuestions(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
     const threadId = this.threadId(params);
-    const assertCurrent = this.questionScope(peer, threadId);
+    const assertCurrent = this.subscriptionScope(peer, threadId, 'Subscribe to the conversation before reading or answering its questions.');
     if (!this.api.listQuestions) return this.unsupported(ChromeAppServerMethod.QuestionsList);
     const questions = await this.api.listQuestions(threadId, assertCurrent);
     assertCurrent();
@@ -761,7 +795,7 @@ export class ChromeAppServerHub {
 
   private async respondQuestion(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
     const threadId = this.threadId(params);
-    const assertCurrent = this.questionScope(peer, threadId);
+    const assertCurrent = this.subscriptionScope(peer, threadId, 'Subscribe to the conversation before reading or answering its questions.');
     const requestId = optionalString(params, 'requestId');
     if (!requestId || requestId.length > 256) invalidParams('requestId is required.');
     if (params.behavior !== 'submit' && params.behavior !== 'cancel') invalidParams('Invalid question response.');

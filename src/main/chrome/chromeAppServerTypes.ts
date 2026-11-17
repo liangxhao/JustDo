@@ -4,6 +4,7 @@ import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExten
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 import type { AskUserRequest } from '../../shared/cowork/interactions/askUserQuestion';
 import type { SetSessionWorkspaceInput, SetSessionWorkspaceResult } from '../../shared/cowork/sessionWorkspace';
+import type { MessageFileLinkTarget } from '../../shared/preview/messageFileLink';
 import type { PermissionMode } from '../../shared/security/approvals';
 import type { AppServerConnectionContext } from '../clients/appServer/protocol/appServerProtocol';
 import type { AppServerModel, AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
@@ -118,6 +119,8 @@ export interface ChromeExtensionChatApi {
     options?: { forceFullSnapshot?: boolean },
   ) => Promise<ChromeExtensionMessage[]>;
   readManagedImage?: (sessionId: string, source: string) => Promise<string>;
+  openDelivery?: (sessionId: string, source: string, assertPeerCurrent: () => void) => Promise<void>;
+  openMessageFile?: (sessionId: string, link: MessageFileLinkTarget, assertPeerCurrent: () => void) => Promise<void>;
   startThread: (title?: string, options?: {
     cwd?: string;
     model?: string;

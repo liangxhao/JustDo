@@ -18,6 +18,11 @@ export interface WebLaunchNativeBinding extends CoworkNativeSendBinding {
   nativeRunId: string;
   clientTurnId: string;
 }
+export interface WebLaunchResultReference {
+  messageId: string;
+  digest: string;
+  mediaDigest?: string;
+}
 export interface WebLaunchDocumentLease {
   id: string;
   sourceKey: string;
@@ -64,7 +69,7 @@ export interface WebLaunchStoredReceipt {
   notSent?: boolean;
   nativeBinding?: WebLaunchNativeBinding;
   terminal?: { status: 'completed' | 'failed' | 'interrupted'; endedAt: number; agentSeq: number };
-  resultRef?: { messageId: string; digest: string };
+  resultRef?: WebLaunchResultReference;
   errorCode?: string;
 }
 export interface ChromeWebLaunchState {

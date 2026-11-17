@@ -15,10 +15,12 @@ import type { SessionRunTiming } from '../../shared/cowork/sessionRun';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { SessionWorkspaceFailure, type SetSessionWorkspaceInput } from '../../shared/cowork/sessionWorkspace';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../shared/openclaw/agentEvent';
+import { getAssistantDeliverables, unwrapAssistantDeliverableSource } from '../../shared/openclaw/assistantDeliverables';
 import type {
   OpenClawAssistantMediaRequest,
   OpenClawAssistantMediaResult,
 } from '../../shared/openclaw/assistantMedia';
+import { parseManagedOutgoingMediaSource } from '../../shared/openclaw/assistantMedia';
 import { isKnownAutomaticRetryFailureCopy, projectRetryFailureMessages } from '../../shared/openclaw/automaticErrorRetryDisplay';
 import { isGatewayRequestOutcomeUnknown } from '../../shared/openclaw/gatewayRequestOutcome';
 import { normalizeMessageSessionKey } from '../../shared/openclaw/messageDomain';
@@ -27,6 +29,7 @@ import {
   isFailedRunMessage,
   readFailedRunMessageText,
 } from '../../shared/openclaw/runFailureDisplay';
+import type { MessageFileLinkTarget } from '../../shared/preview/messageFileLink';
 import { PRODUCT_NAME } from '../../shared/productMetadata';
 import { matchesModelSelectionIdentity } from '../../shared/providers/modelSelectionIdentity';
 import { isPermissionMode, PermissionMode, resolvePermissionMode } from '../../shared/security/approvals';
@@ -43,6 +46,8 @@ import type { GatewayClientLike, GatewayEventFrame, NativeRunTerminalReceipt } f
 import type { AutomaticErrorRetryWaitReceipt } from '../engine/openclaw/automaticErrorRetry/coordinator';
 import type { OpenClawRuntimeAdapter } from '../engine/openclaw/openclawRuntimeAdapter';
 import type { CoworkAutomaticErrorRetryOwner } from '../engine/types';
+import { prepareMessageFileLink } from '../ipc/app/messageFileLink';
+import type { ManagedAssistantDelivery, ManagedAssistantDeliveryRequest } from '../openclaw/media/readManagedAssistantDelivery';
 import type { OpenClawEngineStatus } from '../openclaw/runtime/openclawEngineManager';
 import type { GatewayHistoryEntry } from '../openclaw/sessions/openclawHistory';
 import { extractGatewayHistoryEntries } from '../openclaw/sessions/openclawHistory';
@@ -58,6 +63,13 @@ import type {
   ChromeExtensionTrustedSendHooks,
   ChromeExtensionTurnState,
 } from './chromeAppServerTypes';
+import {
+  CHROME_MANAGED_DELIVERY_MIME_TYPES,
+  isChromeOpenableFileMode,
+  isChromeOpenableFilePath,
+  openStagedChromeDelivery,
+  resolveChromeLocalDelivery,
+} from './chromeExtensionDelivery';
 import { readChromeExtensionHistoryDisplay, readChromeQuestionResult } from './chromeExtensionHistoryDisplay';
 import { ChromeExtensionQuestions } from './chromeExtensionQuestions';
 
@@ -153,6 +165,9 @@ type ChromeExtensionChatControllerDependencies = {
   readAssistantMedia?: (
     request: OpenClawAssistantMediaRequest,
   ) => Promise<OpenClawAssistantMediaResult>;
+  readManagedDelivery?: (request: ManagedAssistantDeliveryRequest) => Promise<ManagedAssistantDelivery>;
+  managedDeliveryDirectory?: string;
+  openDeliveryPath?: (filePath: string) => Promise<string>;
 };
 
 const limit = (value: unknown, maxLength: number): string =>
@@ -160,6 +175,11 @@ const limit = (value: unknown, maxLength: number): string =>
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const chromeHistoryIdentity = (session: CoworkSession): string => JSON.stringify([
+  session.id, session.source, session.agentId, session.cwd, session.nativeSessionKey ?? null,
+  session.historyBinding ?? null, session.nativeParentSessionId ?? null,
+]);
 
 const readConfiguredModelOptions = (value: unknown): Array<{ id: string; name: string }> => {
   if (!Array.isArray(value)) return [];
@@ -230,6 +250,9 @@ const projectRichHistory = (
             'image_url',
             'input_image',
             'attachment',
+            'audio',
+            'video',
+            'file',
             'browser_annotation',
             'browser_recording',
           ].includes(String(block.type)),
@@ -338,14 +361,26 @@ const extractChromeExtensionHistoryEntries = (messages: unknown[]): ExtensionHis
       // and appends embedded tools. The extension process timeline instead needs
       // the original content-block order and one countable entry per block.
       const delivery = isRecord(message.openclawDelivery) ? message.openclawDelivery : null;
-      const hasDelivery =
-        Array.isArray(delivery?.mediaUrls) &&
-        delivery.mediaUrls.some(value => typeof value === 'string' && value.trim());
-      const entries = message.content.flatMap((block, index) =>
-        withSource(
+      const originalSources = Array.isArray(delivery?.mediaUrls)
+        ? delivery.mediaUrls.filter(value => typeof value === 'string' && value.trim()) : [];
+      const hasDelivery = originalSources.length > 0;
+      const deliverables = hasDelivery ? getAssistantDeliverables(message) : [];
+      const deliveredSources = new Set(deliverables.map(deliverable => deliverable.source));
+      // Earlier text can still mention the original MEDIA aliases. Keep both
+      // forms out of those segments so only the final delivery row shows files.
+      const omittedDelivery = hasDelivery
+        ? { openclawDelivery: { mediaUrls: [...new Set([...originalSources, ...deliveredSources])] } }
+        : {};
+      const entries = message.content.flatMap((block, index) => {
+        if (hasDelivery && isRecord(block) &&
+            ['attachment', 'audio', 'video', 'file', 'image'].includes(String(block.type)) &&
+            getAssistantDeliverables({ role: 'assistant', content: [block] }).some(item => deliveredSources.has(item.source)))
+          return [];
+        return withSource(
           projectRichHistory(
             {
               ...message,
+              ...omittedDelivery,
               content: [block],
               text: undefined,
               ...(index !== 0
@@ -363,8 +398,8 @@ const extractChromeExtensionHistoryEntries = (messages: unknown[]): ExtensionHis
             hasDelivery,
           ),
           index,
-        ),
-      );
+        );
+      });
       if (
         !entries.some(entry => entry.role === 'assistant' && Boolean(entry.text)) &&
         typeof message.text === 'string' &&
@@ -374,7 +409,7 @@ const extractChromeExtensionHistoryEntries = (messages: unknown[]): ExtensionHis
           ...(hasDelivery
             ? withSource(
                 projectRichHistory(
-                  { role: 'assistant', content: message.text, openclawDelivery: delivery },
+                  { role: 'assistant', content: message.text, ...omittedDelivery },
                   true,
                 ),
                 message.content.length,
@@ -386,9 +421,22 @@ const extractChromeExtensionHistoryEntries = (messages: unknown[]): ExtensionHis
         );
       }
       if (hasDelivery) {
+        const attachments = deliverables.map(deliverable => ({
+          type: 'attachment',
+          attachment: {
+            kind: deliverable.kind,
+            label: deliverable.name,
+            url: deliverable.source,
+            ...(deliverable.mimeType ? { mimeType: deliverable.mimeType } : {}),
+          },
+        }));
         entries.push(
           ...withSource(
-            projectRichHistory({ role: 'assistant', content: [], openclawDelivery: delivery }),
+            projectRichHistory({
+              role: 'assistant',
+              content: attachments,
+              openclawDelivery: { mediaUrls: [...deliveredSources] },
+            }),
             message.content.length + 1,
           ),
         );
@@ -566,10 +614,6 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
   async getHistory(sessionId: string): Promise<AppServerThreadHistory> {
     const store = this.deps.getStore();
     this.requireChromeSession(sessionId);
-    const identityOf = (session: CoworkSession) => JSON.stringify([
-      session.id, session.source, session.agentId, session.cwd, session.nativeSessionKey ?? null,
-      session.historyBinding ?? null, session.nativeParentSessionId ?? null,
-    ]);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const recent = this.activeTurns.get(sessionId)?.runId ??
         store.getSessionRuns(sessionId).at(-1)?.automaticErrorRetry?.chainId;
@@ -578,7 +622,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       const logicalState = chainBefore ? await this.getTurnState(sessionId, recent) : null;
       const chainRevision = recent ? retryRuntime?.getAutomaticErrorRetryTurn?.(sessionId, recent)?.presentation.revision : undefined;
       const session = this.requireChromeSession(sessionId);
-      const identity = identityOf(session);
+      const identity = chromeHistoryIdentity(session);
       const runs = store.getSessionRuns(sessionId);
       const tracked = this.activeTurns.get(sessionId);
       if (!runs.length && !tracked && !session.nativeSessionKey && !session.historyBinding)
@@ -590,7 +634,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       const sessionKey = session.nativeSessionKey ?? session.historyBinding?.sessionKey ??
         buildManagedSessionKey(sessionId, session.agentId);
       const assertCurrent = () => {
-        if (identityOf(this.requireChromeSession(sessionId)) !== identity ||
+        if (chromeHistoryIdentity(this.requireChromeSession(sessionId)) !== identity ||
           this.deps.getRuntime() !== runtime || runtime.getGatewayClient() !== client ||
           runtime.getGatewayClientGeneration() !== generation)
           throw new Error('Chrome history identity changed during the read.');
@@ -850,6 +894,111 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     this.requireChromeSession(sessionId);
     if (result.success === false) throw new Error(result.error);
     return result.dataUrl;
+  }
+
+  async openMessageFile(sessionId: string, link: MessageFileLinkTarget, assertPeerCurrent: () => void): Promise<void> {
+    const session = this.requireChromeSession(sessionId);
+    const identity = chromeHistoryIdentity(session);
+    const openPath = this.deps.openDeliveryPath;
+    if (!openPath) throw new Error('Message file opening is unavailable.');
+
+    const isCurrent = () => {
+      assertPeerCurrent();
+      return chromeHistoryIdentity(this.requireChromeSession(sessionId)) === identity;
+    };
+    let fileIdentity: { mode: number; isCurrent: () => boolean } | undefined;
+    const prepared = await prepareMessageFileLink({
+      sourceKind: link.sourceKind,
+      target: link.target,
+      navigationSuffix: link.navigationSuffix,
+      workspaceSessionId: sessionId,
+      expectedProjectRoot: session.cwd || undefined,
+    }, {
+      resolveWorkspaceRoot: id => this.requireChromeSession(id).cwd,
+      isCurrent,
+      captureFileIdentity: value => { fileIdentity = value; },
+    });
+    if (!prepared.success || !fileIdentity || !isChromeOpenableFilePath(prepared.filePath) ||
+        !isChromeOpenableFileMode(fileIdentity.mode) || !fileIdentity.isCurrent()) {
+      throw new Error('Message file is unavailable.');
+    }
+    if (await openPath(prepared.filePath)) throw new Error('System app did not open the message file.');
+  }
+
+  async openDelivery(sessionId: string, source: string, assertPeerCurrent: () => void): Promise<void> {
+    const session = this.requireChromeSession(sessionId);
+    const identity = chromeHistoryIdentity(session);
+    const runtime = this.deps.getRuntime();
+    const openPath = this.deps.openDeliveryPath;
+    if (!runtime || !openPath) throw new Error('Delivery opening is unavailable.');
+    await runtime.ensureReady();
+    const client = runtime.getGatewayClient();
+    const generation = runtime.getGatewayClientGeneration();
+    const sessionKey = runtime.getSessionKeysForSession(sessionId)[0];
+    if (!client || !sessionKey) throw new Error('Conversation scope is unavailable.');
+
+    const assertCurrent = () => {
+      assertPeerCurrent();
+      if (chromeHistoryIdentity(this.requireChromeSession(sessionId)) !== identity ||
+          this.deps.getRuntime() !== runtime || runtime.getGatewayClient() !== client ||
+          runtime.getGatewayClientGeneration() !== generation ||
+          runtime.getSessionKeysForSession(sessionId)[0] !== sessionKey) {
+        throw new Error('Conversation changed while opening delivery.');
+      }
+    };
+    const describe = async () => {
+      assertCurrent();
+      const result = await client.request<{
+        session?: { key?: string; sessionId?: string; lifecycleRevision?: string } | null;
+      }>('sessions.describe', { key: sessionKey });
+      assertCurrent();
+      return result?.session;
+    };
+    const native = await describe();
+    if (native?.key !== sessionKey || !native.sessionId || !native.lifecycleRevision ||
+        (session.historyBinding && (session.historyBinding.sessionKey !== sessionKey ||
+          session.historyBinding.nativeSessionId !== native.sessionId))) {
+      throw new Error('Native conversation identity is unavailable.');
+    }
+    const verifyNative = async () => {
+      const current = await describe();
+      if (current?.key !== native.key || current.sessionId !== native.sessionId ||
+          current.lifecycleRevision !== native.lifecycleRevision) {
+        throw new Error('Native conversation changed while opening delivery.');
+      }
+    };
+
+    const messages = await this.getMessages(sessionId, { forceFullSnapshot: true });
+    await verifyNative();
+    const delivery = messages.flatMap(message =>
+      message.role === 'assistant'
+        ? getAssistantDeliverables(message.rawMessage ?? { role: message.role, text: message.text })
+        : [],
+    ).find(candidate => candidate.source === source);
+    if (!delivery) throw new Error('Delivery is not referenced in this conversation.');
+
+    const openCurrent = async (filePath: string, assertFileCurrent: () => void) => {
+      await verifyNative();
+      assertCurrent();
+      assertFileCurrent();
+      if (await openPath(filePath)) throw new Error('System app did not open the delivery.');
+    };
+    const reference = unwrapAssistantDeliverableSource(delivery.source);
+    if (!parseManagedOutgoingMediaSource(reference)) {
+      const local = await resolveChromeLocalDelivery(reference, session.cwd);
+      await openCurrent(local.filePath, local.assertCurrent);
+      return;
+    }
+    const { readManagedDelivery, managedDeliveryDirectory } = this.deps;
+    if (!readManagedDelivery || !managedDeliveryDirectory || !parseManagedOutgoingMediaSource(reference, sessionKey)) {
+      throw new Error('Gateway delivery is unavailable for this conversation.');
+    }
+    const managed = await readManagedDelivery({
+      source: reference, sessionKey, acceptedMimeTypes: CHROME_MANAGED_DELIVERY_MIME_TYPES,
+    });
+    assertCurrent();
+    await openStagedChromeDelivery(managedDeliveryDirectory, managed, delivery.name, filePath =>
+      openCurrent(filePath, managed.assertCurrent));
   }
 
   async getMessages(sessionId: string, options: { forceFullSnapshot?: boolean } = {}) {

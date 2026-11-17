@@ -1036,9 +1036,11 @@ describe('ChromeExtensionChatController', () => {
   });
 
   it.each([false, true])(
-    'keeps a single native delivery after content blocks (fallback text: %s)',
+    'keeps one native delivery with exact file metadata after content blocks (fallback text: %s)',
     async fallbackText => {
-      const delivery = { mediaUrls: ['./generated.png'] };
+      const managed = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
+      const managedImage = '/api/chat/media/outgoing/agent%3Amain/22222222-2222-4222-8222-222222222222/full';
+      const delivery = { mediaUrls: ['./generated.png', './Quarterly report.pdf'] };
       const controller = new ChromeExtensionChatController({
         ensureEngineRunning: vi.fn(),
         getRouter: vi.fn(),
@@ -1055,15 +1057,14 @@ describe('ChromeExtensionChatController', () => {
                   content: [
                     { type: 'thinking', thinking: 'Generate' },
                     { type: 'text', text: 'Result\nMEDIA: ./generated.png' },
+                    { type: 'image', url: managedImage, alt: 'generated.png', mimeType: 'image/png' },
                     {
                       type: 'attachment',
                       attachment: {
-                        kind: 'image',
-                        label: 'Generated',
-                        url: '/api/chat/media/outgoing/id',
+                        kind: 'document', label: 'Quarterly report.pdf', url: managed, mimeType: 'application/pdf',
                       },
                     },
-                  ].slice(0, fallbackText ? 1 : undefined),
+                  ].filter(block => !fallbackText || block.type !== 'text'),
                 },
               ],
             })),
@@ -1076,15 +1077,28 @@ describe('ChromeExtensionChatController', () => {
       const messages = await controller.getMessages('session-1');
       expect(messages[0]).toEqual({ role: 'assistant', text: '', thinking: 'Generate' });
       const rich = messages.filter(message => message.rawMessage);
-      expect(
-        rich
-          .slice(0, -1)
-          .every(message => message.rawMessage?.__chromeExtensionOmitDeliveryMedia === true),
-      ).toBe(true);
+      expect(rich).toHaveLength(2);
+      expect(rich[0].rawMessage).toMatchObject({
+        __chromeExtensionOmitDeliveryMedia: true,
+        openclawDelivery: { mediaUrls: [...delivery.mediaUrls, managedImage, managed] },
+      });
       expect(rich.at(-1)?.rawMessage).toEqual({
         role: 'assistant',
-        content: '',
-        openclawDelivery: delivery,
+        content: [
+          {
+            type: 'attachment',
+            attachment: {
+              kind: 'image', label: 'generated.png', url: managedImage, mimeType: 'image/png',
+            },
+          },
+          {
+            type: 'attachment',
+            attachment: {
+              kind: 'document', label: 'Quarterly report.pdf', url: managed, mimeType: 'application/pdf',
+            },
+          },
+        ],
+        openclawDelivery: { mediaUrls: [managedImage, managed] },
       });
     },
   );
