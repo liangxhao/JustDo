@@ -14,7 +14,7 @@ import type { CoworkNativeAcceptedBinding } from '../engine/types';
 import type { ChromeExtensionTrustedSendHooks } from './chromeAppServerTypes';
 import { ChromeWebLaunchService } from './chromeWebLaunchService';
 import { ChromeWebLaunchStore } from './chromeWebLaunchStore';
-import { buildStrictWebLaunchContext, webLaunchDigest } from './chromeWebLaunchValidation';
+import { buildStrictWebLaunchContext, webLaunchActualDigest, webLaunchDigest } from './chromeWebLaunchValidation';
 
 const databases: Database.Database[] = [];
 const services: ChromeWebLaunchService[] = [];
@@ -83,7 +83,7 @@ function fixture() {
       ...(options.connectionOnly !== undefined ? { connectionOnly: options.connectionOnly } : {}),
       ...(options.expectedPolicyRevision !== undefined ? { expectedPolicyRevision: options.expectedPolicyRevision } : {}) });
   };
-  const actual = { prompt: input.prompt, context: input.context, permissionMode: 'ask' };
+  const actual = { prompt: input.prompt, context: input.context, permissionMode: 'full' };
   const submit = (prepared: ReturnType<typeof prepare>, extra: Record<string, unknown> = {}) => service.submit({ launchId: prepared.receipt.launchId, composeRevision: prepared.internal.composeRevision, input: actual, submission: 'automatic', shareResult: true, ...extra });
   const ref = (prepared: ReturnType<typeof prepare>, changedSource = source) => ({ launchId: prepared.receipt.launchId, documentLeaseId: prepared.internal.documentLeaseId, source: changedSource });
   const finish = (text = 'SYNTHETIC_FINAL', status: 'completed' | 'failed' = 'completed', accepted = latestBinding) => {
@@ -103,12 +103,18 @@ function fixture() {
 }
 
 describe('webpage launch admission and persistence', () => {
-  it('atomically creates one ask session and only persists hashes/metadata', () => {
+  it('atomically creates one Full session and only persists hashes/metadata', () => {
     const f = fixture();
-    const first = f.prepare();
-    expect(f.prepare()).toEqual(first);
-    expect(f.db.prepare('SELECT source,permission_mode FROM cowork_sessions').all()).toEqual([{ source: 'chrome-extension', permission_mode: 'ask' }]);
+    const title = 'Review the order and identify unfinished shipments';
+    const requestInput = { ...input, prompt: `  \r\n\t \r\n  ${title} and include vendors.\r\n${input.prompt}` };
+    const first = f.prepare({ input: requestInput });
+    expect(f.prepare({ input: requestInput })).toEqual(first);
+    expect(first.internal.permissionMode).toBe('full');
+    expect(f.db.prepare('SELECT title,source,permission_mode FROM cowork_sessions').all()).toEqual([
+      { title, source: 'chrome-extension', permission_mode: 'full' },
+    ]);
     const serialized = JSON.stringify(f.state());
+    expect(serialized).not.toContain(title);
     expect(serialized).not.toContain(input.prompt);
     expect(serialized).not.toContain(input.context!.text);
     expect(Object.keys(f.state().receipts)).toHaveLength(1);
@@ -130,6 +136,9 @@ describe('webpage launch admission and persistence', () => {
     f.submit(prepared, { submission: 'confirmed', shareResult: true });
     await tick();
     expect(f.wire).toHaveBeenCalledTimes(1);
+    expect(f.chat.sendMessage).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      permissionMode: 'full',
+    }), expect.anything());
     expect(f.state().receipts[prepared.receipt.launchId].shareResult).toBe(true);
     f.finish('FIRST_REPLY');
     expect((await f.service.read(f.ref(prepared))).receipt.output.text).toBe('FIRST_REPLY');
@@ -140,9 +149,47 @@ describe('webpage launch admission and persistence', () => {
     f.submit(next);
     await tick();
     expect(f.wire).toHaveBeenCalledTimes(2);
+    expect(f.chat.sendMessage).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      permissionMode: 'full',
+    }), expect.anything());
     f.finish('NEXT_REPLY');
     expect((await f.service.read(f.ref(next))).receipt.output.text).toBe('NEXT_REPLY');
     expect(f.service.sites().revision).toBe(1);
+  });
+
+  it('preserves an existing Ask draft whose metadata predates the permission field', async () => {
+    const f = fixture();
+    const prepared = f.prepare();
+    const { launchId } = prepared.receipt;
+    const actual = { prompt: input.prompt, context: input.context };
+    const store = new ChromeWebLaunchStore(f.deps.getDatabase, f.deps.now);
+    store.mutate(state => {
+      const stored = state.receipts[launchId];
+      delete stored.permissionMode;
+      stored.actualDigest = webLaunchActualDigest(actual);
+    });
+    f.db.prepare('UPDATE cowork_sessions SET permission_mode = ? WHERE id = ?')
+      .run('ask', prepared.internal.threadId);
+    f.service.close();
+    const restored = new ChromeWebLaunchService(f.deps);
+    services.push(restored);
+
+    const { internal } = await restored.read(f.ref(prepared));
+    expect(internal).toMatchObject({ permissionMode: 'ask', requiresSendConfirmation: true });
+    expect(() => restored.submit({
+      launchId, composeRevision: internal.composeRevision, input: { ...actual, permissionMode: 'full' },
+      submission: 'confirmed', shareResult: true,
+    })).toThrow('COMPOSE_CHANGED');
+    restored.submit({
+      launchId, composeRevision: internal.composeRevision, input: actual,
+      submission: 'confirmed', shareResult: true,
+    });
+    await tick();
+
+    expect(f.chat.sendMessage).toHaveBeenCalledOnce();
+    expect(f.chat.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      permissionMode: 'ask',
+    }), expect.anything());
   });
 
   it('applies one sending preference to future clicks without changing accepted runs or requested results', async () => {
@@ -311,19 +358,25 @@ describe('webpage owned sender and exact results', () => {
     expect(f.state().receipts[prepared.receipt.launchId].nativeBinding?.nativeRunId).toBe('native-1');
   });
 
-  it('fences a revised automatic owner and requires a fresh confirmed attempt', async () => {
+  it('fences an automatic Full owner when the user revises the same draft to Ask', async () => {
     const f = fixture(); const prepared = f.prepare();
+    const downgraded = { prompt: input.prompt, context: input.context, permissionMode: 'ask' };
+    expect(() => f.submit(prepared, { input: downgraded })).toThrow('COMPOSE_CHANGED');
     let release!: () => void;
     f.beforeSend = () => new Promise(resolve => { release = resolve; });
     f.submit(prepared); await tick();
-    const revised = f.service.revise({ launchId: prepared.receipt.launchId, expectedComposeRevision: 1, input: { prompt: 'human edit', permissionMode: 'ask' } });
+    const revised = f.service.revise({ launchId: prepared.receipt.launchId, expectedComposeRevision: 1, input: downgraded });
     release(); await tick();
     expect(f.wire).not.toHaveBeenCalled();
     expect(f.state().receipts[prepared.receipt.launchId].notSent).toBe(true);
-    expect(() => f.submit(revised, { input: { prompt: 'human edit', permissionMode: 'ask' } })).toThrow('CONFIRMATION_REQUIRED');
+    expect(revised.internal).toMatchObject({ permissionMode: 'ask', requiresSendConfirmation: true });
+    expect(() => f.submit(revised, { input: downgraded })).toThrow('CONFIRMATION_REQUIRED');
     f.beforeSend = undefined;
-    f.submit(revised, { submission: 'confirmed', input: { prompt: 'human edit', permissionMode: 'ask' } });
+    f.submit(revised, { submission: 'confirmed', input: downgraded });
     await tick(); expect(f.wire).toHaveBeenCalledTimes(1);
+    expect(f.chat.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      permissionMode: 'ask',
+    }), expect.anything());
   });
 
   it('preserves stop intent before a native ID exists, without issuing an unbound abort', async () => {
@@ -433,6 +486,54 @@ describe('webpage owned sender and exact results', () => {
     expect(() => f.submit(otherWindow)).toThrow('UNKNOWN_EXECUTION');
     expect(f.wire).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['confirmed', 'automatic'] as const)(
+    'applies the %s launch confirmation when an earlier run loses its ACK before dispatch',
+    async submission => {
+      const f = fixture();
+      let resolveOldSend!: () => void;
+      const oldSend = new Promise<void>(resolve => { resolveOldSend = resolve; });
+      f.chat.sendMessage.mockImplementationOnce(async (value, trusted) => {
+        trusted.finalSyncAdmission?.(binding);
+        f.wire();
+        await oldSend;
+        return { sessionId: value.sessionId, runId: value.clientTurnId, nativeRunId: value.clientTurnId };
+      });
+      const first = f.prepare();
+      f.submit(first);
+      await tick();
+
+      const secondSource = {
+        ...source, windowId: 2, windowInstanceId: 'window-2', tabId: 11, documentId: 'doc-2',
+      };
+      const next = f.prepare({ requestId: 'other-window', source: secondSource });
+      expect(next.internal.requiresUnknownConfirmation).toBe(false);
+      let releaseNewSend!: () => void;
+      f.beforeSend = () => new Promise(resolve => { releaseNewSend = resolve; });
+      f.submit(next, { submission, confirmNewTask: true });
+      await tick();
+      expect(f.wire).toHaveBeenCalledTimes(1);
+
+      resolveOldSend();
+      await tick();
+      const previous = await f.service.read(f.ref(first));
+      expect(previous.receipt.execution).toEqual({ status: 'unknown', executionSettled: false });
+      expect(previous.receipt.error?.code).toBe('UNKNOWN_EXECUTION');
+      releaseNewSend();
+      await tick();
+
+      const current = await f.service.read(f.ref(next, secondSource));
+      if (submission === 'confirmed') {
+        expect(f.wire).toHaveBeenCalledTimes(2);
+        expect(current.receipt.execution).toEqual({ status: 'running', executionSettled: false });
+      } else {
+        expect(f.wire).toHaveBeenCalledTimes(1);
+        expect(current.receipt.execution).toEqual({ status: 'not-started', executionSettled: false });
+        expect(current.receipt.error?.code).toBe('UNKNOWN_EXECUTION');
+      }
+      expect((await f.service.read(f.ref(first))).receipt.execution).toEqual(previous.receipt.execution);
+    },
+  );
 
   it('does not erase an abandoned unknown tombstone when a separately confirmed task completes', async () => {
     const f = fixture(); const first = f.prepare();

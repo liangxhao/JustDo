@@ -4,6 +4,7 @@ import type {
   WebLaunchExecutionStatus,
   WebLaunchMode,
   WebLaunchOutputStatus,
+  WebLaunchPermissionMode,
   WebLaunchRequestStatus,
   WebLaunchResultMode,
   WebLaunchSendMode,
@@ -37,6 +38,7 @@ export interface WebLaunchStoredReceipt {
   bindingRevision: number;
   payloadDigest: string;
   actualDigest: string;
+  permissionMode?: WebLaunchPermissionMode;
   mode: WebLaunchMode;
   result: WebLaunchResultMode;
   composeRevision: number;

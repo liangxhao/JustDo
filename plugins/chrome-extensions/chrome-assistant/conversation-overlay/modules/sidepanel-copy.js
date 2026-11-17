@@ -8,10 +8,10 @@ export function createCopyController(container) {
   const states = new Map();
   let disposed = false;
 
-  const textFor = button => button.classList.contains('message-copy')
+  const textFor = button => button.dataset.copyLabel || button.classList.contains('message-copy')
     ? button.copyText || ''
     : button.closest('.code-block')?.querySelector('pre > code')?.textContent || '';
-  const labelFor = button => t(button.classList.contains('message-copy') ? 'copyAnswer' : 'copyCode');
+  const labelFor = button => t(button.dataset.copyLabel ?? (button.classList.contains('message-copy') ? 'copyAnswer' : 'copyCode'));
   const statusFor = button => button.parentElement?.querySelector('.message-copy-status, .code-copy-status');
 
   function reset(button) {
@@ -25,10 +25,10 @@ export function createCopyController(container) {
   }
 
   async function onClick(event) {
-    const button = event.target.closest?.('.message-copy, .code-copy');
+    const button = event.target.closest?.('.message-copy, .code-copy, button[data-copy-label]');
     if (disposed || !button || !container.contains(button)) return;
     const text = textFor(button);
-    if (!text.trim()) return;
+    if (!(button.dataset.copyLabel ? text : text.trim())) return;
     reset(button);
     const state = {};
     states.set(button, state);

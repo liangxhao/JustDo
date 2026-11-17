@@ -9,6 +9,7 @@ import {
   type WebLaunchSource,
   type WebLaunchSubmit,
 } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
+import { isPermissionMode } from '../../shared/security/approvals';
 
 export class ChromeWebLaunchError extends Error {
   readonly publicError: { code: string; messageKey: string };
@@ -89,8 +90,8 @@ export function parseWebLaunchActualInput(raw: unknown): WebLaunchActualInput {
   }
   if (value.modelRef !== undefined) input.modelRef = webLaunchString(value.modelRef, 500);
   if (value.permissionMode !== undefined) {
-    if (!['ask', 'auto', 'full'].includes(String(value.permissionMode))) return failWebLaunch('INVALID_REQUEST');
-    input.permissionMode = value.permissionMode as WebLaunchActualInput['permissionMode'];
+    if (!isPermissionMode(value.permissionMode)) return failWebLaunch('INVALID_REQUEST');
+    input.permissionMode = value.permissionMode;
   }
   if (Buffer.byteLength(JSON.stringify(input)) > WebLaunchLimits.requestBytes) return failWebLaunch('REQUEST_TOO_LARGE');
   return input;

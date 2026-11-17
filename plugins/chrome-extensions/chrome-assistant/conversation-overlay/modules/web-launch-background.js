@@ -40,6 +40,7 @@ export function createWebLaunchBackground({
   const slots = new Map();
   const cancelled = new Set();
   const preparing = new Set();
+  const revising = new Map();
   const retirements = new Map();
   const releaseSlot = (windowId, requestId) => {
     if (slots.get(windowId) === requestId) slots.delete(windowId);
@@ -151,22 +152,15 @@ export function createWebLaunchBackground({
       const items = Array.isArray(result) ? result : (result?.observations ?? []);
       for (const response of items) {
         if (!response?.receipt || !response.internal) continue;
-        const record = await transaction(() =>
-          structuredClone(
-            Object.values(state.requests).find(item => item.launchId === response.receipt.launchId),
-          ),
-        );
-        if (!record) continue;
-        record.response = {
-          receipt: publicReceipt(response.receipt, false),
-          internal: response.internal,
-        };
-        await transaction(() => {
-          if (response.receipt.request.status === 'submitted' || terminal(response.receipt))
-            delete record.input;
-          state.requests[record.requestId] = record;
+        const record = await transaction(() => {
+          const current = state.requests[response.receipt.requestId];
+          return current?.launchId === response.receipt.launchId
+            ? cacheResponse(current, response)
+            : undefined;
         });
-        if (terminal(response.receipt)) releaseSlot(record.source.windowId, record.requestId);
+        if (!record) continue;
+        if (terminal(record.response.receipt))
+          releaseSlot(record.source.windowId, record.requestId);
         notifyPanel(record);
       }
       return result;
@@ -315,7 +309,8 @@ export function createWebLaunchBackground({
   }
   function envelope(record) {
     const { response, input } = record;
-    if (!response?.internal) return null;
+    // A restored composer must not revise from the snapshot an in-flight edit is replacing.
+    if (!response?.internal || (input && revising.has(record.requestId))) return null;
     const metadata = response.internal;
     return {
       launchId: response.receipt.launchId,
@@ -323,6 +318,7 @@ export function createWebLaunchBackground({
       origin: record.source.origin,
       threadId: metadata.threadId,
       mode: metadata.effectiveMode ?? record.mode ?? input?.mode ?? WebLaunchSendMode.Draft,
+      ...(metadata.permissionMode ? { permissionMode: metadata.permissionMode } : {}),
       result: record.result,
       prompt: input?.prompt ?? '',
       contextText: input?.context?.text,
@@ -354,46 +350,79 @@ export function createWebLaunchBackground({
       .catch(() => {});
   }
   function notifyPanel(record) {
+    const receipt = record.response?.receipt;
+    if (
+      cancelled.has(`${record.source.documentId}/${record.documentNonce}/${record.requestId}`) &&
+      !terminal(receipt)
+    )
+      return;
     panelEvent(record.source, {
       envelope: ['cancelled', 'expired', 'rejected'].includes(
         record.response?.receipt.request.status,
       )
         ? undefined
         : envelope(record),
-      receipt: record.response?.receipt,
+      receipt,
       internal: record.response?.internal,
     });
   }
-  async function accept(record, response, doc) {
+  function cacheResponse(record, response, revisedInput) {
     if (!response?.receipt || !response.internal) throw { code: 'CONNECTION_UNAVAILABLE' };
-    record.response = response;
-    record.launchId = response.receipt.launchId;
-    doc.documentLeaseId = response.internal.documentLeaseId;
-    record.documentLeaseId = doc.documentLeaseId;
-    await transaction(() => {
-      const saved = {
-        ...record,
-        response: {
-          receipt: publicReceipt(response.receipt, false),
-          internal: response.internal,
-        },
-      };
-      if (response.receipt.request.status === 'submitted' || terminal(response.receipt))
-        delete saved.input;
-      state.requests[record.requestId] = saved;
-      state.documents[doc.key] = {
-        source: doc.source,
-        documentLeaseId: doc.documentLeaseId,
-        revoked: doc.revoked,
-      };
-    });
-    if (terminal(response.receipt)) releaseSlot(record.source.windowId, record.requestId);
+    const saved = { ...(state.requests[record.requestId] ?? record) };
+    const receipt = publicReceipt(response.receipt, false);
     if (
-      !cancelled.has(`${record.source.documentId}/${record.documentNonce}/${record.requestId}`) ||
-      terminal(response.receipt)
+      !receipt ||
+      saved.documentKey !== record.documentKey ||
+      receipt.requestId !== record.requestId ||
+      (saved.launchId && saved.launchId !== receipt.launchId)
     )
-      notifyPanel(record);
-    return response;
+      throw { code: 'INVALID_REQUEST' };
+    const previous = saved.response;
+    const composeRevision = response.internal.composeRevision;
+    if (saved.input) saved.inputComposeRevision ??= previous?.internal.composeRevision ?? 1;
+    if (
+      !previous ||
+      (receipt.receiptRevision >= previous.receipt.receiptRevision &&
+        composeRevision >= previous.internal.composeRevision)
+    ) {
+      saved.response = { receipt, internal: response.internal };
+      saved.launchId = receipt.launchId;
+      saved.documentLeaseId = response.internal.documentLeaseId;
+    }
+    if (saved.input && revisedInput && composeRevision > saved.inputComposeRevision) {
+      saved.input = {
+        ...saved.input,
+        prompt: revisedInput.prompt,
+        ...(revisedInput.context ? { context: { text: revisedInput.context.text } } : {}),
+      };
+      if (!revisedInput.context) delete saved.input.context;
+      saved.inputComposeRevision = composeRevision;
+    }
+    const accepted = saved.response.receipt;
+    if (accepted.request.status === 'submitted' || terminal(accepted)) {
+      delete saved.input;
+      delete saved.inputComposeRevision;
+    }
+    state.requests[record.requestId] = saved;
+    return saved;
+  }
+  async function accept(record, response, doc, revisedInput) {
+    const saved = await transaction(() => {
+      const updated = cacheResponse(record, response, revisedInput);
+      if (doc) {
+        doc.documentLeaseId = updated.documentLeaseId;
+        state.documents[doc.key] = {
+          source: doc.source,
+          documentLeaseId: doc.documentLeaseId,
+          revoked: doc.revoked,
+        };
+      }
+      return updated;
+    });
+    const accepted = saved.response.receipt;
+    if (terminal(accepted)) releaseSlot(saved.source.windowId, saved.requestId);
+    notifyPanel(saved);
+    return saved;
   }
   async function safeResponse(record, response, doc, revision) {
     const active = await documentActive(doc);
@@ -489,8 +518,8 @@ export function createWebLaunchBackground({
           launchId: response.receipt.launchId,
         });
       }
-      await accept(record, response, doc);
-      const projected = await safeResponse(record, response, doc, revision);
+      const saved = await accept(record, response, doc);
+      const projected = await safeResponse(saved, response, doc, revision);
       return projected.ok ? projected : { ...projected, prepareUncertain: true };
     } catch (error) {
       throw { code: publicErrorCode(error), prepareUncertain: true };
@@ -536,8 +565,8 @@ export function createWebLaunchBackground({
         launchId: response.receipt.launchId,
       });
     }
-    await accept(record, response, doc);
-    return safeResponse(record, response, doc, revision);
+    const saved = await accept(record, response, doc);
+    return safeResponse(saved, response, doc, revision);
   }
   async function revoke(doc, reason) {
     doc.revoked = true;
@@ -756,18 +785,38 @@ export function createWebLaunchBackground({
     }
     if ([WebLaunchMethod.Cancel].includes(method))
       Object.assign(params, { source: record.source, documentLeaseId: record.documentLeaseId });
-    const response = await client.request(method, params);
-    if (method === WebLaunchMethod.Revise && record.input) {
-      record.input = {
-        ...record.input,
-        prompt: params.input.prompt,
-        ...(params.input.context ? { context: { text: params.input.context.text } } : {}),
-      };
-      if (!params.input.context) delete record.input.context;
+    const isRevise = method === WebLaunchMethod.Revise;
+    if (isRevise) revising.set(record.requestId, (revising.get(record.requestId) ?? 0) + 1);
+    let response;
+    let saved;
+    try {
+      response = await client.request(method, params);
+      saved = response?.receipt
+        ? await accept(
+            record,
+            response,
+            documents.get(record.documentKey),
+            isRevise ? params.input : undefined,
+          )
+        : record;
+    } finally {
+      if (isRevise) {
+        const remaining = revising.get(record.requestId) - 1;
+        if (remaining) revising.set(record.requestId, remaining);
+        else {
+          revising.delete(record.requestId);
+          const current = await transaction(() => state.requests[record.requestId]).catch(
+            () => null,
+          );
+          if (current?.response) notifyPanel(current);
+        }
+      }
     }
-    const doc = documents.get(record.documentKey);
-    if (doc && response?.receipt) await accept(record, response, doc);
-    return { ok: true, ...response, envelope: envelope(record) };
+    return {
+      ok: true,
+      ...(response?.receipt ? saved.response : response),
+      envelope: envelope(saved),
+    };
   }
   function handleMessage(message, sender, reply) {
     if (typeof message?.type !== 'string' || !message.type.startsWith('web-launch:')) return false;

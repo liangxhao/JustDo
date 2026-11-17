@@ -124,7 +124,9 @@ const questionPending = () => (questionsReady || refreshingQuestions) && questio
 function syncQuestionVisibility() {
   void webLaunchPanel?.publishState();
   const hasApproval = approvalPending();
-  const showConnection = !webConnectionCard.classList.contains('hidden') && !questionPending();
+  const hasQuestion = questionPending();
+  const showConnection = !webConnectionCard.classList.contains('hidden') && !hasQuestion;
+  if (hasApproval || hasQuestion || showConnection) webLaunchPanel?.closeContext?.();
   if (!hasApproval && !showConnection) {
     if (decisionDialog.open) decisionDialog.close();
     questions.setSuspended(!questionsReady);
@@ -393,7 +395,7 @@ function updateComposerDisabledState() {
   const webAction = selectedWebAction();
   const stopping = webAction ? webAction.type === 'stop' : currentThreadRunning;
   send.classList.toggle('stop', stopping);
-  send.title = t(stopping ? 'stop' : (webAction?.label ?? 'send'));
+  send.title = t(stopping ? 'stop' : 'send');
   send.setAttribute('aria-label', send.title);
   workspace.update({
     threadId: sessionSelect.value, draftId, cwd: currentCwd, recentCwds,

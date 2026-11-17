@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { canonicalWebLaunchInput } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
-import { parseWebLaunchPrepare, parseWebLaunchSource, webLaunchDigest } from './chromeWebLaunchValidation';
+import { parseWebLaunchActualInput, parseWebLaunchPrepare, parseWebLaunchSource, webLaunchDigest } from './chromeWebLaunchValidation';
 
 const source = { chromeInstanceId: 'browser', windowInstanceId: 'window', windowId: 1, tabId: 1, frameId: 0, documentId: 'doc', channelGeneration: 1, origin: 'https://example.test:8443' };
 
@@ -19,6 +19,11 @@ describe('webpage launch boundary validation', () => {
     expect(parseWebLaunchPrepare(prepare).input).toEqual(input);
     expect(() => parseWebLaunchPrepare({ ...prepare, input: { ...input, permissionMode: 'full' } })).toThrow('INVALID_REQUEST');
     expect(() => parseWebLaunchPrepare({ ...prepare, input: { ...input, prompt: 'another request' } })).toThrow('REQUEST_CONFLICT');
+  });
+
+  it('accepts only scalar permission modes from the trusted side panel', () => {
+    expect(() => parseWebLaunchActualInput({ prompt: 'fixture prompt', permissionMode: ['full'] }))
+      .toThrow('INVALID_REQUEST');
   });
 
   it('accepts connection-only admission only with an explicit true flag and captured policy revision', () => {

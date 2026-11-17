@@ -248,7 +248,7 @@ describe('side panel interactions', () => {
     expect(mock.questions.setQuestions.mock.calls.length).toBe(snapshots);
   });
 
-  it('uses the composer button to send a website draft and stop its exact launch before the send acknowledgement', async () => {
+  it.each(['click', 'Enter'])('uses %s to send a website draft before Stop targets the exact launch', async activation => {
     const receipt = {
       launchId: 'website-launch',
       receiptRevision: 1,
@@ -259,6 +259,11 @@ describe('side panel interactions', () => {
     const pendingSubmit = deferred<{ ok: boolean; receipt: typeof receipt }>();
     const webRequest = vi.fn(async (request: { type: string }) => {
       if (request.type === 'web-launch:launch:submit') return pendingSubmit.promise;
+      if (request.type === 'web-launch:launch:revise') return {
+        ok: true,
+        receipt: { ...receipt, receiptRevision: 2 },
+        internal: { composeRevision: 2, permissionMode: 'ask' },
+      };
       return { ok: true };
     });
     let receive = (_message: Record<string, unknown>) => {};
@@ -287,8 +292,10 @@ describe('side panel interactions', () => {
         prompt: 'Summarize these orders',
         mode: 'draft',
         result: 'final',
+        permissionMode: 'full',
         shareAllowed: false,
         automaticSendAllowed: false,
+        requiresUnknownConfirmation: true,
         composeRevision: 1,
         expiresAt: Date.now() + 60_000,
         receipt,
@@ -297,22 +304,41 @@ describe('side panel interactions', () => {
 
     const prompt = element<HTMLTextAreaElement>('prompt');
     const send = element<HTMLButtonElement>('send');
+    const permission = element<HTMLSelectElement>('permission');
     await vi.waitFor(() => {
       expect(prompt.value).toBe('Summarize these orders');
       expect(send.disabled).toBe(false);
     });
     expect(document.getElementById('webLaunchCard')).toBeNull();
-    expect(element<HTMLSelectElement>('permission').value).toBe('ask');
-    expect(send.getAttribute('aria-label')).toBe('Send and return result');
-    expect(element('webLaunchControls').textContent).toContain('https://business.invalid:8443');
-    send.click();
+    expect(permission.value).toBe('full');
+    expect(send.getAttribute('aria-label')).toBe('Send');
+    expect(element('webLaunchControls').hidden).toBe(true);
+    if (activation === 'click') send.click();
+    else {
+      const hostRequest = mock.request.getMockImplementation()!;
+      mock.request.mockImplementation(async (method, params) => {
+        const result = await hostRequest(method, params);
+        return method === 'chrome/composer/options' ? { ...result, permissionMode: 'full' } : result;
+      });
+      permission.value = 'ask';
+      permission.dispatchEvent(new Event('change', { bubbles: true }));
+      expect(webRequest).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'web-launch:launch:revise', input: expect.objectContaining({ permissionMode: 'ask' }),
+      }));
+      element<HTMLButtonElement>('refresh').click();
+      expect(send.disabled).toBe(true);
+      await vi.waitFor(() => expect(send.disabled).toBe(false));
+      expect(permission.value).toBe('ask');
+      prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    }
     await vi.waitFor(() => {
       expect(send.getAttribute('aria-label')).toBe('Stop');
       expect(send.disabled).toBe(false);
     });
     expect(webRequest).toHaveBeenCalledWith(expect.objectContaining({
       type: 'web-launch:launch:submit', launchId: receipt.launchId,
-      submission: 'confirmed', shareResult: true,
+      submission: 'confirmed', shareResult: true, confirmNewTask: true,
+      input: expect.objectContaining({ permissionMode: activation === 'click' ? 'full' : 'ask' }),
     }));
 
     prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

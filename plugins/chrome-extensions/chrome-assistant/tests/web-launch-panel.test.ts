@@ -19,6 +19,7 @@ const envelope = (overrides: Record<string, unknown> = {}) => ({
   threadId: 'external-thread',
   mode: 'draft',
   result: 'none',
+  permissionMode: 'full',
   prompt: 'Website prompt',
   contextText: 'Business snapshot',
   expiresAt: Date.now() + 60_000,
@@ -258,6 +259,7 @@ describe('website launch panel', () => {
     };
     emit({ connectionPending: { ...consent, revision: 1, status: 'awaiting-consent' } });
     expect(card.classList.contains('hidden')).toBe(false);
+    expect(card.textContent).toContain('Website requests use Full access by default.');
     emit({
       connectionPending: { ...consent, revision: 2, status: 'connected' },
     });
@@ -273,7 +275,7 @@ describe('website launch panel', () => {
     });
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(installComposer).toHaveBeenCalledWith(
-      expect.objectContaining({ permissionMode: 'ask' }),
+      expect.objectContaining({ permissionMode: 'full' }),
     );
     expect(calls(sendMessage, Message.Submit)).toHaveLength(0);
     await panel.submit('confirmed');
@@ -281,21 +283,93 @@ describe('website launch panel', () => {
     expect(calls(sendMessage, Message.Submit)[0]).toMatchObject({
       submission: 'confirmed',
       shareResult: true,
+      input: { permissionMode: 'full' },
     });
   });
 
-  it('creates a separate guarded draft without sending or carrying previous full access', async () => {
-    const { panel, composer, sendMessage, installComposer } = await mount();
+  it('keeps a separate legacy draft at Ask when the host did not provide a permission mode', async () => {
+    const { panel, composer, sendMessage, installComposer } = await mount({
+      permissionMode: undefined,
+    });
     expect(composer.permissionMode).toBe('ask');
     expect(composer.prompt).toBe('Website prompt');
     expect(composer.threadId).toBe('external-thread');
     expect(installComposer).toHaveBeenCalledWith(expect.objectContaining({ includePage: false }));
     expect(panel.inputAssociated()).toBe(true);
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
-    expect(
-      document.querySelector('#webLaunchControls details:not([hidden]) summary')?.textContent,
-    ).toBe('Website-provided context');
+    expect(document.querySelector('#webLaunchControls button:not([hidden])')?.textContent).toBe(
+      'Website-provided context',
+    );
     expect(document.querySelector('#webLaunchControls p:not([hidden])')).toBeNull();
+  });
+
+  it('previews without revising and closes the context dialog at the updated deadline', async () => {
+    const { input, emit, sendMessage } = await mount({ contextText: '# Business snapshot' });
+    const trigger = document.querySelector<HTMLButtonElement>('#webLaunchControls button')!;
+    const dialog = document.getElementById(
+      trigger.getAttribute('aria-controls')!,
+    ) as HTMLDialogElement;
+    dialog.showModal = () => {
+      dialog.open = true;
+    };
+    dialog.close = () => {
+      dialog.open = false;
+      dialog.dispatchEvent(new Event('close'));
+    };
+    trigger.click();
+
+    expect(dialog.open).toBe(true);
+    expect(dialog.querySelector('.markdown-content h1')?.textContent).toBe('Business snapshot');
+    expect(calls(sendMessage, Message.Revise)).toEqual([]);
+    expect(calls(sendMessage, Message.Submit)).toEqual([]);
+
+    vi.useFakeTimers({
+      toFake: ['Date', 'setTimeout', 'clearTimeout'],
+      shouldClearNativeTimers: true,
+    });
+    try {
+      const deadlineAt = Date.now() + 120_000;
+      emit({ receipt: { ...input.receipt, receiptRevision: 2 }, internal: { deadlineAt } });
+      await vi.advanceTimersByTimeAsync(60_001);
+      expect(dialog.open).toBe(true);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(dialog.open).toBe(false);
+      expect(trigger.hidden).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('revises and submits the Markdown source edited in the dialog', async () => {
+    const { panel, sendMessage } = await mount({ contextText: '# Business snapshot' });
+    const trigger = document.querySelector<HTMLButtonElement>('#webLaunchControls button')!;
+    const dialog = document.getElementById(
+      trigger.getAttribute('aria-controls')!,
+    ) as HTMLDialogElement;
+    dialog.showModal = () => {
+      dialog.open = true;
+    };
+    dialog.close = () => {
+      dialog.open = false;
+    };
+    trigger.click();
+    const edit = dialog.querySelector<HTMLButtonElement>('button[aria-label="Edit"]')!;
+    edit.click();
+    const editor = dialog.querySelector('textarea')!;
+    const updated = '# Current orders\n\n- **3 pending**\n';
+    editor.value = updated;
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.waitFor(() => expect(panel.composerAction('external-thread')?.disabled).toBe(false));
+
+    const context = { text: updated };
+    expect(calls(sendMessage, Message.Revise)).toEqual([
+      expect.objectContaining({ input: expect.objectContaining({ context }) }),
+    ]);
+    await panel.submit('confirmed');
+    expect(calls(sendMessage, Message.Submit)).toEqual([
+      expect.objectContaining({ composeRevision: 2, input: expect.objectContaining({ context }) }),
+    ]);
+    expect(dialog.open).toBe(false);
   });
 
   it('releases an old website draft as ordinary text when its tab moves to another window', async () => {
@@ -380,18 +454,19 @@ describe('website launch panel', () => {
       expect(calls(sendMessage, Message.Submit)[0]).toEqual(
         expect.objectContaining({
           submission: 'automatic',
+          confirmNewTask: false,
           shareResult: result === 'final',
           input: {
             prompt: 'Website prompt',
             context: { text: 'Business snapshot' },
-            permissionMode: 'ask',
+            permissionMode: 'full',
           },
         }),
       );
     },
   );
 
-  it('shows the exact recipient and shares only on confirmation when the site lacks automatic result permission', async () => {
+  it('returns the result from ordinary Send without a separate reminder or control', async () => {
     const { panel, sendMessage } = await mount({
       mode: 'send',
       result: 'final',
@@ -401,12 +476,12 @@ describe('website launch panel', () => {
     });
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
     const controls = document.getElementById('webLaunchControls')!;
-    expect(controls.querySelector('p:not([hidden])')?.textContent).toBe(
-      'Sending will return the result to https://business.internal:8443',
-    );
-    expect(controls.querySelector('details:not([hidden])')).toBeNull();
-    expect(controls.querySelector('label:not([hidden]) input, button:not([hidden])')).toBeNull();
-    expect(panel.composerAction('external-thread')).toMatchObject({ label: 'webLaunchSendReturn' });
+    expect(controls.hidden).toBe(true);
+    expect(controls.querySelector('p')).toBeNull();
+    expect(panel.composerAction('external-thread')).toEqual({
+      type: 'send',
+      disabled: false,
+    });
     await panel.submit('confirmed');
     expect(calls(sendMessage, Message.Submit)[0]).toEqual(
       expect.objectContaining({ submission: 'confirmed', shareResult: true }),
@@ -415,8 +490,8 @@ describe('website launch panel', () => {
     expect(calls(sendMessage, Message.Submit)[0]).not.toHaveProperty('rememberResult');
   });
 
-  it('waits for the latest revised input before allowing confirmed sending', async () => {
-    const { panel, composer, sendMessage, input } = await mount({ result: 'final' });
+  it('keeps an edited Ask selection while waiting for the latest revision before sending', async () => {
+    const { panel, composer, sendMessage, input, emit } = await mount({ result: 'final' });
     let resolveRevision!: (response: unknown) => void;
     sendMessage.mockImplementation(async (message: any) => {
       if (message.type === Message.Revise)
@@ -431,8 +506,16 @@ describe('website launch panel', () => {
       return { ok: true };
     });
     composer.prompt = 'Actually edited';
+    composer.permissionMode = 'ask';
     panel.edit();
-    expect(calls(sendMessage, Message.Revise)[0]).not.toHaveProperty('shareResult');
+    const revise = calls(sendMessage, Message.Revise)[0];
+    expect(revise.input).toMatchObject({ permissionMode: 'ask' });
+    expect(revise).not.toHaveProperty('shareResult');
+    emit({
+      receipt: { ...input.receipt, receiptRevision: 2 },
+      internal: { composeRevision: 1, permissionMode: 'full' },
+    });
+    expect(composer.permissionMode).toBe('ask');
     await panel.submit('confirmed');
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
     expect(panel.composerAction('external-thread')?.disabled).toBe(true);
@@ -502,26 +585,28 @@ describe('website launch panel', () => {
     expect(composer.threadId).toBe('external-thread');
   });
 
-  it('requires a fresh unknown-task confirmation even for a trusted send site', async () => {
+  it('uses manual Send as the new-task confirmation and keeps automatic sending blocked', async () => {
     const { panel, sendMessage } = await mount({
       mode: 'send',
       automaticSendAllowed: true,
       requiresUnknownConfirmation: true,
     });
-    await panel.submit('confirmed');
+    expect(document.querySelector('#webLaunchControls input[type="checkbox"]')).toBeNull();
+    expect(panel.composerAction('external-thread')?.disabled).toBe(false);
+    await panel.submit('automatic');
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
-    const choice = document.querySelector<HTMLInputElement>('.web-launch-choice input')!;
-    choice.checked = true;
-    choice.dispatchEvent(new Event('change'));
     await panel.submit('confirmed');
-    expect(calls(sendMessage, Message.Submit)[0].confirmNewTask).toBe(true);
+    expect(calls(sendMessage, Message.Submit)).toEqual([
+      expect.objectContaining({ submission: 'confirmed', confirmNewTask: true }),
+    ]);
   });
 
-  it('restores a revised draft with ask/default and requires a new revision and human send', async () => {
+  it('restores the previously selected Ask mode and still requires a new revision and human send', async () => {
     const { composer, panel, sendMessage } = await mount({
       mode: 'send',
       automaticSendAllowed: true,
       composeRevision: 2,
+      permissionMode: 'ask',
       restored: true,
     });
     await vi.waitFor(() => expect(calls(sendMessage, Message.Revise)).toHaveLength(1));
@@ -530,7 +615,10 @@ describe('website launch panel', () => {
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
     await vi.waitFor(() => expect(panel.composerAction('external-thread')?.disabled).toBe(false));
     await panel.submit('confirmed');
-    expect(calls(sendMessage, Message.Submit)[0].submission).toBe('confirmed');
+    expect(calls(sendMessage, Message.Submit)[0]).toMatchObject({
+      submission: 'confirmed',
+      input: { permissionMode: 'ask' },
+    });
   });
 
   it('restores an already submitted observation without touching an ordinary draft', async () => {

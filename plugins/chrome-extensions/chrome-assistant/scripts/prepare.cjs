@@ -64,6 +64,7 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/web-launch-background.js',
   'modules/web-launch-connections.js',
   'modules/web-launch-content.js',
+  'modules/web-launch-context.js',
   'modules/web-launch-sdk.js',
   'modules/web-launch-panel.js',
   'modules/web-connection-panel.js',

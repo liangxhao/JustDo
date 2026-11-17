@@ -1,5 +1,6 @@
 import { sidePanelText as t } from './sidepanel-i18n.js';
 import { createWebConnectionPanel } from './web-connection-panel.js';
+import { createWebLaunchContext } from './web-launch-context.js';
 
 export const WebLaunchPanelMessage = {
   Register: 'web-launch:panel:register',
@@ -43,6 +44,7 @@ export function createWebLaunchPanel({
       ownsThread: () => false,
       composerAction: () => null,
       activity: () => null,
+      closeContext: noop,
       updateSelection: noop,
       edit: noop,
       publishState: noop,
@@ -84,17 +86,12 @@ export function createWebLaunchPanel({
     parent.append(node);
     return node;
   };
-  const recipient = make('p');
-  const contextDetails = make('details');
-  make('summary', 'webLaunchContext', contextDetails);
-  const context = make('textarea', null, contextDetails);
-  context.setAttribute('aria-label', t('webLaunchContext'));
-  context.maxLength = 24000;
-  const newTaskLabel = make('label');
-  newTaskLabel.className = 'web-launch-choice';
-  const newTask = make('input', null, newTaskLabel);
-  newTask.type = 'checkbox';
-  make('span', 'webLaunchUnknownConfirm', newTaskLabel);
+  const context = createWebLaunchContext({
+    document,
+    onEdit: edit,
+    canOpen: () => selected() && !draftUnavailable() && !readComposer().busy,
+  });
+  root.append(context.trigger);
   const actions = make('div');
   actions.className = 'web-launch-actions';
   const button = (key, action) => {
@@ -133,8 +130,7 @@ export function createWebLaunchPanel({
       !dirty &&
       !revisionError &&
       composer.ready &&
-      composer.prompt.trim() &&
-      (!current.requiresUnknownConfirmation || newTask.checked),
+      composer.prompt.trim(),
     );
   };
   function composerAction(threadId, turnId) {
@@ -142,12 +138,7 @@ export function createWebLaunchPanel({
     if (turnId && current.clientTurnId !== turnId) return null;
     if (ownsThread(threadId) && (busy || submitted()))
       return { type: 'stop', disabled: actionPending || stopPending === current.launchId };
-    if (inputAssociated())
-      return {
-        type: 'send',
-        disabled: !canSubmit(),
-        label: current.result === 'final' ? 'webLaunchSendReturn' : 'webLaunchSendOnly',
-      };
+    if (inputAssociated()) return { type: 'send', disabled: !canSubmit() };
     return null;
   }
   function activity(threadId, turnId) {
@@ -198,26 +189,12 @@ export function createWebLaunchPanel({
     const editable = draft && !draftUnavailable();
     const canRecover = draft && !editable;
     const canAbandon = show && receipt?.execution?.status === 'unknown';
-    const showRecipient = editable && current.result === 'final';
-    const showContext = editable && current.contextText !== undefined;
-    const showUnknownConfirmation = editable && current.requiresUnknownConfirmation;
+    const showContext = editable && !installing && current.contextText !== undefined;
     const launch = show ? current.launchId : '';
-    if (launch !== visibleLaunch || !showContext) contextDetails.open = false;
+    if (launch !== visibleLaunch) context.close();
     visibleLaunch = launch;
-    root.hidden = !(
-      showRecipient ||
-      showContext ||
-      showUnknownConfirmation ||
-      canRecover ||
-      canAbandon
-    );
-    recipient.hidden = !showRecipient;
-    recipient.textContent = showRecipient
-      ? t('webLaunchReturningTo', { origin: current.origin })
-      : '';
-    contextDetails.hidden = !showContext;
-    context.disabled = !editable;
-    newTaskLabel.hidden = !showUnknownConfirmation;
+    root.hidden = !(showContext || canRecover || canAbandon);
+    context.setAvailable(showContext);
     actions.hidden = !(canRecover || canAbandon);
     ordinaryButton.hidden = !canRecover;
     ordinaryButton.disabled = actionPending;
@@ -227,6 +204,16 @@ export function createWebLaunchPanel({
   function render() {
     updateSelection();
     onChange();
+  }
+  function scheduleExpiry() {
+    clearTimeout(expiryTimer);
+    const launchId = current.launchId;
+    expiryTimer = setTimeout(
+      () => {
+        if (!disposed && current?.launchId === launchId) render();
+      },
+      Math.max(0, current.expiresAt - Date.now()) + 1,
+    );
   }
   function acceptReceipt(response) {
     if (!current || disposed) return;
@@ -253,7 +240,10 @@ export function createWebLaunchPanel({
       if (next.error?.code && !intentionalCancel) fail(next.error.code);
       if (response.internal?.composeRevision !== undefined)
         current.composeRevision = response.internal.composeRevision;
-      if (response.internal?.deadlineAt) current.expiresAt = response.internal.deadlineAt;
+      if (response.internal?.deadlineAt && response.internal.deadlineAt !== current.expiresAt) {
+        current.expiresAt = response.internal.deadlineAt;
+        scheduleExpiry();
+      }
       if (next.request.status === 'submitted' || next.execution.status === 'running') {
         const original = readComposer().prompt;
         inputReleased = true;
@@ -347,10 +337,11 @@ export function createWebLaunchPanel({
     onClearError();
     installing = true;
     context.value = envelope.contextText || '';
-    newTask.checked = false;
+    const permissionMode = envelope.permissionMode ?? internal?.permissionMode;
     installComposer({
       prompt: envelope.prompt,
-      permissionMode: 'ask',
+      permissionMode:
+        permissionMode === 'full' || permissionMode === 'auto' ? permissionMode : 'ask',
       includePage: false,
       threadId: envelope.threadId,
     });
@@ -361,17 +352,11 @@ export function createWebLaunchPanel({
     render();
     await publishState();
     if (current?.launchId !== envelope.launchId || disposed) return;
-    clearTimeout(expiryTimer);
-    expiryTimer = setTimeout(
-      () => {
-        if (!disposed) render();
-      },
-      Math.max(0, current.expiresAt - Date.now()) + 1,
-    );
+    scheduleExpiry();
     if (current.restored === true) {
       automaticDisarmed = true;
       edit();
-    } else await maybeAutomatic();
+    } else await submit('automatic');
   }
   async function revise() {
     if (revisePromise || !current || !inputAssociated()) return revisePromise;
@@ -416,31 +401,15 @@ export function createWebLaunchPanel({
     render();
     void revise();
   }
-  async function maybeAutomatic() {
-    if (
-      !initialized ||
-      installing ||
-      !current ||
-      current.mode !== 'send' ||
-      !current.automaticSendAllowed ||
-      (current.result === 'final' && !current.shareAllowed) ||
-      current.requiresUnknownConfirmation ||
-      automaticDisarmed ||
-      dirty ||
-      busy ||
-      !readComposer().ready ||
-      !inputAssociated()
-    )
-      return;
-    await submit('automatic');
-  }
   async function submit(submission = 'confirmed') {
     if (!canSubmit()) return;
     if (
       submission === 'automatic' &&
-      (automaticDisarmed ||
+      (!initialized ||
+        automaticDisarmed ||
         current.mode !== 'send' ||
         !current.automaticSendAllowed ||
+        current.requiresUnknownConfirmation ||
         (current.result === 'final' && !current.shareAllowed))
     )
       return;
@@ -458,7 +427,7 @@ export function createWebLaunchPanel({
         input,
         submission,
         shareResult: current.result === 'final',
-        confirmNewTask: newTask.checked,
+        confirmNewTask: submission === 'confirmed',
       });
       if (current?.launchId !== launchId || disposed) return;
       acceptReceipt(result);
@@ -566,8 +535,6 @@ export function createWebLaunchPanel({
       void publishState();
     }
   }
-  context.addEventListener('input', edit);
-  newTask.addEventListener('change', render);
   const listener = (message, sender) => {
     if (
       chrome.runtime.id &&
@@ -698,12 +665,13 @@ export function createWebLaunchPanel({
     ownsThread,
     composerAction,
     activity,
+    closeContext: context.close,
     updateSelection,
     edit,
     publishState,
     ready: () => {
       render();
-      void maybeAutomatic();
+      void submit('automatic');
     },
     submit,
     stop,
@@ -727,6 +695,7 @@ export function createWebLaunchPanel({
       chrome.tabs.onDetached?.removeListener(onTabDetached);
       chrome.tabs.onAttached?.removeListener(onTabAttached);
       connection.dispose();
+      context.dispose();
     },
   };
 }

@@ -149,6 +149,8 @@ export interface WebLaunchInternal {
   composeRevision: number;
   deadlineAt: number;
   effectiveMode?: WebLaunchMode;
+  /** Trusted draft permission. Older hosts omit it and use Ask. */
+  permissionMode?: WebLaunchPermissionMode;
   requiresSendConfirmation: boolean;
   requiresResultConsent: boolean;
   requiresUnknownConfirmation?: boolean;
@@ -172,6 +174,7 @@ export interface WebLaunchEnvelope {
   result: WebLaunchResultMode;
   prompt: string;
   contextText?: string;
+  permissionMode?: WebLaunchPermissionMode;
   expiresAt: number;
   automaticSendAllowed: boolean;
   shareAllowed: boolean;

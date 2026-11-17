@@ -499,6 +499,81 @@ describe('web launch background', () => {
     expect(reopened.envelope.contextText).toBeUndefined();
   });
 
+  it('restores a revised lower permission with its input after a worker restart and an older observation', async () => {
+    const first = createWebLaunchBackground({ chromeApi: api, client });
+    reply.internal.permissionMode = 'full';
+    const webpage = await invoke(first, launch);
+    expect(webpage.receipt).not.toHaveProperty('permissionMode');
+    expect(webpage).not.toHaveProperty('internal');
+
+    const older = structuredClone(reply);
+    const revision = {
+      ...reply,
+      receipt: { ...reply.receipt, receiptRevision: 2 },
+      internal: { ...reply.internal, composeRevision: 2, permissionMode: 'ask' },
+    };
+    const original = client.request.getMockImplementation()!;
+    let releaseObservation!: (value: unknown) => void;
+    let releaseRevision!: (value: unknown) => void;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Observations)
+        return new Promise(resolve => {
+          releaseObservation = resolve;
+        });
+      if (method === WebLaunchMethod.Revise)
+        return new Promise(resolve => {
+          releaseRevision = resolve;
+        });
+      return original(method, params);
+    });
+    const restarted = createWebLaunchBackground({ chromeApi: api, client });
+    const register = { type: 'web-launch:panel:register', ...panelScope };
+    const panel = panelSender(7);
+    expect((await invoke(restarted, register, panel)).envelope.permissionMode).toBe('full');
+    await invoke(restarted, { type: 'web-launch:panel:state', ...panelScope }, panel);
+    await vi.waitFor(() => expect(releaseObservation).toBeTypeOf('function'));
+
+    const revising = invoke(
+      restarted,
+      {
+        type: 'web-launch:launch:revise',
+        ...panelScope,
+        launchId: reply.receipt.launchId,
+        expectedComposeRevision: 1,
+        input: { prompt: 'revised', context: { text: 'edited context' }, permissionMode: 'ask' },
+      },
+      panel,
+    );
+    await vi.waitFor(() => expect(releaseRevision).toBeTypeOf('function'));
+    const reopened = { ...register, panelInstanceId: 'reopened-panel' };
+    expect((await invoke(restarted, reopened, panel)).envelope).toBeNull();
+
+    releaseRevision(revision);
+    const revised = await revising;
+    const draft = {
+      prompt: 'revised',
+      contextText: 'edited context',
+      permissionMode: 'ask',
+      composeRevision: 2,
+    };
+    expect(revised.envelope).toMatchObject(draft);
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        panelInstanceId: 'reopened-panel',
+        envelope: expect.objectContaining(draft),
+      }),
+    );
+
+    const events = api.runtime.sendMessage.mock.calls.length;
+    releaseObservation({ observations: [older] });
+    await vi.waitFor(() =>
+      expect(api.runtime.sendMessage.mock.calls.length).toBeGreaterThan(events),
+    );
+    const restored = await invoke(restarted, reopened, panel);
+    expect(restored.envelope).toMatchObject(draft);
+    expect(restored.envelope.receipt.receiptRevision).toBe(2);
+  });
+
   it('never leaves a result body in session metadata when persistence fails', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     await invoke(controller, launch);
