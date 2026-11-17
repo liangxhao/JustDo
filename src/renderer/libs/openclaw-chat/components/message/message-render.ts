@@ -27,7 +27,7 @@ import { renderChatAvatar } from '@/libs/openclaw-chat/components/message/chat-a
 import type { OpenMessageFileLink } from '@/libs/openclaw-chat/message-actions';
 import { formatActiveTurnDuration } from '@/libs/openclaw-chat/model/timeline/active-turn-footer';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
-import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import { ATTACHMENT_FILE_NOT_FOUND, normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { partitionTaggedReasoning } from '@/libs/openclaw-chat/pipeline/tagged-reasoning';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
@@ -603,23 +603,18 @@ function renderAttachmentError(
   item: Extract<MessageContentItem, { type: 'attachment_error' }>,
 ): TemplateResult {
   const { attachment } = item;
-  const unavailable = i18nService
-    .t('coworkAttachmentUnavailable')
-    .replace('{filename}', attachment.label);
+  const reason = i18nService.t(attachment.code === ATTACHMENT_FILE_NOT_FOUND
+    ? 'coworkAttachmentMissingAtDelivery'
+    : 'coworkAttachmentDeliveryFailed');
   return html`
     <div
-      class="message-attachment message-attachment--unavailable"
-      title=${unavailable}
-      aria-label=${unavailable}
+      class="message-attachment message-attachment--unavailable message-attachment--delivery-failed"
+      title=${attachment.label}
     >
       ${renderMessageFileIcon(attachment.label)}
       <span class="message-attachment__content">
-        <span class="message-attachment__name message-attachment__name--with-warning">
-          <span class="message-attachment__filename">${attachment.label}</span>
-          <span class="message-attachment__warning" title=${unavailable} aria-label=${unavailable}>
-            !
-          </span>
-        </span>
+        <span class="message-attachment__name">${attachment.label}</span>
+        <span class="message-attachment__warning">${reason}</span>
       </span>
     </div>
   `;
@@ -659,7 +654,7 @@ export function renderMessageImages(
 }
 
 function renderListedAttachment(
-  attachment: RenderableAttachment,
+  attachment: Pick<RenderableAttachment, 'listMarker'>,
   content: TemplateResult | typeof nothing,
 ): TemplateResult | typeof nothing {
   const marker = attachment.listMarker;
@@ -785,7 +780,7 @@ function renderOrderedBubble(
             `;
           }
           if (item.type === 'attachment_error') {
-            return renderAttachmentError(item);
+            return renderListedAttachment(item.attachment, renderAttachmentError(item));
           }
           if (item.type === 'browser_recording') {
             return renderBrowserRecording(item.recording);
@@ -1027,7 +1022,11 @@ function renderAssistantMessage(
   };
 
   const existingUrls = new Set(
-    msg.content.flatMap(item => (item.type === 'attachment' ? [item.attachment.url] : [])),
+    msg.content.flatMap(item => {
+      if (item.type === 'attachment') return [item.attachment.url];
+      if (item.type === 'attachment_error' && item.attachment.sourceUrl) return [item.attachment.sourceUrl];
+      return [];
+    }),
   );
   const media = extractTranscriptAttachments(rawMessage).filter(
     item => !existingUrls.has(item.url),

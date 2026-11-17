@@ -17,7 +17,10 @@ import {
   persistFailedRun,
   persistInterruptedMessage,
   projectGatewayHistoryForDisplay,
+  readCollapsedDeliveryArtifacts,
+  retainCollapsedDeliveryProjection,
 } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
 afterEach(() => {
@@ -197,6 +200,60 @@ describe('projectGatewayHistoryForDisplay', () => {
     };
 
     expect(projectGatewayHistoryForDisplay([source, distinct])).toEqual([source, distinct]);
+  });
+
+  test.each([true, false])('combines a matched failed delivery with the original reply (metadata=%s)', hasMetadata => {
+    const missing = 'C:/workspace/missing.py';
+    const delivered = 'C:/workspace/success.py';
+    const other = 'C:/workspace/other.py';
+    const source = {
+      role: 'assistant',
+      __openclaw: { id: 'source', runId: 'source-run' },
+      content: `Reports\nMEDIA:${missing}\nMEDIA:${delivered}\nMEDIA:${other}`,
+      ...(hasMetadata ? { openclawDelivery: { mediaUrls: [missing, delivered, other] } } : {}),
+    };
+    const companion = {
+      role: 'assistant',
+      model: 'gateway-injected',
+      __openclaw: { seq: 7 },
+      content: [
+        { type: 'text', text: 'Reports' },
+        { type: 'attachment', attachment: {
+          url: '/api/chat/media/outgoing/session/file/full',
+          artifactId: 'delivered-file', kind: 'document', label: 'success.py',
+        } },
+        { type: 'attachment_error', attachment: {
+          code: 'file-not-found', kind: 'document', label: 'missing.py',
+        } },
+        { type: 'attachment_error', attachment: {
+          code: 'delivery-failed', kind: 'document', label: 'other.py',
+        } },
+      ],
+    };
+
+    const projected = projectGatewayHistoryForDisplay([source, companion]);
+
+    expect(projected).toHaveLength(1);
+    expect(readTranscriptIdentity(projected[0])).toEqual(readTranscriptIdentity(source));
+    expect(readCollapsedDeliveryArtifacts(projected[0])).toMatchObject([
+      { path: delivered, artifactId: 'delivered-file', messageSeq: 7 },
+    ]);
+    const hydrated = retainCollapsedDeliveryProjection({ ...source }, projected[0]);
+    expect(normalizeMessage(hydrated).content).toMatchObject([
+      { type: 'text', text: 'Reports' },
+      { type: 'attachment_error', attachment: { code: 'file-not-found', label: 'missing.py' } },
+      { type: 'attachment', attachment: { url: delivered } },
+      { type: 'attachment', attachment: { url: other } },
+      { type: 'attachment_error', attachment: { code: 'delivery-failed', label: 'other.py' } },
+    ]);
+    expect(projectGatewayHistoryForDisplay([source, {
+      ...companion,
+      content: [{ type: 'text', text: 'Different reply' }, ...companion.content.slice(1)],
+    }])).toHaveLength(2);
+    expect(projectGatewayHistoryForDisplay([source, {
+      ...companion,
+      __openclaw: { ...companion.__openclaw, runId: 'other-run' },
+    }])).toHaveLength(2);
   });
 
   test('collapses a flat native audio companion only when its producer owns that same delivery', () => {

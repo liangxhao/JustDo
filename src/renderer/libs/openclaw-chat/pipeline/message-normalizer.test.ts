@@ -515,6 +515,52 @@ describe('normalizeMessage assistant media', () => {
     ]);
   });
 
+  test('shows one failure for an original delivery path with a native not-found result', () => {
+    const source = 'C:/project/结果 1.pdf';
+    const message = normalizeMessage({
+      role: 'assistant',
+      openclawDelivery: { mediaUrls: [source, 'C:/project/available.pdf'] },
+      content: [
+        { type: 'text', text: 'Reports\nMEDIA:C:/project/结果 1.pdf' },
+        {
+          type: 'attachment_error',
+          attachment: {
+            code: 'file-not-found', kind: 'document', label: '%E7%BB%93%E6%9E%9C%201.pdf',
+          },
+        },
+      ],
+    });
+
+    expect(message.content).toEqual([
+      { type: 'text', text: 'Reports' },
+      { type: 'attachment_error', attachment: {
+        code: 'file-not-found', kind: 'document', label: '结果 1.pdf', sourceUrl: source,
+      } },
+      { type: 'attachment', attachment: {
+        url: 'C:/project/available.pdf', kind: 'document', label: 'available.pdf', mimeType: 'application/pdf',
+      } },
+    ]);
+  });
+
+  test('does not assign a not-found result to either of two same-named source files', () => {
+    const first = 'C:/first/report.pdf';
+    const second = 'C:/second/report.pdf';
+    const failure = { type: 'attachment_error', attachment: {
+      code: 'file-not-found', kind: 'document', label: 'report.pdf',
+    } };
+    const message = normalizeMessage({
+      role: 'assistant',
+      openclawDelivery: { mediaUrls: [first, second] },
+      content: [failure],
+    });
+
+    expect(message.content).toMatchObject([
+      failure,
+      { type: 'attachment', attachment: { url: first } },
+      { type: 'attachment', attachment: { url: second } },
+    ]);
+  });
+
   test('discards malformed attachment delivery failures', () => {
     const message = normalizeMessage({
       role: 'assistant',

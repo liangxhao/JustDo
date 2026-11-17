@@ -15,11 +15,18 @@ import {
   readNativeFailureSummary,
 } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
-import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import {
+  ATTACHMENT_FILE_NOT_FOUND,
+  collapsedAssistantMediaFailures,
+  normalizeMessage,
+  readCollapsedAssistantMediaFailures,
+  uniqueAssistantMediaUrlsByLabel,
+} from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import {
   splitMediaFromOutput,
   stripInboundMetadata,
 } from '@/libs/openclaw-chat/shims/backend-helpers';
+import type { MessageContentItem } from '@/libs/openclaw-chat/types';
 
 import { stripAppInput } from '../../../../../plugins/extensions/runtime-services/contracts/app-input';
 
@@ -50,10 +57,16 @@ export function readCollapsedDeliveryArtifacts(
   );
 }
 
-export function retainCollapsedDeliveryArtifacts<T>(message: T, placeholder: unknown): T {
+export function retainCollapsedDeliveryProjection<T>(message: T, placeholder: unknown): T {
   const links = readCollapsedDeliveryArtifacts(placeholder);
+  const failures = readCollapsedAssistantMediaFailures(messageRecord(placeholder));
   const full = asRecord(message);
-  return links.length && full ? ({ ...full, [collapsedDeliveryArtifacts]: links } as T) : message;
+  if (!full || (links.length === 0 && failures.length === 0)) return message;
+  return {
+    ...full,
+    ...(links.length > 0 ? { [collapsedDeliveryArtifacts]: links } : {}),
+    ...(failures.length > 0 ? { [collapsedAssistantMediaFailures]: failures } : {}),
+  } as T;
 }
 
 type FailedRunRecord = {
@@ -298,9 +311,8 @@ function messageRecord(message: unknown): Record<string, unknown> | null {
   return asRecord(outer?.message) ?? outer;
 }
 
-function isGatewayInjectedAssistantMessage(message: unknown): boolean {
-  const record = messageRecord(message);
-  if (!record || String(record.role ?? '').toLowerCase() !== 'assistant') return false;
+function isGatewayInjectedAssistantMessage(record: Record<string, unknown>): boolean {
+  if (String(record.role ?? '').toLowerCase() !== 'assistant') return false;
   const metadata = asRecord(record.metadata);
   return [record.modelName, record.model, metadata?.modelName, metadata?.model].some(
     isGatewayInjectedModelRef,
@@ -329,15 +341,15 @@ function messageDisplayContent(message: unknown): unknown {
     : record?.content;
 }
 
-function managedAttachments(message: unknown) {
+function managedAttachmentOutcomes(message: unknown) {
   const content = messageDisplayContent(message);
   if (!Array.isArray(content)) return [];
-  return normalizeMessage({ role: 'assistant', content }).content.flatMap(item =>
-    item.type === 'attachment' &&
-    item.attachment.url.startsWith('/api/chat/media/outgoing/') &&
-    item.attachment.label.trim()
-      ? [item.attachment]
-      : [],
+  return normalizeMessage({ role: 'assistant', content }).content.filter(
+    (item): item is Extract<MessageContentItem, { type: 'attachment' | 'attachment_error' }> => item.type === 'attachment_error' || (
+      item.type === 'attachment' &&
+      item.attachment.url.startsWith('/api/chat/media/outgoing/') &&
+      item.attachment.label.trim().length > 0
+    ),
   );
 }
 
@@ -356,38 +368,65 @@ function canonicalCompanionText(message: unknown): string {
 
 /**
  * OpenClaw persists a gateway-injected managed-media projection after the
- * producer assistant row. When that row already owns the same local delivery,
- * showing both creates a duplicate attachment and the managed copy cannot be
- * opened without its Gateway authorization context.
+ * producer assistant row. Keep the producer's original references and carry
+ * any confirmed missing file into the same display row.
  */
 function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
   const retained: T[] = [];
   for (const message of messages) {
     const previous = retained[retained.length - 1];
-    if (!previous || !isGatewayInjectedAssistantMessage(message)) {
-      retained.push(message);
-      continue;
-    }
-
     const previousRecord = messageRecord(previous);
-    const mediaUrls = assistantDeliveryMediaUrls(previous);
-    const attachments = managedAttachments(message);
-    const labels = attachments.map(attachment => attachment.label.toLowerCase());
-    const isMatchingCompanion =
-      String(previousRecord?.role ?? '').toLowerCase() === 'assistant' &&
-      mediaUrls.length > 0 &&
-      mediaUrls.length === labels.length &&
-      canonicalCompanionText(previous) === canonicalCompanionText(message) &&
-      mediaUrls.every((url, index) => fileNameFromMediaPath(url) === labels[index]);
-
-    if (!isMatchingCompanion) {
+    const previousOuter = asRecord(previous);
+    const companionOuter = asRecord(message);
+    const companionRecord = messageRecord(message);
+    if (
+      !previousRecord || !previousOuter || !companionOuter || !companionRecord ||
+      String(previousRecord.role ?? '').toLowerCase() !== 'assistant' ||
+      !isGatewayInjectedAssistantMessage(companionRecord)
+    ) {
       retained.push(message);
       continue;
     }
-    const seq =
-      asRecord(asRecord(message)?.__openclaw)?.seq ??
-      asRecord(messageRecord(message)?.__openclaw)?.seq;
-    const links = attachments.flatMap((attachment, index) => {
+    const outcomes = managedAttachmentOutcomes(message);
+    const hasFailures = outcomes.some(item => item.type === 'attachment_error');
+    const hasMissing = outcomes.some(item => item.type === 'attachment_error' &&
+      item.attachment.code === ATTACHMENT_FILE_NOT_FOUND);
+    const deliveryUrls = assistantDeliveryMediaUrls(previous);
+    const body = canonicalCompanionText(previous);
+    const sourceRunId = messageRunId(previousOuter, previousRecord);
+    const companionRunId = messageRunId(companionOuter, companionRecord);
+    const mediaUrls = deliveryUrls.length === 0 && hasMissing &&
+        (body || (sourceRunId && sourceRunId === companionRunId))
+      ? [...new Set(splitMediaFromOutput(messageText(messageDisplayContent(previous))).mediaUrls)]
+      : deliveryUrls;
+    if (
+      (hasFailures && !hasMissing) ||
+      (sourceRunId && companionRunId && sourceRunId !== companionRunId) ||
+      mediaUrls.length === 0 || mediaUrls.length !== outcomes.length ||
+      body !== canonicalCompanionText(message)
+    ) {
+      retained.push(message);
+      continue;
+    }
+
+    // Native WebChat can append failure blocks after successful media, regardless of source order.
+    const urlsByLabel = hasFailures ? uniqueAssistantMediaUrlsByLabel(mediaUrls) : undefined;
+    const matched = outcomes.flatMap((item, index) => {
+      const label = item.attachment.label;
+      const path = urlsByLabel ? urlsByLabel.get(label)
+        : fileNameFromMediaPath(mediaUrls[index]) === label.toLowerCase() ? mediaUrls[index]
+        : undefined;
+      return path ? [{ item, path }] : [];
+    });
+    if (matched.length !== outcomes.length ||
+        (hasFailures && new Set(matched.map(pair => pair.path)).size !== mediaUrls.length)) {
+      retained.push(message);
+      continue;
+    }
+    const seq = asRecord(companionOuter.__openclaw)?.seq ?? asRecord(companionRecord.__openclaw)?.seq;
+    const links = matched.flatMap(({ item, path }) => {
+      if (item.type !== 'attachment') return [];
+      const { attachment } = item;
       const artifactId =
         typeof attachment.artifactId === 'string' && attachment.artifactId.trim()
           ? attachment.artifactId.trim()
@@ -398,17 +437,29 @@ function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
         {
           artifactId,
           messageSeq,
-          path: mediaUrls[index],
+          path,
           title: String(attachment.label).trim(),
           mimeType: typeof attachment.mimeType === 'string' ? attachment.mimeType : undefined,
         },
       ];
     });
-    if (links.length)
+    const failures = matched.flatMap(({ item, path }) => {
+      if (item.type !== 'attachment_error') return [];
+      if (item.attachment.code !== ATTACHMENT_FILE_NOT_FOUND) return [item];
+      return [{ ...item, attachment: { ...item.attachment, sourceUrl: path } }];
+    });
+    if (links.length || failures.length) {
+      const producer = failures.length > 0 ? {
+        ...previousRecord,
+        [collapsedAssistantMediaFailures]: [...readCollapsedAssistantMediaFailures(previousRecord), ...failures],
+      } : previousRecord;
       retained[retained.length - 1] = {
-        ...asRecord(previous),
-        [collapsedDeliveryArtifacts]: [...readCollapsedDeliveryArtifacts(previous), ...links],
+        ...(previousOuter === previousRecord ? producer : { ...previousOuter, message: producer }),
+        ...(links.length > 0 ? {
+          [collapsedDeliveryArtifacts]: [...readCollapsedDeliveryArtifacts(previous), ...links],
+        } : {}),
       } as T;
+    }
   }
   return retained;
 }

@@ -7,9 +7,10 @@ import { withNativeFailureSummary } from '../../model/turn/failed-run-message';
 import {
   isPersistedFailedAssistantMessage,
   readCollapsedDeliveryArtifacts,
-  retainCollapsedDeliveryArtifacts,
+  retainCollapsedDeliveryProjection,
 } from '../../pipeline/history-display-normalizer';
 import { extractText } from '../../pipeline/message-extract';
+import { readCollapsedAssistantMediaFailures } from '../../pipeline/message-normalizer';
 import type { GatewayClient } from '../client';
 
 export const CHAT_HISTORY_INITIAL_LIMIT = 250;
@@ -117,7 +118,8 @@ const needsFailureDetail = (message: unknown): boolean => {
 function canRestoreFailureText(message: UnknownRecord): boolean {
   if (
     message.openclawDisplayContent !== undefined ||
-    readCollapsedDeliveryArtifacts(message).length > 0
+    readCollapsedDeliveryArtifacts(message).length > 0 ||
+    readCollapsedAssistantMediaFailures(message).length > 0
   )
     return false;
   if (
@@ -255,7 +257,7 @@ const retainHistoryIdentity = (message: unknown, placeholder: unknown): unknown 
     reason: _fullReason,
     ...fullMetadata
   } = asRecord(full.__openclaw) ?? {};
-  return retainCollapsedDeliveryArtifacts(
+  return retainCollapsedDeliveryProjection(
     {
       ...full,
       ...(original?.activity ? { activity: original.activity } : {}),

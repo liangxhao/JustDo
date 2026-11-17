@@ -12,6 +12,7 @@ import {
   pluginMessageText,
   pluginReplyMirror,
 } from '@/features/plugins/app/messagePresentation';
+import { getTranscriptMedia } from '@/libs/openclaw-chat/attachments';
 import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
 import { stripInboundMetadata } from '@/libs/openclaw-chat/shims/backend-helpers';
 import {
@@ -293,6 +294,37 @@ function mediaAttachment(url: string): Extract<MessageContentItem, { type: 'atta
   };
 }
 
+export const ATTACHMENT_FILE_NOT_FOUND = 'file-not-found';
+type AttachmentError = Extract<MessageContentItem, { type: 'attachment_error' }>;
+export const collapsedAssistantMediaFailures = Symbol('collapsed-assistant-media-failures');
+
+export function readCollapsedAssistantMediaFailures(message: unknown): readonly AttachmentError[] {
+  return (
+    (message as { [collapsedAssistantMediaFailures]?: readonly AttachmentError[] } | null)?.[
+      collapsedAssistantMediaFailures
+    ] ?? []
+  );
+}
+
+/** Native failure blocks contain a display label, without the original source URL. */
+export function uniqueAssistantMediaUrlsByLabel(urls: Iterable<string>): Map<string, string | undefined> {
+  const byLabel = new Map<string, string | undefined>();
+  for (const url of new Set(urls)) {
+    const labels = [inferAttachmentKind(url).label];
+    // OpenClaw also derives failure labels from the URL pathname, including drive letters.
+    if (URL.canParse(url)) {
+      const label = new URL(url).pathname.replace(/[\\/]+$/u, '').split(/[\\/]/u).pop()?.trim();
+      if (label) labels.push(label);
+    }
+    // Native source failures cap their labels at 180 UTF-16 code units.
+    for (const label of [...labels, ...labels.map(label => label.slice(0, 180).replace(/[\uD800-\uDBFF]$/u, ''))]) {
+      if (!byLabel.has(label)) byLabel.set(label, url);
+      else if (byLabel.get(label) !== url) byLabel.set(label, undefined);
+    }
+  }
+  return byLabel;
+}
+
 export function assistantMediaUrls(message: Record<string, unknown>): string[] {
   const delivery = asRecord(message.openclawDelivery);
   if (!Array.isArray(delivery?.mediaUrls)) return [];
@@ -308,19 +340,63 @@ export function assistantMediaUrls(message: Record<string, unknown>): string[] {
 
 function applyAssistantMediaUrls(
   content: MessageContentItem[],
-  mediaUrls: string[],
+  message: Record<string, unknown>,
+  inlineUrls: Set<string>,
 ): MessageContentItem[] {
-  if (mediaUrls.length === 0) return content;
+  const mediaUrls = assistantMediaUrls(message);
+  const companionFailures = readCollapsedAssistantMediaFailures(message);
+  if (
+    mediaUrls.length === 0 && companionFailures.length === 0 &&
+    !content.some(item => item.type === 'attachment_error')
+  ) return content;
   const mediaUrlSet = new Set(mediaUrls);
-  const retained = content.filter(item => {
-    if (item.type === 'attachment_error') return false;
-    if (item.type !== 'attachment') return true;
-    return (
-      !item.attachment.url.startsWith('/api/chat/media/outgoing/') &&
-      !mediaUrlSet.has(item.attachment.url)
-    );
+  const originalUrls = [...mediaUrls, ...inlineUrls];
+  const urlsByLabel = uniqueAssistantMediaUrlsByLabel(originalUrls.length > 0
+    ? originalUrls
+    : getTranscriptMedia(message).map(item => item.path));
+  const failuresByUrl = new Map(companionFailures.flatMap(item => item.attachment.sourceUrl
+    ? [[item.attachment.sourceUrl, item] as const]
+    : []));
+  const managedLabels = new Set(content.flatMap(item =>
+    item.type === 'attachment' && item.attachment.url.startsWith('/api/chat/media/outgoing/')
+      ? [item.attachment.label]
+      : [],
+  ));
+  const matchedErrors = new Map<AttachmentError, string>();
+  for (const item of content) {
+    if (item.type !== 'attachment_error' || item.attachment.code !== ATTACHMENT_FILE_NOT_FOUND) continue;
+    const sourceUrl = urlsByLabel.get(item.attachment.label);
+    if (!sourceUrl || managedLabels.has(item.attachment.label)) continue;
+    matchedErrors.set(item, sourceUrl);
+    failuresByUrl.set(sourceUrl, {
+      ...item,
+      attachment: { ...item.attachment, sourceUrl, label: inferAttachmentKind(sourceUrl).label },
+    });
+  }
+
+  const displayedFailures = new Set<string>();
+  const retained = content.flatMap<MessageContentItem>(item => {
+    if (item.type === 'attachment_error') {
+      const sourceUrl = matchedErrors.get(item);
+      if (sourceUrl && (mediaUrlSet.has(sourceUrl) || inlineUrls.has(sourceUrl))) return [];
+      if (mediaUrls.length > 0 && item.attachment.code !== ATTACHMENT_FILE_NOT_FOUND) return [];
+      return [sourceUrl ? failuresByUrl.get(sourceUrl)! : item];
+    }
+    if (item.type !== 'attachment') return [item];
+    const { url, listMarker } = item.attachment;
+    if (mediaUrls.length > 0 && (mediaUrlSet.has(url) || url.startsWith('/api/chat/media/outgoing/'))) return [];
+    const failure = failuresByUrl.get(url);
+    if (!failure) return [item];
+    // An original MEDIA path can appear more than once in the body.
+    if (displayedFailures.has(url)) return [];
+    displayedFailures.add(url);
+    return [listMarker ? { ...failure, attachment: { ...failure.attachment, listMarker } } : failure];
   });
-  return [...retained, ...mediaUrls.map(mediaAttachment)];
+  return [
+    ...retained,
+    ...mediaUrls.map(url => failuresByUrl.get(url) ?? mediaAttachment(url)),
+    ...companionFailures.filter(item => !item.attachment.sourceUrl),
+  ];
 }
 
 function coercePlayableContentBlock(
@@ -538,7 +614,7 @@ function stripMessageDisplayMetadata(items: MessageContentItem[]): MessageConten
     .filter(item => item.type !== 'text' || Boolean(item.text?.trim()));
 }
 
-function expandTextContent(text: string): {
+function expandTextContent(text: string, mediaUrls: Set<string>): {
   content: MessageContentItem[];
   audioAsVoice: boolean;
   replyTarget: NormalizedMessage['replyTarget'];
@@ -561,6 +637,7 @@ function expandTextContent(text: string): {
     const segments = parsed.segments ?? [{ type: 'text' as const, text: parsed.text }];
     for (const segment of segments) {
       if (segment.type === 'media') {
+        mediaUrls.add(segment.url);
         const attachment = mediaAttachment(segment.url);
         parts.push(
           segment.listMarker
@@ -725,12 +802,13 @@ export function normalizeMessage(
 
   // Extract content
   let content: MessageContentItem[] = [];
+  const inlineMediaUrls = new Set<string>();
   let audioAsVoice = false;
   let replyTarget: NormalizedMessage['replyTarget'] = null;
 
   if (typeof m.content === 'string') {
     if (isAssistantMessage) {
-      const expanded = expandTextContent(m.content);
+      const expanded = expandTextContent(m.content, inlineMediaUrls);
       content = expanded.content;
       audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
@@ -856,7 +934,7 @@ export function normalizeMessage(
         ];
       }
       if (item.type === 'text' && typeof item.text === 'string' && isAssistantMessage) {
-        const expanded = expandTextContent(item.text);
+        const expanded = expandTextContent(item.text, inlineMediaUrls);
         audioAsVoice = audioAsVoice || expanded.audioAsVoice;
         if (expanded.replyTarget?.kind === 'id') {
           replyTarget = expanded.replyTarget;
@@ -883,7 +961,7 @@ export function normalizeMessage(
     });
   } else if (typeof m.text === 'string') {
     if (isAssistantMessage) {
-      const expanded = expandTextContent(m.text);
+      const expanded = expandTextContent(m.text, inlineMediaUrls);
       content = expanded.content;
       audioAsVoice = expanded.audioAsVoice;
       replyTarget = expanded.replyTarget;
@@ -931,7 +1009,7 @@ export function normalizeMessage(
   }
   content = stripMessageDisplayMetadata(content);
   if (isAssistantMessage) {
-    content = applyAssistantMediaUrls(content, assistantMediaUrls(m));
+    content = applyAssistantMediaUrls(content, m, inlineMediaUrls);
     if (audioAsVoice)
       content = content.map(item =>
         item.type === 'attachment' && item.attachment.kind === 'audio'

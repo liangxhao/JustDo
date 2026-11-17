@@ -2092,38 +2092,19 @@ export const chatStyles = [
       white-space: nowrap;
     }
 
-    .message-attachment__name--with-warning {
-      display: flex;
-      align-items: center;
-      gap: 2px;
-    }
-
-    .message-attachment__filename {
-      overflow: hidden;
-      min-width: 0;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .message-attachment--delivery-failed {
+      opacity: 1;
     }
 
     .message-attachment__warning {
-      display: inline-grid;
-      flex: 0 0 9px;
-      width: 9px;
-      height: 9px;
-      margin-right: 3px;
-      color: var(--justdo-chat-text-secondary, #6b7280);
-      font-size: 7px;
-      font-weight: 700;
-      line-height: 1;
-      border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
-      border-radius: 50%;
-      cursor: help;
-      opacity: 0.6;
-      place-items: center;
+      display: block;
+      color: var(--justdo-chat-error, #dc2626);
+      font-size: 12px;
+      line-height: 1.4;
     }
 
-    .message-attachment__warning:hover {
-      opacity: 1;
+    :host(.dark) .message-attachment__warning {
+      color: var(--justdo-chat-error, #fca5a5);
     }
 
     .message-attachment__open {

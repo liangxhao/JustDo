@@ -80,6 +80,9 @@ export type MessageContentItem =
         kind: 'image' | 'audio' | 'video' | 'document';
         label: string;
         mimeType?: string;
+        /** Original MEDIA reference, only set by display reconciliation. */
+        sourceUrl?: string;
+        listMarker?: string;
       };
     }
   | {

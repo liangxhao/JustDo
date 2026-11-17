@@ -930,12 +930,35 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
     expect(rendered).not.toContain('Managed media attachment has an unsupported content type');
     expect(rendered).toContain('message-attachment__warning');
-    expect(rendered).toContain('附件不可用：quicksort_v1.py');
+    expect(rendered).toContain('附件交付失败');
     expect(rendered).not.toContain('@contextmenu=');
     expect(rendered).not.toContain('message-attachment__open');
     expect(rendered).toContain('message-attachment--unavailable');
     expect(rendered).not.toContain('message-attachment__detail');
     expect(rendered).not.toContain('delete');
+  });
+
+  test.each([true, false])('renders one visible failure for a missing MEDIA file (inline=%s)', inline => {
+    const source = 'C:/workspace/project/missing.pdf';
+    const group = createGroup('assistant');
+    group.messages[0].message = {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: inline ? `Report\nMEDIA:${source}\nMEDIA:${source}` : 'Report' },
+        { type: 'attachment_error', attachment: {
+          code: 'file-not-found', kind: 'document', label: 'missing.pdf',
+        } },
+      ],
+      MediaPath: source,
+    };
+
+    const rendered = stringifyTemplate(renderMessageBlock(group));
+
+    expect(rendered.match(/class="message-attachment /g)).toHaveLength(1);
+    expect(rendered).toContain('missing.pdf');
+    expect(rendered).toContain('交付时找不到文件');
+    expect(rendered).not.toContain('message-attachment__open');
+    expect(rendered).not.toContain('@contextmenu=');
   });
 
   test.each([
