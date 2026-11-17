@@ -4,6 +4,11 @@ import { describe, expect, it } from 'vitest';
 import { ChromeExtensionStream } from './chrome-extension-stream';
 
 const user = { type: 'userMessage', content: [{ type: 'text', text: 'Question' }] };
+const nativeUser = { ...user, inputRunId: 'input-1' };
+const acceptedHistory = (items: Array<Record<string, unknown> & { type: string }> = []) => ({
+  id: 'one',
+  turns: [{ id: 'history-1', items: [nativeUser, ...items] }],
+});
 const history = (items: Array<Record<string, unknown> & { type: string }> = []) => ({
   id: 'one',
   turns: [{ id: 'history-1', items: [user, ...items] }],
@@ -83,10 +88,10 @@ describe('extension live projection', () => {
 
   it('rebinds a successor to the same displayed user turn and ignores delayed predecessor frames', () => {
     const view = new ChromeExtensionStream('one');
-    view.start('Question');
+    view.start('Question', undefined, 'input-1');
     expect(view.bindRun('run-1')).toBe(true);
     view.accept(agent(30, 'assistant', { text: 'Earlier native commentary' }));
-    view.setHistory(history([{ type: 'agentMessage', text: 'Earlier native commentary' }]));
+    view.setHistory(acceptedHistory([{ type: 'agentMessage', text: 'Earlier native commentary' }]));
     const retry = { ...agent(1, 'assistant', { text: 'Continued reply' }), retryAttempt: 1 };
     retry.event.runId = 'run-2';
     expect(view.accept(retry)).toBe(true);
@@ -249,7 +254,7 @@ describe('extension live projection', () => {
     ]);
   });
 
-  it('accepts a compacted authoritative final snapshot and rebases the optimistic turn', () => {
+  it('rebases a compacted snapshot on exact native input identity even before terminal', () => {
     const view = new ChromeExtensionStream('one');
     view.setHistory({
       id: 'one',
@@ -258,14 +263,14 @@ describe('extension live projection', () => {
         { id: 'old-2', items: [user] },
       ],
     });
-    view.start('Question');
+    view.start('Question', undefined, 'input-1');
     view.bindRun('run-1');
     view.accept(agent(1, 'assistant', { text: 'Current answer' }));
     const displayId = view.project().turns[2].id;
-    const compacted = history([{ type: 'agentMessage', text: 'Current answer persisted' }]);
-    view.setHistory(compacted);
+    const compacted = acceptedHistory([{ type: 'agentMessage', text: 'Current answer persisted' }]);
+    view.setHistory(history([{ type: 'agentMessage', text: 'Current answer persisted' }]));
     expect(view.project().turns).toHaveLength(3);
-    view.setHistory(compacted, true);
+    view.setHistory(compacted);
     expect(view.project().turns).toHaveLength(1);
     expect(view.project().turns[0].id).toBe(displayId);
     view.finish();
@@ -410,15 +415,15 @@ describe('extension live projection', () => {
 
   it('keeps an optimistic turn display identity after persistence and completion', () => {
     const view = new ChromeExtensionStream('one');
-    view.start('Question');
+    view.start('Question', undefined, 'input-1');
     view.bindRun('run-1');
     view.accept(agent(1, 'thinking', { thinking: 'Inspect' }));
     const turnId = view.project().turns[0].id;
-    view.setHistory(history([{ type: 'reasoning', content: ['Inspect'] }]));
+    view.setHistory(acceptedHistory([{ type: 'reasoning', content: ['Inspect'] }]));
     expect(view.project().turns[0].id).toBe(turnId);
     view.finish();
     expect(view.project().turns[0].id).toBe(turnId);
-    view.setHistory(history([{ type: 'reasoning', content: ['Inspect'] }]));
+    view.setHistory(acceptedHistory([{ type: 'reasoning', content: ['Inspect'] }]));
     expect(view.project().turns[0].id).toBe(turnId);
   });
 
@@ -512,12 +517,114 @@ describe('extension live projection', () => {
     view.start('Rejected question');
     view.cancelStart();
     expect(view.project().turns).toEqual([]);
-    view.start('Question');
+    view.start('Question', undefined, 'input-1');
     view.bindRun('run-1');
-    view.setHistory(history());
+    view.setHistory(acceptedHistory());
     view.accept(agent(1, 'assistant', { text: 'Reply' }));
     expect(items(view)).toMatchObject([user, { text: 'Reply' }]);
   });
+  it.each([false, true])(
+    'keeps the exact local input before an assistant-first snapshot and through terminal (existing chat: %s)',
+    existing => {
+      const view = new ChromeExtensionStream('one');
+      const previous = { ...user, inputRunId: 'earlier-input' };
+      const oldTurn = { id: 'old-turn', items: [previous] };
+      const priorTurns = existing ? [oldTurn] : [];
+      view.setHistory({ id: 'one', turns: priorTurns });
+      view.start('Question', undefined, 'input-1');
+      view.bindRun('native-run');
+      const reply = { type: 'agentMessage', text: 'New reply' };
+      view.setHistory({ id: 'one', turns: [...priorTurns, { id: 'new-turn', items: [reply] }] });
+      expect(view.project().turns[priorTurns.length].items).toMatchObject([user, reply]);
+
+      view.setHistory({ id: 'one', turns: [] }, true);
+      view.finish();
+      expect(items(view)).toMatchObject([user]);
+
+      view.setHistory({ id: 'one', turns: [...priorTurns, { id: 'new-turn', items: [nativeUser, reply] }] });
+      expect(items(view)).toMatchObject([...(existing ? [previous] : []), nativeUser, reply]);
+    },
+  );
+
+  it('keeps a late preceding reply in its original turn when the next input is absent', () => {
+    const view = new ChromeExtensionStream('one');
+    const oldUser = { ...user, id: 'old-user', inputRunId: 'old-input' };
+    const oldReply = { id: 'old-reply', type: 'agentMessage', text: 'Earlier reply' };
+    const previous = { id: 'history', items: [oldUser, oldReply] };
+    view.setHistory({ id: 'one', turns: [previous] });
+    view.start('Question', undefined, 'input-1');
+    const nextReply = { id: 'new-reply', type: 'agentMessage', text: 'Late preceding reply' };
+    const snapshot = { id: 'one', turns: [{ ...previous, items: [...previous.items, nextReply] }] };
+
+    view.setHistory(snapshot, true);
+    view.finish();
+    expect(view.project().turns.map(turn => turn.items)).toMatchObject([
+      [oldUser, oldReply, nextReply], [user],
+    ]);
+
+    view.setHistory(snapshot);
+    expect(items(view)).toMatchObject([oldUser, oldReply, nextReply, user]);
+  });
+
+  it('retains attachment-only input until the exact native row, even across a pending-row gap', () => {
+    const view = new ChromeExtensionStream('one');
+    const rawMessage = { role: 'user', content: [{ type: 'attachment', attachment: { label: 'file.pdf' } }] };
+    view.start('', rawMessage, 'input-1');
+    const local = view.project().turns[0].items[0];
+    expect(local.rawMessage).toEqual(rawMessage);
+
+    const native = { ...local, inputRunId: 'input-1' };
+    view.setHistory({ id: 'one', turns: [
+      { id: 'native', items: [{ ...native, pendingInput: { id: 'transfer', state: 'queued' } }] },
+    ] });
+    expect(items(view)).toHaveLength(1);
+    expect(items(view)[0].pendingInput).toEqual({ id: 'transfer', state: 'queued' });
+
+    view.setHistory({ id: 'one', turns: [] }, true);
+    view.finish();
+    expect(items(view)).toEqual([local]);
+    view.setHistory({ id: 'one', turns: [{ id: 'native', items: [native] }] });
+    expect(items(view)).toEqual([native]);
+  });
+
+  it('binds a website submission after history arrives without merging same-text inputs or cancelling another launch', () => {
+    const view = new ChromeExtensionStream('one');
+    const old = { id: 'prior', items: [{ ...user, inputRunId: 'other-input' }] };
+    view.start('Question', undefined, 'website-request');
+    view.setHistory({ id: 'one', turns: [old] });
+    expect(items(view)).toHaveLength(2);
+    view.finish();
+    view.start('Question', undefined, 'next-request');
+    view.setHistory({ id: 'one', turns: [old, { id: 'accepted', items: [nativeUser] }] });
+    expect(items(view)).toHaveLength(4);
+
+    expect(view.identifyInput('website-request', 'input-1')).toBe(true);
+    expect(items(view)).toHaveLength(3);
+    expect(items(view).filter(item => item.inputRunId === 'input-1')).toHaveLength(1);
+    view.cancelStart('website-request');
+    expect(items(view)).toHaveLength(3);
+    view.cancelStart('next-request');
+    expect(items(view)).toHaveLength(2);
+  });
+
+  it('settles buffered output only for the matching local submission', () => {
+    const view = new ChromeExtensionStream('one');
+    view.start('Question', undefined, 'web-launch');
+    expect(view.accept(agent(1, 'assistant', { text: 'Fast reply' }))).toBe(false);
+    expect(view.finishSubmission('unrelated-launch', 'run-1')).toBe(false);
+    expect(items(view)).toMatchObject([user]);
+
+    expect(view.finishSubmission('web-launch', 'run-1')).toBe(true);
+    expect(items(view)).toMatchObject([user, { text: 'Fast reply' }]);
+
+    view.identifyInput('web-launch', 'input-1');
+    view.setHistory(acceptedHistory([{ type: 'agentMessage', text: 'Fast reply' }]));
+    expect(items(view)).toMatchObject([nativeUser, { text: 'Fast reply' }]);
+    view.start('New input', undefined, 'new-input');
+    expect(view.finishSubmission('web-launch', 'run-1')).toBe(false);
+    expect(items(view).at(-1)?.content).toEqual([{ type: 'text', text: 'New input' }]);
+  });
+
   it('retains interrupted text until authoritative history contains it', () => {
     const view = new ChromeExtensionStream('one');
     view.setHistory(history());

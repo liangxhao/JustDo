@@ -205,6 +205,20 @@ type ExtensionHistoryEntry = GatewayHistoryEntry & {
   rawMessage?: Record<string, unknown>;
   display?: ChromeExtensionMessageDisplay;
 };
+
+function persistedInputRunId(message: unknown): string | undefined {
+  if (!isRecord(message) || message.role !== 'user') return undefined;
+  const metadata = isRecord(message.__openclaw) ? message.__openclaw : undefined;
+  const key = message.idempotencyKey ?? metadata?.idempotencyKey;
+  if (metadata?.idempotencyKey !== undefined && metadata.idempotencyKey !== key) return undefined;
+  // Native chat.send persists buildRunUserTurnIdempotencyKey(clientRunId).
+  // An execution run or steer target can belong to a different input.
+  const suffix = ':user';
+  if (typeof key !== 'string' || !key.endsWith(suffix)) return undefined;
+  const runId = key.slice(0, -suffix.length);
+  return runId && runId.length <= 256 && runId === runId.trim() ? runId : undefined;
+}
+
 const projectRichHistory = (
   message: unknown,
   omitDeliveryMedia = false,
@@ -1080,10 +1094,14 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
         const metadata = entry.metadata;
         const toolName = typeof metadata?.toolName === 'string' ? metadata.toolName : undefined;
         const toolUseId = typeof metadata?.toolUseId === 'string' ? metadata.toolUseId : undefined;
+        const inputRunId = entry.role === 'user'
+          ? pendingInput ? pendingInput.runId : persistedInputRunId(message)
+          : undefined;
         return {
           role: entry.role,
           text: entry.text,
           ...(pendingInput ? { pendingInput } : {}),
+          ...(inputRunId ? { inputRunId } : {}),
           ...(entry.rawMessage ? { rawMessage: entry.rawMessage } : {}),
           ...(entry.display ? { display: entry.display } : {}),
           ...(entry.questionResult ? { questionResult: entry.questionResult } : {}),

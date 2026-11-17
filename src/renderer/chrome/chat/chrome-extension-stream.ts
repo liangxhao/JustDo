@@ -15,6 +15,7 @@ export { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-prev
 type Item = Record<string, unknown> & {
   type: string;
   id?: string;
+  inputRunId?: string;
   /** Local presentation identity; never a native ownership or authorization field. */
   displayKey?: string;
   display?: ChromeExtensionMessageDisplay;
@@ -25,6 +26,20 @@ type ChromeStreamEvent = ChromeExtensionStreamEvent & { retryAttempt?: number; s
 const MAX_PENDING_STREAM_EVENTS = 64;
 const MAX_PENDING_STREAM_CHARS = 1_000_000;
 const MAX_DISPLAY_ITEM_KEYS = 2048;
+const MAX_OPTIMISTIC_INPUTS = 8;
+
+type OptimisticInput = {
+  submissionId: string;
+  displayId: string;
+  inputRunId: string | undefined;
+  item: Item;
+  turnIndex: number;
+};
+
+const readInputRunId = (item: Item): string | undefined =>
+  item.type === 'userMessage' && typeof item.inputRunId === 'string' && item.inputRunId
+    ? item.inputRunId
+    : undefined;
 
 function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>): Item {
   const identity = {
@@ -163,8 +178,9 @@ export class ChromeExtensionStream {
   private anchor: number | null = null;
   private completedRuns = new Set<string>();
   private settled = false;
-  private beforeStart: ChromeDisplayView | null = null;
-  private readonly displayTurnIds = new Map<number, string>();
+  private activeInput: OptimisticInput | null = null;
+  private readonly optimisticInputs = new Map<string, OptimisticInput>();
+  private readonly displayTurnIds = new Map<string, string>();
   private readonly displayItemKeys = new Map<string, string>();
   private readonly dependencies = {
     now: () => Date.now(),
@@ -220,10 +236,12 @@ export class ChromeExtensionStream {
     if (retryAttempt > this.retryAttempt && previous) {
       if (previous === runId) return false;
       const index = this.anchor;
+      const input = this.activeInput;
       const sessionKey = this.state.sessionKey;
       const sessionId = this.state.sessionId ?? this.state.activeTurn?.sessionId ?? null;
       this.finish();
       this.anchor = index;
+      this.activeInput = input;
       this.state.sessionKey = sessionKey;
       this.state.sessionId = sessionId;
     }
@@ -244,62 +262,118 @@ export class ChromeExtensionStream {
     return true;
   }
 
-  start(message: string, rawMessage?: Record<string, unknown>): void {
+  start(message: string, rawMessage?: Record<string, unknown>, submissionId?: string): void {
+    if (submissionId && (this.optimisticInputs.has(submissionId) ||
+        this.activeInput?.submissionId === submissionId)) return;
     this.finish();
     this.pendingRunEvents = [];
     this.pendingRunChars = 0;
-    this.beforeStart = this.history;
-    this.anchor = this.history.turns.length;
-    const turnId = `pending-${this.nextId++}`;
-    this.displayTurnIds.set(this.anchor, turnId);
-    this.history = {
-      ...this.history,
-      turns: [
-        ...this.history.turns,
-        {
-          id: turnId,
-          items: [
-            {
-              type: 'userMessage',
-              content: [{ type: 'text', text: message }],
-              ...(rawMessage ? { rawMessage } : {}),
-            },
-          ],
-        },
-      ],
+    const displayId = `pending-${this.nextId++}`;
+    const input = {
+      submissionId: submissionId ?? displayId,
+      displayId,
+      inputRunId: submissionId,
+      item: {
+        type: 'userMessage',
+        content: [{ type: 'text', text: message }],
+        ...(rawMessage ? { rawMessage } : {}),
+      },
+      turnIndex: this.history.turns.length,
     };
+    this.optimisticInputs.set(input.submissionId, input);
+    if (this.optimisticInputs.size > MAX_OPTIMISTIC_INPUTS)
+      this.optimisticInputs.delete(this.optimisticInputs.keys().next().value!);
+    this.activeInput = input;
+    this.anchor = input.turnIndex;
+  }
+
+  identifyInput(submissionId: string, runId: string): boolean {
+    const input = this.optimisticInputs.get(submissionId);
+    if (!input || !runId || input.inputRunId === runId || input.inputRunId !== submissionId)
+      return false;
+    input.inputRunId = runId;
+    this.setHistory(this.history);
+    return true;
   }
 
   setHistory(thread: ChromeDisplayView, authoritative = false): void {
     if (thread.id !== this.threadId) return;
-    // A pre-send snapshot must not remove the optimistic user/streaming turn.
-    if (this.anchor !== null && thread.turns.length <= this.anchor) {
+    const active = this.activeInput;
+    const activeIndex = active?.inputRunId
+      ? thread.turns.findIndex(turn =>
+          turn.items.some(item => readInputRunId(item) === active.inputRunId),
+        )
+      : -1;
+    if (active && activeIndex >= 0) {
+      this.anchor = activeIndex;
+      active.turnIndex = activeIndex;
+    } else if (this.anchor !== null && thread.turns.length <= this.anchor) {
+      // A read from before admission must not attach live output to an older turn.
       if (!authoritative) return;
-      // Completion can compact the transcript. Count alone no longer locates
-      // this run; the freshly read final history owns its new turn boundaries.
-      const displayId = this.displayTurnIds.get(this.anchor);
-      this.displayTurnIds.clear();
-      this.anchor = Math.max(0, thread.turns.length - 1);
-      if (displayId && thread.turns.length) this.displayTurnIds.set(this.anchor, displayId);
+      this.anchor = thread.turns.length;
     }
+    const pendingByRunId = new Map<string, OptimisticInput>();
+    for (const input of this.optimisticInputs.values())
+      if (input.inputRunId) pendingByRunId.set(input.inputRunId, input);
     this.history = {
       ...thread,
-      turns: thread.turns.map((turn, index) =>
-        this.retainDisplayKeys({
+      turns: thread.turns.map(turn => {
+        const user = turn.items.find(item => readInputRunId(item));
+        const runId = user && readInputRunId(user);
+        if (!runId) return this.retainDisplayKeys(turn);
+        const input = pendingByRunId.get(runId);
+        if (input) {
+          this.displayTurnIds.set(runId, input.displayId);
+          if (this.displayTurnIds.size > MAX_DISPLAY_ITEM_KEYS)
+            this.displayTurnIds.delete(this.displayTurnIds.keys().next().value!);
+          // Native pending rows can disappear while the durable user message is
+          // being written. Keep a local fallback until the exact persisted row.
+          if (!user.pendingInput) this.optimisticInputs.delete(input.submissionId);
+        }
+        return this.retainDisplayKeys({
           ...turn,
-          id: this.displayTurnIds.get(index) ?? turn.id,
-        }),
-      ),
+          id: this.displayTurnIds.get(runId) ?? turn.id,
+        });
+      }),
     };
-    this.beforeStart = null;
     if (this.settled) this.finish(true);
   }
 
-  cancelStart(): void {
-    const original = this.beforeStart;
-    if (original && this.anchor !== null) this.displayTurnIds.delete(this.anchor);
-    this.finish();
-    if (original) this.history = original;
+  cancelStart(submissionId = this.activeInput?.submissionId): void {
+    if (!submissionId) return;
+    this.optimisticInputs.delete(submissionId);
+    if (submissionId === this.activeInput?.submissionId) this.finish();
+  }
+
+  finishSubmission(submissionId: string, nativeRunId?: string): boolean {
+    if (this.activeInput?.submissionId !== submissionId) return false;
+    if (nativeRunId && this.pendingRunEvents !== null) this.bindRun(nativeRunId);
+    this.finish(true);
+    return true;
+  }
+
+  private projectOptimisticInputs(turns: ChromeDisplayView['turns']): ChromeDisplayView['turns'] {
+    if (!this.optimisticInputs.size) return turns;
+    const nativeRunIds = new Set<string>();
+    for (const turn of turns)
+      for (const item of turn.items) {
+        const id = readInputRunId(item);
+        if (id) nativeRunIds.add(id);
+      }
+    const result = turns.slice();
+    const inputs = [...this.optimisticInputs.values()].reverse();
+    inputs.sort((a, b) => b.turnIndex - a.turnIndex);
+    for (const input of inputs) {
+      if (input.inputRunId && nativeRunIds.has(input.inputRunId)) continue;
+      const slot = Math.min(input.turnIndex, result.length);
+      const next = result[slot];
+      if (next && !next.items.some(item => item.type === 'userMessage')) {
+        result[slot] = { ...next, id: input.displayId, items: [input.item, ...next.items] };
+      } else {
+        result.splice(slot, 0, { id: input.displayId, items: [input.item] });
+      }
+    }
+    return result;
   }
 
   accept(value: ChromeStreamEvent): boolean {
@@ -383,7 +457,7 @@ export class ChromeExtensionStream {
       ...(this.activity ? { activity: this.activity } : {}),
     };
     const turn = this.state.activeTurn;
-    if (!turn?.items.length) return history;
+    if (!turn?.items.length) return { ...history, turns: this.projectOptimisticInputs(history.turns) };
     const turns = this.history.turns.slice();
     const index = this.anchor ?? Math.max(0, turns.length - 1);
     const historical = turns[index] ?? { id: turn.id, items: [] };
@@ -401,7 +475,7 @@ export class ChromeExtensionStream {
       ...historical,
       items: reconcileItems(historical.items, live).items,
     });
-    return { ...history, turns };
+    return { ...history, turns: this.projectOptimisticInputs(turns) };
   }
 
   finish(preserveUnpersisted = false): void {
@@ -485,6 +559,6 @@ export class ChromeExtensionStream {
     this.agentTextRun = null;
     this.anchor = null;
     this.settled = false;
-    this.beforeStart = null;
+    this.activeInput = null;
   }
 }

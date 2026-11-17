@@ -24,6 +24,8 @@ export function createWebLaunchPanel({
   readComposer,
   installComposer,
   refreshThread = async () => {},
+  onSubmitInput = noop,
+  onWithdrawSubmitInput = noop,
   onReceipt = noop,
   onChange = noop,
   onError = noop,
@@ -80,6 +82,8 @@ export function createWebLaunchPanel({
   let expiryTimer;
   let connectionVersion = 0;
   let visibleLaunch = '';
+  let refreshedReceipt = '';
+  let blockedRestoration = '';
   const make = (tag, key, parent = root) => {
     const node = document.createElement(tag);
     if (key) node.textContent = t(key);
@@ -179,6 +183,9 @@ export function createWebLaunchPanel({
     if (!result || result.ok === false)
       throw Object.assign(new Error('Web launch request failed'), {
         code: result?.code || 'GENERIC',
+        ...(type === WebLaunchPanelMessage.Submit && result?.requestSent === false
+          ? { requestSent: false }
+          : {}),
       });
     return result;
   };
@@ -215,12 +222,48 @@ export function createWebLaunchPanel({
       Math.max(0, current.expiresAt - Date.now()) + 1,
     );
   }
+  function withdrawSubmissionInput() {
+    const { launchId, threadId } = current;
+    current.submissionInput = undefined;
+    current.lastSubmittedPrompt = undefined;
+    onWithdrawSubmitInput({ launchId, threadId });
+  }
+  function refreshReceiptThread(response, visibleError) {
+    const { clientTurnId, nativeRunId } = response.internal ?? {};
+    const { execution, request, receiptRevision } = response.receipt;
+    const phase = execution.executionSettled
+      ? 'settled'
+      : nativeRunId && request.status === 'submitted' && execution.status === 'running'
+        ? 'accepted'
+        : '';
+    if (!phase || !clientTurnId || !selected()) return;
+    const { launchId, threadId } = current;
+    const key = `${launchId}/${clientTurnId}/${phase}`;
+    if (key === refreshedReceipt) return;
+    refreshedReceipt = key;
+    void Promise.resolve()
+      .then(async () => {
+        if (key !== refreshedReceipt) return;
+        if (disposed || current?.launchId !== launchId || !selected()) {
+          refreshedReceipt = '';
+          return;
+        }
+        try {
+          await refreshThread(threadId);
+        } finally {
+          if (visibleError && receipt?.receiptRevision === receiptRevision)
+            fail(visibleError, launchId);
+        }
+      })
+      .catch(() => {});
+  }
   function acceptReceipt(response) {
     if (!current || disposed) return;
     const next = response.receipt;
     if (
       next &&
       next.launchId === current.launchId &&
+      (!response.internal?.threadId || response.internal.threadId === current.threadId) &&
       (!receipt || next.receiptRevision > receipt.receiptRevision)
     ) {
       receipt = next;
@@ -250,7 +293,22 @@ export function createWebLaunchPanel({
         if (selected() && !dirty && original === current.lastSubmittedPrompt)
           installComposer({ clearPrompt: true });
       }
-      onReceipt({ ...response, threadId: response.internal?.threadId || current.threadId });
+      const attempt = current.submissionInput;
+      const { clientTurnId, notSent } = response.internal ?? {};
+      const matchesSubmission = Boolean(
+        attempt &&
+        (attempt.clientTurnId
+          ? clientTurnId === attempt.clientTurnId
+          : clientTurnId
+            ? clientTurnId !== attempt.precedingClientTurnId
+            : !attempt.precedingClientTurnId && notSent === true),
+      );
+      if (matchesSubmission) {
+        if (notSent === true && next.execution.status === 'not-started') withdrawSubmissionInput();
+        else attempt.clientTurnId = clientTurnId;
+      }
+      onReceipt({ ...response, threadId: current.threadId, matchesSubmission });
+      refreshReceiptThread(response, intentionalCancel ? undefined : next.error?.code);
       if (CLOSED.has(next.request.status) && cancellation?.launchId === next.launchId) {
         if (
           cancellation.hadInput &&
@@ -295,8 +353,35 @@ export function createWebLaunchPanel({
       if (failure.code === 'FORBIDDEN') await register();
     }
   }
-  async function acceptEnvelope(envelope, internal) {
-    if (disposed || !envelope || envelope.launchId === current?.launchId) return;
+  const composerHasWork = composer => Boolean(
+    composer.prompt.trim() ||
+    composer.attachments ||
+    composer.attachmentReads ||
+    composer.busy ||
+    busy ||
+    actionPending,
+  );
+  async function restoreDispatched() {
+    if (!current || disposed || inputAssociated() || !submitted() || composerHasWork(readComposer()))
+      return;
+    const { threadId } = current;
+    if (!selected()) installComposer({ threadId });
+    render();
+    await refreshThread(threadId);
+  }
+  async function resumeCurrentEnvelope(envelope) {
+    if (!current || envelope?.launchId !== current.launchId || envelope.threadId !== current.threadId)
+      return;
+    automaticDisarmed = true;
+    if (!selected()) await restoreDispatched();
+  }
+  async function acceptEnvelope(envelope, internal, resume = false) {
+    if (disposed || !envelope || (!resume && blockedRestoration === envelope.launchId)) return;
+    if (envelope.launchId === current?.launchId) {
+      if (resume) await resumeCurrentEnvelope(envelope);
+      return;
+    }
+    const restored = resume || envelope.restored === true;
     const composer = readComposer();
     const alreadyDispatched =
       SENT.has(envelope.receipt?.request?.status) ||
@@ -307,32 +392,31 @@ export function createWebLaunchPanel({
       receipt = envelope.receipt;
       inputReleased = true;
       automaticDisarmed = true;
+      submissionStartedAt = undefined;
       render();
+      if (resume) await restoreDispatched();
       return;
     }
-    if (
-      composer.prompt.trim() ||
-      composer.attachments ||
-      composer.attachmentReads ||
-      composer.busy ||
-      busy ||
-      inputAssociated()
-    ) {
-      await request(WebLaunchPanelMessage.Cancel, {
-        launchId: envelope.launchId,
-        reason: 'composer-busy',
-      }).catch(() => {});
+    if (composerHasWork(composer) || inputAssociated()) {
+      if (restored) blockedRestoration = envelope.launchId;
+      else {
+        await request(WebLaunchPanelMessage.Cancel, {
+          launchId: envelope.launchId,
+          reason: 'composer-busy',
+        }).catch(() => {});
+      }
       fail('COMPOSER_BUSY', null);
       return;
     }
-    current = { ...envelope };
+    blockedRestoration = '';
+    current = { ...envelope, restored, clientTurnId: internal?.clientTurnId };
     receipt = envelope.receipt;
     submissionStartedAt = undefined;
     inputReleased = false;
     cancellation = null;
     dirty = false;
     revisionError = false;
-    automaticDisarmed = envelope.restored === true;
+    automaticDisarmed = restored;
     modelChanged = false;
     onClearError();
     installing = true;
@@ -413,14 +497,17 @@ export function createWebLaunchPanel({
         (current.result === 'final' && !current.shareAllowed))
     )
       return;
-    const launchId = current.launchId;
+    const { launchId, threadId } = current;
     const input = actualInput();
     current.lastSubmittedPrompt = input.prompt;
+    const newAttempt = !current.submissionInput;
+    const attempt = (current.submissionInput ??= { precedingClientTurnId: current.clientTurnId });
     submissionStartedAt = Date.now();
     busy = true;
     onClearError();
     render();
     try {
+      onSubmitInput({ launchId, threadId, prompt: input.prompt });
       const result = await request(WebLaunchPanelMessage.Submit, {
         launchId,
         composeRevision: current.composeRevision,
@@ -431,10 +518,16 @@ export function createWebLaunchPanel({
       });
       if (current?.launchId !== launchId || disposed) return;
       acceptReceipt(result);
-      if (selected() && !receipt?.error) await refreshThread(current.threadId);
     } catch (failure) {
       if (current?.launchId === launchId && !disposed) {
         automaticDisarmed = true;
+        if (
+          failure.requestSent === false &&
+          newAttempt &&
+          current.submissionInput === attempt &&
+          !attempt.clientTurnId
+        )
+          withdrawSubmissionInput();
         fail(failure.code, launchId);
       }
     } finally {
@@ -555,10 +648,14 @@ export function createWebLaunchPanel({
       connectionVersion += 1;
       connection.accept(message.connectionPending);
     }
-    if (message.envelope && message.envelope.launchId !== current?.launchId)
-      void acceptEnvelope(message.envelope, message.internal);
-    else if (message.receipt) acceptReceipt(message);
-    else if (message.code) fail(message.code, message.launchId ?? null);
+    const resume = message.resume === true;
+    if (message.envelope && message.envelope.launchId !== current?.launchId) {
+      void acceptEnvelope(message.envelope, message.internal, resume);
+    } else {
+      if (message.receipt) acceptReceipt(message);
+      else if (message.code) fail(message.code, message.launchId ?? null);
+      if (resume) void resumeCurrentEnvelope(message.envelope);
+    }
   };
   chrome.runtime.onMessage?.addListener(listener);
   function leaveWindow() {
@@ -577,6 +674,7 @@ export function createWebLaunchPanel({
     current = null;
     receipt = null;
     cancellation = null;
+    blockedRestoration = '';
     installing = false;
     initialized = false;
     render();
@@ -633,6 +731,7 @@ export function createWebLaunchPanel({
         registeredTab?.windowId !== nextWindowId
       )
         return;
+      const firstRegistration = !initialized;
       initialized = true;
       registered = true;
       if (
@@ -644,7 +743,11 @@ export function createWebLaunchPanel({
         const observed = result.observations?.find(
           item => item.receipt?.launchId === result.envelope.launchId,
         );
-        await acceptEnvelope(result.envelope, observed?.internal);
+        await acceptEnvelope(
+          result.envelope,
+          observed?.internal,
+          firstRegistration && result.envelope.restored === true,
+        );
       }
     } catch {
       /* Ordinary extension chat remains available when this bridge is unavailable. */

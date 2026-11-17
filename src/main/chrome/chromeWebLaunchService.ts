@@ -107,13 +107,20 @@ export class ChromeWebLaunchService {
   }
 
   getOperations(): Partial<Record<WebLaunchMethod, AppServerOperation>> {
-    const safe = (operation: (params: unknown) => unknown | Promise<unknown>): AppServerOperation => async params => {
+    const safe = (
+      operation: (params: unknown) => unknown | Promise<unknown>,
+      rejectBeforeSubmission = false,
+    ): AppServerOperation => async params => {
       try {
         if (this.closed) return failWebLaunch('NATIVE_UNAVAILABLE');
         if (Buffer.byteLength(JSON.stringify(params)) > WebLaunchLimits.requestBytes) return failWebLaunch('REQUEST_TOO_LARGE');
         return await operation(params) as AppServerResult;
       } catch (error) {
-        if (error instanceof ChromeWebLaunchError) throw error;
+        if (error instanceof ChromeWebLaunchError) {
+          // Synchronous submit validation can fail before this call claims a send.
+          if (rejectBeforeSubmission) Object.assign(error, { requestSent: false });
+          throw error;
+        }
         throw new ChromeWebLaunchError('INTERNAL_ERROR');
       }
     };
@@ -123,7 +130,7 @@ export class ChromeWebLaunchService {
       [WebLaunchMethod.SendModeSet]: safe(params => this.setSendMode(params)),
       [WebLaunchMethod.Prepare]: safe(params => this.prepare(params)),
       [WebLaunchMethod.Revise]: safe(params => this.revise(params)),
-      [WebLaunchMethod.Submit]: safe(params => this.submit(params)),
+      [WebLaunchMethod.Submit]: safe(params => this.submit(params), true),
       [WebLaunchMethod.Read]: safe(params => this.read(params)),
       [WebLaunchMethod.Cancel]: safe(params => this.cancel(params)),
       [WebLaunchMethod.Stop]: safe(params => this.stop(params)),
@@ -196,6 +203,7 @@ export class ChromeWebLaunchService {
       requiresUnknownConfirmation: receipt.requiresUnknownConfirmation,
       ...(receipt.clientTurnId ? { clientTurnId: receipt.clientTurnId } : {}),
       ...(receipt.nativeBinding ? { nativeRunId: receipt.nativeBinding.nativeRunId } : {}),
+      ...(receipt.notSent === true ? { notSent: true } : {}),
     } };
   }
 
@@ -310,7 +318,7 @@ export class ChromeWebLaunchService {
         prepared = existing;
         return;
       }
-      let lease: WebLaunchDocumentLease;
+      let lease: WebLaunchDocumentLease | undefined;
       if (value.documentLeaseId) lease = this.verifyLease(state, value.documentLeaseId, value.source);
       else {
         const active = Object.values(state.leases).find(item => item.sourceKey === sourceKey && item.active && item.expiresAt > this.now());
@@ -318,18 +326,23 @@ export class ChromeWebLaunchService {
         else {
           if (Object.keys(state.leases).length >= 256) return failWebLaunch('CAPACITY_EXCEEDED');
           if (!(watermarkKey in state.watermarks) && Object.keys(state.watermarks).length >= 8192) return failWebLaunch('CAPACITY_EXCEEDED');
-          lease = { id: this.uuid(), sourceKey, source: strippedSource(value.source), highWater: state.watermarks[watermarkKey] ?? 0, active: true, expiresAt: this.now() + 24 * 60 * 60_000 };
-          state.leases[lease.id] = lease;
         }
       }
-      if (value.clickSequence <= lease.highWater) return failWebLaunch('EXPIRED');
-      lease.highWater = value.clickSequence; // Rejected clicks are consumed too.
+      if (value.clickSequence <= (lease?.highWater ?? state.watermarks[watermarkKey] ?? 0)) return failWebLaunch('EXPIRED');
+      if (lease) lease.highWater = value.clickSequence; // Rejected clicks are consumed too.
       state.watermarks[watermarkKey] = value.clickSequence;
       const site = state.sites.find(item => item.origin === value.source.origin);
       if (!site?.enabled) { error = 'SITE_NOT_ALLOWED'; return; }
       const windowKey = webLaunchWindowKey(value.source);
       if (Object.values(state.receipts).some(receipt => receipt.observed && receipt.windowKey === windowKey && !settled(receipt) && !receipt.notSent)) { error = 'COMPOSER_BUSY'; return; }
       if (Object.values(state.receipts).filter(receipt => receipt.observed && !settled(receipt) && !receipt.notSent).length >= WebLaunchLimits.activeReceipts || Object.keys(state.receipts).length >= 300) { error = 'CAPACITY_EXCEEDED'; return; }
+      if (!lease) {
+        lease = {
+          id: this.uuid(), sourceKey, source: strippedSource(value.source), highWater: value.clickSequence,
+          active: true, expiresAt: this.now() + 24 * 60 * 60_000,
+        };
+        state.leases[lease.id] = lease;
+      }
       const title = value.input.prompt.trim().split(/\r?\n/u, 1)[0].trim().slice(0, 50);
       const permissionMode = PermissionMode.Full;
       const thread = this.deps.getStore().createSession(title, cwd, config.executionMode || 'local', [], 'main', permissionMode, this.deps.getDefaultModelRef?.(), undefined, CoworkSessionSource.ChromeExtension);

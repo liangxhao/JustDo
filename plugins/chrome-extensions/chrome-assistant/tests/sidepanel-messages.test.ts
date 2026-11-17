@@ -468,7 +468,7 @@ describe('side panel process presentation matches the desktop', () => {
       ],
     };
     stream.setHistory(initial);
-    stream.start('Current request');
+    stream.start('Current request', undefined, 'exact-current-input');
     stream.bindRun('run-one');
     const emit = (seq: number, channel: string, data: Record<string, unknown>) =>
       stream.accept({
@@ -504,7 +504,7 @@ describe('side panel process presentation matches the desktop', () => {
           items: [
             {
               id: 'native-user',
-              type: 'userMessage',
+              type: 'userMessage', inputRunId: 'exact-current-input',
               content: [{ type: 'text', text: 'Current request' }],
             },
             {

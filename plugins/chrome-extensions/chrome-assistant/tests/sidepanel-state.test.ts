@@ -5,7 +5,6 @@ import {
   chromeDisplayThread,
   isCurrentThreadRunning,
   isSettledTurnNotification,
-  mergePendingUserMessage,
   messagesFromThread,
   shouldShowTurnError,
   toolDisplayTitle,
@@ -54,19 +53,6 @@ describe('Chrome extension side panel state', () => {
     },
   );
 
-  it('uses accepted run identity when same-text pending inputs change', () => {
-    const pending = { threadId: 'one', text: 'same', runId: 'current', persistedMatches: 1 };
-    const old = { role: 'user', text: 'same', pendingInput: { runId: 'other' } };
-    expect(mergePendingUserMessage([old], pending, 'one')).toHaveLength(2);
-    const accepted = { role: 'user', text: 'same', pendingInput: { runId: 'current' } };
-    expect(mergePendingUserMessage([accepted], pending, 'one')).toEqual([accepted]);
-    const canonical = {
-      role: 'user',
-      text: 'same',
-      rawMessage: { __openclaw: { idempotencyKey: 'current:user' } },
-    };
-    expect(mergePendingUserMessage([canonical], pending, 'one')).toEqual([canonical]);
-  });
   it('preserves native pending status separately from canonical user messages', () => {
     const entries = messagesFromThread({
       id: 'one',
@@ -107,29 +93,6 @@ describe('Chrome extension side panel state', () => {
     expect(shouldShowTurnError('thread-1', 'thread-1', true, display, 'A different error')).toBe(true);
     expect(shouldShowTurnError('thread-1', 'thread-1', true, { turns: [...display.turns, { items: [] }] }, 'Final error')).toBe(true);
     expect(shouldShowTurnError('thread-1', 'thread-1', true, { turns: [{ items: [{ ...failure, display: {} }] }] }, 'Final error')).toBe(true);
-  });
-
-  it('shows a submitted user message until it appears in persisted history', () => {
-    const pending = { threadId: 'thread-1', text: 'Hello' };
-    expect(mergePendingUserMessage([], pending, 'thread-1')).toEqual([
-      { role: 'user', text: 'Hello' },
-    ]);
-    expect(mergePendingUserMessage([{ role: 'user', text: 'Hello' }], pending, 'thread-1')).toEqual(
-      [{ role: 'user', text: 'Hello' }],
-    );
-    expect(mergePendingUserMessage([], pending, 'thread-2')).toEqual([]);
-  });
-
-  it('keeps a repeated user message optimistic until a new matching row is persisted', () => {
-    const pending = { threadId: 'thread-1', text: 'Again', persistedMatches: 1 };
-    const previous = [{ role: 'user', text: 'Again' }];
-    expect(mergePendingUserMessage(previous, pending, 'thread-1')).toEqual([
-      ...previous,
-      { role: 'user', text: 'Again' },
-    ]);
-    expect(
-      mergePendingUserMessage([...previous, { role: 'user', text: 'Again' }], pending, 'thread-1'),
-    ).toEqual([...previous, { role: 'user', text: 'Again' }]);
   });
 
   it('formats a compact desktop-style tool input summary', () => {

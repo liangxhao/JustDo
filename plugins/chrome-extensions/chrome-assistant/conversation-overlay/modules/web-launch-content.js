@@ -23,7 +23,6 @@ export function installWebLaunchContent({
   const requests = new Map();
   const continuations = new Map();
   let documentNonce = randomIdentifier(cryptoApi);
-  let documentLeaseId;
   let sequence = 0;
   let terminated = false;
   let polling = false;
@@ -104,8 +103,6 @@ export function installWebLaunchContent({
       !bindings.has(request.bindingId)
     )
       return;
-    if (response?.documentLeaseId !== undefined)
-      documentLeaseId = response.documentLeaseId ?? undefined;
     if (!response?.ok) {
       const code = publicErrorCode(response);
       if (phase === 'launch') {
@@ -126,13 +123,14 @@ export function installWebLaunchContent({
         bindings.clear();
         requests.clear();
         continuations.clear();
-        documentLeaseId = undefined;
         documentNonce = randomIdentifier(cryptoApi);
         post({ kind: 'lease-retired', reconnectRequired: true });
       }
       return;
     }
     if (response.receipt) {
+      if (request.receipt && response.receipt.receiptRevision < request.receipt.receiptRevision)
+        return;
       request.launchId = response.receipt.launchId;
       request.receipt = response.receipt;
       post({
@@ -150,7 +148,6 @@ export function installWebLaunchContent({
       type: `${WEB_RUNTIME}${kind}`,
       requestId: request.requestId,
       launchId,
-      documentLeaseId,
       result: request.result,
     });
     if (kind === 'read' && response?.code === 'EXPIRED' && !launchId && request.launchId)
@@ -176,6 +173,7 @@ export function installWebLaunchContent({
   }
 
   function launchRequest(bindingId, binding, continuation) {
+    if (binding.reopening) return;
     if (requests.size >= 100) {
       const retired = [...requests.entries()].find(
         ([, request]) =>
@@ -198,35 +196,59 @@ export function installWebLaunchContent({
       sequence >= Number.MAX_SAFE_INTEGER
     )
       return;
+    const prior = continuation
+      ? undefined
+      : [...requests.values()].reverse().find(
+          request =>
+            request.bindingId === bindingId &&
+            request.bindingRevision === binding.revision &&
+            !request.awaitingReopen &&
+            !request.failure &&
+            request.receipt?.delivery.status !== 'revoked' &&
+            request.receipt?.execution.executionSettled !== true &&
+            !CLOSED_REQUEST.has(request.receipt?.request.status),
+        );
     const requestId = randomIdentifier(cryptoApi);
     const request = {
       requestId,
       bindingId,
       bindingRevision: binding.revision,
       result: binding.input.result,
+      awaitingReopen: Boolean(prior),
     };
     requests.set(requestId, request);
-    post({ kind: 'request', bindingId, requestId, bindingRevision: binding.revision });
+    const announce = () =>
+      post({ kind: 'request', bindingId, requestId, bindingRevision: request.bindingRevision });
+    if (prior) binding.reopening = true;
+    else announce();
     // Keep this call on the real click stack. No digest, storage or permission await here.
     const operation = send({
       type: `${WEB_RUNTIME}${continuation ? 'connection-launch' : 'launch'}`,
       ...(continuation ? { pendingId: continuation.pendingId, bindingId } : {}),
+      ...(prior ? { reopenRequestId: prior.requestId } : {}),
       requestId,
       bindingRevision: binding.revision,
       clickSequence: ++sequence,
       payloadDigest: binding.digest,
       input: binding.input,
-      documentLeaseId,
       title: doc.title,
     });
+    const complete = response => {
+      if (prior) {
+        binding.reopening = false;
+        if (terminated || requests.get(requestId) !== request || !bindings.has(bindingId)) return;
+        if (response?.ok === true && response.reopened === true) {
+          requests.delete(requestId);
+          return;
+        }
+        request.awaitingReopen = false;
+        announce();
+      }
+      acceptResponse(request, response, 'launch');
+    };
     void Promise.resolve(operation).then(
-      response => acceptResponse(request, response, 'launch'),
-      error =>
-        acceptResponse(
-          request,
-          { ok: false, code: publicErrorCode(error), prepareUncertain: true },
-          'launch',
-        ),
+      complete,
+      error => complete({ ok: false, code: publicErrorCode(error), prepareUncertain: true }),
     );
     return operation;
   }
@@ -284,7 +306,6 @@ export function installWebLaunchContent({
             type: `${WEB_RUNTIME}cancel`,
             requestId: id,
             launchId: request.launchId,
-            documentLeaseId,
           }).catch(() => {});
         }
         reply(message, { ok: true });
@@ -317,6 +338,7 @@ export function installWebLaunchContent({
       for (const request of requests.values()) {
         if (
           request.failure ||
+          request.awaitingReopen ||
           request.receipt?.delivery.status === 'revoked' ||
           CLOSED_REQUEST.has(request.receipt?.request.status)
         )
@@ -344,10 +366,7 @@ export function installWebLaunchContent({
     bindings.clear();
     continuations.clear();
     requests.clear();
-    void send({ type: `${WEB_RUNTIME}revoke`, documentLeaseId, reason: 'pagehide' }).catch(
-      () => {},
-    );
-    documentLeaseId = undefined;
+    void send({ type: `${WEB_RUNTIME}revoke`, reason: 'pagehide' }).catch(() => {});
   }
   function pageshow(event) {
     if (event.persisted) {
@@ -389,7 +408,6 @@ export function installWebLaunchContent({
       requests.clear();
       continuations.clear();
       if (message.reconnectRequired === true) bindings.clear();
-      documentLeaseId = undefined;
       documentNonce = randomIdentifier(cryptoApi);
       post({ kind: 'lease-retired', reconnectRequired: message.reconnectRequired === true });
       reply({ ok: true });

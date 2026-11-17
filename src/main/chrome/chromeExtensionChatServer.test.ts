@@ -259,7 +259,7 @@ describe('ChromeExtensionChatServer', () => {
           getSessionKeysForSession: () => ['agent:main:justdo:one'],
           fetchSessionHistoryByKey: vi.fn(async () => ({
             messages: [
-              { role: 'user', content: 'Question' },
+              { role: 'user', content: 'Question', idempotencyKey: 'original-input:user' },
               {
                 role: 'tool_use',
                 name: 'inspect',
@@ -304,6 +304,10 @@ describe('ChromeExtensionChatServer', () => {
           chrome: { display: { turns: Array<{ items: Array<Record<string, unknown>> }> } } } }
       ).thread;
       expect(thread.turns).toEqual([]);
+      expect(thread.chrome.display.turns[0].items[0]).toMatchObject({
+        type: 'userMessage',
+        inputRunId: 'original-input',
+      });
       const tool = thread.chrome.display.turns[0].items.find(item => item.type === 'toolCall');
       expect(tool).toMatchObject({
         toolUseId: 'inspect-1',
@@ -629,7 +633,8 @@ describe('ChromeExtensionChatServer', () => {
       emit = listener;
       return dispose;
     });
-    vi.mocked(api.getMessages).mockResolvedValue([{ role: 'user', text: 'Question' }]);
+    const nativeInput = { role: 'user', text: 'Question', inputRunId: fixtureTurnId };
+    vi.mocked(api.getMessages).mockResolvedValue([nativeInput]);
     vi.mocked(api.getThreadRuntimeStatus).mockResolvedValue({ known: true, running: true });
     vi.mocked(api.sendMessage).mockImplementation(async () => {
       emit({
@@ -657,16 +662,18 @@ describe('ChromeExtensionChatServer', () => {
     await request(socket, 'init', 'initialize');
     socket.send(JSON.stringify({ method: 'initialized' }));
     const view = new ChromeExtensionStream('one');
-    view.start('Question');
+    view.start('Question', undefined, fixtureTurnId);
     const received: string[] = [];
     socket.on('message', data => {
       const value = JSON.parse(data.toString());
       received.push(value.method ?? value.id);
       if (value.method === 'chrome/thread/stream') view.accept(value.params);
       if (value.id === 'send') view.bindRun(value.result.chrome.activeTurn.nativeRunId);
-      if (value.method === 'chrome/thread/updated') view.setHistory(value.params.display);
+      if (value.method === 'chrome/thread/updated' && value.params.display) view.setHistory(value.params.display);
     });
-    await request(socket, 'send', 'turn/start', { threadId: 'one', input: [{ type: 'text', text: 'Question' }] });
+    await request(socket, 'send', 'turn/start', {
+      threadId: 'one', input: [{ type: 'text', text: 'Question' }], chrome: { clientTurnId: fixtureTurnId },
+    });
     expect(received.indexOf('chrome/thread/stream')).toBeLessThan(received.indexOf('send'));
     await vi.waitFor(() => expect(received).toContain('turn/started'));
     expect(received.indexOf('turn/started')).toBeGreaterThan(received.indexOf('send'));
@@ -674,7 +681,7 @@ describe('ChromeExtensionChatServer', () => {
       { type: 'userMessage' },
       { type: 'agentMessage', text: 'First words' },
     ]);
-    expect(await api.getMessages('one')).toEqual([{ role: 'user', text: 'Question' }]);
+    expect(await api.getMessages('one')).toEqual([nativeInput]);
     await request(socket, 'unsubscribe', 'thread/unsubscribe', { threadId: 'one' });
     await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
   });
@@ -1235,8 +1242,8 @@ describe('ChromeExtensionChatServer', () => {
     const recovered = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Timed out waiting for recovery.')), 4_000);
       socket.on('message', data => {
-        const message = JSON.parse(data.toString()) as Record<string, unknown>;
-        if (message.method !== 'chrome/thread/updated') return;
+        const message = JSON.parse(data.toString()) as { method?: string; params?: { display?: unknown } };
+        if (message.method !== 'chrome/thread/updated' || !message.params?.display) return;
         updates.push(message);
         if (JSON.stringify(message).includes('Recovered answer')) {
           clearTimeout(timeout);

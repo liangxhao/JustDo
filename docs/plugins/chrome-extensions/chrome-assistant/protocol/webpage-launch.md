@@ -62,6 +62,7 @@ type Prepare = {
 ### 来源校验与防重
 
 - 后台以浏览器 `MessageSender` 为来源，网页字段不能覆盖。`payloadDigest` 是 `canonicalWebLaunchInput` 的 UTF-8 SHA-256。
+- 后台为原文档的新真实点击发送 `prepare`，由 Main 按当前文档来源选择有效租约或创建新租约。成功接纳的回执各自保留租约 ID，站点授权和已消费的点击序号跨租约生效。
 - 相同文档请求身份与摘要返回原回执。同 ID 换内容返回 `REQUEST_CONFLICT`。
 - 已消费的序号若缺少完整回执，返回 `EXPIRED`，不重新创建会话。
 
@@ -80,8 +81,10 @@ type Prepare = {
 
 ### ACK 丢失与只读恢复
 
-`prepare` 或 `submit` 的 ACK 丢失后只调用 `read`。未知 launch／lease 时用 `source + requestId` 找回回执，已知时用 `source + documentLeaseId + launchId`。
+`prepare` 或 `submit` 的 ACK 丢失后只调用 `read`。尚未收到本次 `prepare` 的 ACK 时用 `source + requestId` 找回回执，已知回执时用 `source + documentLeaseId + launchId`。后台只从新接纳或找回的本次请求更新文档租约；迟到的旧请求响应不能改写当前租约。
 同一仍 active 的文档可用新 `channelGeneration` 只读重连。文档租约终止撤销后不可恢复。
+
+同一按钮再次被真实点击时，内容脚本可以在内部请求中附上 `reopenRequestId`。后台校验原请求的窗口、标签页、文档 ID、origin 和隔离通道身份后，打开原侧栏，返回 `reopened: true`。网页继续使用原回执。重开的草稿等待用户确认发送。
 
 ## 回执与内部字段
 
@@ -110,14 +113,15 @@ type Receipt = {
 Main 返回 `{receipt, internal}`，后台仅用 `receipt` 的允许字段逐项重建网页可见 Receipt。
 `executionSettled` 只来自同一 native run 的精确整轮终态。
 
-| `internal` 字段                                                                    | 用途                     |
-| ---------------------------------------------------------------------------------- | ------------------------ |
-| `threadId`、`documentLeaseId`                                                      | 宿主会话和原文档租约     |
-| `composeRevision`、`deadlineAt`                                                    | 实际输入版本和准入期限   |
-| `effectiveMode`（可选）                                                            | 接纳时生效的发送方式     |
-| `permissionMode`（可选）                                                           | 可信侧栏使用的草稿权限   |
-| `requiresSendConfirmation`、`requiresResultConsent`、`requiresUnknownConfirmation` | 侧栏需确认的条件         |
-| `clientTurnId`、`nativeRunId`（可选）                                              | 客户端提交和原生运行身份 |
+| `internal` 字段                                                                    | 用途                                          |
+| ---------------------------------------------------------------------------------- | --------------------------------------------- |
+| `threadId`、`documentLeaseId`                                                      | 宿主会话和原文档租约                          |
+| `composeRevision`、`deadlineAt`                                                    | 实际输入版本和准入期限                        |
+| `effectiveMode`（可选）                                                            | 接纳时生效的发送方式                          |
+| `permissionMode`（可选）                                                           | 可信侧栏使用的草稿权限                        |
+| `requiresSendConfirmation`、`requiresResultConsent`、`requiresUnknownConfirmation` | 侧栏需确认的条件                              |
+| `clientTurnId`、`nativeRunId`（可选）                                              | 客户端提交和原生运行身份                      |
+| `notSent`（可选）                                                                  | Main 已确认本次输入未发送，侧栏可撤回临时气泡 |
 
 ### 提交与结果释放
 

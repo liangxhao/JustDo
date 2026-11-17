@@ -34,6 +34,7 @@ export const toChromeDisplay = (
         content: [{ text: message.text, type: 'text' }],
         ...(message.rawMessage ? { rawMessage: message.rawMessage } : {}),
         ...(message.pendingInput ? { pendingInput: message.pendingInput } : {}),
+        ...(message.inputRunId ? { inputRunId: message.inputRunId } : {}),
         id: nextItemId(),
         type: 'userMessage',
       });

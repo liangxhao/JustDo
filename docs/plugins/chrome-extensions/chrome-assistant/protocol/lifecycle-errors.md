@@ -83,7 +83,9 @@ Side Panel 在当前所选线程收到 `turn/started` 后把 Send 按钮切换�
 ## 完成判定
 
 运行结果来自精确 whole-run 终态证据。Main 验证 `executionSettled:true` 后才发送标准 `turn/completed`，该标准通知不另带此字段。
-增强 `chrome.activeTurn` 仍携带显式证据。chat final、单次尝试、yield、idle 和 Stop ACK 均不能结算执行。
+增强 `chrome.activeTurn` 仍携带显式证据。轮询确认终态后，在读取历史前通过 `chrome/thread/updated`
+发送 `activeTurn`，此时可省略 `display`。后续历史轮询及标准 `turn/completed` 继续提供最终消息和兼容通知。
+chat final、单次尝试、yield、idle 和 Stop ACK 均不能结算执行。
 
 ### 实时终态与身份
 

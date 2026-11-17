@@ -6,11 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('electron', () => ({ app: { getAppPath: () => '/mock' } }));
 
-import { canonicalWebLaunchInput, type WebLaunchInput, type WebLaunchReceipt, type WebLaunchSource } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
+import { canonicalWebLaunchInput, type WebLaunchInput, WebLaunchMethod, type WebLaunchReceipt, type WebLaunchSource } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import { CoworkStore } from '../data/coworkStore';
 import type { NativeRunTerminalReceipt } from '../engine/gateway/types';
 import type { CoworkNativeAcceptedBinding } from '../engine/types';
+import { wrapChromeWebLaunchOperation } from './chromeAppServerProtocol';
 import type { ChromeExtensionTrustedSendHooks } from './chromeAppServerTypes';
 import { ChromeWebLaunchService } from './chromeWebLaunchService';
 import { ChromeWebLaunchStore } from './chromeWebLaunchStore';
@@ -132,7 +133,14 @@ describe('webpage launch admission and persistence', () => {
     const stored = f.state().receipts[prepared.receipt.launchId];
     expect(stored).toMatchObject({ autoAllowed: false, shareResult: false, mode: input.mode, result: input.result,
       payloadDigest: webLaunchDigest(canonicalWebLaunchInput(input)) });
-    expect(() => f.submit(prepared)).toThrow('CONFIRMATION_REQUIRED');
+    const submit = wrapChromeWebLaunchOperation(f.service.getOperations()[WebLaunchMethod.Submit]!);
+    await expect(submit({
+      launchId: prepared.receipt.launchId,
+      composeRevision: prepared.internal.composeRevision,
+      input: { prompt: input.prompt, context: input.context, permissionMode: 'full' },
+      submission: 'automatic',
+      shareResult: true,
+    })).rejects.toMatchObject({ data: { code: 'CONFIRMATION_REQUIRED', requestSent: false } });
     expect(f.wire).not.toHaveBeenCalled();
     f.submit(prepared, { submission: 'confirmed', shareResult: true });
     await tick();
@@ -300,6 +308,37 @@ describe('webpage launch admission and persistence', () => {
     expect(f.prepare({ requestId: 'fresh', clickSequence: 3 }).receipt.request.status).toBe('drafted');
   });
 
+  it('starts a new conversation after another tab prunes the expired lease of the still-open page', async () => {
+    const f = fixture();
+    const first = f.prepare();
+    f.submit(first);
+    await tick();
+    f.finish('FIRST_REPLY');
+    expect((await f.service.read(f.ref(first))).receipt.execution.executionSettled).toBe(true);
+
+    f.advance(24 * 60 * 60_000);
+    const otherSource = { ...source, tabId: 11, documentId: 'other-document' };
+    const other = f.prepare({ source: otherSource });
+    expect(f.state().leases[first.internal.documentLeaseId]).toBeUndefined();
+    const busyClick = { requestId: 'busy-click', clickSequence: 2 };
+    expect(() => f.prepare(busyClick)).toThrow('COMPOSER_BUSY');
+    expect(Object.keys(f.state().leases)).toEqual([other.internal.documentLeaseId]);
+    f.service.cancel(f.ref(other, otherSource));
+    expect(() => f.prepare()).toThrow('EXPIRED');
+    expect(() => f.prepare(busyClick)).toThrow('EXPIRED');
+
+    const next = f.prepare({ requestId: 'new-click', clickSequence: 3 });
+    expect(next.internal.documentLeaseId).not.toBe(first.internal.documentLeaseId);
+    expect(next.internal.threadId).not.toBe(first.internal.threadId);
+    await expect(f.service.read(f.ref(first))).rejects.toThrow('EXPIRED');
+    f.submit(next);
+    await tick();
+    expect(f.chat.sendMessage.mock.calls.map(([message]) => message.sessionId)).toEqual([
+      first.internal.threadId,
+      next.internal.threadId,
+    ]);
+  });
+
   it('allows a higher channel only for the same live lease and rejects retired channels', async () => {
     const f = fixture(); const prepared = f.prepare();
     expect((await f.service.read(f.ref(prepared, { ...source, channelGeneration: 2 }))).receipt.launchId).toBe(prepared.receipt.launchId);
@@ -385,11 +424,15 @@ describe('webpage owned sender and exact results', () => {
     let release!: () => void;
     f.beforeSend = () => new Promise(resolve => { release = resolve; });
     f.submit(prepared); await tick();
-    await f.service.stop({ launchId: prepared.receipt.launchId });
+    const stopped = await f.service.stop({ launchId: prepared.receipt.launchId });
+    expect(stopped.internal).not.toHaveProperty('notSent');
     release(); await tick();
     expect(f.wire).not.toHaveBeenCalled();
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.abort')).toBe(false);
     expect(f.state().receipts[prepared.receipt.launchId].notSent).toBe(true);
+    const { observations } = await f.service.observations();
+    expect(observations[0].internal.notSent).toBe(true);
+    expect(observations[0].receipt).not.toHaveProperty('notSent');
   });
 
   it('rejects a delayed confirmed submission or edit after Stop closes the draft', async () => {
@@ -399,6 +442,7 @@ describe('webpage owned sender and exact results', () => {
 
     const stopped = await f.service.stop({ launchId });
     expect(stopped.receipt.request.status).toBe('cancelled');
+    expect(stopped.internal.notSent).toBe(true);
     expect(() => f.submit(prepared, { submission: 'confirmed' })).toThrow('EXPIRED');
     expect(() => f.service.revise({
       launchId, expectedComposeRevision: prepared.internal.composeRevision,
@@ -421,7 +465,8 @@ describe('webpage owned sender and exact results', () => {
       throw Object.assign(new Error('synthetic lost ACK'), { requestSent: true });
     });
     f.submit(prepared); await tick();
-    await f.service.stop({ launchId: prepared.receipt.launchId });
+    const stopped = await f.service.stop({ launchId: prepared.receipt.launchId });
+    expect(stopped.internal).not.toHaveProperty('notSent');
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.abort')).toBe(false);
     const stored = f.state().receipts[prepared.receipt.launchId];
     const lateAck = { ...binding, nativeRunId: 'explicit-ack-run', clientTurnId: stored.clientTurnId! };

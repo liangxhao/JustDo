@@ -547,6 +547,67 @@ describe('extension streaming DOM', () => {
     );
   });
 
+  it.each(['chrome/thread/updated', 'turn/completed'])('clears tool progress on a desktop interruption via %s while history is loading', async method => {
+    const { respond, emit, thread } = await mountThread();
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    emit(1, 'assistant', { text: 'Partial reply' });
+    const progress = {
+      itemId: 'run-stream-progress', kind: 'status', phase: 'update', status: 'running',
+      progress: { kind: 'tool-input', toolCallId: 'write-1', name: 'write', receivedChars: 64_000 },
+    };
+    emit(2, 'item', progress);
+    await vi.waitFor(() => expect(document.querySelector('.run-activity-label')?.textContent).toBe(t('generating-tool-input')));
+    const history = Promise.withResolvers<Record<string, unknown>>();
+    mock.request.mockClear();
+    mock.request.mockImplementation((name: string) => {
+      if (name === 'thread/resume') return history.promise;
+      if (name === 'thread/list') return Promise.resolve({ data: [{ id: 'one', status: { type: 'active' } }] });
+      return respond(name);
+    });
+    const interrupted = { id: 'run-1', status: 'interrupted' };
+    const completion = method === 'turn/completed'
+      ? { turn: interrupted }
+      : { activeTurn: { ...interrupted, executionSettled: true } };
+
+    mock.notify(method, { threadId: 'one', ...completion });
+
+    const activity = document.getElementById('runActivity')!;
+    try {
+      expect(activity.classList.contains('hidden')).toBe(true);
+      expect(document.getElementById('send')?.classList.contains('stop')).toBe(false);
+      emit(3, 'item', progress);
+      mock.notify('chrome/thread/updated', {
+        threadId: 'one', activeTurn: { id: 'run-1', nativeRunId: 'run-1', status: 'inProgress', executionSettled: false },
+      });
+      expect(document.getElementById('send')?.classList.contains('stop')).toBe(false);
+      await vi.waitFor(() => expect(mock.request).toHaveBeenCalledWith('thread/resume', {
+        threadId: 'one', excludeTurns: true, chrome: { includeDisplay: true },
+      }));
+      expect(activity.classList.contains('hidden')).toBe(true);
+      expect(document.querySelector('.assistant-content')?.textContent).toContain('Partial reply');
+    } finally {
+      history.resolve({ thread });
+    }
+  });
+
+  it('renders the next run when the interrupted run’s history refresh discovers it', async () => {
+    const { thread, respond, emit } = await mountThread();
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    emit(1, 'assistant', { text: 'Unpersisted partial reply' });
+    await vi.waitFor(() => expect(document.querySelector('.assistant-content')?.textContent?.trim()).toBe('Unpersisted partial reply'));
+    mock.request.mockImplementation((method: string) => method === 'thread/resume'
+      ? Promise.resolve({ thread, activeTurn: { id: 'run-2', nativeRunId: 'run-2', status: 'inProgress', executionSettled: false } })
+      : respond(method));
+    mock.notify('chrome/thread/updated', {
+      threadId: 'one', activeTurn: { id: 'run-1', status: 'interrupted', executionSettled: true },
+    });
+    await vi.waitFor(() => expect(document.getElementById('send')?.classList.contains('stop')).toBe(true));
+
+    emit(1, 'assistant', { text: 'Next reply' }, 'one', 'run-2');
+
+    await vi.waitFor(() => expect(document.querySelector('.assistant-content')?.textContent?.trim()).toBe('Next reply'));
+  });
+
   it('preserves an uncertain submission and reconciles its exact identity without resending', async () => {
     const { respond } = await mountThread();
     let submitted: Record<string, unknown> | undefined;
@@ -1031,12 +1092,15 @@ describe('extension streaming DOM', () => {
     { text: '你好啊', count: 1 },
     { text: 'Question', count: 2 },
   ])(
-    'preserves $count bubble(s) for "$text" through acceptance, failed refresh, and final history',
+    'preserves $count bubble(s) for "$text" through acceptance, interruption, and final history',
     async ({ text, count }) => {
       const { thread, respond, emit } = await mountThread();
+      let submittedTurnId: unknown;
       mock.request.mockImplementation((method: string, params: Record<string, unknown>) => {
-        if (method === 'turn/start')
-          return Promise.resolve({ turn: { id: (params.chrome as Record<string, unknown>).clientTurnId, nativeRunId: 'run-1' } });
+        if (method === 'turn/start') {
+          submittedTurnId = (params.chrome as Record<string, unknown>).clientTurnId;
+          return Promise.resolve({ turn: { id: submittedTurnId, nativeRunId: 'run-1' } });
+        }
         if (method === 'thread/resume') return Promise.reject(new Error('History unavailable'));
         return respond(method);
       });
@@ -1060,6 +1124,12 @@ describe('extension streaming DOM', () => {
         expect(document.querySelector('.assistant')?.textContent).toContain('Hello back'),
       );
       mock.notify('chrome/thread/updated', {
+        threadId: 'one', activeTurn: { id: submittedTurnId, status: 'interrupted', executionSettled: true },
+      });
+      expect(document.getElementById('runActivity')?.classList.contains('hidden')).toBe(true);
+      expect(submitted()).toHaveLength(count);
+
+      mock.notify('chrome/thread/updated', {
         threadId: 'one',
         thread: {
           ...thread,
@@ -1068,7 +1138,7 @@ describe('extension streaming DOM', () => {
             {
               id: 'history-2',
               items: [
-                { type: 'userMessage', content: [{ type: 'text', text }] },
+                { type: 'userMessage', inputRunId: submittedTurnId, content: [{ type: 'text', text }] },
                 { type: 'reasoning', content: ['Considering'] },
                 { type: 'agentMessage', text: 'Hello back' },
               ],
@@ -1141,7 +1211,7 @@ describe('extension streaming DOM', () => {
           {
             id: 'history-1',
             items: [
-              { type: 'userMessage', content: [{ type: 'text', text: 'Question' }] },
+              { type: 'userMessage', inputRunId: submittedTurnId, content: [{ type: 'text', text: 'Question' }] },
               { type: 'agentMessage', text: 'Second answer' },
             ],
           },

@@ -81,9 +81,12 @@ type ChromeActiveTurn = {
 {
   "id": "<threadId>-item-1",
   "type": "userMessage",
+  "inputRunId": "<original-client-turn-id>",
   "content": [{ "type": "text", "text": "Question" }]
 }
 ```
+
+`inputRunId` 来自已验证的原生排队记录或正式用户消息。侧栏用它接管同一笔提交的临时气泡；缺少原生输入身份的消息省略此字段。
 
 **智能体最终消息**
 
@@ -137,7 +140,7 @@ type ChromeActiveTurn = {
 ### 显示分组、实时更新与权限
 
 - **分组。** 新 `userMessage` 开启分组，后续 Thinking、工具活动及非用户消息归入该分组。历史若以非用户消息开头，也形成独立分组。分组 ID 只用于当前展示。
-- **更新。** `thread.chrome.display`／`chrome/thread/updated` 提供完整显示投影，`chrome/thread/stream` 提供实时 Thinking、正文与工具增强流。标准 `item/*` 也会发送，侧栏仅通过增强显示一路更新正文，避免重复追加。
+- **更新。** `thread.chrome.display`／`chrome/thread/updated` 的 `display` 提供完整显示投影，终态更新可先只携带 `activeTurn`。`chrome/thread/stream` 提供实时 Thinking、正文与工具增强流。标准 `item/*` 也会发送，侧栏仅通过增强显示一路更新正文，避免重复追加。
 - **权限。** OpenClaw 若将命令执行和文件变更表示为普通工具调用，侧栏显示 `toolCall`，执行权限由宿主单独核验。已支持的命令／插件审批通过独立的标准服务端请求交给实际发送连接，观察连接没有审批权。独立文件变更审批和复杂原生问答尚未适配，`toolCall` 的名称不决定交互能力。
 
 ### 原生展示字段

@@ -378,6 +378,31 @@ describe('browser app-server observation lifecycle', () => {
     expect(peer.notify.mock.calls.some(([method]) => method === AppServerNotificationMethod.TurnCompleted)).toBe(false);
   });
 
+  it('publishes a confirmed interruption while display history is still loading', async () => {
+    const f = fixture();
+    const peer = f.connect();
+    await peer.binding.turns.start({
+      threadId: 'one', input: [{ type: 'text', text: 'Input' }], chrome: { clientTurnId: f.turn.id },
+    });
+    await microtasks();
+    peer.notify.mockClear();
+    const history = deferred<Awaited<ReturnType<ChromeExtensionChatApi['getMessages']>>>();
+    vi.mocked(f.api.getMessages).mockReturnValueOnce(history.promise);
+    const interrupted: ChromeExtensionTurnState = { id: f.turn.id, status: 'interrupted', executionSettled: true };
+    vi.mocked(f.api.getTurnState).mockResolvedValue(interrupted);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(peer.notify).toHaveBeenCalledWith(ChromeAppServerNotificationMethod.ThreadUpdated, {
+      threadId: 'one', activeTurn: interrupted,
+    });
+    expect(f.api.interruptThread).not.toHaveBeenCalled();
+    history.resolve([{ role: 'user', text: 'Input' }]);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(peer.notify).toHaveBeenCalledWith(AppServerNotificationMethod.TurnCompleted,
+      expect.objectContaining({ turn: expect.objectContaining({ id: f.turn.id, status: 'interrupted' }) }));
+  });
+
   it('does not promote historical commentary into a final answer after exact settlement', async () => {
     const f = fixture();
     vi.mocked(f.api.getMessages).mockResolvedValue([{ role: 'assistant', text: 'Only commentary' }]).mockResolvedValueOnce([]);

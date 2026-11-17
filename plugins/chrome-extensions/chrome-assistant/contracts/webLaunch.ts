@@ -162,6 +162,8 @@ export interface WebLaunchInternal {
   requiresUnknownConfirmation?: boolean;
   clientTurnId?: string;
   nativeRunId?: string;
+  /** The current launch attempt was definitively not sent to the native runtime. */
+  notSent?: true;
 }
 
 export interface WebLaunchResponse {

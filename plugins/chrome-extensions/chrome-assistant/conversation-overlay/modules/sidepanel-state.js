@@ -101,26 +101,6 @@ export function shouldShowTurnError(completedThreadId, selectedThreadId, refresh
     typeof item.text === 'string' && item.text.trim() === errorMessage?.trim());
 }
 
-export function mergePendingUserMessage(entries, pendingMessage, selectedThreadId) {
-  if (!pendingMessage || pendingMessage.threadId !== selectedThreadId) return entries;
-  if (pendingMessage.runId) {
-    const key = `${pendingMessage.runId}:user`;
-    const accepted = entries.some(
-      entry =>
-        entry.role === 'user' &&
-        (entry.pendingInput?.runId === pendingMessage.runId ||
-          entry.rawMessage?.idempotencyKey === key ||
-          entry.rawMessage?.__openclaw?.idempotencyKey === key),
-    );
-    return accepted ? entries : [...entries, { role: 'user', text: pendingMessage.text }];
-  }
-  const persistedMatches = entries.filter(
-    entry => entry.role === 'user' && entry.text === pendingMessage.text,
-  ).length;
-  const persisted = persistedMatches > (pendingMessage.persistedMatches ?? 0);
-  return persisted ? entries : [...entries, { role: 'user', text: pendingMessage.text }];
-}
-
 function formatSidePanelValue(value) {
   if (value === null || value === undefined || value === '') return '';
   if (typeof value === 'string') return value;

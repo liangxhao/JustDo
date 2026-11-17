@@ -827,13 +827,27 @@ describe('ChromeExtensionChatController', () => {
     const history = {
       sessionKey: 'agent:main:justdo:session-1',
       messages: [
-        { role: 'user', content: 'before', timestamp: 100 },
-        { role: 'assistant', content: 'after', timestamp: 300 },
+        {
+          role: 'user', content: 'before', timestamp: 100,
+          idempotencyKey: 'persisted-input:user',
+          __openclaw: { runId: 'unrelated-execution' },
+        },
+        {
+          role: 'assistant', content: 'after', timestamp: 300,
+          idempotencyKey: 'assistant-not-input:user',
+        },
+        { role: 'user', content: 'legacy metadata key', __openclaw: { idempotencyKey: 'nested-input:user' } },
+        { role: 'user', content: 'execution marker only', __openclaw: { runId: 'unrelated-execution' } },
+        {
+          role: 'user', content: 'conflicting identities', idempotencyKey: 'top:user',
+          __openclaw: { idempotencyKey: 'nested:user' },
+        },
       ],
       pendingInputs: [
         {
           id: 'pending-1',
           acceptedAt: 200,
+          runId: 'native-pending-input',
           state: 'cancelled',
           message: { role: 'user', content: 'cancelled but visible', display: true },
         },
@@ -858,12 +872,23 @@ describe('ChromeExtensionChatController', () => {
       'before',
       'cancelled but visible',
       'after',
+      'legacy metadata key',
+      'execution marker only',
+      'conflicting identities',
     ]);
-    expect(visible[1].pendingInput).toEqual({ id: 'pending-1', state: 'cancelled' });
+    expect(visible.map(message => message.inputRunId)).toEqual([
+      'persisted-input', 'native-pending-input', undefined, 'nested-input', undefined, undefined,
+    ]);
+    expect(visible[1].pendingInput).toEqual({
+      id: 'pending-1', state: 'cancelled', runId: 'native-pending-input',
+    });
     history.pendingInputs[0].message.display = false;
     expect((await controller.getMessages('session-1')).map(message => message.text)).toEqual([
       'before',
       'after',
+      'legacy metadata key',
+      'execution marker only',
+      'conflicting identities',
     ]);
   });
 

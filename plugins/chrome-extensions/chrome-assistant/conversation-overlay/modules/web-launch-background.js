@@ -24,6 +24,8 @@ const LEGACY_SITE_READ_TIMEOUT_MS = 1000;
 const grantedOriginsFrom = sites => sites.filter(hasWebsiteLaunchGrant).map(site => site.origin);
 const scriptId = origin =>
   `web-launch-${[...new TextEncoder().encode(origin)].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
+const PANEL_SUBMIT_REQUEST = 'web-launch:launch:submit';
+
 const terminal = receipt =>
   receipt?.execution.executionSettled === true ||
   ['rejected', 'cancelled', 'expired'].includes(receipt?.request.status);
@@ -38,12 +40,14 @@ export function createWebLaunchBackground({
   const documents = new Map();
   const panels = new Map();
   const slots = new Map();
+  const restoredRequests = new Set();
   const cancelled = new Set();
   const preparing = new Set();
   const revising = new Map();
   const retirements = new Map();
   const releaseSlot = (windowId, requestId) => {
     if (slots.get(windowId) === requestId) slots.delete(windowId);
+    restoredRequests.delete(requestId);
   };
   const cancelKey = (message, sender) =>
     `${sender.documentId}/${message.documentNonce}/${message.requestId}`;
@@ -87,6 +91,9 @@ export function createWebLaunchBackground({
         state.channels ??= {};
         state.cancelled ??= {};
         for (const key of Object.keys(state.cancelled)) cancelled.add(key);
+        // Anything recovered after a worker restart is an existing observation.
+        for (const record of Object.values(state.requests))
+          if (!terminal(record.response?.receipt)) restoredRequests.add(record.requestId);
       }
       const previous = structuredClone(state);
       try {
@@ -216,9 +223,9 @@ export function createWebLaunchBackground({
     await chromeApi.storage.local.set({ [SITES_KEY]: origins });
     return origins.includes(origin);
   }
-  async function getDocument(message, sender) {
+  async function getDocument(documentNonce, sender) {
     return transaction(async () => {
-      const key = `${sender.tab.id}/${sender.documentId}/${message.documentNonce}`;
+      const key = `${sender.tab.id}/${sender.documentId}/${documentNonce}`;
       let doc = documents.get(key);
       if (!doc) {
         if (documents.size >= 256) throw { code: 'CAPACITY_EXCEEDED' };
@@ -231,10 +238,10 @@ export function createWebLaunchBackground({
         state.channels[channelKey] = generation;
         doc = {
           key,
-          documentNonce: message.documentNonce,
+          documentNonce,
           deliveryRevision: 0,
           revoked: prior?.revoked === true,
-          documentLeaseId: prior?.documentLeaseId ?? message.documentLeaseId,
+          documentLeaseId: prior?.documentLeaseId,
           source: {
             chromeInstanceId: state.chromeInstanceId,
             windowInstanceId: state.windows[windowKey],
@@ -250,12 +257,6 @@ export function createWebLaunchBackground({
         };
         documents.set(key, doc);
       }
-      if (
-        message.documentLeaseId &&
-        doc.documentLeaseId &&
-        message.documentLeaseId !== doc.documentLeaseId
-      )
-        throw { code: 'LEASE_REVOKED' };
       state.documents[key] = {
         source: doc.source,
         documentLeaseId: doc.documentLeaseId,
@@ -307,8 +308,23 @@ export function createWebLaunchBackground({
     const panel = panels.get(source.tabId);
     return samePanelTab(panel, source) ? panel : undefined;
   }
+  function requestCancelled(record) {
+    return cancelled.has(`${record.source.documentId}/${record.documentNonce}/${record.requestId}`);
+  }
+  function requestSourceAvailable(record) {
+    const live = documents.get(record.documentKey);
+    const saved = state.documents[record.documentKey];
+    return Boolean(
+      (live || saved) && !live?.revoked && !live?.permissionPending && !saved?.revoked,
+    );
+  }
   function envelope(record) {
     const { response, input } = record;
+    if (
+      !terminal(response?.receipt) &&
+      (requestCancelled(record) || !requestSourceAvailable(record))
+    )
+      return null;
     // A restored composer must not revise from the snapshot an in-flight edit is replacing.
     if (!response?.internal || (input && revising.has(record.requestId))) return null;
     const metadata = response.internal;
@@ -331,9 +347,9 @@ export function createWebLaunchBackground({
       requiresUnknownConfirmation: metadata.requiresUnknownConfirmation,
       composeRevision: metadata.composeRevision,
       receipt: response.receipt,
-      restored: Boolean(
-        record.presentedPanelId && record.presentedPanelId !== panelFor(record.source)?.id,
-      ),
+      restored:
+        restoredRequests.has(record.requestId) ||
+        Boolean(record.presentedPanelId && record.presentedPanelId !== panelFor(record.source)?.id),
     };
   }
   function panelEvent(source, fields) {
@@ -349,13 +365,9 @@ export function createWebLaunchBackground({
       })
       .catch(() => {});
   }
-  function notifyPanel(record) {
+  function notifyPanel(record, { resume = false } = {}) {
     const receipt = record.response?.receipt;
-    if (
-      cancelled.has(`${record.source.documentId}/${record.documentNonce}/${record.requestId}`) &&
-      !terminal(receipt)
-    )
-      return;
+    if (requestCancelled(record) && !terminal(receipt)) return;
     panelEvent(record.source, {
       envelope: ['cancelled', 'expired', 'rejected'].includes(
         record.response?.receipt.request.status,
@@ -364,6 +376,7 @@ export function createWebLaunchBackground({
         : envelope(record),
       receipt,
       internal: record.response?.internal,
+      ...(resume ? { resume: true } : {}),
     });
   }
   function cacheResponse(record, response, revisedInput) {
@@ -406,10 +419,12 @@ export function createWebLaunchBackground({
     state.requests[record.requestId] = saved;
     return saved;
   }
-  async function accept(record, response, doc, revisedInput) {
+  async function accept(record, response, { doc, revisedInput } = {}) {
     const saved = await transaction(() => {
+      if (doc?.revoked) return null;
       const updated = cacheResponse(record, response, revisedInput);
-      if (doc) {
+      // Only the preparation or its exact ACK recovery can establish a new lease.
+      if (doc && !record.launchId && doc.documentLeaseId === record.documentLeaseId) {
         doc.documentLeaseId = updated.documentLeaseId;
         state.documents[doc.key] = {
           source: doc.source,
@@ -419,6 +434,10 @@ export function createWebLaunchBackground({
       }
       return updated;
     });
+    if (!saved) {
+      if (!record.launchId) return discardPreparation(record, response, doc);
+      throw { code: 'LEASE_REVOKED' };
+    }
     const accepted = saved.response.receipt;
     if (terminal(accepted)) releaseSlot(saved.source.windowId, saved.requestId);
     notifyPanel(saved);
@@ -426,34 +445,59 @@ export function createWebLaunchBackground({
   }
   async function safeResponse(record, response, doc, revision) {
     const active = await documentActive(doc);
-    if (!active || doc.revoked || doc.deliveryRevision !== revision)
+    if (
+      !active ||
+      doc.revoked ||
+      doc.deliveryRevision !== revision ||
+      doc.documentLeaseId !== response.internal.documentLeaseId
+    )
       return { ok: false, code: 'LEASE_REVOKED' };
     const receipt = publicReceipt(response.receipt, record.result === 'final');
     if (!receipt || receipt.requestId !== record.requestId || receipt.launchId !== record.launchId)
       throw { code: 'INVALID_REQUEST' };
-    return { ok: true, receipt, documentLeaseId: doc.documentLeaseId };
+    return { ok: true, receipt };
   }
   async function recoverDocument(record) {
-    return getDocument(
-      { documentNonce: record.documentNonce, documentLeaseId: record.documentLeaseId },
-      {
-        ...record.source,
-        tab: { id: record.source.tabId, windowId: record.source.windowId },
-        url: record.source.url,
-      },
+    return getDocument(record.documentNonce, {
+      ...record.source,
+      tab: { id: record.source.tabId, windowId: record.source.windowId },
+      url: record.source.url,
+    });
+  }
+  async function composerBusy(source) {
+    const current = () => {
+      const panel = panelFor(source) ?? state.panels[String(source.tabId)];
+      return samePanelTab(panel, source) ? panel : undefined;
+    };
+    const registered = current();
+    if (!registered?.busy) return false;
+    const documentId = registered.documentId ?? registered.contextDocumentId;
+    if (!documentId || !chromeApi.runtime.getContexts) return true;
+    const contexts = await chromeApi.runtime
+      .getContexts({
+        contextTypes: ['SIDE_PANEL'],
+        documentIds: [documentId],
+      })
+      .catch(() => null);
+    const latest = current();
+    return Boolean(
+      latest?.busy &&
+      (latest.id !== registered.id ||
+        (latest.documentId ?? latest.contextDocumentId) !== documentId ||
+        !contexts ||
+        contexts.length > 0),
     );
   }
   async function prepare(message, sender, opened, admission = {}) {
     await opened;
     await retirements.get(sender.tab.id);
-    const doc = await getDocument(message, sender);
+    const doc = await getDocument(message.documentNonce, sender);
     await readSites();
     const policy = sites.sites.find(site => site.origin === doc.source.origin);
     if (!hasWebsiteLaunchGrant(policy) || doc.revoked || !(await documentActive(doc)))
       throw { code: 'SITE_NOT_ALLOWED' };
     if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
-    const panel = panelFor(doc.source) ?? state.panels[String(doc.source.tabId)];
-    if (samePanelTab(panel, doc.source) && panel.busy) throw { code: 'COMPOSER_BUSY' };
+    if (await composerBusy(doc.source)) throw { code: 'COMPOSER_BUSY' };
     const input = normalizeInput(message.input);
     const record = {
       requestId: message.requestId,
@@ -484,9 +528,11 @@ export function createWebLaunchBackground({
     const revision = doc.deliveryRevision;
     let response;
     try {
+      if (doc.revoked || doc.permissionPending) throw { code: 'LEASE_REVOKED' };
+      if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
+      // Main resolves a lease from the verified source of this new click.
       response = await client.request(WebLaunchMethod.Prepare, {
         source: doc.source,
-        documentLeaseId: doc.documentLeaseId,
         requestId: message.requestId,
         bindingRevision: message.bindingRevision,
         clickSequence: message.clickSequence,
@@ -505,12 +551,9 @@ export function createWebLaunchBackground({
         }).catch(() => {});
       throw { code, prepareUncertain };
     }
-    if (doc.revoked || !(await documentActive(doc))) {
-      doc.documentLeaseId = response.internal.documentLeaseId;
-      await revoke(doc, 'navigation');
-      throw { code: 'LEASE_REVOKED' };
-    }
     try {
+      if (!(await documentActive(doc)) || doc.revoked)
+        return await discardPreparation(record, response, doc);
       if (cancelled.has(cancelKey(message, sender))) {
         response = await client.request(WebLaunchMethod.Cancel, {
           source: doc.source,
@@ -518,17 +561,17 @@ export function createWebLaunchBackground({
           launchId: response.receipt.launchId,
         });
       }
-      const saved = await accept(record, response, doc);
+      const saved = await accept(record, response, { doc });
       const projected = await safeResponse(saved, response, doc, revision);
       return projected.ok ? projected : { ...projected, prepareUncertain: true };
     } catch (error) {
-      throw { code: publicErrorCode(error), prepareUncertain: true };
+      throw { code: publicErrorCode(error), prepareUncertain: error?.prepareUncertain !== false };
     }
   }
   async function observe(message, sender) {
     if (preparing.has(cancelKey(message, sender)) && !message.type.endsWith('cancel'))
       return { ok: true, pending: true };
-    const doc = await getDocument(message, sender);
+    const doc = await getDocument(message.documentNonce, sender);
     let record = await transaction(() => structuredClone(state.requests[message.requestId]));
     if (!record && message.type.endsWith('cancel')) return { ok: true, pending: true };
     if (!record)
@@ -551,8 +594,9 @@ export function createWebLaunchBackground({
     const revision = doc.deliveryRevision;
     const reference = {
       source: doc.source,
-      documentLeaseId: doc.documentLeaseId,
-      ...(record.launchId ? { launchId: record.launchId } : { requestId: record.requestId }),
+      ...(record.launchId
+        ? { launchId: record.launchId, documentLeaseId: record.documentLeaseId }
+        : { requestId: record.requestId }),
     };
     let response = await client.request(
       message.type.endsWith('cancel') ? WebLaunchMethod.Cancel : WebLaunchMethod.Read,
@@ -565,23 +609,39 @@ export function createWebLaunchBackground({
         launchId: response.receipt.launchId,
       });
     }
-    const saved = await accept(record, response, doc);
+    const saved = await accept(record, response, { doc });
     return safeResponse(saved, response, doc, revision);
   }
-  async function revoke(doc, reason) {
+  async function revoke(doc, reason, leaseId = doc.documentLeaseId) {
     doc.revoked = true;
     doc.deliveryRevision += 1;
     await saveDocument(doc);
-    if (doc.documentLeaseId)
-      await client.request(WebLaunchMethod.RevokeDocument, {
-        source: doc.source,
-        documentLeaseId: doc.documentLeaseId,
-        reason,
-      });
+    if (leaseId) {
+      try {
+        await client.request(WebLaunchMethod.RevokeDocument, {
+          source: doc.source,
+          documentLeaseId: leaseId,
+          reason,
+        });
+      } catch (error) {
+        // Expired and already revoked leases are no longer usable by this document channel.
+        if (error?.code !== 'EXPIRED') throw error;
+      }
+    }
     doc.revokeAcknowledged = true;
     await transaction(() => {
       if (state.documents[doc.key]) state.documents[doc.key].revokeAcknowledged = true;
     });
+  }
+  async function discardPreparation(record, response, doc) {
+    const leaseId = response.internal.documentLeaseId;
+    if (doc.documentLeaseId === record.documentLeaseId) doc.documentLeaseId = leaseId;
+    await revoke(doc, 'navigation', leaseId);
+    await transaction(() => {
+      delete state.requests[record.requestId];
+    });
+    releaseSlot(record.source.windowId, record.requestId);
+    throw { code: 'LEASE_REVOKED', prepareUncertain: false };
   }
   async function registerScripts(value) {
     const old = await chromeApi.scripting.getRegisteredContentScripts();
@@ -655,11 +715,28 @@ export function createWebLaunchBackground({
       const records = await transaction(async () => {
         const tab = await chromeApi.tabs.get(panel.tabId).catch(() => null);
         if (tab?.windowId !== panel.windowId) throw { code: 'FORBIDDEN' };
+        if (!panel.documentId && chromeApi.runtime.getContexts) {
+          const contexts = await chromeApi.runtime
+            .getContexts({
+              contextTypes: ['SIDE_PANEL'],
+              documentUrls: [sender.url],
+            })
+            .catch(() => []);
+          if (contexts.length === 1 && validIdentifier(contexts[0].documentId))
+            panel.contextDocumentId = contexts[0].documentId;
+        }
         state.panels[String(panel.tabId)] = panel;
         return Object.values(state.requests).filter(record => samePanelTab(panel, record.source));
       });
       panels.set(panel.tabId, panel);
-      const active = records.find(record => !terminal(record.response?.receipt));
+      const eligible = record =>
+        !terminal(record.response?.receipt) &&
+        !requestCancelled(record) &&
+        requestSourceAvailable(record);
+      const active =
+        records.find(
+          record => record.requestId === slots.get(panel.windowId) && eligible(record),
+        ) ?? records.find(eligible);
       return {
         ok: true,
         envelope: active ? envelope(active) : undefined,
@@ -759,7 +836,7 @@ export function createWebLaunchBackground({
       return { ok: true, ...result };
     }
     const methods = {
-      'web-launch:launch:submit': WebLaunchMethod.Submit,
+      [PANEL_SUBMIT_REQUEST]: WebLaunchMethod.Submit,
       'web-launch:launch:revise': WebLaunchMethod.Revise,
       'web-launch:launch:cancel': WebLaunchMethod.Cancel,
       'web-launch:launch:stop': WebLaunchMethod.Stop,
@@ -792,12 +869,7 @@ export function createWebLaunchBackground({
     try {
       response = await client.request(method, params);
       saved = response?.receipt
-        ? await accept(
-            record,
-            response,
-            documents.get(record.documentKey),
-            isRevise ? params.input : undefined,
-          )
+        ? await accept(record, response, { revisedInput: isRevise ? params.input : undefined })
         : record;
     } finally {
       if (isRevise) {
@@ -818,6 +890,67 @@ export function createWebLaunchBackground({
       envelope: envelope(saved),
     };
   }
+  function findReopenedRequest(requestId, message, sender) {
+    if (requestId !== message.reopenRequestId) return undefined;
+    const record = state?.requests[requestId];
+    if (
+      !record?.response?.receipt ||
+      terminal(record.response.receipt) ||
+      record.documentNonce !== message.documentNonce ||
+      record.source.windowId !== sender.tab.windowId ||
+      record.source.tabId !== sender.tab.id ||
+      record.source.documentId !== sender.documentId ||
+      record.source.origin !== sender.origin
+    )
+      return undefined;
+    return record;
+  }
+  async function restoreOrPrepare(message, sender, opened) {
+    if (!message.reopenRequestId) return prepare(message, sender, opened);
+    // Consume a fast Chrome rejection while storage is loading the original owner.
+    const didOpen = opened.then(
+      () => true,
+      () => false,
+    );
+    const { windowId } = sender.tab;
+    const previous = await transaction(() =>
+      findReopenedRequest(message.reopenRequestId, message, sender),
+    );
+    if (slots.get(windowId) !== message.requestId) throw { code: 'EXPIRED' };
+    if (previous) {
+      const record = findReopenedRequest(previous.requestId, message, sender);
+      if (!record || requestCancelled(record) || !requestSourceAvailable(record))
+        throw { code: 'EXPIRED' };
+      slots.set(windowId, record.requestId);
+      restoredRequests.add(record.requestId);
+      return reopenExisting(
+        record,
+        didOpen.then(ok => {
+          if (!ok) throw { code: 'PANEL_OPEN_FAILED' };
+        }),
+      );
+    }
+    if (!(await didOpen)) throw { code: 'PANEL_OPEN_FAILED' };
+    return prepare(message, sender, Promise.resolve());
+  }
+  async function reopenExisting(record, opened) {
+    try {
+      await opened;
+    } catch {
+      throw { code: 'PANEL_OPEN_FAILED' };
+    }
+    const current = state.requests[record.requestId];
+    if (
+      current?.launchId === record.launchId &&
+      current.documentKey === record.documentKey &&
+      slots.get(record.source.windowId) === record.requestId &&
+      !terminal(current.response?.receipt) &&
+      !requestCancelled(current) &&
+      requestSourceAvailable(current)
+    )
+      notifyPanel(current, { resume: true });
+    return { ok: true, reopened: true };
+  }
   function handleMessage(message, sender, reply) {
     if (typeof message?.type !== 'string' || !message.type.startsWith('web-launch:')) return false;
     if (message.type === 'web-launch:panel:event') return false;
@@ -827,6 +960,9 @@ export function createWebLaunchBackground({
           ok: false,
           code: publicErrorCode(error),
           ...(error?.prepareUncertain === true ? { prepareUncertain: true } : {}),
+          ...(message.type === PANEL_SUBMIT_REQUEST && error?.requestSent === false
+            ? { requestSent: false }
+            : {}),
         }),
       );
       return true;
@@ -891,15 +1027,24 @@ export function createWebLaunchBackground({
         message.bindingRevision < 1 ||
         !/^[0-9a-f]{64}$/u.test(message.payloadDigest ?? '') ||
         !normalizeInput(message.input) ||
+        (message.reopenRequestId !== undefined &&
+          (continuation || !validIdentifier(message.reopenRequestId))) ||
         (continuation &&
           (!validIdentifier(message.pendingId) || !validIdentifier(message.bindingId)))
       ) {
         reply({ ok: false, code: 'INVALID_REQUEST' });
         return false;
       }
-      if (slots.has(sender.tab.windowId)) {
-        reply({ ok: false, code: 'WINDOW_BUSY' });
-        return false;
+      const existing = slots.get(sender.tab.windowId);
+      if (existing) {
+        const record = !continuation && findReopenedRequest(existing, message, sender);
+        if (!record || requestCancelled(record) || !requestSourceAvailable(record)) {
+          reply({ ok: false, code: 'WINDOW_BUSY' });
+          return false;
+        }
+        // Install the restored envelope before Chrome can create the replacement side panel.
+        restoredRequests.add(existing);
+        return done(reopenExisting(record, openTabSidePanel(chromeApi, sender.tab.id)));
       }
       slots.set(sender.tab.windowId, message.requestId);
       const pendingKey = cancelKey(message, sender);
@@ -925,7 +1070,7 @@ export function createWebLaunchBackground({
         return false;
       }
       return done(
-        prepare(message, sender, opened)
+        restoreOrPrepare(message, sender, opened)
           .catch(error => {
             if (!error.prepareUncertain) releaseSlot(sender.tab.windowId, message.requestId);
             throw error;
@@ -1002,7 +1147,7 @@ export function createWebLaunchBackground({
   chromeApi.windows?.onRemoved?.addListener(windowId => {
     for (const panel of panels.values())
       if (panel.windowId === windowId) panels.delete(panel.tabId);
-    slots.delete(windowId);
+    releaseSlot(windowId, slots.get(windowId));
     void transaction(() => {
       delete state.windows[String(windowId)];
       for (const [key, panel] of Object.entries(state.panels))

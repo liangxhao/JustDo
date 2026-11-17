@@ -6,7 +6,6 @@ import {
   chromeDisplayThread,
   isCurrentThreadRunning,
   isSettledTurnNotification,
-  mergePendingUserMessage,
   messagesFromThread,
   shouldShowTurnError,
 } from './modules/sidepanel-state.js';
@@ -252,6 +251,7 @@ const client = new AppServerClient((method, params) => {
   // viewer consumes its explicit browser lane once, without appending both.
   if (method === 'chrome/thread/stream') {
     if (typeof params?.threadId !== 'string' || !params.threadId) return;
+    if (params.turnId && settledTurns.has(`${params.threadId}/${params.turnId}`)) return;
     const known = knownTurns.get(params.threadId);
     if (params.retryAttempt > 0 && (!known || known.id !== params.turnId || known.uncertain)) return;
     if (!streamView(params.threadId).accept(params)) return;
@@ -314,41 +314,40 @@ const client = new AppServerClient((method, params) => {
     if (params.display?.id === params.threadId) renderDisplayHistory(params.display);
     if (settled) void refreshAll(params.threadId);
   }
-  if (method === 'turn/completed' && params?.threadId !== sessionSelect.value) {
+  if (method === 'turn/completed') {
     if (!isSettledTurnNotification(params)) return;
-    approvals.cancelTurn(params.threadId, params.turn.id);
     const expectedId =
       knownTurns.get(params.threadId)?.id ||
       pendingSubmissions.get(params.threadId)?.clientTurnId;
-    if (!expectedId || expectedId !== params.turn.id) return;
-    pendingSubmissions.delete(params.threadId);
-    knownTurns.delete(params.threadId);
-    rememberSettledTurn(params.threadId, params.turn.id);
-    pendingCompletions.set(params.threadId, params.turn);
-    streamViews.get(params?.threadId)?.finish(true);
-  }
-  if (method === 'turn/completed' && params?.threadId === sessionSelect.value) {
-    if (!isSettledTurnNotification(params)) return;
-    approvals.cancelTurn(params.threadId, params.turn.id);
-    const pending = pendingSubmissions.get(params.threadId);
-    const expectedId =
-      knownTurns.get(params.threadId)?.id ||
-      pending?.clientTurnId;
-    if (!expectedId || params.turn.id !== expectedId) return;
-    const completedThreadId = params.threadId;
-    pendingSubmissions.delete(completedThreadId);
-    knownTurns.delete(completedThreadId);
-    rememberSettledTurn(completedThreadId, params.turn.id);
-    if (stoppingThreadId === completedThreadId) stoppingThreadId = '';
-    pendingCompletions.set(completedThreadId, params.turn);
-    setRunningTurn('', '');
-    void refreshAll(completedThreadId);
+    if (!expectedId || expectedId !== params.turn.id) {
+      approvals.cancelTurn(params.threadId, params.turn.id);
+      return;
+    }
+    recordTurnCompletion(params.threadId, params.turn);
+    if (params.threadId === sessionSelect.value) void refreshAll(params.threadId);
   }
 }, { requestHandler: (request, options) => approvals.request(request, options) });
 
 function rememberSettledTurn(threadId, turnId) {
   settledTurns.add(`${threadId}/${turnId}`);
   if (settledTurns.size > 48) settledTurns.delete(settledTurns.values().next().value);
+}
+
+function recordTurnCompletion(threadId, turn) {
+  approvals.cancelTurn(threadId, turn.id);
+  pendingSubmissions.delete(threadId);
+  knownTurns.delete(threadId);
+  rememberSettledTurn(threadId, turn.id);
+  pendingCompletions.set(threadId, turn);
+  if (stoppingThreadId === threadId) stoppingThreadId = '';
+  const selected = threadId === sessionSelect.value;
+  const view = streamViews.get(threadId);
+  if (!selected || turn.status === 'interrupted') view?.finish(true);
+  if (selected) {
+    setRunningTurn('', '');
+    if (view && turn.status === 'interrupted')
+      renderThreadMessages(projectThreadMessages(view.project()), threadId);
+  }
 }
 
 function setRunningTurn(threadId, turnId, nativeRunId, confirmed = false, retry = {}) {
@@ -384,6 +383,10 @@ function selectedWebAction() {
 
 function updateActivity() {
   const threadId = sessionSelect.value;
+  if (pendingCompletions.has(threadId) && !knownTurns.has(threadId)) {
+    activityView.render(null);
+    return;
+  }
   const activity = streamViews.get(threadId)?.project().activity ?? null;
   const webActivity = webLaunchPanel?.activity(threadId, activeThreadId === threadId ? activeTurnId : '');
   let fallback = null;
@@ -460,20 +463,16 @@ function renderMessages(entries) {
 
 function renderThreadMessages(entries, threadId = sessionSelect.value) {
   currentEntries = entries;
-  const projected = mergePendingUserMessage(entries, pendingUserMessage, threadId);
-  if (projected === entries && pendingUserMessage?.threadId === threadId) {
-    pendingUserMessage = null;
-  }
-  renderMessages(projected);
+  renderMessages(pendingUserMessage?.threadId === threadId
+    ? [...entries, pendingUserMessage.entry]
+    : entries);
   updateActivity();
 }
 
-function showPendingUserMessage(threadId, text) {
+function showPendingUserMessage(threadId, text, rawMessage) {
   pendingUserMessage = {
     threadId,
-    text,
-    persistedMatches: currentEntries.filter(entry => entry.role === 'user' && entry.text === text)
-      .length,
+    entry: { role: 'user', text, rawMessage },
   };
   renderThreadMessages(currentEntries, threadId);
 }
@@ -509,7 +508,7 @@ async function refreshSessions(preferredSessionId, generation) {
   }
   webLaunchPanel?.updateSelection();
   const selectedThread = (result.data ?? []).find(entry => entry.id === sessionSelect.value);
-  if (selectedThread?.status?.type === 'active') {
+  if (selectedThread?.status?.type === 'active' && !pendingCompletions.has(selectedThread.id)) {
     setRunningTurn(
       selectedThread.id,
       knownTurns.get(selectedThread.id)?.id ||
@@ -620,14 +619,23 @@ async function refreshMessages(threadId, generation) {
     void client.request('thread/unsubscribe', { threadId: previousThreadId }).catch(() => {});
   }
   const observation = result.thread?.chrome?.activeTurn;
-  applyTurnObservation(threadId, observation, expectedTurnId);
+  const observedTurnId = pendingSubmissions.get(threadId)?.clientTurnId ||
+    knownTurns.get(threadId)?.id || expectedTurnId;
+  const previousCompletion = pendingCompletions.get(threadId);
+  const nextRun = previousCompletion && observation?.status === 'inProgress' &&
+    observation.id && observation.id !== previousCompletion.id &&
+    (!observedTurnId || observation.id === observedTurnId) &&
+    !settledTurns.has(`${threadId}/${observation.id}`);
+  // Reconcile the previous run before the snapshot can bind its successor.
+  if (!nextRun) applyTurnObservation(threadId, observation, observedTurnId);
   const completed = pendingCompletions.get(threadId);
-  if (completed) {
+  pendingCompletions.delete(threadId);
+  const currentTurnId = knownTurns.get(threadId)?.id || pendingSubmissions.get(threadId)?.clientTurnId;
+  if (completed && (!currentTurnId || currentTurnId === completed.id)) {
     const view = streamView(threadId);
     const display = chromeDisplayThread(result.thread);
     view.setHistory(display, true);
-    view.finish(completed.status === 'interrupted');
-    pendingCompletions.delete(threadId);
+    view.finish(completed.status === 'interrupted' && !nextRun);
     renderThreadMessages(projectThreadMessages(view.project()), threadId);
     if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true, display, completed.error.message)) {
       showError(completed.error.message);
@@ -635,23 +643,18 @@ async function refreshMessages(threadId, generation) {
   } else {
     renderHistory(result.thread);
   }
+  if (nextRun) applyTurnObservation(threadId, observation, observedTurnId);
 }
 
 function applyTurnObservation(threadId, observation, expectedTurnId) {
   if (observation?.id && (!expectedTurnId || observation.id === expectedTurnId)) {
+    if (settledTurns.has(`${threadId}/${observation.id}`)) {
+      // A stale thread-list status cannot override the already observed terminal.
+      if (activeThreadId === threadId && (!activeTurnId || activeTurnId === observation.id)) setRunningTurn('', '');
+      return false;
+    }
     if (observation.executionSettled === true) {
-      approvals.cancelTurn(threadId, observation.id);
-      if (settledTurns.has(`${threadId}/${observation.id}`)) {
-        // A stale thread-list status cannot override the already observed terminal.
-        if (activeThreadId === threadId && (!activeTurnId || activeTurnId === observation.id)) setRunningTurn('', '');
-        return false;
-      }
-      pendingSubmissions.delete(threadId);
-      knownTurns.delete(threadId);
-      rememberSettledTurn(threadId, observation.id);
-      if (stoppingThreadId === threadId) stoppingThreadId = '';
-      setRunningTurn('', '');
-      pendingCompletions.set(threadId, observation);
+      recordTurnCompletion(threadId, observation);
       return true;
     } else if (observation.status === 'inProgress') {
       if (pendingSubmissions.has(threadId)) clearAttachments();
@@ -904,6 +907,20 @@ async function submit() {
     mimeType,
     name,
   }));
+  const rawUserMessage = {
+    role: 'user',
+    content: [
+      { type: 'text', text: message },
+      ...attachments.map(attachment => ({
+        type: 'attachment',
+        attachment: {
+          kind: attachment.mimeType.startsWith('image/') ? 'image' : 'document',
+          label: attachment.name,
+          url: `data:${attachment.mimeType};base64,${attachment.base64Data}`,
+        },
+      })),
+    ],
+  };
   const modelRef = modelSelect.value;
   const permissionMode = permissionSelect.value;
   const selectedThreadId = sessionSelect.value;
@@ -920,7 +937,7 @@ async function submit() {
   sendingStartedAt = Date.now();
   updateComposerDisabledState();
   clearError();
-  showPendingUserMessage(selectedThreadId, message);
+  showPendingUserMessage(selectedThreadId, message, rawUserMessage);
   if (prompt.value.trim() === message) prompt.value = '';
   prompt.style.height = 'auto';
   try {
@@ -946,6 +963,8 @@ async function submit() {
       option.textContent = started.thread.name || message.split(/\r?\n/u)[0] || t('untitled');
       sessionSelect.append(option);
       sessionSelect.value = threadId;
+      pendingUserMessage.threadId = threadId;
+      renderThreadMessages(projectThreadMessages(streamView(threadId).project()), threadId);
       webLaunchPanel?.updateSelection();
     }
     preparedThreadId = threadId;
@@ -953,20 +972,7 @@ async function submit() {
       ? await pageContextForTurn(contextGeneration, pageSnapshot)
       : undefined;
     submissionScopeThreadId = threadId;
-    streamView(threadId).start(message, {
-      role: 'user',
-      content: [
-        { type: 'text', text: message },
-        ...attachments.map(attachment => ({
-          type: 'attachment',
-          attachment: {
-            kind: attachment.mimeType.startsWith('image/') ? 'image' : 'document',
-            label: attachment.name,
-            url: `data:${attachment.mimeType};base64,${attachment.base64Data}`,
-          },
-        })),
-      ],
-    });
+    streamView(threadId).start(message, rawUserMessage, clientTurnId);
     // Once the thread exists, its stream owns the optimistic user bubble.
     // The pre-thread placeholder must not be merged into that projection again.
     pendingUserMessage = null;
@@ -1015,7 +1021,7 @@ async function submit() {
       showError(t('unknownSend'));
     } else {
       pendingSubmissions.delete(threadId);
-      if (threadId) streamView(threadId).cancelStart();
+      if (threadId) streamView(threadId).cancelStart(clientTurnId);
       clearPendingUserMessage();
       if (threadId && threadId === sessionSelect.value)
         renderThreadMessages(projectThreadMessages(streamView(threadId).project()), threadId);
@@ -1219,16 +1225,39 @@ webLaunchPanel = createWebLaunchPanel({
     prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`;
   },
   refreshThread: threadId => refreshAll(threadId),
+  onSubmitInput: ({ launchId, threadId, prompt: submittedPrompt }) => {
+    if (threadId !== sessionSelect.value || threadId !== subscribedThreadId) return;
+    const view = streamView(threadId);
+    view.start(submittedPrompt.trim(), undefined, launchId);
+    renderThreadMessages(projectThreadMessages(view.project()), threadId);
+  },
+  onWithdrawSubmitInput: ({ launchId, threadId }) => {
+    const view = streamViews.get(threadId);
+    if (!view) return;
+    view.cancelStart(launchId);
+    if (threadId === sessionSelect.value && threadId === subscribedThreadId)
+      renderThreadMessages(projectThreadMessages(view.project()), threadId);
+  },
   onReceipt: response => {
     const threadId = response.threadId;
     const turnId = response.internal?.clientTurnId;
     const execution = response.receipt?.execution;
+    const launchId = response.receipt?.launchId;
+    const view = threadId && streamViews.get(threadId);
+    if (view && launchId && turnId && response.matchesSubmission && response.internal?.notSent !== true) {
+      let changed = view.identifyInput(launchId, turnId);
+      if (execution?.executionSettled === true)
+        changed = view.finishSubmission(launchId, response.internal?.nativeRunId) || changed;
+      if (changed && threadId === sessionSelect.value && threadId === subscribedThreadId)
+        renderThreadMessages(projectThreadMessages(view.project()), threadId);
+    }
+    const expectedTurnId = pendingSubmissions.get(threadId)?.clientTurnId || knownTurns.get(threadId)?.id;
     if (
       threadId &&
       turnId &&
       execution?.status === 'running' &&
       !settledTurns.has(`${threadId}/${turnId}`) &&
-      (!knownTurns.has(threadId) || knownTurns.get(threadId).id === turnId)
+      (!expectedTurnId || expectedTurnId === turnId)
     ) {
       if (threadId === sessionSelect.value)
         setRunningTurn(threadId, turnId, response.internal?.nativeRunId, true);
@@ -1243,14 +1272,13 @@ webLaunchPanel = createWebLaunchPanel({
     if (
       threadId &&
       turnId &&
-      execution?.executionSettled &&
+      execution?.executionSettled === true &&
+      ['completed', 'failed', 'interrupted'].includes(execution.status) &&
       threadId === sessionSelect.value &&
+      expectedTurnId === turnId &&
       knownTurns.get(threadId)?.id === turnId
     ) {
-      if (turnId) rememberSettledTurn(threadId, turnId);
-      knownTurns.delete(threadId);
-      pendingSubmissions.delete(threadId);
-      setRunningTurn('', '');
+      recordTurnCompletion(threadId, { id: turnId, status: execution.status });
     }
   },
   onChange: () => {

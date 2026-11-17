@@ -61,6 +61,8 @@ export interface ChromeExtensionThread {
 export interface ChromeExtensionMessage {
   questionResult?: QuestionResult;
   pendingInput?: { id: string; state: string; runId?: string; incomplete?: boolean };
+  /** Original native input identity, independent of the execution or retry run. */
+  inputRunId?: string;
   rawMessage?: Record<string, unknown>;
   display?: ChromeExtensionMessageDisplay;
   role: string;

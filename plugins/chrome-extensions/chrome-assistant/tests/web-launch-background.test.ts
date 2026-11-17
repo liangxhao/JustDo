@@ -269,6 +269,126 @@ describe('web launch background', () => {
     ).toHaveLength(1);
   });
 
+  it.each([false, true])(
+    'reopens and restores the same draft without another Prepare after restart=%s',
+    async restart => {
+      let controller = createWebLaunchBackground({ chromeApi: api, client });
+      await invoke(
+        controller,
+        { type: 'web-launch:panel:register', ...panelScope },
+        panelSender(7),
+      );
+      await invoke(controller, launch);
+      if (restart) controller = createWebLaunchBackground({ chromeApi: api, client });
+
+      api.sidePanel.open.mockClear();
+      order.length = 0;
+      const click = {
+        ...launch,
+        requestId: 'request-2',
+        clickSequence: 2,
+        reopenRequestId: launch.requestId,
+      };
+      if (!restart) {
+        expect(
+          await invoke(controller, click, { ...sender, documentId: 'other-document' }),
+        ).toEqual({ ok: false, code: 'WINDOW_BUSY' });
+        expect(await invoke(controller, { ...click, documentNonce: 'other-nonce' })).toEqual({
+          ok: false,
+          code: 'WINDOW_BUSY',
+        });
+        expect(api.sidePanel.open).not.toHaveBeenCalled();
+      }
+      const reopening = invoke(controller, click);
+      expect(order).toEqual(['open']);
+      expect(await reopening).toEqual({ ok: true, reopened: true });
+      const registration = await invoke(
+        controller,
+        { type: 'web-launch:panel:register', ...panelScope, panelInstanceId: 'replacement-panel' },
+        panelSender(7),
+      );
+      expect(registration.envelope).toMatchObject({
+        requestId: 'request-1',
+        launchId: 'launch-1',
+        restored: true,
+        prompt: 'hello',
+      });
+      expect(
+        client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
+      ).toHaveLength(1);
+    },
+  );
+
+  it('does not expose a restored draft when cancellation arrives during native opening', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    await invoke(controller, launch);
+    let finishOpen!: () => void;
+    api.sidePanel.open.mockImplementationOnce(
+      () =>
+        new Promise<void>(resolve => {
+          finishOpen = resolve;
+        }),
+    );
+    const reopening = invoke(controller, {
+      ...launch,
+      requestId: 'request-2',
+      clickSequence: 2,
+      reopenRequestId: launch.requestId,
+    });
+
+    const original = client.request.getMockImplementation()!;
+    let finishCancel!: (value: unknown) => void;
+    client.request.mockImplementation(async (method, params) =>
+      method === WebLaunchMethod.Cancel
+        ? new Promise(resolve => {
+            finishCancel = resolve;
+          })
+        : original(method, params),
+    );
+    const cancelling = invoke(controller, {
+      type: 'web-launch:document:cancel',
+      documentNonce: launch.documentNonce,
+      requestId: launch.requestId,
+      launchId: 'launch-1',
+    });
+    await vi.waitFor(() => expect(finishCancel).toBeDefined());
+    const replacement = await invoke(
+      controller,
+      { type: 'web-launch:panel:register', ...panelScope, panelInstanceId: 'replacement-panel' },
+      panelSender(7),
+    );
+    expect(replacement.envelope).toBeUndefined();
+    finishOpen();
+    expect(await reopening).toEqual({ ok: true, reopened: true });
+    expect(api.runtime.sendMessage.mock.calls.some(([message]) => message.resume)).toBe(false);
+    finishCancel({ ...reply, receipt: { ...reply.receipt, request: { status: 'cancelled' } } });
+    await cancelling;
+  });
+
+  it('ignores only a busy composer whose exact Chrome side-panel context has closed', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const oldContext = { documentId: 'old-panel-context' };
+    api.runtime.getContexts = vi.fn().mockResolvedValue([oldContext]);
+    const panel = panelSender(7);
+    await invoke(
+      controller,
+      { type: 'web-launch:panel:register', ...panelScope, composerBusy: true },
+      panel,
+    );
+    expect(api.runtime.getContexts).toHaveBeenCalledWith({
+      contextTypes: ['SIDE_PANEL'],
+      documentUrls: [panel.url],
+    });
+
+    expect(await invoke(controller, launch)).toEqual({ ok: false, code: 'COMPOSER_BUSY' });
+    api.runtime.getContexts.mockResolvedValue([]);
+    expect(await invoke(controller, launch)).toMatchObject({ ok: true });
+    expect(api.runtime.getContexts).toHaveBeenLastCalledWith({
+      contextTypes: ['SIDE_PANEL'],
+      documentIds: ['old-panel-context'],
+    });
+  });
+
   it('restores only observation after a worker restart, advancing its persisted document channel', async () => {
     const first = createWebLaunchBackground({ chromeApi: api, client });
     await invoke(first, launch);
@@ -386,6 +506,81 @@ describe('web launch background', () => {
     ).toMatchObject({ requestId: launch.requestId });
   });
 
+  it('recovers a new click on the same page after lease rotation without reusing a late old read', async () => {
+    const original = client.request.getMockImplementation()!;
+    const completed = {
+      ...reply,
+      receipt: {
+        ...reply.receipt,
+        request: { status: 'submitted' },
+        execution: { status: 'completed', executionSettled: true },
+        output: { status: 'available', format: 'text', text: 'Old result' },
+      },
+    };
+    const next = { ...launch, requestId: 'request-2', clickSequence: 2 };
+    const prepared = {
+      receipt: { ...reply.receipt, requestId: next.requestId, launchId: 'launch-2' },
+      internal: { ...reply.internal, documentLeaseId: 'new-lease' },
+    };
+    let releaseOldRead!: (value: typeof completed) => void;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Prepare) {
+        if (params.requestId === launch.requestId) return completed;
+        expect(params).not.toHaveProperty('documentLeaseId');
+        throw { code: 'REQUEST_TIMEOUT', requestSent: true };
+      }
+      if (method === WebLaunchMethod.Read) {
+        if (params.launchId === completed.receipt.launchId)
+          return new Promise(resolve => {
+            releaseOldRead = resolve;
+          });
+        return prepared;
+      }
+      return original(method);
+    });
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    expect((await invoke(controller, launch)).ok).toBe(true);
+    const query = {
+      type: 'web-launch:document:read',
+      documentNonce: launch.documentNonce,
+      result: 'final',
+    };
+    const oldRead = invoke(controller, {
+      ...query,
+      requestId: launch.requestId,
+      launchId: completed.receipt.launchId,
+    });
+    await vi.waitFor(() => expect(releaseOldRead).toBeTypeOf('function'));
+    expect(await invoke(controller, next)).toMatchObject({ prepareUncertain: true });
+
+    const recovered = await invoke(controller, { ...query, requestId: next.requestId });
+    expect(recovered).toMatchObject({ ok: true, receipt: { launchId: prepared.receipt.launchId } });
+    const readParams = client.request.mock.calls.findLast(
+      ([method]) => method === WebLaunchMethod.Read,
+    )![1];
+    expect(readParams).toMatchObject({
+      requestId: next.requestId,
+      source: { documentId: sender.documentId },
+    });
+    expect(readParams).not.toHaveProperty('documentLeaseId');
+    releaseOldRead(completed);
+    expect(await oldRead).toEqual({ ok: false, code: 'LEASE_REVOKED' });
+
+    expect(
+      await invoke(controller, {
+        ...query,
+        requestId: next.requestId,
+        launchId: prepared.receipt.launchId,
+      }),
+    ).toMatchObject({ ok: true });
+    expect(
+      client.request.mock.calls.findLast(([method]) => method === WebLaunchMethod.Read)![1],
+    ).toMatchObject({ launchId: prepared.receipt.launchId, documentLeaseId: 'new-lease' });
+    expect(
+      client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
+    ).toHaveLength(2);
+  });
+
   it('releases the launch slot when Main confirms rejection even though the request was sent', async () => {
     const original = client.request.getMockImplementation()!;
     client.request.mockImplementation(async (method, params) => {
@@ -403,6 +598,62 @@ describe('web launch background', () => {
       ok: true,
       receipt: { requestId: next.requestId },
     });
+  });
+
+  it('releases the window when the document is revoked while a new prepare ACK is being checked', async () => {
+    reply.receipt.execution = { status: 'completed', executionSettled: true };
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    expect((await invoke(controller, launch)).ok).toBe(true);
+    const original = client.request.getMockImplementation()!;
+    const revokeLease = vi
+      .fn()
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce({ code: 'EXPIRED' });
+    const activeProbe = api.tabs.sendMessage.getMockImplementation();
+    let releaseProbe!: () => void;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.RevokeDocument) return revokeLease();
+      if (method === WebLaunchMethod.Prepare && params.requestId === 'request-2') {
+        api.tabs.sendMessage.mockImplementationOnce(async (_tab: number, message: any) => {
+          await new Promise<void>(resolve => {
+            releaseProbe = resolve;
+          });
+          return { active: true, documentNonce: message.documentNonce };
+        });
+      }
+      return original(method, params);
+    });
+    const next = { ...launch, requestId: 'request-2', clickSequence: 2 };
+    reply.receipt.requestId = next.requestId;
+    reply.receipt.launchId = 'launch-2';
+    const pending = invoke(controller, next);
+    await vi.waitFor(() => expect(releaseProbe).toBeTypeOf('function'));
+    expect(
+      await invoke(controller, {
+        type: 'web-launch:document:revoke',
+        documentNonce: launch.documentNonce,
+        reason: 'pagehide',
+      }),
+    ).toEqual({ ok: true });
+    releaseProbe();
+    expect(await pending).toEqual({ ok: false, code: 'LEASE_REVOKED' });
+    expect(revokeLease).toHaveBeenCalledTimes(2);
+    expect(storage.chromeWebLaunchSession.requests[next.requestId]).toBeUndefined();
+
+    api.tabs.sendMessage.mockImplementation(activeProbe);
+    reply.receipt.requestId = 'request-3';
+    reply.receipt.launchId = 'launch-3';
+    expect(
+      await invoke(
+        controller,
+        {
+          ...launch,
+          requestId: 'request-3',
+          documentNonce: 'next-document-nonce',
+        },
+        { ...sender, documentId: 'next-document' },
+      ),
+    ).toMatchObject({ ok: true });
   });
 
   it('allows only an existing exact document to revoke during cached pagehide', async () => {
@@ -728,6 +979,42 @@ describe('web launch background', () => {
     expect(client.request.mock.calls.some(([method]) => method === WebLaunchMethod.Submit)).toBe(
       false,
     );
+  });
+
+  it('passes a definite pre-dispatch error only to the trusted submitting panel', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    await invoke(controller, launch);
+    const panel = panelSender(7);
+    await invoke(controller, { type: 'web-launch:panel:register', ...panelScope }, panel);
+    const original = client.request.getMockImplementation()!;
+    const failures = [
+      { code: 'CONFIRMATION_REQUIRED', requestSent: false },
+      { code: 'CONFIRMATION_REQUIRED', requestSent: true },
+    ];
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Submit) throw failures.shift();
+      return original(method, params);
+    });
+    const submit = {
+      type: 'web-launch:launch:submit',
+      ...panelScope,
+      launchId: 'launch-1',
+      composeRevision: 1,
+      input: { prompt: 'hello', permissionMode: 'ask' },
+      submission: 'confirmed',
+      shareResult: false,
+    };
+
+    expect(await invoke(controller, submit)).toEqual({ ok: false, code: 'FORBIDDEN' });
+    expect(await invoke(controller, submit, panel)).toEqual({
+      ok: false,
+      code: 'CONFIRMATION_REQUIRED',
+      requestSent: false,
+    });
+    expect(await invoke(controller, submit, panel)).toEqual({
+      ok: false,
+      code: 'CONFIRMATION_REQUIRED',
+    });
   });
 
   it('never presents an automatic-send envelope after cancellation races a prepare ACK', async () => {

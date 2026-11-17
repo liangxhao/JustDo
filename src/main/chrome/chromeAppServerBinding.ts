@@ -1028,6 +1028,7 @@ export class ChromeAppServerHub {
     };
     this.pollStates.set(key, state);
     let previousMessages = '';
+    let terminalPublishedEpoch: number | undefined;
     const poll = async () => {
       const epoch = this.observationEpoch;
       const current = () =>
@@ -1051,26 +1052,32 @@ export class ChromeAppServerHub {
           state.timer = setTimeout(() => void poll(), POLL_INTERVAL_MS);
           return;
         }
-        const runtimeStatus = await this.api.getThreadRuntimeStatus(threadId, {
-          forceRefresh: thread.status === 'error' && !state.runtimeConfirmedActive,
-        });
-        if (!current()) return;
         const turnState = await this.api.getTurnState(threadId, turnId);
         if (!current()) return;
-        if (turnState && !turnState.executionSettled) {
-          await this.publishObservedStatus(threadId, generation, current, turnId);
-          if (!current()) return;
-        }
         const executionSettled =
           turnState?.id === turnId &&
           turnState.executionSettled === true &&
           ['completed', 'failed', 'interrupted'].includes(turnState.status);
-        const runtimeRunning = runtimeStatus.known
-          ? runtimeStatus.running
-          : thread.status === 'running';
-        if (runtimeRunning) state.runtimeConfirmedActive = true;
-        const forceFullSnapshot =
-          executionSettled || !runtimeRunning || state.polls % FULL_SNAPSHOT_POLL_INTERVAL === 0;
+        if (executionSettled && terminalPublishedEpoch !== epoch && !this.pendingStartResponses.has(key)) {
+          // Deliver the verified state even if the transcript read stalls or fails.
+          terminalPublishedEpoch = epoch;
+          this.broadcast(ChromeAppServerNotificationMethod.ThreadUpdated,
+            { threadId, activeTurn: turnState }, threadId, generation);
+        }
+        let forceFullSnapshot = true;
+        if (!executionSettled) {
+          const runtimeStatus = await this.api.getThreadRuntimeStatus(threadId, {
+            forceRefresh: thread.status === 'error' && !state.runtimeConfirmedActive,
+          });
+          if (!current()) return;
+          if (turnState && !turnState.executionSettled) {
+            await this.publishObservedStatus(threadId, generation, current, turnId);
+            if (!current()) return;
+          }
+          const runtimeRunning = runtimeStatus.known ? runtimeStatus.running : thread.status === 'running';
+          if (runtimeRunning) state.runtimeConfirmedActive = true;
+          forceFullSnapshot = !runtimeRunning || state.polls % FULL_SNAPSHOT_POLL_INTERVAL === 0;
+        }
         state.polls += 1;
         const messages = await this.api.getMessages(threadId, { forceFullSnapshot });
         if (!current()) return;

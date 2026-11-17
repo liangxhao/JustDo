@@ -37,7 +37,12 @@ const envelope = (overrides: Record<string, unknown> = {}) => ({
   },
   ...overrides,
 });
-async function mount(options: Record<string, unknown> = {}, initial = {}, registrationExtra = {}) {
+async function mount(
+  options: Record<string, unknown> = {},
+  initial = {},
+  registrationExtra = {},
+  statusBeforeRegister = false,
+) {
   document.body.innerHTML =
     '<section id="webConnectionCard" class="hidden"></section><div class="composer"><div id="webLaunchControls" hidden></div></div><p id="error"></p>';
   const input = envelope(options);
@@ -60,6 +65,14 @@ async function mount(options: Record<string, unknown> = {}, initial = {}, regist
   const sendMessage = vi.fn(async (message: any): Promise<any> => {
     if (message.type === Message.Register) {
       registration = message;
+      if (statusBeforeRegister) listener({
+        type: Message.Event,
+        panelInstanceId: message.panelInstanceId,
+        tabId: message.tabId,
+        windowId: message.windowId,
+        envelope: input,
+        receipt: input.receipt,
+      });
       return { ok: true, envelope: input, ...registrationExtra };
     }
     if (message.type === Message.Submit)
@@ -96,6 +109,10 @@ async function mount(options: Record<string, unknown> = {}, initial = {}, regist
       if (next[key] !== undefined) (composer as any)[key] = next[key];
   });
   const confirm = vi.fn(() => true);
+  const onSubmitInput = vi.fn();
+  const onWithdrawSubmitInput = vi.fn();
+  const onReceipt = vi.fn();
+  const refreshThread = vi.fn(async (_threadId: string) => {});
   const panel = createWebLaunchPanel({
     document,
     chrome: {
@@ -127,6 +144,10 @@ async function mount(options: Record<string, unknown> = {}, initial = {}, regist
     tabId: 7,
     readComposer: () => composer,
     installComposer,
+    onSubmitInput,
+    onWithdrawSubmitInput,
+    onReceipt,
+    refreshThread,
     confirm,
     isTurnSettled: (threadId, turnId) => settled.has(`${threadId}/${turnId}`),
     onError: message => {
@@ -145,6 +166,10 @@ async function mount(options: Record<string, unknown> = {}, initial = {}, regist
     input,
     sendMessage,
     installComposer,
+    onSubmitInput,
+    onWithdrawSubmitInput,
+    onReceipt,
+    refreshThread,
     confirm,
     settled,
     moveToWindow: (id: number, notify = false) => {
@@ -441,7 +466,7 @@ describe('website launch panel', () => {
   it.each(['none', 'final'])(
     'automatically submits authorized send + %s exactly once',
     async result => {
-      const { panel, sendMessage } = await mount({
+      const { panel, sendMessage, onSubmitInput } = await mount({
         mode: 'send',
         result,
         automaticSendAllowed: true,
@@ -451,6 +476,11 @@ describe('website launch panel', () => {
       panel.ready();
       await panel.submit('confirmed');
       expect(calls(sendMessage, Message.Submit)).toHaveLength(1);
+      expect(onSubmitInput).toHaveBeenCalledExactlyOnceWith({
+        launchId: 'launch-one',
+        threadId: 'external-thread',
+        prompt: 'Website prompt',
+      });
       expect(calls(sendMessage, Message.Submit)[0]).toEqual(
         expect.objectContaining({
           submission: 'automatic',
@@ -527,6 +557,172 @@ describe('website launch panel', () => {
         composeRevision: 2,
         shareResult: true,
         input: expect.objectContaining({ prompt: 'Actually edited', permissionMode: 'ask' }),
+      }),
+    );
+  });
+
+  it('places the exact confirmed prompt before dispatch and refreshes on authoritative receipts', async () => {
+    const { panel, composer, input, emit, sendMessage, onSubmitInput, onReceipt, refreshThread } =
+      await mount();
+    expect(onSubmitInput).not.toHaveBeenCalled();
+    composer.prompt = 'Edited prompt';
+    panel.edit();
+    await vi.waitFor(() => expect(panel.composerAction('external-thread')?.disabled).toBe(false));
+    refreshThread.mockClear();
+
+    let acknowledge!: (value: object) => void;
+    const reply = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation(async message => {
+      if (message.type !== Message.Submit) return reply(message);
+      expect(onSubmitInput).toHaveBeenCalledExactlyOnceWith({
+        launchId: 'launch-one',
+        threadId: 'external-thread',
+        prompt: 'Edited prompt',
+      });
+      return new Promise(resolve => {
+        acknowledge = resolve;
+      });
+    });
+    const submit = panel.submit();
+    const internal = { threadId: 'external-thread', clientTurnId: 'web-turn' };
+    const submitting = {
+      ...input.receipt,
+      receiptRevision: 2,
+      request: { status: 'submitting' },
+    };
+    acknowledge({ ok: true, receipt: submitting, internal });
+    await submit;
+    expect(onReceipt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        internal,
+        matchesSubmission: true,
+      }),
+    );
+    expect(refreshThread).not.toHaveBeenCalled();
+
+    const running = {
+      ...submitting,
+      receiptRevision: 3,
+      request: { status: 'submitted' },
+      execution: { status: 'running', executionSettled: false },
+    };
+    const acceptedInternal = { ...internal, nativeRunId: 'physical-run' };
+    emit({ receipt: running, internal: acceptedInternal });
+    await vi.waitFor(() =>
+      expect(refreshThread).toHaveBeenCalledExactlyOnceWith('external-thread'),
+    );
+    emit({ receipt: { ...running, receiptRevision: 4 }, internal: acceptedInternal });
+    await Promise.resolve();
+    expect(refreshThread).toHaveBeenCalledTimes(1);
+
+    emit({
+      receipt: {
+        ...running,
+        receiptRevision: 5,
+        execution: { status: 'completed', executionSettled: true },
+      },
+      internal: acceptedInternal,
+    });
+    await vi.waitFor(() => expect(refreshThread).toHaveBeenCalledTimes(2));
+    expect(composer.prompt).toBe('');
+  });
+
+  it('refreshes a fast terminal and preserves its error notice', async () => {
+    const { panel, input, sendMessage, onReceipt, refreshThread } = await mount();
+    refreshThread.mockClear();
+    const errorLine = document.getElementById('error')!;
+    refreshThread.mockImplementation(async () => {
+      errorLine.textContent = '';
+    });
+    const reply = sendMessage.getMockImplementation()!;
+    const receipt = {
+      ...input.receipt,
+      receiptRevision: 3,
+      request: { status: 'submitted' },
+      execution: { status: 'failed', executionSettled: true },
+      error: { code: 'NATIVE_UNAVAILABLE', messageKey: 'webLaunchErrorNATIVE_UNAVAILABLE' },
+    };
+    const internal = {
+      threadId: 'external-thread',
+      clientTurnId: 'web-turn',
+      nativeRunId: 'physical-run',
+    };
+    sendMessage.mockImplementation(async message =>
+      message.type === Message.Submit ? { ok: true, receipt, internal } : reply(message),
+    );
+
+    await panel.submit();
+
+    expect(onReceipt).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        matchesSubmission: true,
+        receipt,
+        internal,
+      }),
+    );
+    expect(refreshThread).toHaveBeenCalledExactlyOnceWith('external-thread');
+    await vi.waitFor(() => expect(errorLine.textContent).not.toBe(''));
+  });
+
+  it('withdraws a directly rejected fresh submission but preserves an earlier unconfirmed attempt', async () => {
+    const { panel, sendMessage, onSubmitInput, onWithdrawSubmitInput } = await mount();
+    const rejected = { ok: false, code: 'CONFIRMATION_REQUIRED', requestSent: false };
+    const replies = [rejected, { ok: false, code: 'REQUEST_TIMEOUT' }, rejected];
+    const reply = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation(async message =>
+      message.type === Message.Submit ? replies.shift() : reply(message),
+    );
+    await panel.submit();
+    expect(onSubmitInput).toHaveBeenCalledOnce();
+    expect(onWithdrawSubmitInput).toHaveBeenCalledExactlyOnceWith({
+      launchId: 'launch-one',
+      threadId: 'external-thread',
+    });
+
+    await panel.submit();
+    expect(onSubmitInput).toHaveBeenCalledTimes(2);
+    expect(onWithdrawSubmitInput).toHaveBeenCalledTimes(1);
+    await panel.submit();
+    expect(onWithdrawSubmitInput).toHaveBeenCalledTimes(1);
+  });
+
+  it('matches only the new submission turn after an authoritative not-sent receipt', async () => {
+    const { panel, input, emit, sendMessage, onSubmitInput, onReceipt } = await mount();
+    const oldInternal = { threadId: 'external-thread', clientTurnId: 'old-turn', notSent: true };
+    const first = {
+      ...input.receipt,
+      receiptRevision: 2,
+      request: { status: 'awaiting-confirmation' },
+    };
+    sendMessage.mockImplementation(async message =>
+      message.type === Message.Submit ? { ok: false, code: 'REQUEST_TIMEOUT' } : { ok: true },
+    );
+    await panel.submit();
+    expect(onSubmitInput).toHaveBeenCalledOnce();
+    expect(onReceipt).not.toHaveBeenCalled();
+    emit({ receipt: first, internal: oldInternal });
+    expect(onReceipt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        internal: oldInternal,
+        matchesSubmission: true,
+      }),
+    );
+
+    await panel.submit();
+    expect(onSubmitInput).toHaveBeenCalledTimes(2);
+    emit({ receipt: { ...first, receiptRevision: 3 }, internal: oldInternal });
+    expect(onReceipt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        matchesSubmission: false,
+      }),
+    );
+    emit({
+      receipt: { ...first, receiptRevision: 4 },
+      internal: { ...oldInternal, clientTurnId: 'new-turn' },
+    });
+    expect(onReceipt).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        matchesSubmission: true,
       }),
     );
   });
@@ -623,8 +819,9 @@ describe('website launch panel', () => {
 
   it('restores an already submitted observation without touching an ordinary draft', async () => {
     const sent = envelope().receipt;
-    const { composer, panel, sendMessage, installComposer } = await mount(
+    const { composer, panel, sendMessage, installComposer, refreshThread } = await mount(
       {
+        restored: true,
         receipt: {
           ...sent,
           request: { status: 'submitted' },
@@ -635,6 +832,7 @@ describe('website launch panel', () => {
     );
     expect(composer.prompt).toBe('New ordinary draft');
     expect(installComposer).not.toHaveBeenCalled();
+    expect(refreshThread).not.toHaveBeenCalled();
     expect(panel.inputAssociated()).toBe(false);
     expect(calls(sendMessage, Message.Cancel)).toEqual([]);
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
@@ -668,38 +866,71 @@ describe('website launch panel', () => {
     await resubmitting;
   });
 
-  it('reopens a running website observation with trusted Stop and no extra composer controls', async () => {
+  it('reopens a running website observation even when its status arrives before registration', async () => {
     const original = envelope().receipt;
-    const { sendMessage, composer, panel } = await mount(
-      {
-        prompt: '',
-        contextText: undefined,
-        result: 'final',
-        receipt: {
-          ...original,
-          request: { status: 'submitted' },
-          execution: { status: 'running', executionSettled: false },
-          output: { status: 'pending' },
-        },
+    const { sendMessage, composer, panel, installComposer, refreshThread } = await mount({
+      restored: true,
+      result: 'final',
+      receipt: {
+        ...original,
+        request: { status: 'submitted' },
+        execution: { status: 'running', executionSettled: false },
+        output: { status: 'pending' },
       },
-      { prompt: 'Unrelated ordinary draft' },
-    );
-    expect(panel.composerAction('existing-thread')).toBeNull();
-    expect(document.getElementById('webLaunchControls')?.hasAttribute('hidden')).toBe(true);
-    composer.threadId = 'external-thread';
-    panel.updateSelection();
+    }, {}, {}, true);
+    expect(composer.threadId).toBe('external-thread');
+    expect(composer.prompt).toBe('');
+    expect(installComposer).toHaveBeenCalledExactlyOnceWith({ threadId: 'external-thread' });
+    expect(refreshThread).toHaveBeenCalledExactlyOnceWith('external-thread');
     expect(panel.composerAction('external-thread')).toMatchObject({ type: 'stop' });
     expect(document.getElementById('webLaunchControls')?.hasAttribute('hidden')).toBe(true);
     await panel.stop();
     await vi.waitFor(() => expect(calls(sendMessage, Message.Stop)).toHaveLength(1));
     expect(calls(sendMessage, Message.Cancel)).toHaveLength(0);
+    expect(calls(sendMessage, Message.Submit)).toEqual([]);
+  });
+
+  it('follows an explicit reopen of the existing launch without following its ordinary status updates', async () => {
+    const original = envelope().receipt;
+    const { composer, emit, input, refreshThread } = await mount({
+      receipt: {
+        ...original,
+        request: { status: 'submitted' },
+        execution: { status: 'running', executionSettled: false },
+      },
+    });
+    const snapshot = { envelope: { ...input, restored: true }, receipt: input.receipt };
+    emit(snapshot);
+    expect(composer.threadId).toBe('existing-thread');
+    expect(refreshThread).not.toHaveBeenCalled();
+
+    emit({ ...snapshot, resume: true });
+    expect(composer.threadId).toBe('external-thread');
+    expect(refreshThread).toHaveBeenCalledExactlyOnceWith('external-thread');
+  });
+
+  it('keeps a restored web draft pending when the ordinary composer contains work', async () => {
+    const { composer, input, emit, sendMessage, installComposer } = await mount(
+      { restored: true, mode: 'send', automaticSendAllowed: true },
+      { prompt: 'Unrelated ordinary draft', attachments: 1 },
+    );
     expect(composer.prompt).toBe('Unrelated ordinary draft');
+    expect(installComposer).not.toHaveBeenCalled();
+    expect(calls(sendMessage, Message.Cancel)).toEqual([]);
+    composer.prompt = '';
+    composer.attachments = 0;
+    emit({ envelope: input });
+    expect(installComposer).not.toHaveBeenCalled();
+
+    emit({ envelope: input, resume: true });
+    expect(composer.prompt).toBe('Website prompt');
+    await vi.waitFor(() => expect(calls(sendMessage, Message.Revise)).toHaveLength(1));
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
   });
 
   it('lets a human abandon a restored unknown observation without claiming the task stopped', async () => {
     const original = envelope().receipt;
-    const { sendMessage, confirm, composer, panel } = await mount(
+    const { sendMessage, confirm, composer } = await mount(
       {
         prompt: '',
         contextText: undefined,

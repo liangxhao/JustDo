@@ -127,6 +127,54 @@ describe('webpage button bridge', () => {
     ).toBe(true);
   });
 
+  it.each([true, false])(
+    'reuses the prior handle only when the backend confirms reopen=%s',
+    async reopened => {
+      const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
+      const onRequest = vi.fn();
+      const onStatus = vi.fn();
+      const onError = vi.fn();
+      const original = runtime.sendMessage.getMockImplementation()!;
+      let finishReopen!: (response: unknown) => void;
+      runtime.sendMessage.mockImplementation(async message => {
+        if (message.reopenRequestId)
+          return new Promise(resolve => { finishReopen = resolve; });
+        return original(message);
+      });
+      const button = document.getElementById('business') as HTMLButtonElement;
+      await sdk.bind(button, { prompt: 'Restore the report request' }, { onRequest, onStatus, onError });
+      click();
+      await vi.waitFor(() => expect(onStatus).toHaveBeenCalledOnce());
+      const originalId = onRequest.mock.calls[0][0].requestId;
+
+      click();
+      const repeat = runtime.sendMessage.mock.lastCall![0];
+      expect(repeat).toMatchObject({ reopenRequestId: originalId, clickSequence: 2 });
+      expect(repeat.requestId).not.toBe(originalId);
+      await Promise.resolve();
+      expect(onRequest).toHaveBeenCalledOnce();
+      finishReopen(reopened ? { ok: true, reopened: true } : await original(repeat));
+
+      if (reopened) {
+        // The original handle still reads its own receipt after the panel is reopened.
+        const handle = onRequest.mock.calls[0][0];
+        await handle.read();
+        expect(runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+          type: 'web-launch:document:read', requestId: originalId,
+        }));
+        expect(onRequest).toHaveBeenCalledOnce();
+        expect(onStatus).toHaveBeenCalledOnce();
+      } else {
+        await vi.waitFor(() => expect(onStatus).toHaveBeenCalledTimes(2));
+        expect(onRequest.mock.calls.map(([handle]) => handle.requestId)).toEqual([
+          originalId,
+          repeat.requestId,
+        ]);
+      }
+      expect(onError).not.toHaveBeenCalled();
+    },
+  );
+
   it('delivers an artifact-only exact result through the existing onResult callback', async () => {
     const onRequest = vi.fn();
     const onResult = vi.fn();

@@ -7,6 +7,8 @@ const mock = vi.hoisted(() => ({
   notify: (_method: string, _params: unknown) => {},
   request: vi.fn(),
   disconnect: vi.fn(),
+  renderMessages: vi.fn(),
+  startStream: vi.fn(),
   openDelivery: null as null | ((threadId: string, source: string) => Promise<void>),
   openMessageFile: null as null | ((threadId: string, link: { sourceKind: string; target: string }) => Promise<void>),
   questionOptions: null as null | {
@@ -39,7 +41,7 @@ vi.mock('../conversation-overlay/modules/sidepanel-messages.js', () => ({
   }) => {
     mock.openDelivery = options.openDelivery;
     mock.openMessageFile = options.openMessageFile;
-    return { render: vi.fn(), dispose: vi.fn() };
+    return { render: mock.renderMessages, dispose: vi.fn() };
   },
 }));
 vi.mock('../conversation-overlay/modules/sidepanel-activity.js', () => ({
@@ -51,7 +53,7 @@ vi.mock('../conversation-overlay/modules/sidepanel-stream.js', () => ({
     constructor(id: string) { this.id = id; }
     project() { return { id: this.id, turns: [] }; }
     setHistory() {}
-    start() {}
+    start = mock.startStream;
     cancelStart() {}
     bindRun() { return true; }
     finish() {}
@@ -471,6 +473,44 @@ describe('side panel interactions', () => {
         pageContext: { title: tab.title, url: tab.url, pageText: '', selectedText: '' },
       }),
     })));
+  });
+
+  it('shows an attachment-only user bubble before a new chat is created', async () => {
+    await mount();
+    const attachment = {
+      name: 'report.txt',
+      type: 'text/plain',
+      size: 1,
+      arrayBuffer: async () => Uint8Array.of(65).buffer,
+    };
+    const files = element<HTMLInputElement>('fileInput');
+    Object.defineProperty(files, 'files', { value: [attachment] });
+    files.dispatchEvent(new Event('change'));
+    const send = element<HTMLButtonElement>('send');
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+
+    const hostRequest = mock.request.getMockImplementation()!;
+    const threadStart = deferred<{ thread: { id: string } }>();
+    mock.request.mockImplementation((method, params) =>
+      method === 'thread/start' ? threadStart.promise : hostRequest(method, params),
+    );
+    element<HTMLInputElement>('includePage').checked = false;
+    send.click();
+
+    const rawMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: '' },
+        { type: 'attachment', attachment: {
+          kind: 'document', label: 'report.txt', url: 'data:text/plain;base64,QQ==',
+        } },
+      ],
+    };
+    expect(mock.renderMessages).toHaveBeenLastCalledWith([{ role: 'user', text: '', rawMessage }], '');
+    expect(mock.startStream).not.toHaveBeenCalled();
+    threadStart.resolve({ thread: { id: 'created' } });
+    await vi.waitFor(() => expect(mock.startStream).toHaveBeenCalledWith('', rawMessage, expect.any(String)));
+    expect(mock.renderMessages).toHaveBeenCalledWith([{ role: 'user', text: '', rawMessage }], 'created');
   });
 
   it('collects visible main text and selection within the outgoing context limits', async () => {

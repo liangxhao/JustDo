@@ -48,6 +48,10 @@ export const wrapChromeWebLaunchOperation = (operation: AppServerOperation): App
       ? error.publicError.code : undefined;
     const code = typeof offered === 'string' && webLaunchErrorCodes.has(offered)
       ? offered : WebLaunchErrorCode.InternalError;
-    throw new AppServerRpcError(AppServerErrorCode.Internal, code, { code, messageKey: `webLaunchError${code}` });
+    throw new AppServerRpcError(AppServerErrorCode.Internal, code, {
+      code,
+      messageKey: `webLaunchError${code}`,
+      ...(isAppServerRecord(error) && error.requestSent === false ? { requestSent: false } : {}),
+    });
   }
 };
