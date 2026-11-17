@@ -123,7 +123,7 @@ type LiveWebview = HTMLElement & {
   reload: () => void;
   isAudioMuted?: () => boolean;
   setAudioMuted?: (muted: boolean) => void;
-  send: (channel: string, ...args: unknown[]) => void;
+  send: (channel: string, ...args: unknown[]) => void | Promise<void>;
   sendInputEvent: (event: {
     type: 'mouseWheel';
     x: number;
@@ -456,7 +456,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [httpAuthRequests, setHttpAuthRequests] = useState<BrowserPanelHttpAuthRequest[]>([]);
   const httpAuthRequestsRef = useRef(httpAuthRequests);
   httpAuthRequestsRef.current = httpAuthRequests;
-  const [credentialOfferTargetId, setCredentialOfferTargetId] = useState<string | null>(null);
+  const [credentialOffer, setCredentialOffer] = useState<{
+    targetId: string;
+    webview: LiveWebview;
+    id: string;
+    navigationEpoch: number;
+  } | null>(null);
   const panelRef = useRef<HTMLElement>(null);
   const addressInputRef = useRef<HTMLInputElement>(null);
   const addressDirtyRef = useRef(false);
@@ -515,6 +520,21 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     (targetId: string | null | undefined) => canPresentBrowserPage(targetId, presentationState()),
     [presentationState],
   );
+  const answerCredentialOffer = (confirmed: boolean): void => {
+    setCredentialOffer(null);
+    if (!credentialOffer) return;
+    const { webview, targetId, id, navigationEpoch } = credentialOffer;
+    if (
+      !canPresentPage(targetId) || !webview.isConnected ||
+      webviewsRef.current.get(targetId) !== webview ||
+      (guestNavigationEpochsRef.current.get(webview) ?? 0) !== navigationEpoch
+    ) return;
+    try {
+      void webview.send(BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL, id, confirmed)?.catch(() => undefined);
+    } catch {
+      // The native guest can detach while the toolbar is being used.
+    }
+  };
   const focusDocumentRef = useRef(ownerDocument);
   focusDocumentRef.current = ownerDocument;
   const queuePageFocus = useCallback((targetId: string, focus: () => void) => {
@@ -908,7 +928,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   }, [annotationAddedNotice, annotationNoticeSequence]);
 
   useEffect(() => clearAnnotations(), [clearAnnotations, draftKey]);
-  useEffect(() => setCredentialOfferTargetId(null), [activeTabTargetId]);
+  useEffect(() => setCredentialOffer(null), [activeTabTargetId, browserOperationRunning]);
   useEffect(() => {
     if (!isOpen) {
       setOverflowMenuAnchor(null);
@@ -917,7 +937,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       setIsImportModalOpen(false);
       setIsClearDataModalOpen(false);
       setIsCommentComposerOpen(false);
-      setCredentialOfferTargetId(null);
+      setCredentialOffer(null);
     }
   }, [isOpen]);
   useEffect(
@@ -1277,7 +1297,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           : undefined,
       });
       if (activeTargetRef.current === targetId) {
-        setCredentialOfferTargetId(null);
+        if (authoritative) setCredentialOffer(null);
         if (authoritative) addressDirtyRef.current = false;
         if (authoritative || !addressDirtyRef.current) {
           const nextTab = retainedTab ? { ...retainedTab, url: nextUrl } : undefined;
@@ -1363,6 +1383,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       if (installedGuestsRef.current.has(webview)) return;
       installedGuestsRef.current.add(webview);
       onGuest('did-start-loading', () => {
+        setCredentialOffer(current => current?.webview === webview ? null : current);
         if (readyGuestsRef.current.has(webview)) {
           guestNavigationEpochsRef.current.set(
             webview, (guestNavigationEpochsRef.current.get(webview) ?? 0) + 1,
@@ -1435,7 +1456,18 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           return;
         }
         if (details.channel === BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL) {
-          if (activeTargetRef.current === targetId) setCredentialOfferTargetId(targetId);
+          const [id] = details.args ?? [];
+          if (id === null) {
+            setCredentialOffer(current => current?.webview === webview ? null : current);
+          } else if (
+            typeof id === 'string' && id.length > 0 && id.length <= 64 && canPresentPage(targetId) &&
+            webviewsRef.current.get(targetId) === webview
+          ) {
+            setCredentialOffer({
+              targetId, webview, id,
+              navigationEpoch: guestNavigationEpochsRef.current.get(webview) ?? 0,
+            });
+          }
           return;
         }
         if (details.channel !== 'justdo-browser-inspect-result') return;
@@ -2761,7 +2793,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           </button>
         </div>
       )}
-      {credentialOfferTargetId === activeTab?.targetId && (
+      {credentialOffer && canPresentPage(credentialOffer.targetId) && (
         <div className="flex items-center gap-2 border-b border-border bg-surface-raised px-3 py-2 text-xs">
           <span className="min-w-0 flex-1 text-secondary">
             {i18nService.t('browserCredentialOffer')}
@@ -2769,10 +2801,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           <button
             type="button"
             className="rounded-md bg-primary px-2.5 py-1 font-medium text-white hover:brightness-105"
-            onClick={() => {
-              activeWebview?.send(BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL);
-              setCredentialOfferTargetId(null);
-            }}
+            onClick={() => answerCredentialOffer(true)}
           >
             {i18nService.t('browserCredentialFill')}
           </button>
@@ -2780,7 +2809,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             type="button"
             className="rounded p-1 text-secondary hover:bg-surface hover:text-foreground"
             aria-label={i18nService.t('browserCredentialDismiss')}
-            onClick={() => setCredentialOfferTargetId(null)}
+            onClick={() => answerCredentialOffer(false)}
           >
             <XMarkIcon className="h-3.5 w-3.5" />
           </button>

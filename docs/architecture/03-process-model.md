@@ -449,6 +449,8 @@ Tab 图标同样属于对应 guest 的网络边界。Main 从原生 favicon 事�
 
 HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义，不能共用一个页面全局授权布尔值。详细 guest 行为在[浏览器设计](../features/browser/browser-settings-design.md)，不再散放到通用 IPC 清单。
 
+网页表单密码通过已登记侧栏 guest 的专用 IPC 进入 Main。Main 验证顶层文档来源，负责保存确认和加密；侧栏只收到填充提示的临时标识，用户确认后密码直接返回仍匹配原表单的 guest preload。
+
 ### 原生子任务查询与精确操作
 
 Renderer 通过显式 preload 方法 `listSubTaskChildren(sessionId, parentTaskId?, cursor?)` 和 `controlSubTask(sessionId, taskId, action)` 访问子任务。shared 合约只开放 `cancel`；Main 调用 `sessions.abort({ key, clearQueued: true })`，不提供任意 Gateway 方法转发。OpenClaw v2026.9.8 移除了任务账本 RPC 与结果重新投递/忽略操作，因此产品同步移除这两个操作入口，不重建旧任务账本。

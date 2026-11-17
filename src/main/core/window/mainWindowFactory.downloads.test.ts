@@ -43,6 +43,9 @@ vi.mock('../../browser/data/browserDataImportService', () => ({
   recordBrowserDownload: mocks.record,
   updateBrowserDownload: mocks.update,
 }));
+vi.mock('../../browser/data/browserGuestCredentials', () => ({
+  registerBrowserGuestCredentials: vi.fn(),
+}));
 vi.mock('../../browser/downloads/browserAgentDownloadCoordinator', () => ({
   claimBrowserAgentDownload: mocks.claim,
   cancelBrowserAgentDownloadsForWebContents: mocks.cancelForGuest,

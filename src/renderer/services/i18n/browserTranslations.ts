@@ -204,8 +204,8 @@ export const browserTranslations = {
     browserClearDataCacheDescription: '释放空间；下次访问时页面可能加载得更慢',
     browserClearDataDownloads: '下载历史记录',
     browserClearDataDownloadCount: '{count} 条记录；不会删除已下载的文件',
-    browserClearDataAutofill: '自动填充表单数据',
-    browserClearDataAutofillCount: '{count} 条已导入的登录填充记录',
+    browserClearDataAutofill: '已保存的密码',
+    browserClearDataAutofillCount: '{count} 条登录记录（含导入的密码）',
     browserClearDataStorageRangeNotice:
       '时间范围仅精确应用于历史、下载和自动填充记录；Chromium 只能清除内嵌浏览器保存的全部 Cookie、站点数据和缓存。',
     browserClearDataCalculating: '正在计算…',
@@ -524,8 +524,8 @@ export const browserTranslations = {
     browserClearDataCacheDescription: 'Frees space; some pages may load more slowly next time',
     browserClearDataDownloads: 'Download history',
     browserClearDataDownloadCount: '{count} entries; downloaded files will not be deleted',
-    browserClearDataAutofill: 'Autofill form data',
-    browserClearDataAutofillCount: '{count} imported sign-in fill entries',
+    browserClearDataAutofill: 'Saved passwords',
+    browserClearDataAutofillCount: '{count} sign-in entries, including imports',
     browserClearDataStorageRangeNotice:
       'The time range applies precisely to history, download, and autofill records. Chromium can only clear all cookies, site data, and cache saved by the embedded browser.',
     browserClearDataCalculating: 'Calculating…',

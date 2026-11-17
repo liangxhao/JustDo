@@ -607,7 +607,7 @@ Main 与 Renderer 共用数值校验。它只控制新建准入，不持久化�
 
 ### 浏览器索引与站点图标
 
-browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下载记录和命名 profile；浏览器 Cookie/storage/cache 在 Chromium partition。Renderer 不获取密码密文或下载真实路径，打开文件按记录 ID 经 Main 验证。
+browser-import.sqlite 独立保存导入历史、safeStorage 加密密码、下载记录和命名 profile；浏览器 Cookie/storage/cache 在 Chromium partition。`imported_passwords` 继续使用 `(origin, username)` 主键，包含原有导入数据和用户在侧栏确认保存的密码。两种来源共用 `updated_at` 时间范围清理和查询。手动保存使用确认时的时间，同一键更新密码与该时间。Renderer 不获取密码明文、密文或下载真实路径，打开文件按记录 ID 经 Main 验证。
 
 `imported_history.url` 同时记录 HTTP(S) 网页与浏览器实际访问的原生 `file://` 地址，保留文件名转义及非敏感 query/hash；本地记录同样支持检索、访问计数与删除。历史地址准入与网络图标地址准入分开，允许本地访问记录不授予 Main 任意本地图片读取。列表过滤旧预览服务的精确临时 token URL 形态，不删除底层旧行、不猜测 token 对应的原文件路径，也不排除普通 localhost 开发站点。表结构保持不变，重新访问本地文件后产生实际文件地址的记录。
 

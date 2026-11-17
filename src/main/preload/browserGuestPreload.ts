@@ -2,17 +2,15 @@ import { ipcRenderer } from 'electron';
 
 import {
   BROWSER_GUEST_COMMAND_CHANNEL,
-  BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL,
-  BROWSER_GUEST_CREDENTIALS_GET_CHANNEL,
-  BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL,
   BROWSER_GUEST_ZOOM_CHANNEL,
-  type BrowserImportedCredential,
   isBrowserGuestCommand,
   resolveBrowserGuestWheelZoomDirection,
 } from '../../shared/browser/browser';
 import { installBrowserRecordingGuest } from '../browser/recording/browserRecordingGuest';
+import { installBrowserGuestCredentials } from './browserGuestCredentials';
 
 installBrowserRecordingGuest();
+installBrowserGuestCredentials();
 
 type InspectionPoint = { x: number; y: number };
 const MAX_SIBLINGS_SCANNED = 512;
@@ -155,60 +153,3 @@ const reportViewportChange = (): void => {
 };
 window.addEventListener('scroll', reportViewportChange, true);
 window.addEventListener('resize', reportViewportChange);
-
-const setNativeInputValue = (input: HTMLInputElement, value: string): void => {
-  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set?.call(input, value);
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  input.dispatchEvent(new Event('change', { bubbles: true }));
-};
-
-const requestedPasswordInputs = new WeakSet<HTMLInputElement>();
-let pendingPasswordInput: HTMLInputElement | null = null;
-const tryAutofillImportedCredential = async (passwordInput: HTMLInputElement): Promise<void> => {
-  if (requestedPasswordInputs.has(passwordInput) || !/^https?:$/.test(location.protocol)) return;
-  if (!passwordInput || passwordInput.value) return;
-  requestedPasswordInputs.add(passwordInput);
-  try {
-    const credentials = (await ipcRenderer.invoke(
-      BROWSER_GUEST_CREDENTIALS_GET_CHANNEL,
-    )) as BrowserImportedCredential[];
-    // Multiple accounts require a picker; never guess which credential the user wants.
-    if (credentials.length !== 1) return;
-    const credential = credentials[0]!;
-    const usernameInput = passwordInput.form?.querySelector<HTMLInputElement>(
-      'input[autocomplete="username"], input[type="email"], input[type="text"]',
-    );
-    if (usernameInput && !usernameInput.value)
-      setNativeInputValue(usernameInput, credential.username);
-    setNativeInputValue(passwordInput, credential.password);
-  } catch {
-    // Autofill is best-effort and never blocks page interaction.
-  }
-};
-
-ipcRenderer.on(BROWSER_GUEST_CREDENTIALS_FILL_CHANNEL, () => {
-  const passwordInput = pendingPasswordInput;
-  pendingPasswordInput = null;
-  if (!passwordInput?.isConnected || passwordInput.disabled || passwordInput.readOnly) return;
-  void tryAutofillImportedCredential(passwordInput);
-});
-
-// A page click may only request that the host shows its own trusted confirmation UI. The
-// credential is not requested from Main until the user confirms outside the guest contents.
-document.addEventListener(
-  'pointerdown',
-  event => {
-    if (!event.isTrusted || event.button !== 0) return;
-    const target = event.target;
-    if (
-      target instanceof HTMLInputElement &&
-      target.type === 'password' &&
-      !target.disabled &&
-      !target.readOnly
-    ) {
-      pendingPasswordInput = target;
-      ipcRenderer.sendToHost(BROWSER_GUEST_CREDENTIALS_OFFER_CHANNEL);
-    }
-  },
-  true,
-);

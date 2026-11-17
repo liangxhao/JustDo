@@ -1,14 +1,11 @@
 import { execFile } from 'child_process';
-import { ipcMain, session, shell } from 'electron';
+import { ipcMain, shell } from 'electron';
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
 import { promisify } from 'util';
 
 import {
-  BROWSER_GUEST_CREDENTIALS_GET_CHANNEL,
-  BROWSER_IMPORTED_PROFILE_PARTITION,
-  BROWSER_PANEL_PARTITION,
   type BrowserActionResult,
   type BrowserClearDataResult,
   type BrowserClearDataSummaryResult,
@@ -43,7 +40,6 @@ import {
   deleteBrowserDownloads,
   deleteBrowserHistory,
   getBrowserDownloadPath,
-  getImportedCredentials,
   importChromeData,
   listBrowserDownloads,
   listBrowserHistory,
@@ -361,24 +357,6 @@ export const registerBrowserHandlers = ({
       );
     },
   );
-  ipcMain.handle(BROWSER_GUEST_CREDENTIALS_GET_CHANNEL, event => {
-    if (
-      event.sender.getType() !== 'webview' ||
-      ![
-        session.fromPartition(BROWSER_PANEL_PARTITION),
-        session.fromPartition(BROWSER_IMPORTED_PROFILE_PARTITION),
-      ].includes(event.sender.session) ||
-      event.senderFrame !== event.sender.mainFrame
-    ) {
-      return [];
-    }
-    try {
-      const credentials = getImportedCredentials(new URL(event.senderFrame.url).origin);
-      return credentials.length === 1 ? credentials : [];
-    } catch {
-      return [];
-    }
-  });
   ipcMain.handle(BrowserIpc.GetStatus, async () => {
     const bundledExtensionVersion = readBundledChromeExtensionVersion();
     try {

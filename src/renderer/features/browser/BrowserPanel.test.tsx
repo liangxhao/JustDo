@@ -3340,16 +3340,16 @@ describe('BrowserPanel embedded webview', () => {
     const { container } = render(<BrowserPanelHarness />);
     const webview = container.querySelector('webview')!;
     const offer = new Event('ipc-message');
-    Object.assign(offer, { channel: 'justdo-browser-credentials:offer', args: [] });
+    Object.assign(offer, { channel: 'justdo-browser-credentials:offer', args: ['credential-offer-id'] });
 
     fireEvent(webview, offer);
 
     expect(
       await screen.findByText('Use the sign-in information saved for this site?'),
     ).toBeTruthy();
-    expect(guestSend).not.toHaveBeenCalledWith('justdo-browser-credentials:fill');
+    expect(guestSend).not.toHaveBeenCalledWith('justdo-browser-credentials:fill', expect.anything(), true);
     fireEvent.click(screen.getByRole('button', { name: 'Fill' }));
-    expect(guestSend).toHaveBeenCalledWith('justdo-browser-credentials:fill');
+    expect(guestSend).toHaveBeenCalledWith('justdo-browser-credentials:fill', 'credential-offer-id', true);
     expect(screen.queryByText('Use the sign-in information saved for this site?')).toBeNull();
   });
 

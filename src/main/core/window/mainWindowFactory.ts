@@ -34,6 +34,7 @@ import {
 import { WebpageEmbedIpc, type WebpageEmbedRequest } from '../../../shared/browser/webpageEmbed';
 import type { WorkspaceWindowBounds } from '../../../shared/cowork/workspaceWindow';
 import { registerBrowserNetworkDiagnostics } from '../../browser/browserNetworkDiagnostics';
+import { isSameBrowserSession } from '../../browser/browserSessionIdentity';
 import {
   configureBrowserSessionUi,
   ensureBrowserSessionPolicy,
@@ -44,6 +45,7 @@ import {
   updateBrowserDownload,
 } from '../../browser/data/browserDataImportService';
 import { sanitizeBrowserUrl } from '../../browser/data/browserDataSanitizers';
+import { registerBrowserGuestCredentials } from '../../browser/data/browserGuestCredentials';
 import {
   cancelBrowserAgentDownloadsForWebContents,
   claimBrowserAgentDownload,
@@ -602,6 +604,16 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       registerBrowserNetworkDiagnostics(guestContents);
       browserGuests.add(guestContents);
       guestContents.once('destroyed', () => browserGuests.delete(guestContents));
+      if (
+        isSameBrowserSession(guestContents.session, browserPanelSession) ||
+        isSameBrowserSession(guestContents.session, importedBrowserSession)
+      ) {
+        registerBrowserGuestCredentials(
+          guestContents,
+          () => workspaceManager?.presentationWindow(host.id) ?? mainWindow,
+          () => options.isBrowserGuestAutomating?.(guestContents.id) ?? false,
+        );
+      }
       let externalProtocolPromptPending = false;
       const requestExternalProtocol = (url: string): void => {
         if (externalProtocolPromptPending || !isAllowedExternalBrowserUrl(url)) return;

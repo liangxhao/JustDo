@@ -555,30 +555,56 @@ export const importChromeData = async (
   return { success: true, imported, skippedAppBound, failed };
 };
 
-export const getImportedCredentials = (origin: string): BrowserImportedCredential[] => {
-  let normalizedOrigin: string;
-  try {
-    normalizedOrigin = new URL(origin).origin;
-  } catch {
-    return [];
-  }
-  if (!/^https?:\/\//i.test(normalizedOrigin)) return [];
+export const findBrowserCredential = (
+  origin: string,
+  username: string | null,
+): BrowserImportedCredential | null => {
   const dbPath = path.join(app.getPath('userData'), 'browser-import.sqlite');
-  if (!fs.existsSync(dbPath)) return [];
+  if (!fs.existsSync(dbPath)) return null;
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
-    const rows = db
-      .prepare(
-        'SELECT username, password FROM imported_passwords WHERE origin = ? ORDER BY updated_at DESC LIMIT 10',
-      )
-      .all(normalizedOrigin) as Array<{ username: string; password: Buffer }>;
-    return rows.flatMap(row => {
+    const rows = (username === null
+      ? db.prepare(`
+          SELECT username, password FROM imported_passwords WHERE origin = ? ORDER BY updated_at DESC LIMIT 11
+        `).all(origin)
+      : db.prepare(`
+          SELECT username, password FROM imported_passwords WHERE origin = ? AND username = ?
+        `).all(origin, username)) as Array<{ username: string; password: Buffer }>;
+    // Require an explicit account when the bounded lookup cannot establish uniqueness.
+    if (rows.length > 10) return null;
+
+    let match: BrowserImportedCredential | null = null;
+    for (const row of rows) {
+      let password: string;
       try {
-        return [{ username: row.username, password: safeStorage.decryptString(row.password) }];
+        password = safeStorage.decryptString(row.password);
       } catch {
-        return [];
+        continue;
       }
-    });
+      if (!password) continue;
+      if (match) return null;
+      match = { username: row.username, password };
+    }
+    return match;
+  } finally {
+    db.close();
+  }
+};
+
+export const saveBrowserCredential = (origin: string, credential: BrowserImportedCredential): void => {
+  if (
+    !safeStorage.isEncryptionAvailable() ||
+    (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')
+  ) {
+    throw new Error('Browser password storage is unavailable.');
+  }
+  const encryptedPassword = safeStorage.encryptString(credential.password);
+  const db = openImportedDataDb();
+  try {
+    db.prepare(`
+      INSERT INTO imported_passwords(origin, username, password, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(origin, username) DO UPDATE SET password = excluded.password, updated_at = excluded.updated_at
+    `).run(origin, credential.username, encryptedPassword, Date.now());
   } finally {
     db.close();
   }
