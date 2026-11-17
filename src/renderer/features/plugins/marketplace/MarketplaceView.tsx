@@ -12,6 +12,7 @@ import { i18nService } from '@/services/i18n';
 import { MarketplaceAction } from './MarketplaceActions';
 import MarketplaceDetail from './MarketplaceDetail';
 import MarketplaceOperationFeedback from './MarketplaceOperationFeedback';
+import MarketplaceUnconfiguredNotice from './MarketplaceUnconfiguredNotice';
 import {
   type InstalledMarketplacePlugin,
   MarketplaceFilter,
@@ -107,7 +108,7 @@ export function MarketplaceResults({
         </div>
       )}
       {c.source === null && !c.sourceError && (
-        <p className="py-4 text-sm text-secondary">{i18nService.t('marketplaceNotConfigured')}</p>
+        <MarketplaceUnconfiguredNotice className="py-4 text-sm text-secondary" />
       )}
       {(c.loading || c.source === undefined) && (
         <PluginActivityStatus message={i18nService.t('marketplaceLoading')} />

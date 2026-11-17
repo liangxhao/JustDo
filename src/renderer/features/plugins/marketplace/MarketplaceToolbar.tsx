@@ -5,6 +5,7 @@ import { i18nService } from '@/services/i18n';
 
 import MarketplaceOperationFeedback from './MarketplaceOperationFeedback';
 import { MarketplaceToolbarSlot } from './MarketplaceToolbarSlot';
+import MarketplaceUnconfiguredNotice from './MarketplaceUnconfiguredNotice';
 import { MarketplaceFilter, type PluginMarketplaceController } from './usePluginMarketplace';
 
 export default function MarketplaceToolbar({
@@ -58,7 +59,7 @@ export default function MarketplaceToolbar({
       {controller.filter === MarketplaceFilter.UPDATES &&
         controller.source === null &&
         !controller.sourceError && (
-          <p className="text-sm text-secondary">{i18nService.t('marketplaceNotConfigured')}</p>
+          <MarketplaceUnconfiguredNotice className="text-sm text-secondary" />
         )}
       {controller.updateError && (
         <p role="status" className="text-xs text-amber-700 dark:text-amber-300">
