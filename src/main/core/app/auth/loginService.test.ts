@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { LOGIN_STORAGE_CONFIG } from '../../../../config/loginStorage';
 import type { AuthState } from '../../../../shared/app/auth';
-import { AuthErrorCode, AuthStatus, AuthSyncStatus } from '../../../../shared/app/auth';
+import { AuthErrorCode, AuthLoginPhase, AuthStatus, AuthSyncStatus } from '../../../../shared/app/auth';
 import {
   getOutboundHeaderUserInfo,
   publishOutboundHeaderUserInfoCache,
@@ -96,6 +96,7 @@ test('a canceled popup leaves imported credentials intact and does not refresh s
   context.store.writeLogin(session);
   await context.service.restoreFromFile();
   expect((await context.service.login()).canceled).toBe(true);
+  expect(context.service.getState().loginPhase).toBeNull();
   expect(context.store.read()?.values.mtoken).toBe(session.mtoken);
   expect(context.onLoginCommitted).not.toHaveBeenCalled();
   expect(context.onLogoutCommitted).not.toHaveBeenCalled();
@@ -112,7 +113,41 @@ test('login commits mtoken and headers before the single combined model and head
   expect(context.onLoginCommitted).toHaveBeenCalledTimes(1);
   expect(context.onHeadersCommitted).not.toHaveBeenCalled();
   expect(context.service.getState().syncStatus).toBe(AuthSyncStatus.Completed);
+  expect(context.changes.map(state => state.loginPhase)).toContain(AuthLoginPhase.Completing);
   expect(JSON.stringify(context.changes)).not.toMatch(/synthetic|mtoken|X-Cookie|X-Tool-Token/);
+});
+
+test('a submitted dialog enters completion while the SDK still has to verify the account', async () => {
+  let submitDialog!: () => void;
+  let authenticate!: (result: LoginSdkResult) => void;
+  const context = setup({
+    login: ({ onDialogSubmitted }) => {
+      submitDialog = onDialogSubmitted;
+      return new Promise(resolve => {
+        authenticate = resolve;
+      });
+    },
+  });
+  context.onLoginCommitted.mockImplementationOnce(async () => {
+    expect(context.service.getState()).toMatchObject({
+      status: AuthStatus.SignedIn,
+      loginPhase: null,
+    });
+  });
+
+  const login = context.service.login();
+  expect(context.service.getState().loginPhase).toBe(AuthLoginPhase.Dialog);
+  submitDialog();
+
+  expect(context.service.getState()).toMatchObject({
+    status: AuthStatus.SignedOut,
+    loginPhase: AuthLoginPhase.Completing,
+  });
+  expect(context.store.read()).toBeNull();
+  expect(context.onLoginCommitted).not.toHaveBeenCalled();
+
+  authenticate({ status: 'authenticated', session });
+  expect((await login).success).toBe(true);
 });
 
 test('failed model synchronization keeps the committed login and can be retried', async () => {
@@ -185,11 +220,14 @@ test('duplicate login clicks share a popup and a late old result cannot restore 
 
 test('a newer login can complete even if an aborted older SDK popup ignores its signal', async () => {
   let complete!: (value: LoginSdkResult) => void;
+  let submitOldDialog!: () => void;
   const context = setup({
-    login: () =>
-      new Promise(resolve => {
+    login: ({ onDialogSubmitted }) => {
+      submitOldDialog = onDialogSubmitted;
+      return new Promise(resolve => {
         complete = resolve;
-      }),
+      });
+    },
   });
   const first = context.service.login();
   await context.service.logout();
@@ -197,7 +235,10 @@ test('a newer login can complete even if an aborted older SDK popup ignores its 
     status: 'authenticated',
     session: { account: 'bob', mtoken: 'bob-token' },
   });
-  await context.service.login();
+  const second = context.service.login();
+  submitOldDialog();
+  expect(context.service.getState().loginPhase).toBe(AuthLoginPhase.Dialog);
+  await second;
   complete({ status: 'authenticated', session });
   await first;
   expect(context.store.read()?.profile.account).toBe('bob');

@@ -1,6 +1,7 @@
 import {
   type AuthActionResult,
   AuthErrorCode,
+  AuthLoginPhase,
   AuthOperation,
   type AuthState,
   AuthStatus,
@@ -85,7 +86,11 @@ export class LoginService {
     }
     const generation = ++this.generation;
     const controller = new AbortController();
-    this.setState({ operation: AuthOperation.Login, errorCode: null });
+    this.setState({
+      operation: AuthOperation.Login,
+      loginPhase: AuthLoginPhase.Dialog,
+      errorCode: null,
+    });
     const promise = this.runLogin(generation, controller).finally(() => {
       if (this.loginAttempt?.controller === controller) this.loginAttempt = null;
     });
@@ -237,8 +242,25 @@ export class LoginService {
     generation: number,
     controller: AbortController,
   ): Promise<AuthActionResult> {
+    let sdkPending = true;
+    const enterCompletion = () => {
+      if (
+        this.disposed ||
+        generation !== this.generation ||
+        controller.signal.aborted ||
+        this.state.loginPhase !== AuthLoginPhase.Dialog
+      ) return;
+      this.setState({ loginPhase: AuthLoginPhase.Completing });
+    };
     try {
-      const result = await this.dependencies.adapter.login({ signal: controller.signal });
+      const result = await this.dependencies.adapter.login({
+        signal: controller.signal,
+        onDialogSubmitted: () => {
+          if (sdkPending) enterCompletion();
+        },
+      });
+      sdkPending = false;
+      if (result.status === LoginSdkStatus.Authenticated) enterCompletion();
       return await this.enqueue(async () => {
         if (this.disposed || generation !== this.generation || controller.signal.aborted) {
           return this.failure(AuthErrorCode.SessionChanged);
@@ -271,6 +293,7 @@ export class LoginService {
         return synced ? this.success() : this.failure(AuthErrorCode.SyncFailed);
       });
     } catch (error) {
+      sdkPending = false;
       if (this.disposed || generation !== this.generation || controller.signal.aborted) {
         return this.failure(AuthErrorCode.SessionChanged);
       }
@@ -326,7 +349,11 @@ export class LoginService {
 
   private setState(patch: Partial<AuthState>): void {
     if (this.disposed) return;
-    this.state = { ...this.state, ...patch, revision: this.state.revision + 1 };
+    const next = { ...this.state, ...patch, revision: this.state.revision + 1 };
+    if (next.operation !== AuthOperation.Login || patch.status === AuthStatus.SignedIn) {
+      next.loginPhase = null;
+    }
+    this.state = next;
     this.dependencies.onStateChanged(this.state);
   }
 

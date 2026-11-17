@@ -131,7 +131,7 @@ Main 通过 webContents 事件通知会话变化、目标执行、审批、结�
 账号入口通过 `auth` 的四个显式操作查询、登录、退出和重试服务同步，仅主窗口 main frame
 可调用。Main 的 LoginService 持有账号操作队列与 SDK 取消身份；SDK 在 Main 确认身份后
 返回凭据，产品原子写入登录文件，再 await 现有模型与 Header 生命周期入口。
-Renderer 仅接收含 revision 的显示资料、闭合错误码和独立账号/同步状态，先订阅再读取快照，
+Renderer 仅接收含 revision 的显示资料、闭合错误码、弹窗提交阶段和独立账号/同步状态，先订阅再读取快照，
 不接收 token、Cookie 或 SDK 原始结果。
 
 文件导入只恢复 local-credentials 显示，不门禁原有

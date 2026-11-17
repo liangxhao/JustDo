@@ -29,8 +29,8 @@ export type CredentialUpdate = Readonly<{
 
 export interface LoginSdkAdapter {
   readonly available: boolean;
-  /** Own the SDK popup; abort must close it and remove its listeners. */
-  login: (options: { signal: AbortSignal }) => Promise<LoginSdkResult>;
+  /** Own the popup. Notify after submission actually hides it, before authentication settles. Abort closes it and removes listeners. */
+  login: (options: { signal: AbortSignal; onDialogSubmitted: () => void }) => Promise<LoginSdkResult>;
   /** Optional SDK session restoration; must verify, not infer login from file presence. */
   restoreSession?: (options: { signal: AbortSignal; profile: AuthProfile }) => Promise<boolean>;
   logout?: (options: { signal: AbortSignal }) => Promise<void>;

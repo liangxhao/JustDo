@@ -1,7 +1,9 @@
 /// <reference lib="es2022.intl" />
 
-import { ArrowRightEndOnRectangleIcon, UserIcon } from '@heroicons/react/24/outline';
-import { AuthErrorCode, AuthOperation, AuthStatus, AuthSyncStatus } from '@shared/app/auth';
+import './AuthEntry.css';
+
+import { ArrowRightEndOnRectangleIcon, ArrowRightStartOnRectangleIcon, UserIcon } from '@heroicons/react/24/outline';
+import { AuthErrorCode, AuthLoginPhase, AuthOperation, AuthStatus, AuthSyncStatus } from '@shared/app/auth';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -31,22 +33,28 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const busy = loading || state.operation !== AuthOperation.Idle;
   const hasAccount = state.status !== AuthStatus.SignedOut;
-  const showLoginText = compact && !hasAccount;
-  const EntryIcon = hasAccount ? UserIcon : ArrowRightEndOnRectangleIcon;
+  const signingOut = state.operation === AuthOperation.Logout;
+  const loginPhase = state.status === AuthStatus.SignedIn ? null : state.loginPhase;
+  const accountPendingLabel = loading
+    ? i18nService.t('authLoading')
+    : signingOut
+      ? i18nService.t('authSigningOut')
+      : null;
+  const completingLogin = loginPhase === AuthLoginPhase.Completing;
+  const showSpinner = Boolean(accountPendingLabel) || completingLogin;
+  const progressMessage = accountPendingLabel ?? (loginPhase
+    ? i18nService.t(completingLogin ? 'authSigningIn' : 'authAwaitingLogin')
+    : undefined);
+  const showLoginText = compact && !hasAccount && !showSpinner;
   const accountName = state.profile?.displayName.trim() || state.profile?.account.trim() || '';
-  const label = accountName || i18nService.t('authLogin');
+  const label = accountPendingLabel ?? (accountName || i18nService.t('authLogin'));
   const initial = accountNameSegmenter.segment(accountName)[Symbol.iterator]().next()
     .value?.segment;
-  const subtitle =
-    state.operation === AuthOperation.Login
-      ? 'authSigningIn'
-      : state.operation === AuthOperation.Logout
-        ? 'authSigningOut'
-        : state.syncStatus === AuthSyncStatus.Pending
-          ? 'authSyncPending'
-          : state.status === AuthStatus.LocalCredentials
-            ? 'authLocalCredentials'
-            : 'authSignedIn';
+  const subtitle = state.syncStatus === AuthSyncStatus.Pending
+    ? 'authSyncPending'
+    : state.status === AuthStatus.LocalCredentials
+      ? 'authLocalCredentials'
+      : 'authSignedIn';
 
   useEffect(() => {
     if (!open) return;
@@ -96,9 +104,9 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
     };
   }, [open, compact, busy, errorCode, hasAccount, state.syncStatus]);
 
-  const startLogin = async () => {
+  const runAccountAction = async (action: typeof login) => {
     setOpen(false);
-    const result = await login();
+    const result = await action();
     if (result && !result.success && root.current) setOpen(true);
   };
 
@@ -124,7 +132,7 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
           role="status"
           className="overflow-x-auto whitespace-nowrap px-2 py-2 text-xs text-secondary"
         >
-          {i18nService.t(subtitle)}
+          {progressMessage ?? i18nService.t(subtitle)}
         </p>
       )}
       {errorCode && (
@@ -149,7 +157,7 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
         <button
           type="button"
           disabled={busy}
-          onClick={() => void startLogin()}
+          onClick={() => void runAccountAction(login)}
           className="w-full rounded-lg px-2 py-2 text-left text-sm text-secondary hover:bg-surface-raised disabled:opacity-50"
         >
           {i18nService.t('authLogin')}
@@ -159,7 +167,7 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
         <button
           type="button"
           disabled={busy}
-          onClick={() => void logout()}
+          onClick={() => void runAccountAction(logout)}
           className="w-full rounded-lg px-2 py-2 text-left text-sm text-secondary hover:bg-surface-raised disabled:opacity-50"
         >
           {i18nService.t('authLogout')}
@@ -173,38 +181,51 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
       <button
         ref={button}
         type="button"
-        className={`flex min-w-0 items-center text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60 ${compact ? 'h-9 w-9 justify-center rounded-xl' : 'w-full gap-2 rounded-lg px-2 py-2 text-left'}`}
+        className={`auth-entry-button flex min-w-0 items-center text-secondary transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${compact ? 'h-9 w-9 justify-center rounded-xl' : 'w-full gap-2 rounded-lg px-2 py-2 text-left'}`}
+        data-login-phase={loginPhase ?? undefined}
         disabled={busy}
-        aria-label={hasAccount ? i18nService.t('authAccountMenu') : i18nService.t('authLogin')}
+        aria-busy={progressMessage ? true : undefined}
+        aria-label={accountPendingLabel ?? i18nService.t(hasAccount ? 'authAccountMenu' : 'authLogin')}
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        title={hasAccount ? `${label} · ${i18nService.t(subtitle)}` : label}
-        onClick={hasAccount ? () => setOpen(value => !value) : () => void startLogin()}
+        title={progressMessage ?? (hasAccount ? `${label} · ${i18nService.t(subtitle)}` : label)}
+        onClick={hasAccount ? () => setOpen(value => !value) : () => void runAccountAction(login)}
       >
-        {hasAccount && initial ? (
+        {showSpinner ? (
           <span
             aria-hidden="true"
-            className={`inline-flex shrink-0 items-center justify-center rounded-full border border-current bg-transparent font-medium leading-none ${compact ? 'h-[18px] w-[18px] text-[10px]' : 'h-7 w-7 text-sm'}`}
+            className={`relative grid shrink-0 place-items-center ${signingOut ? 'h-6 w-6' : 'h-4 w-4'}`}
           >
-            {initial}
+            <span className="auth-entry-button__spinner" />
+            {signingOut && <ArrowRightStartOnRectangleIcon className="h-3 w-3 text-primary" />}
+          </span>
+        ) : hasAccount ? (
+          <span
+            aria-hidden="true"
+            className={`auth-entry-button__avatar inline-flex shrink-0 items-center justify-center rounded-full font-semibold leading-none ${compact ? 'h-6 w-6 text-xs' : 'h-7 w-7 text-sm'}`}
+          >
+            {initial ?? <UserIcon className="h-3.5 w-3.5" />}
           </span>
         ) : !showLoginText ? (
-          <EntryIcon aria-hidden="true" className={`${compact ? 'h-5 w-5' : 'h-7 w-7'} shrink-0`} />
+          <ArrowRightEndOnRectangleIcon aria-hidden="true" className="h-7 w-7 shrink-0" />
         ) : null}
-        <span className={compact && hasAccount ? 'sr-only' : 'min-w-0'}>
+        <span className={compact && (hasAccount || showSpinner) ? 'sr-only' : 'min-w-0'}>
           <span
             className={`block truncate ${showLoginText ? 'text-xs font-normal leading-4' : 'text-sm font-medium'}`}
             title={label}
           >
             {label}
           </span>
-          {(hasAccount || busy) && (
+          {!accountPendingLabel && (hasAccount || busy) && (
             <span className={compact ? 'sr-only' : 'block truncate text-xs text-secondary'}>
-              {loading ? i18nService.t('authLoading') : i18nService.t(subtitle)}
+              {progressMessage ?? i18nService.t(subtitle)}
             </span>
           )}
         </span>
       </button>
+      <span role="status" className="sr-only">
+        {progressMessage}
+      </span>
       {panel && (compact ? createPortal(panel, document.body) : panel)}
     </div>
   );

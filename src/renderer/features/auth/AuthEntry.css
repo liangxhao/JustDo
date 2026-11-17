@@ -1,0 +1,50 @@
+.auth-entry-button[aria-busy='true'] {
+  background-color: color-mix(in srgb, var(--justdo-primary) 12%, var(--justdo-surface));
+  color: var(--justdo-foreground);
+}
+
+.auth-entry-button:disabled:not([aria-busy='true']) {
+  opacity: 0.6;
+}
+
+.auth-entry-button[data-login-phase='dialog'] {
+  animation: auth-dialog-pulse 1.8s ease-in-out infinite;
+}
+
+.auth-entry-button__avatar {
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--justdo-primary) 32%, var(--justdo-surface)),
+    color-mix(in srgb, var(--justdo-primary) 13%, var(--justdo-surface))
+  );
+  color: var(--justdo-foreground);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--justdo-primary) 25%, transparent);
+}
+
+.auth-entry-button__spinner {
+  position: absolute;
+  inset: 0;
+  border: 2px solid color-mix(in srgb, var(--justdo-primary) 27%, transparent);
+  border-top-color: var(--justdo-primary-hover);
+  border-radius: 50%;
+  animation: auth-progress-spin 850ms linear infinite;
+}
+
+@keyframes auth-dialog-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--justdo-primary) 32%, transparent); }
+  50% { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--justdo-primary) 82%, transparent); }
+}
+
+@keyframes auth-progress-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-entry-button[data-login-phase='dialog'] {
+    animation: auth-dialog-pulse 1.8s ease-in-out infinite;
+  }
+
+  .auth-entry-button__spinner {
+    animation: auth-progress-spin 850ms linear infinite;
+  }
+}

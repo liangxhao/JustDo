@@ -19,6 +19,11 @@ export const AuthOperation = {
   Sync: 'sync',
 } as const;
 
+export const AuthLoginPhase = {
+  Dialog: 'dialog',
+  Completing: 'completing',
+} as const;
+
 export const AuthSyncStatus = {
   Idle: 'idle',
   Pending: 'pending',
@@ -50,6 +55,7 @@ export type AuthState = Readonly<{
   sdkAvailable: boolean;
   status: (typeof AuthStatus)[keyof typeof AuthStatus];
   operation: (typeof AuthOperation)[keyof typeof AuthOperation];
+  loginPhase: (typeof AuthLoginPhase)[keyof typeof AuthLoginPhase] | null;
   syncStatus: (typeof AuthSyncStatus)[keyof typeof AuthSyncStatus];
   profile: AuthProfile | null;
   errorCode: AuthErrorCode | null;
@@ -75,6 +81,7 @@ export const INITIAL_AUTH_STATE: AuthState = {
   sdkAvailable: false,
   status: AuthStatus.SignedOut,
   operation: AuthOperation.Idle,
+  loginPhase: null,
   syncStatus: AuthSyncStatus.Idle,
   profile: null,
   errorCode: null,

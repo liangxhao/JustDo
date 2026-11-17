@@ -3,6 +3,7 @@ import {
   type AuthActionResult,
   type AuthApi,
   AuthErrorCode,
+  AuthLoginPhase,
   AuthOperation,
   type AuthState,
   AuthStatus,
@@ -51,6 +52,32 @@ const imported: AuthState = {
   profile: { account: 'alice', displayName: 'Alice' },
 };
 
+test.each([
+  { state: INITIAL_AUTH_STATE, label: 'authLogin' },
+  { state: { ...imported, status: AuthStatus.SignedIn }, label: 'authAccountMenu' },
+])('the initial read shows a spinner before revealing $label', async ({ state, label }) => {
+  const { api } = setup();
+  let finishRead!: (state: AuthState) => void;
+  vi.mocked(api.getState).mockImplementationOnce(() => new Promise(resolve => {
+    finishRead = resolve;
+  }));
+  render(<AuthEntry compact />);
+
+  const button = screen.getByRole('button', { name: 'authLoading' });
+  expect(button.hasAttribute('disabled')).toBe(true);
+  expect(button.querySelector('.auth-entry-button__spinner')).toBeTruthy();
+  expect(screen.getByRole('status').textContent).toBe('authLoading');
+  expect(screen.queryByText('authLogin')).toBeNull();
+
+  await act(async () => finishRead(state));
+  expect(screen.getByRole('button', { name: label })).toBe(button);
+  expect(button.hasAttribute('disabled')).toBe(false);
+  expect(button.querySelector('.auth-entry-button__spinner')).toBeNull();
+  expect(button.querySelector('.auth-entry-button__avatar')?.textContent ?? null).toBe(
+    state.profile ? 'A' : null,
+  );
+});
+
 test('clicking the signed-out avatar reports an unavailable SDK without displaying a fake login form', async () => {
   const { api } = setup();
   render(<AuthEntry />);
@@ -62,7 +89,7 @@ test('clicking the signed-out avatar reports an unavailable SDK without displayi
   expect(screen.queryByRole('textbox')).toBeNull();
 });
 
-test('a signed-out click invokes the SDK directly and successful login displays a username initial', async () => {
+test('a signed-out click shows both login phases before displaying the username initial', async () => {
   const initial = { ...INITIAL_AUTH_STATE, sdkAvailable: true };
   const context = setup(initial);
   let complete!: (result: AuthActionResult) => void;
@@ -73,30 +100,53 @@ test('a signed-out click invokes the SDK directly and successful login displays 
       }),
   );
   const { container } = render(<AuthEntry compact />);
-  const avatar = screen.getByRole('button', { name: 'authLogin' });
-  await waitFor(() => expect(avatar.hasAttribute('disabled')).toBe(false));
+  const avatar = await screen.findByRole('button', { name: 'authLogin' });
   fireEvent.click(avatar);
   expect(context.api.login).toHaveBeenCalledOnce();
-  act(() => context.send({ ...initial, revision: 1, operation: AuthOperation.Login }));
+  const dialog: AuthState = {
+    ...initial,
+    revision: 1,
+    operation: AuthOperation.Login,
+    loginPhase: AuthLoginPhase.Dialog,
+  };
+  act(() => context.send(dialog));
   expect(screen.queryByRole('region')).toBeNull();
+  expect(avatar.textContent).toContain('authLogin');
   expect(avatar.hasAttribute('disabled')).toBe(true);
+  expect(avatar.getAttribute('data-login-phase')).toBe(AuthLoginPhase.Dialog);
+  expect(screen.getByRole('status').textContent).toBe('authAwaitingLogin');
+  expect(avatar.querySelector('.auth-entry-button__spinner')).toBeNull();
+
+  act(() => context.send({ ...dialog, revision: 2, loginPhase: AuthLoginPhase.Completing }));
+  expect(avatar.hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('status').textContent).toBe('authSigningIn');
+  expect(avatar.querySelector('.auth-entry-button__spinner')).toBeTruthy();
+
+  const signedIn: AuthState = {
+    ...initial,
+    revision: 3,
+    status: AuthStatus.SignedIn,
+    profile: {
+      account: 'alice',
+      displayName: 'Alice',
+      avatarUrl: 'https://example.test/avatar.png',
+    },
+  };
+  act(() =>
+    context.send({ ...signedIn, operation: AuthOperation.Login, syncStatus: AuthSyncStatus.Pending }),
+  );
+  const account = screen.getByRole('button', { name: 'authAccountMenu' });
+  expect(account.querySelector('.auth-entry-button__avatar')?.textContent).toBe('A');
+  expect(account.hasAttribute('data-login-phase')).toBe(false);
+  expect(account.querySelector('.auth-entry-button__spinner')).toBeNull();
+  expect(screen.getByRole('status').textContent).toBe('');
+
   await act(async () =>
     complete({
       success: true,
-      state: {
-        ...initial,
-        revision: 2,
-        status: AuthStatus.SignedIn,
-        profile: {
-          account: 'alice',
-          displayName: 'Alice',
-          avatarUrl: 'https://example.test/avatar.png',
-        },
-      },
+      state: { ...signedIn, revision: 4, syncStatus: AuthSyncStatus.Completed },
     }),
   );
-  const account = screen.getByRole('button', { name: 'authAccountMenu' });
-  expect(account.contains(screen.getByText('A'))).toBe(true);
   expect(container.querySelector('img')).toBeNull();
   expect(screen.queryByRole('region')).toBeNull();
   fireEvent.click(account);
@@ -112,8 +162,7 @@ test('canceling the SDK popup leaves the product account panel closed', async ()
     state: { ...initial, revision: 1 },
   });
   render(<AuthEntry compact />);
-  const avatar = screen.getByRole('button', { name: 'authLogin' });
-  await waitFor(() => expect(avatar.hasAttribute('disabled')).toBe(false));
+  const avatar = await screen.findByRole('button', { name: 'authLogin' });
   await act(async () => fireEvent.click(avatar));
   expect(context.api.login).toHaveBeenCalledOnce();
   expect(screen.queryByRole('region')).toBeNull();
@@ -152,8 +201,7 @@ test('an obsolete SDK failure cannot reopen the account panel after a newer logi
       }),
   );
   render(<AuthEntry compact />);
-  const avatar = screen.getByRole('button', { name: 'authLogin' });
-  await waitFor(() => expect(avatar.hasAttribute('disabled')).toBe(false));
+  const avatar = await screen.findByRole('button', { name: 'authLogin' });
   fireEvent.click(avatar);
   act(() =>
     context.send({
@@ -179,8 +227,7 @@ test('an invocation failure shows a generic account hint without exposing the SD
   const context = setup();
   vi.mocked(context.api.login).mockRejectedValueOnce(new Error('sensitive-sdk-detail'));
   render(<AuthEntry compact />);
-  const avatar = screen.getByRole('button', { name: 'authLogin' });
-  await waitFor(() => expect(avatar.hasAttribute('disabled')).toBe(false));
+  const avatar = await screen.findByRole('button', { name: 'authLogin' });
   fireEvent.click(avatar);
   await screen.findByText('authUnavailable');
   expect(screen.queryByText('sensitive-sdk-detail')).toBeNull();
@@ -196,8 +243,7 @@ test('an obsolete rejected invocation cannot show an error after a newer signed-
       }),
   );
   render(<AuthEntry compact />);
-  const avatar = screen.getByRole('button', { name: 'authLogin' });
-  await waitFor(() => expect(avatar.hasAttribute('disabled')).toBe(false));
+  const avatar = await screen.findByRole('button', { name: 'authLogin' });
   fireEvent.click(avatar);
   act(() =>
     context.send({
@@ -227,6 +273,46 @@ test('imported credentials show their source and allow local sign-out with the S
   unmount();
   expect(stop).toHaveBeenCalledTimes(1);
 });
+
+test.each([null, AuthErrorCode.LogoutFailed])(
+  'sign-out keeps its spinner through cleanup and shows a warning only on failure (%s)',
+  async errorCode => {
+    const signedIn = { ...imported, status: AuthStatus.SignedIn };
+    const context = setup(signedIn);
+    let complete!: (result: AuthActionResult) => void;
+    vi.mocked(context.api.logout).mockImplementationOnce(
+      () => new Promise(resolve => {
+        complete = resolve;
+      }),
+    );
+    render(<AuthEntry compact />);
+    const avatar = await screen.findByRole('button', { name: 'authAccountMenu' });
+    fireEvent.click(avatar);
+    fireEvent.click(screen.getByRole('button', { name: 'authLogout' }));
+    expect(screen.queryByRole('region')).toBeNull();
+
+    act(() => context.send({ ...signedIn, revision: 3, operation: AuthOperation.Logout }));
+    const progress = screen.getByRole('button', { name: 'authSigningOut' });
+    expect(progress.hasAttribute('disabled')).toBe(true);
+    expect(progress.querySelector('.auth-entry-button__spinner + svg')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('authSigningOut');
+
+    const localSignOut = { ...INITIAL_AUTH_STATE, revision: 4, operation: AuthOperation.Logout };
+    act(() => context.send(localSignOut));
+    expect(screen.queryByRole('button', { name: 'authLogin' })).toBeNull();
+    expect(progress.querySelector('.auth-entry-button__spinner')).toBeTruthy();
+
+    await act(async () => complete({
+      success: !errorCode,
+      ...(errorCode ? { errorCode } : {}),
+      state: { ...localSignOut, revision: 5, operation: AuthOperation.Idle, errorCode },
+    }));
+    expect(avatar.getAttribute('aria-label')).toBe('authLogin');
+    expect(avatar.hasAttribute('disabled')).toBe(false);
+    expect(avatar.querySelector('.auth-entry-button__spinner')).toBeNull();
+    expect(screen.queryByRole('alert')?.textContent ?? null).toBe(errorCode ? 'authLogoutFailed' : null);
+  },
+);
 
 test('an old initial query cannot undo a newer account notification', async () => {
   const context = setup();
