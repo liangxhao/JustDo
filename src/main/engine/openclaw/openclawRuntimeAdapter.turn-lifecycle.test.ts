@@ -1447,7 +1447,7 @@ test('does not reopen a terminal turn through its superseded provisional run id'
   expect(session.status).toBe('idle');
 });
 
-test('compaction pauses and then resumes the lifecycle end fallback', () => {
+test('late run compaction cannot cancel whole-run terminal cleanup', () => {
   vi.useFakeTimers();
   try {
     const { session, store } = createEmptyStore();
@@ -1479,20 +1479,9 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
         data: { phase: 'start' },
       },
     });
-    vi.advanceTimersByTime(2000);
+    vi.advanceTimersByTime(1499);
     expect(adapter.isSessionActive('session-1')).toBe(true);
-
-    adapter.handleGatewayEvent({
-      event: 'agent',
-      payload: {
-        seq: 11,
-        runId: 'run-1',
-        sessionKey: 'agent:main:justdo:session-1',
-        stream: 'compaction',
-        data: { phase: 'end', completed: true },
-      },
-    });
-    vi.advanceTimersByTime(1500);
+    vi.advanceTimersByTime(1);
     expect(adapter.isSessionActive('session-1')).toBe(false);
     expect(session.status).toBe('idle');
   } finally {
@@ -1501,7 +1490,40 @@ test('compaction pauses and then resumes the lifecycle end fallback', () => {
   }
 });
 
-test('lifecycle error converges the session to error after compaction fails', () => {
+test('independent manual compaction after a settled turn still waits for its own completion', () => {
+  vi.useFakeTimers();
+  try {
+    const { store } = createEmptyStore();
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    const key = 'agent:main:justdo:session-1';
+    const complete = vi.fn();
+    adapter.on('complete', complete);
+    adapter.rememberSessionKey('session-1', key);
+    adapter.ensureActiveTurn('session-1', key, 'run-1');
+    adapter.handleGatewayEvent({ event: 'agent', payload: {
+      seq: 1, runId: 'run-1', sessionKey: key, stream: 'lifecycle',
+      data: { phase: 'end', executionSettled: true },
+    } });
+    adapter.handleGatewayEvent({ event: 'session.operation', payload: {
+      operation: 'compact', phase: 'start', sessionKey: key,
+    } });
+
+    vi.advanceTimersByTime(LONG_COMPACTION_DURATION_MS);
+    expect(adapter.isSessionActive('session-1')).toBe(true);
+    expect(complete).not.toHaveBeenCalled();
+    adapter.handleGatewayEvent({ event: 'session.operation', payload: {
+      operation: 'compact', phase: 'end', sessionKey: key,
+    } });
+    vi.advanceTimersByTime(1500);
+    expect(adapter.isSessionActive('session-1')).toBe(false);
+    expect(complete).toHaveBeenCalledExactlyOnceWith('session-1', 'idle');
+  } finally {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+  }
+});
+
+test('whole-run error releases compaction even when its failure event is missing', () => {
   vi.useFakeTimers();
   try {
     const { session, store } = createEmptyStore();
@@ -1535,19 +1557,6 @@ test('lifecycle error converges the session to error after compaction fails', ()
         data: { phase: 'error', executionSettled: true, error: 'Compaction timed out' },
       },
     });
-    vi.advanceTimersByTime(2000);
-    expect(adapter.isSessionActive('session-1')).toBe(true);
-
-    adapter.handleGatewayEvent({
-      event: 'agent',
-      payload: {
-        seq: 14,
-        runId: 'run-1',
-        sessionKey: 'agent:main:justdo:session-1',
-        stream: 'compaction',
-        data: { phase: 'failed', error: 'Compaction timed out' },
-      },
-    });
     vi.advanceTimersByTime(1500);
 
     expect(adapter.isSessionActive('session-1')).toBe(false);
@@ -1559,7 +1568,7 @@ test('lifecycle error converges the session to error after compaction fails', ()
   }
 });
 
-test('long compaction pauses lifecycle completion until its native end arrives', () => {
+test('long run compaction remains active until whole-run settlement', () => {
   vi.useFakeTimers();
   try {
     const { session, store } = createEmptyStore();
@@ -1578,7 +1587,7 @@ test('long compaction pauses lifecycle completion until its native end arrives',
         runId: 'run-1',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'lifecycle',
-        data: { phase: 'end', executionSettled: true },
+        data: { phase: 'end', executionSettled: false },
       },
     });
     adapter.handleGatewayEvent({
@@ -1603,6 +1612,18 @@ test('long compaction pauses lifecycle completion until its native end arrives',
         sessionKey: 'agent:main:justdo:session-1',
         stream: 'compaction',
         data: { phase: 'end', completed: true, outcome: 'completed' },
+      },
+    });
+    vi.advanceTimersByTime(1500);
+    expect(adapter.isSessionActive('session-1')).toBe(true);
+    adapter.handleGatewayEvent({
+      event: 'agent',
+      payload: {
+        seq: 18,
+        runId: 'run-1',
+        sessionKey: 'agent:main:justdo:session-1',
+        stream: 'lifecycle',
+        data: { phase: 'end', executionSettled: true },
       },
     });
     vi.advanceTimersByTime(1500);

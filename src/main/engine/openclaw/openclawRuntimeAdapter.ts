@@ -383,6 +383,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       },
       onRunFailed: (sessionId, runId) => {
         if (this.activeTurns.get(sessionId)?.runId === runId) this.cleanupSessionTurn(sessionId);
+        const timing = this.store.getSessionRunByClientTurnId(runId);
+        if (timing?.sessionId === sessionId && timing.state === 'running' &&
+          (timing.rootRunId ?? timing.clientTurnId) === runId) {
+          this.store.finishSessionRun(timing.id, 'failed', Date.now());
+        }
       },
       onRunUnknown: (sessionId, runId) => {
         this.registerUnknownSessionRun(sessionId, runId);

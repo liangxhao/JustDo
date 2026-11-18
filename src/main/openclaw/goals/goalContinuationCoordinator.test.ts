@@ -234,6 +234,73 @@ describe('independent execution policy composition', () => {
     expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
   });
 
+  it.each([false, true])('retires an unsent registration failure before retrying its real predecessor (cleanup fails: %s)', async cleanupFails => {
+    vi.useFakeTimers();
+    const claimSuccessor = vi.fn(() => true);
+    const releaseSuccessor = vi.fn();
+    const harness = createHarness(SessionGoalStatus.Active, undefined, 20, undefined, {
+      claimSuccessor, releaseSuccessor,
+    });
+    harness.onRunAccepted.mockImplementationOnce(() => { throw new Error('Run registration failed'); });
+    if (cleanupFails) harness.onRunFailed.mockImplementationOnce(() => { throw new Error('Receipt cleanup failed'); });
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'end', executionSettled: true,
+    });
+    const candidate = harness.onRunAccepted.mock.calls[0][2];
+    expect(harness.onRunFailed).toHaveBeenCalledWith(sessionId, candidate);
+    expect(releaseSuccessor).toHaveBeenCalledWith('parent-run', candidate);
+    expect(harness.onRunUnknown).not.toHaveBeenCalled();
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    const sends = harness.request.mock.calls.filter(([method]) => method === 'agent');
+    expect(sends).toHaveLength(1);
+    expect(sends[0][1]).toMatchObject({ goalContinuation: { predecessorRunId: 'parent-run' } });
+    expect(sends[0][1]!.idempotencyKey).not.toBe(candidate);
+    expect(harness.onRunFailed.mock.calls).toEqual(cleanupFails
+      ? [[sessionId, candidate], [sessionId, candidate]] : [[sessionId, candidate]]);
+    harness.coordinator.clear();
+  });
+
+  it('does not send a candidate when registration synchronously stops its decision', async () => {
+    const releaseSuccessor = vi.fn();
+    const harness = createHarness(SessionGoalStatus.Active, undefined, 20, undefined, {
+      claimSuccessor: () => true, releaseSuccessor,
+    });
+    harness.onRunAccepted.mockImplementationOnce(() => {
+      harness.coordinator.stop(sessionId);
+      harness.coordinator.confirmStop(sessionId);
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'end', executionSettled: true,
+    });
+    const candidate = harness.onRunAccepted.mock.calls[0][2];
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    expect(harness.onRunFailed).toHaveBeenCalledWith(sessionId, candidate);
+    expect(releaseSuccessor).toHaveBeenCalledWith('parent-run', candidate);
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).toBe(GoalExecutionPhase.Stopped);
+    harness.coordinator.clear();
+  });
+
+  it('retires only its unsent candidate after a newer run takes over during registration', async () => {
+    const harness = createHarness();
+    harness.onRunAccepted.mockImplementationOnce(() => {
+      void harness.coordinator.handleLifecycle({ runId: 'new-user-run', sessionKey, phase: 'start' });
+      throw new Error('Old registration failed');
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'parent-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'end', executionSettled: true,
+    });
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+    expect(harness.onRunFailed).toHaveBeenCalledWith(sessionId, harness.onRunAccepted.mock.calls[0][2]);
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({ phase: GoalExecutionPhase.Running, runId: 'new-user-run' });
+    harness.coordinator.clear();
+  });
+
   it('preserves Goal retry attempts and continuation count across a technical run start', async () => {
     vi.useFakeTimers();
     const harness = createHarness();

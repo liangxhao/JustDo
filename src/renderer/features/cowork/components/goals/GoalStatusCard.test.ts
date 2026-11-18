@@ -274,7 +274,7 @@ describe('GoalStatusCard', () => {
     expect(onContinue).toHaveBeenCalledOnce();
   });
 
-  it('renders an active retrying execution without a confirmation action', () => {
+  it('shows the automatic retry attempt and its failure reason without a confirmation action', () => {
     const rendered = renderToStaticMarkup(
       React.createElement(GoalStatusCard, {
         goal: activeGoal,
@@ -282,6 +282,8 @@ describe('GoalStatusCard', () => {
           sessionId: 'session-1',
           goalId: 'goal-1',
           phase: GoalExecutionPhase.Retrying,
+          retryAttempt: 4,
+          error: 'The previous run is still active.',
           continuationCount: 1,
           updatedAt: Date.now(),
         },
@@ -289,7 +291,9 @@ describe('GoalStatusCard', () => {
       }),
     );
 
-    expect(rendered).toContain(i18nService.t('coworkGoalRetryingHint'));
+    expect(rendered).toContain(i18nService.t('coworkGoalRetryingAttemptHint').replace('{attempt}', '4'));
+    expect(rendered).toContain(i18nService.t('coworkErrorDetails'));
+    expect(rendered).toContain('The previous run is still active.');
     expect(rendered).toContain(i18nService.t('coworkGoalPause'));
     expect(rendered).not.toContain(i18nService.t('coworkGoalMarkComplete'));
   });

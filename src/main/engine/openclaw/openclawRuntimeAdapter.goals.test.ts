@@ -18,6 +18,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 }));
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
+import { SessionPermissionModeCoordinator } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
 import type { GatewayClientLike, SessionTurn } from '../gateway/types';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -57,6 +58,7 @@ function createEmptyStore() {
       getSession: (sessionId: string) => (sessionId === session.id ? session : null),
       getAgent: () => null,
       updateSession: () => {},
+      beginSessionRun: vi.fn(),
       getSessionRunByClientTurnId: () => undefined,
       listSessions: () => [
         {
@@ -1524,6 +1526,78 @@ test.each([undefined, 'generation-current'])('consumes a valid late Goal complet
   expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')).toMatchObject({ phase: 'awaiting_confirmation' });
   expect(adapter.activeTurns.has('session-1')).toBe(false);
   adapter.goalContinuationCoordinator.clear();
+});
+
+test.each([
+  ['end', 'before'], ['end', 'after'], ['error', 'before'], ['error', 'after'],
+] as const)('continues a settled Goal after missing compaction completion (%s, start %s terminal)', async (phase, order) => {
+  vi.useFakeTimers();
+  const { store } = createEmptyStore();
+  store.getConfig = () => ({ maxGoalContinuationTurns: 25 });
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const key = 'agent:main:justdo:session-1';
+  const identity = { sessionKey: key, sessionId: 'native-current', lifecycleGeneration: 'generation-current', runId: 'run-1' };
+  const goal = { ...activeRecoveryGoal };
+  const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+    if (method === 'sessions.describe') return {
+      session: { key, sessionId: identity.sessionId, lifecycleRevision: 'revision-1', goal },
+    };
+    if (method === 'agent') {
+      goal.continuationTurns += 1;
+      return { runId: params!.idempotencyKey, status: 'accepted', goalContinuation: {
+        goalId: goal.id, predecessorRunId: identity.runId,
+        continuationTurns: goal.continuationTurns, acceptedAt: Date.now(),
+      } };
+    }
+    throw new Error(`Unexpected method ${method}`);
+  });
+  adapter.gatewayClient = { request } as unknown as GatewayClientLike;
+  const prepareSession = vi.fn().mockResolvedValue(undefined);
+  const permissions = new SessionPermissionModeCoordinator({
+    getCoworkStore: () => store,
+    isSessionActive: sessionId => adapter.isSessionActive(sessionId),
+    prepareSession,
+  });
+  adapter.setContinuationPermissionPreparer(async sessionId => {
+    const result = await permissions.prepareSessionForRun(sessionId);
+    if (!result.success) throw new Error(result.error);
+  });
+  try {
+    adapter.rememberSessionKey('session-1', key);
+    adapter.ensureActiveTurn('session-1', key, identity.runId);
+    adapter.handleAgentEvent('agent', { ...identity, seq: 1, stream: 'lifecycle', data: { phase: 'start' } });
+    await vi.advanceTimersByTimeAsync(9 * 60 * 60 * 1000);
+    const compact = (seq: number) => adapter.handleAgentEvent('agent', {
+      ...identity, seq, stream: 'compaction', data: { phase: 'start' },
+    });
+    if (order === 'before') compact(2);
+    adapter.handleAgentEvent('agent', { ...identity, seq: 3, stream: 'lifecycle', data: {
+      phase, executionSettled: true, ...(phase === 'error' ? { error: 'Final answer unavailable' } : {}),
+    } });
+    if (order === 'after') compact(4);
+
+    // Neither chat final nor compaction end arrives. Exact whole-run settlement
+    // must still release the predecessor before the real permission preparation.
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+    expect(prepareSession).toHaveBeenCalledOnce();
+    const successor = request.mock.calls.find(([method]) => method === 'agent')![1]!;
+    expect(successor).toMatchObject({
+      expectedExistingSessionId: identity.sessionId,
+      expectedExistingSessionLifecycleRevision: 'revision-1',
+      goalContinuation: { goalId: goal.id, predecessorRunId: identity.runId, automatic: true },
+    });
+    expect(successor.idempotencyKey).not.toBe(identity.runId);
+    await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);
+    expect(request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+    expect(adapter.goalContinuationCoordinator.getSnapshot('session-1')).toMatchObject({
+      phase: 'running', runId: successor.idempotencyKey, continuationCount: 1,
+    });
+  } finally {
+    adapter.goalContinuationCoordinator.clear();
+    adapter.cleanupSessionTurn('session-1');
+    vi.useRealTimers();
+  }
 });
 
 test('retains an unknown automatic Goal run in Main and queries only its exact receipt', async () => {

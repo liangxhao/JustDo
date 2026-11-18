@@ -214,6 +214,9 @@ export class GoalContinuationCoordinator {
   private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly retryAttempts = new Map<string, number>();
   private readonly retryTargets = new Map<string, GoalSessionTarget>();
+  // Exact locally rejected candidates whose product-receipt cleanup must finish
+  // before another candidate is allocated. No native execution is inferred.
+  private readonly pendingRejectedRuns = new Map<string, string>();
   private readonly sessionTargets = new Map<
     string,
     { sessionId: string; lifecycleRevision: string | null }
@@ -495,6 +498,10 @@ export class GoalContinuationCoordinator {
   }
 
   clearSession(sessionId: string): void {
+    try { this.finishPendingRejection(sessionId); } catch {
+      // A local deletion must remain available; a later dispatch retries this
+      // exact cleanup if the session still exists.
+    }
     this.invalidateDecision(sessionId);
     this.continuationTargets.delete(sessionId);
     this.clearTechnicalPredecessors(sessionId);
@@ -542,6 +549,12 @@ export class GoalContinuationCoordinator {
   }
 
   clear(): void {
+    for (const sessionId of this.pendingRejectedRuns.keys()) {
+      try { this.finishPendingRejection(sessionId); } catch {
+        // Known rejection does not expire with the Gateway connection. Retain
+        // only the exact local cleanup until storage is writable again.
+      }
+    }
     this.generation += 1;
     this.dependencies.eventAdmission.clear();
     this.sessionTargets.clear();
@@ -1058,6 +1071,8 @@ export class GoalContinuationCoordinator {
     decision?: GoalDecision,
   ): Promise<void> {
     if (!decision || !this.isCurrentDecision(sessionId, decision)) return;
+    this.finishPendingRejection(sessionId);
+    if (!this.isCurrentDecision(sessionId, decision)) return;
     if (
       generation !== this.generation ||
       (this.stopGenerations.get(sessionId) ?? 0) !== sessionGeneration
@@ -1153,16 +1168,30 @@ export class GoalContinuationCoordinator {
     this.continuationRuns.set(runId, target);
     decision.runId = runId;
     this.latestRunIds.set(sessionId, runId);
-    this.dependencies.onRunAccepted(sessionId, sessionKey, runId, target.sessionId, {
-      ...(predecessorRunId ? { predecessorRunId } : {}),
-      businessRetry: !enforceMaxContinuationTurns ||
-        Boolean(predecessorRunId && this.failedPredecessorRuns.has(predecessorRunId)),
-    });
+    const rejectCandidate = () => {
+      if (predecessorRunId) this.dependencies.releaseSuccessor?.(predecessorRunId, runId);
+      this.continuationRuns.delete(runId);
+      // Restore identity before the host cleanup, which can itself fail. Never
+      // replace a newer run or repopulate a cleared connection's state.
+      if (generation === this.generation && this.latestRunIds.get(sessionId) === runId) {
+        decision.runId = predecessorRunId;
+        if (predecessorRunId) this.latestRunIds.set(sessionId, predecessorRunId);
+        else this.latestRunIds.delete(sessionId);
+      }
+      this.pendingRejectedRuns.set(sessionId, runId);
+      this.finishPendingRejection(sessionId);
+    };
+    let requestIssued = false;
     try {
+      this.dependencies.onRunAccepted(sessionId, sessionKey, runId, target.sessionId, {
+        ...(predecessorRunId ? { predecessorRunId } : {}),
+        businessRetry: !enforceMaxContinuationTurns ||
+          Boolean(predecessorRunId && this.failedPredecessorRuns.has(predecessorRunId)),
+      });
       // Normal chat.send turns receive OpenClaw's native bounded active-Goal context. Automatic
       // continuations use the lower-level agent RPC so the synthetic prompt stays out of history
       // and JustDo can retain its stricter completion and blocked-state policy.
-      const receipt = await client.request('agent', {
+      const params = {
         message: buildContinuationPrompt(preparedGoal),
         extraSystemPrompt: CONTINUATION_SYSTEM_PROMPT,
         sessionKey,
@@ -1180,7 +1209,15 @@ export class GoalContinuationCoordinator {
             automatic: true,
           },
         } : {}),
-      });
+      };
+      // Host registration can synchronously emit activity and trigger Stop or a
+      // new owner. Those callbacks cannot authorize sending the retired candidate.
+      if (!this.isCurrentDecision(sessionId, decision) || (predecessorRunId &&
+        this.dependencies.isSuccessorCurrent?.(predecessorRunId, runId) === false)) {
+        throw new Error('Goal continuation was superseded before dispatch');
+      }
+      requestIssued = true;
+      const receipt = await client.request('agent', params);
       if (receipt.runId !== runId || (receipt.status !== 'accepted' && receipt.status !== 'in_flight')) {
         throw new Error('Gateway returned an unconfirmed Goal continuation receipt');
       }
@@ -1199,6 +1236,13 @@ export class GoalContinuationCoordinator {
         continuationCount = accepted.continuationTurns;
       }
     } catch (error) {
+      if (!requestIssued) {
+        // Even an obsolete decision must release its own definitely unsent
+        // candidate; exact host cleanup cannot disturb a newer local turn.
+        rejectCandidate();
+        if (this.isCurrentDecision(sessionId, decision)) throw error;
+        return;
+      }
       if (
         !this.isCurrentDecision(sessionId, decision) ||
         generation !== this.generation ||
@@ -1213,12 +1257,7 @@ export class GoalContinuationCoordinator {
         isDefinitiveSessionGoalGatewayError(error) ||
         (error && typeof error === 'object' && 'requestSent' in error && error.requestSent === false)
       ) {
-        if (predecessorRunId) this.dependencies.releaseSuccessor?.(predecessorRunId, runId);
-        this.continuationRuns.delete(runId);
-        this.dependencies.onRunFailed(sessionId, runId);
-        decision.runId = predecessorRunId;
-        if (predecessorRunId) this.latestRunIds.set(sessionId, predecessorRunId);
-        else this.latestRunIds.delete(sessionId);
+        rejectCandidate();
         if (deferredReason) {
           if (deferredReason === 'goal-inactive') {
             this.cancelRetry(sessionId, true);
@@ -1426,6 +1465,13 @@ export class GoalContinuationCoordinator {
     if (timer) clearTimeout(timer);
     this.retryTimers.delete(sessionId);
     if (resetAttempt) this.retryAttempts.delete(sessionId);
+  }
+
+  private finishPendingRejection(sessionId: string): void {
+    const runId = this.pendingRejectedRuns.get(sessionId);
+    if (!runId) return;
+    this.dependencies.onRunFailed(sessionId, runId);
+    if (this.pendingRejectedRuns.get(sessionId) === runId) this.pendingRejectedRuns.delete(sessionId);
   }
 
   private rememberProcessedTerminalRun(runId: string): void {

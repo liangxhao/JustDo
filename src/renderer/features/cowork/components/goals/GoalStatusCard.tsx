@@ -311,6 +311,9 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
     matchedExecution?.phase === GoalExecutionPhase.Running ||
     matchedExecution?.phase === GoalExecutionPhase.Continuing;
   const retrying = matchedExecution?.phase === GoalExecutionPhase.Retrying;
+  const retryHint = retrying && matchedExecution.retryAttempt
+    ? i18nService.t('coworkGoalRetryingAttemptHint').replace('{attempt}', String(matchedExecution.retryAttempt))
+    : i18nService.t('coworkGoalRetryingHint');
   const waiting = matchedExecution?.phase === GoalExecutionPhase.Waiting &&
     matchedExecution.waitingReason !== undefined;
   const stopped = matchedExecution?.phase === GoalExecutionPhase.Stopped;
@@ -329,14 +332,14 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
   const idleExecutionHint = completionFeedbackActive
     ? i18nService.t('coworkGoalCompletionFeedbackHint')
     : retrying
-      ? i18nService.t('coworkGoalRetryingHint')
+      ? retryHint
       : matchedExecution?.phase === GoalExecutionPhase.Stopped
         ? i18nService.t('coworkGoalStoppedHint')
         : waiting
           ? i18nService.t('coworkGoalWaitingHint')
         : goal?.lastStatusNote || i18nService.t(presentation.hintKey);
   const liveExecutionHint = retrying
-    ? i18nService.t('coworkGoalRetryingHint')
+    ? retryHint
     : i18nService.t('coworkGoalPhaseRunning');
   const goalActions = !goal ? null : stopped && effectiveStatus === SessionGoalStatus.Active ? (
     <GoalActionButton
@@ -461,6 +464,12 @@ const GoalStatusCard: React.FC<GoalStatusCardProps> = ({
             </div>
           )}
         </div>
+        {(retrying || stopped) && matchedExecution?.error && (
+          <details className="mt-1.5 pl-8 text-xs text-secondary">
+            <summary className="cursor-pointer">{i18nService.t('coworkErrorDetails')}</summary>
+            <p className="mt-1 whitespace-pre-wrap break-words">{matchedExecution.error}</p>
+          </details>
+        )}
       </div>
     </section>
   );

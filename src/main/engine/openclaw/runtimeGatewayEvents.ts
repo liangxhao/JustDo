@@ -433,6 +433,10 @@ export function handleAgentEvent(
     void this.reconcileDisconnectedTurn(sessionId);
   }
   if (stream === 'compaction') {
+    // This admitted run has already settled. A trailing progress event cannot
+    // reclaim its activity or cancel terminal cleanup. Manual compaction uses
+    // the separate session.operation owner below.
+    if (this.terminalLifecycleSessionIds.has(sessionId)) return;
     const phase = typeof data.phase === 'string' ? data.phase : '';
     this.handleCompactionPhase(sessionId, phase, turn);
     return;
@@ -450,6 +454,9 @@ export function handleAgentEvent(
     phase === 'error' && isInternalManagedSubagentHandoffError(data.error);
   if (phase === 'end' || phase === 'error') {
     this.terminalLifecycleSessionIds.add(sessionId);
+    // Whole-run settlement includes any run-owned compaction. Its individual
+    // end event or chat final may be missing; neither may retain this turn.
+    this.clearCompactionInFlight(sessionId);
   }
   if (phase === 'error') {
     if (internalManagedHandoffError) {
