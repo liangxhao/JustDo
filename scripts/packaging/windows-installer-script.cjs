@@ -19,8 +19,8 @@ function installerShutdownDefinitions() {
     + `!define INSTALLER_PROCESS_WAIT_TIMEOUT ${attempts * 500 + 15000}\n`;
 }
 
-// Compose upstream templates at build time. Keep the upstream upgrade, shortcut,
-// registry and uninstall behavior; change payload staging and cache ownership.
+// Compose upstream templates at build time, retaining the registered removal
+// path for upgrades that cannot switch a verified payload in place.
 function createWindowsInstallerScript(templatesDir) {
   const read = name => fs.readFileSync(path.join(templatesDir, name), 'utf8');
   const installerFiles = read('include/installer.nsh');
@@ -167,16 +167,38 @@ function createWindowsInstallerScript(templatesDir) {
       `!insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-returned root=${root}"`,
     ].join('\n'));
   }
+  const previousScopeStart = '!insertmacro InstallerShowCorePhase "正在核对旧版安装位置…" "Checking the previous installation location…"';
+  const previousScopeEnd = '!insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-returned root=SHELL_CONTEXT"';
+  section = section.replace(previousScopeStart, [
+    '!insertmacro InstallerPreparePayloadUpgrade',
+    '\x24{if} $InstallerPayloadRoot == ""',
+    previousScopeStart,
+  ].join('\n')).replace(previousScopeEnd, [previousScopeEnd, '\x24{endif}'].join('\n'));
   const installFiles = '\n!insertmacro installApplicationFiles';
-  if (section.split(installFiles).length !== 2) {
-    throw new Error('The upstream NSIS application file seam changed; review the template.');
+  const register = '!insertmacro registryAddInstallInfo';
+  const customInstall = [
+    '!ifmacrodef customInstall',
+    '  !insertmacro customInstall',
+    '!endif',
+  ].join('\n');
+  if ([installFiles, register, customInstall].some(seam => section.split(seam).length !== 2)) {
+    throw new Error('The upstream NSIS application file or validation seam changed; review the template.');
   }
-  section = section.replace(installFiles, [
+  section = section.replace(customInstall, [
+    '!insertmacro InstallerFinishPayloadUpgrade',
+    '!insertmacro InstallerCompleteInstall',
+  ].join('\n')).replace(installFiles, [
     '',
     '!insertmacro installApplicationFiles',
     '!insertmacro InstallerWriteBrowserAuthenticationAlias',
+    customInstall,
+    '!insertmacro InstallerPublishPayloadUpgrade',
     '!insertmacro InstallerShowCorePhase "正在注册应用并创建快捷方式…" "Registering the application and creating shortcuts…"',
     '!insertmacro JustDoLogInstallEvent "phase=application-registration-start"',
+  ].join('\n')).replace(register, [
+    'ClearErrors',
+    register,
+    '!insertmacro InstallerCheckPayloadRegistration',
   ].join('\n'));
   const assistedSource = read('assistedInstaller.nsh');
   const nativeModeUi = '!include multiUserUi.nsh';

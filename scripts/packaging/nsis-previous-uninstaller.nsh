@@ -16,6 +16,7 @@ Var InstallerOldRegistration
 Var InstallerOldLaunchMode
 Var InstallerOldRetry
 Var InstallerOldRetryAllowed
+Var InstallerOldIoRecentlyActive
 !define /math INSTALLER_PREVIOUS_COMMAND_LIMIT ${NSIS_MAX_STRLEN} - 1
 
 Function InstallerReadPreviousIdentity
@@ -124,6 +125,13 @@ Function InstallerRunPreviousUninstaller
   Push $5
   Push $6
   Push $7
+  Push $8
+  Push $9
+  Push $R0
+  Push $R1
+  Push $R2
+  StrCpy $8 "0"
+  StrCpy $InstallerOldIoRecentlyActive "0"
   StrCpy $InstallerOldResult "not-started"
   StrCpy $InstallerOldError "allocation-failed"
   System::Call '*(i 68, p 0, p 0, p 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0, i 0, p 0, p 0, p 0, p 0)p.r0'
@@ -161,6 +169,12 @@ Function InstallerRunPreviousUninstaller
     System::Call 'kernel32::WaitForSingleObject(p r3, i -1)i.r2 ?e'
     Pop $InstallerOldError
   ${Else}
+    ; Sample the exact child we started. These counters include metadata I/O
+    ; and do not identify a particular file, operation or completion fraction.
+    System::Alloc 48
+    Pop $8
+    StrCpy $9 ""
+    StrCpy $R0 "-5"
     InstallerOldWait:
     System::Call 'kernel32::WaitForSingleObject(p r3, i 250)i.r2 ?e'
     Pop $InstallerOldError
@@ -170,6 +184,25 @@ Function InstallerRunPreviousUninstaller
       IntOp $7 $7 / 1000
       ${If} $7 != $6
         StrCpy $6 $7
+        ${If} $8 != 0
+          System::Call 'kernel32::GetProcessIoCounters(p r3, p r8)i.r7'
+          ${If} $7 != 0
+            System::Call '*$8(l .R1, l .R2, l .r7)'
+            ${If} $9 != ""
+            ${AndIf} $9 != "$R1:$R2:$7"
+              StrCpy $R0 $6
+            ${EndIf}
+            StrCpy $9 "$R1:$R2:$7"
+          ${Else}
+            StrCpy $9 ""
+          ${EndIf}
+        ${EndIf}
+        StrCpy $InstallerOldIoRecentlyActive "0"
+        IntOp $7 $6 - $R0
+        ${If} $9 != ""
+        ${AndIf} $7 < 5
+          StrCpy $InstallerOldIoRecentlyActive "1"
+        ${EndIf}
         !insertmacro InstallerShowPreviousWait "$6"
       ${EndIf}
       Goto InstallerOldWait
@@ -207,6 +240,14 @@ Function InstallerRunPreviousUninstaller
   ${If} $0 != 0
     System::Free $0
   ${EndIf}
+  ${If} $8 != 0
+    System::Free $8
+  ${EndIf}
+  Pop $R2
+  Pop $R1
+  Pop $R0
+  Pop $9
+  Pop $8
   Pop $7
   Pop $6
   Pop $5

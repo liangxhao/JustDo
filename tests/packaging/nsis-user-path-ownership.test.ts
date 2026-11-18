@@ -77,7 +77,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('installer ini
         customInit,
       ].join('\n');
       const variables = [...new Set(Array.from(
-        body.matchAll(/\$(JustDo[A-Za-z0-9_]+|hasPerUserInstallation|hasPerMachineInstallation|installMode|InstallerCombinedUpgradeReady|InstallerCombinedMode)/g),
+        body.matchAll(/\$(JustDo[A-Za-z0-9_]+|hasPerUserInstallation|hasPerMachineInstallation|installMode|InstallerCombinedUpgradeReady|InstallerCombinedMode|InstallerPayloadRoot)/g),
         match => match[1],
       ))];
       const source = [
@@ -90,6 +90,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('installer ini
         ...variables.map(name => `Var ${name}`),
         'Function InstallerCombinedPrepareUpgradeMode', 'FunctionEnd',
         'Function InstallerCombinedApplyUpgradeMode', 'FunctionEnd',
+        '!macro InstallerRecoverPayloadUpgrade', '!macroend',
         '!macro JustDoLogInstallEvent TEXT', 'DetailPrint "${TEXT}"', '!macroend',
         '!macro UAC_AsUser_Call KIND TARGET FLAGS',
         `StrCpy $0 "${nsisPath(initiatingRoaming)}"`,

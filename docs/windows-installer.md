@@ -164,8 +164,9 @@ including during synchronous archive writes. At a terminal result it shows the
 frozen total. A running clock indicates that the interface can still update;
 it does not establish that the file operation is making progress.
 
-The former application-extraction label is split into: verify the previous
-installation → prepare and wait for its uninstaller → write the application
+For upgrades using the registered uninstaller, the preparation phase verifies
+the previous installation and waits for its uninstaller. The writing phase
+then writes the application
 archive into the chosen installation folder → prepare 7-Zip → expand and write
 application files → remove extraction scratch files → write the uninstaller and
 register shortcuts. Setup then checks the installed shell, applies permissions,
@@ -181,6 +182,37 @@ and validation show the operation and its elapsed time instead of a guessed or
 frozen percentage. Directory validation precedes Windows administrator approval;
 Windows owns that approval prompt and installer bootstrap work before a window
 is available cannot show an installation page.
+
+### Same-volume upgrade
+
+For a confirmed local current-user installation with compatible installer
+metadata and program layout, setup prepares the complete new payload in
+`<install>\.upgrade\new`. The previous version stays in its installed
+location during archive extraction and verification. The selected installation
+disk needs room for the new extracted payload and its temporary archives while
+the old version is still present.
+
+After validation, setup checks that the old app is closed, moves its known
+top-level program entries into `.upgrade\old`, and promotes the staged new
+entries to the same installation root. `resources` and `locales` move as
+directories. The Windows move uses no copy, replace or reboot flags. The
+original root, its permissions, existing shortcuts and the `logs` directory
+stay in place. Setup checks application registration before marking the
+transaction committed, then deletes the staged tree without traversing
+junctions or directory links. Cleanup reuses attributes from directory
+enumeration to avoid a second metadata query for each file. Each file still
+has to be removed, and cleanup may remain pending when files are locked.
+
+Before the first move the helper records the planned new file identities. On
+interruption, setup restores uncommitted moves without overwriting a conflicting
+file. A conflicting or inaccessible transaction is preserved and stops setup.
+The current installer and uninstaller serialize the switch and cleanup.
+During staging, setup also guards the installed legacy uninstaller image from
+being opened for execution. The released legacy uninstaller itself is unchanged.
+All-users, different-scope and unsupported layouts retain the registered removal
+flow. An unexpected entry in an otherwise eligible installation stops the fast
+path before moving files. Windows PowerShell must support the packaged file
+operations helper for the fast path.
 
 The caption uses a visibly distinct cool gray-blue (`#E6E9F2`) on supported DWM
 versions, above the near-white (`#FBFBFD`) content, retaining native caption dragging,
@@ -316,7 +348,7 @@ ports and never installs the application or requests administrator credentials.
 
 ### Previous-version removal failures
 
-Before copying a new payload, setup must confirm that the existing installation's
+On the registered-removal path, before copying a new payload, setup must confirm that the existing installation's
 uninstaller succeeded. An unrecovered failure leaves the native failed result and
 details open; it does not write a new payload, register it, or launch the app.
 This applies to both the selected shell scope and an additional current-user
@@ -336,8 +368,9 @@ never re-runs a successfully removed scope.
 
 The writing page is visible before process checks, including after elevation.
 It separates waiting for the old app to exit from waiting for the old
-uninstaller. The uninstaller wait shows real elapsed seconds, not an invented
-percentage, and identifies the installation scope in Details. Setup does not
+uninstaller. The uninstaller wait shows real elapsed seconds and recent process
+I/O activity when Windows reports it. These counters do not identify specific
+files or provide a completion fraction. Details identify the installation scope. Setup does not
 kill the old uninstaller on a timer. Logs attribute attempts to the child PID
 and record wait results and durations. Resource expansion reports archive
 milestones; the window's clock continues independently of resource writes.
@@ -485,10 +518,9 @@ checks use the exact installation-directory paths.
 - The compatibility quit switch remains accepted by Main for older installers.
   If that control invocation acquires the singleton itself, it exits before
   creating windows, preparing a profile or starting Gateway.
-- Setup no longer moves old runtime trees into a sibling staging directory.
-  Upgrades use normal old-version removal followed by the complete new payload;
-  runtime transaction backups, when needed by the extractor, stay in `resources`.
-  Removing the sibling optimization can make deletion of an old runtime slower.
+- Eligible per-user upgrades stage the complete new payload inside the install
+  directory. Other upgrades use the registered uninstaller. Runtime transaction
+  backups, when needed by the extractor, stay in `resources`.
 
 This is an incremental hardening step. A future implementation should replace
 PowerShell inspection with a small native Restart Manager/path-aware helper so

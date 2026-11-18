@@ -5,6 +5,7 @@
 !include "TextFunc.nsh"
 !include "x64.nsh"
 !include "UAC.nsh"
+!include "${PROJECT_DIR}\scripts\packaging\nsis-payload-upgrade.nsh"
 
 ; NSIS FileOpen ... a only seeks once when opening. Long-lived handles would
 ; overwrite records appended by callbacks or another installer process. Windows
@@ -29,6 +30,7 @@
 
 !ifndef BUILD_UNINSTALLER
 !include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-state.nsh"
+Var InstallerPayloadRoot
 !define MUI_CUSTOMFUNCTION_ABORT JustDoInstallerUserAbort
 !define JUSTDO_PROGRESS_STYLE 0x50000009
 !define JUSTDO_PBM_SETPOS 0x0402
@@ -150,7 +152,11 @@ Function JustDoSelectInstallLogDirectory
   !insertmacro JustDoTryInstallLogDirectory "$JustDoCurrentUserAppData" "${PRODUCT_NAME}"
   ${If} $JustDoInstallLogDirectory == ""
   ${AndIf} $JustDoPayloadLogsAllowed == "1"
-    !insertmacro JustDoTryInstallLogDirectory "$INSTDIR" "logs"
+    ${If} $InstallerPayloadRoot != ""
+      !insertmacro JustDoTryInstallLogDirectory "$InstallerPayloadRoot" "logs"
+    ${Else}
+      !insertmacro JustDoTryInstallLogDirectory "$INSTDIR" "logs"
+    ${EndIf}
   ${EndIf}
   ClearErrors
   Pop $1
@@ -295,22 +301,6 @@ Function .onInstSuccess
   Call InstallerRecordSuccess
   Call InstallerPresentationCloseMotion
   Call InstallerLaunchApplication
-FunctionEnd
-
-Function .onInstFailed
-  GetErrorLevel $1
-  System::Call 'kernel32::GetLastError()i.r0'
-  Push "failed"
-  Call InstallerPresentationSetStage
-  StrCpy $JustDoInstallTerminalState "failed"
-  !insertmacro JustDoLogInstallEvent "phase=installer-failed status=terminated-before-success error-level=$1 win32-last-error=$0"
-  Call JustDoCleanupExtractorEnvironment
-  ${If} $JustDoExtractorTempDirectory != ""
-    !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
-  ${EndIf}
-  !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete"
-  Call JustDoWriteInstallSessionEnd
-  Call InstallerPresentationCloseMotion
 FunctionEnd
 
 Function .onGUIEnd
@@ -460,7 +450,9 @@ FunctionEnd
 !macro InstallerShowPreviousWait _SECONDS
   ${IfNot} ${Silent}
     ShowWindow $JustDoNativeProgressBar 0
-    ${If} $InstallerOldAttempt == 2
+    ${If} $InstallerOldIoRecentlyActive == "1"
+      !insertmacro JustDoSetInstallStatus "检测到卸载程序活动（${_SECONDS} 秒）…" "Previous uninstaller active (${_SECONDS} s)…"
+    ${ElseIf} $InstallerOldAttempt == 2
       !insertmacro JustDoSetInstallStatus "正在重试清理旧版（已等待 ${_SECONDS} 秒）…" "Retrying previous-version removal (${_SECONDS} s)…"
     ${Else}
       !insertmacro JustDoSetInstallStatus "正在等待旧版卸载（${_SECONDS} 秒）…" "Waiting for previous-version removal (${_SECONDS} s)…"
@@ -472,7 +464,7 @@ FunctionEnd
       ${Else}
         !insertmacro JustDoAddInstallActivity "正在清理当前用户的旧版安装" "Removing the previous current-user installation"
       ${EndIf}
-      !insertmacro JustDoAddInstallActivity "此步骤没有可用的文件百分比，请保持安装器打开" "File progress is unavailable for this step. Keep setup open."
+      !insertmacro JustDoAddInstallActivity "显示已用时间和检测到的卸载程序活动，请保持安装器打开" "Showing elapsed time and detected uninstaller activity. Keep setup open."
     ${ElseIf} ${_SECONDS} == 60
       !insertmacro JustDoAddInstallActivity "旧版卸载程序尚未退出；安装器仍在等待，尚未写入新文件" "The previous uninstaller has not exited. Setup is waiting and has not written new application files."
     ${EndIf}
@@ -752,6 +744,26 @@ FunctionEnd
 !macro customHeader
   ; Show the native log directly; presentation hides its redundant reveal button.
   ShowInstDetails show
+  !ifndef BUILD_UNINSTALLER
+    Function .onInstFailed
+      GetErrorLevel $1
+      System::Call 'kernel32::GetLastError()i.r0'
+      StrCpy $JustDoInstallTerminalState "failed"
+      !insertmacro JustDoLogInstallEvent "phase=installer-failed status=terminated-before-success error-level=$1 win32-last-error=$0"
+      Call JustDoCleanupExtractorEnvironment
+      ${If} $InstallerPayloadRoot != ""
+        !insertmacro JustDoLogInstallEvent "phase=payload-upgrade-recovery-pending path=$InstallerPayloadRoot"
+      ${EndIf}
+      Push "failed"
+      Call InstallerPresentationSetStage
+      ${If} $JustDoExtractorTempDirectory != ""
+        !insertmacro JustDoLogInstallEvent "phase=extractor-temp-cleanup-incomplete"
+      ${EndIf}
+      !insertmacro JustDoLogInstallEvent "phase=installer-failed-cleanup-complete"
+      Call JustDoWriteInstallSessionEnd
+      Call InstallerPresentationCloseMotion
+    FunctionEnd
+  !endif
 !macroend
 
 !ifndef BUILD_UNINSTALLER
@@ -1112,6 +1124,7 @@ FunctionEnd
   FileClose $2
   ClearErrors
   !insertmacro JustDoLogInstallEvent "phase=installer-init-complete"
+  !insertmacro InstallerRecoverPayloadUpgrade
   ${If} ${Silent}
     ${If} ${isUpdated}
       ${If} ${UAC_IsInnerInstance}
@@ -1577,8 +1590,11 @@ FunctionEnd
     FileWrite $2 "delete-unpack-script: removed$\r$\n"
   ${EndIf}
 
-  ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
-  FileWrite $2 "install-done: $5-$4-$3 $7:$8:$9$\r$\n"
+  FileClose $2
+!macroend
+
+!macro InstallerCompleteInstall
+  !insertmacro JustDoLogInstallEvent "phase=install-done"
   ${If} $JustDoProgressBar != ""
     SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
     ShowWindow $JustDoProgressBar 0
@@ -1591,8 +1607,6 @@ FunctionEnd
   !insertmacro JustDoAddInstallActivity \
     "安装完成" \
     "Installation complete"
-  FileClose $2
-
   Push "complete"
   Call InstallerPresentationSetStage
 
@@ -1622,6 +1636,12 @@ FunctionEnd
       !insertmacro InstallerCheckUninstallProcesses
     ${EndIf}
   !endif
+!macroend
+
+!macro customUnInstall
+  !insertmacro InstallerLockPayloadUpgrade
+  ReadRegStr $3 SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" DisplayVersion
+  !insertmacro InstallerCheckPendingPayloadUpgrade "$INSTDIR" "$3"
 !macroend
 
 !macro InstallerCheckUninstallProcesses

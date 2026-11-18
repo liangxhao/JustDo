@@ -129,10 +129,18 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           '  FileSeek $0 0 END',
           String.raw`  FileWriteUTF16LE $0 "$INSTDIR$\r$\n$1$\r$\n"`,
           '  FileClose $0',
-          '  IfFileExists "@SLOW@" 0 +2', '    Sleep 1700',
+          '  IfFileExists "@SLOW@" 0 finished',
+          '  Sleep 2200',
+          '  StrCpy $2 0',
+          '  active:',
+          '    FileOpen $0 "@SLOW@" a', '    FileSeek $0 0 END',
+          '    FileWrite $0 "."', '    FileClose $0',
+          '    Sleep 250',
+          '    IntOp $2 $2 + 1', '    IntCmp $2 12 finished active finished',
+          '  finished:',
           `  \${If} \${FileExists} "${nsisLiteral(exitNonzero)}"`,
           '    SetErrorLevel 17', '  ${Else}', '    SetErrorLevel 0', '  ${EndIf}', 'SectionEnd',
-        ].join('\n').replace('@SLOW@', nsisLiteral(slowChild)));
+        ].join('\n').replaceAll('@SLOW@', nsisLiteral(slowChild)));
         const created = spawnSync(creator, [], { windowsHide: true, encoding: 'utf8', timeout: 10_000 });
         expect(created.status, `${created.stdout}\n${created.stderr}`).toBe(0);
         expect(existsSync(path.join(actualDirectory, 'Uninstall Wedax.exe'))).toBe(true);
@@ -204,10 +212,11 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           `!define UNINSTALL_REGISTRY_KEY "${registryKey}\\arp"`,
           '!define isDeleteAppData \'$ProbeDeleteAppData == "1"\'',
           ...['installMode', 'appExe', 'ProbeCase', 'ProbeRootKey', 'ProbeErrors', 'ProbeDeleteAppData',
-            'ProbeShellScope', 'ProbeLookupScope', 'ProbeCorrections', 'ProbeCopies', 'ProbeWaitSeconds']
+            'ProbeShellScope', 'ProbeLookupScope', 'ProbeCorrections', 'ProbeCopies', 'ProbeWaitSeconds', 'ProbeSawChildIo']
             .map(name => `Var ${name}`),
           '!macro JustDoLogInstallEvent TEXT', '  DetailPrint "${TEXT}"', '  ClearErrors', '!macroend',
-          '!macro InstallerShowPreviousWait SECONDS', '  StrCpy $ProbeWaitSeconds "${SECONDS}"', '!macroend',
+          '!macro InstallerShowPreviousWait SECONDS', '  StrCpy $ProbeWaitSeconds "${SECONDS}"',
+          '  ${If} $InstallerOldIoRecentlyActive == "1"', '    StrCpy $ProbeSawChildIo "1"', '  ${EndIf}', '!macroend',
           '!macro InstallerShowCorePhase ZH EN', '!macroend',
           '!macro InstallerPreviousRetryText TARGET ZH EN', '  StrCpy ${TARGET} "${EN}"', '!macroend',
           '!macro InstallerShowPreviousFailure', '!macroend',
@@ -229,6 +238,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           '  ReadRegStr $4 HKCU "${INSTALL_REGISTRY_KEY}\\$ProbeLookupScope" InstallLocation',
           String.raw`  FileWriteUTF16LE $3 "$4$\r$\n$ProbeCorrections$\r$\n$ProbeCopies$\r$\n"`,
           String.raw`  FileWriteUTF16LE $3 "$ProbeWaitSeconds$\r$\n"`,
+          String.raw`  FileWriteUTF16LE $3 "$ProbeSawChildIo$\r$\n"`,
           '  FileClose $3', `  DeleteRegKey HKCU "${registryKey}"`, '  SetErrorLevel 0', 'SectionEnd',
         ].join('\n'));
 
@@ -262,7 +272,10 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           expect(lines[4], scenario.id).toBe(String(scenario.corrections));
           const retrySuccess = scenario.id === 'retry-failed-current-user-scope';
           expect(lines[5], scenario.id).toBe(retrySuccess ? '2' : scenario.executes ? '1' : '0');
-          if (scenario.id === 'slow-uninstaller') expect(Number(lines[6])).toBeGreaterThanOrEqual(1);
+          if (scenario.id === 'slow-uninstaller') {
+            expect(Number(lines[6])).toBeGreaterThanOrEqual(3);
+            expect(lines[7]).toBe('1');
+          }
           expect(existsSync(observedFile), scenario.id).toBe(scenario.executes);
           if (scenario.executes) {
             const invocations = readFileSync(observedFile, 'utf16le').trimEnd().split(/\r?\n/);
