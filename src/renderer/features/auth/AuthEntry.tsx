@@ -33,6 +33,8 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const busy = loading || state.operation !== AuthOperation.Idle;
   const hasAccount = state.status !== AuthStatus.SignedOut;
+  const syncFailed = state.syncStatus === AuthSyncStatus.Failed;
+  const hasMenu = hasAccount || syncFailed;
   const signingOut = state.operation === AuthOperation.Logout;
   const loginPhase = state.status === AuthStatus.SignedIn ? null : state.loginPhase;
   const accountPendingLabel = loading
@@ -45,9 +47,9 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
   const progressMessage = accountPendingLabel ?? (loginPhase
     ? i18nService.t(completingLogin ? 'authSigningIn' : 'authAwaitingLogin')
     : undefined);
-  const showLoginText = compact && !hasAccount && !showSpinner;
+  const showLoginText = compact && !hasMenu && !showSpinner;
   const accountName = state.profile?.displayName.trim() || state.profile?.account.trim() || '';
-  const label = accountPendingLabel ?? (accountName || i18nService.t('authLogin'));
+  const label = accountPendingLabel ?? (accountName || i18nService.t(hasMenu ? 'authAccountMenu' : 'authLogin'));
   const initial = accountNameSegmenter.segment(accountName)[Symbol.iterator]().next()
     .value?.segment;
   const subtitle = state.syncStatus === AuthSyncStatus.Pending
@@ -104,10 +106,14 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
     };
   }, [open, compact, busy, errorCode, hasAccount, state.syncStatus]);
 
-  const runAccountAction = async (action: typeof login) => {
-    setOpen(false);
-    const result = await action();
-    if (result && !result.success && root.current) setOpen(true);
+  const runAccountAction = async (action: typeof login, closeMenu = true) => {
+    if (closeMenu) setOpen(false);
+    const warning = await action();
+    if (warning) {
+      window.dispatchEvent(new CustomEvent('app:showToast', {
+        detail: { message: i18nService.t(ERROR_KEYS[warning]), tone: 'warning' },
+      }));
+    }
   };
 
   const panel = open ? (
@@ -135,19 +141,19 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
           {progressMessage ?? i18nService.t(subtitle)}
         </p>
       )}
-      {errorCode && (
+      {(errorCode || syncFailed) && (
         <p
           role="alert"
           className="overflow-x-auto whitespace-nowrap px-2 py-2 text-xs text-red-600 dark:text-red-400"
         >
-          {i18nService.t(ERROR_KEYS[errorCode])}
+          {i18nService.t(ERROR_KEYS[errorCode ?? AuthErrorCode.SyncFailed])}
         </p>
       )}
-      {state.syncStatus === AuthSyncStatus.Failed && (
+      {syncFailed && (
         <button
           type="button"
           disabled={busy}
-          onClick={() => void retrySync()}
+          onClick={() => void runAccountAction(retrySync, false)}
           className="w-full rounded-lg px-2 py-2 text-left text-sm text-secondary hover:bg-surface-raised disabled:opacity-50"
         >
           {i18nService.t('authRetrySync')}
@@ -185,11 +191,11 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
         data-login-phase={loginPhase ?? undefined}
         disabled={busy}
         aria-busy={progressMessage ? true : undefined}
-        aria-label={accountPendingLabel ?? i18nService.t(hasAccount ? 'authAccountMenu' : 'authLogin')}
+        aria-label={accountPendingLabel ?? i18nService.t(hasMenu ? 'authAccountMenu' : 'authLogin')}
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
         title={progressMessage ?? (hasAccount ? `${label} · ${i18nService.t(subtitle)}` : label)}
-        onClick={hasAccount ? () => setOpen(value => !value) : () => void runAccountAction(login)}
+        onClick={hasMenu ? () => setOpen(value => !value) : () => void runAccountAction(login)}
       >
         {showSpinner ? (
           <span
@@ -209,7 +215,7 @@ export default function AuthEntry({ compact = false }: { compact?: boolean }) {
         ) : !showLoginText ? (
           <ArrowRightEndOnRectangleIcon aria-hidden="true" className="h-7 w-7 shrink-0" />
         ) : null}
-        <span className={compact && (hasAccount || showSpinner) ? 'sr-only' : 'min-w-0'}>
+        <span className={compact && (hasMenu || showSpinner) ? 'sr-only' : 'min-w-0'}>
           <span
             className={`block truncate ${showLoginText ? 'text-xs font-normal leading-4' : 'text-sm font-medium'}`}
             title={label}

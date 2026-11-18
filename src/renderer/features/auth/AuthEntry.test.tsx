@@ -18,7 +18,13 @@ import AuthEntry from './AuthEntry';
 vi.mock('@/services/i18n', () => ({ i18nService: { t: (key: string) => key } }));
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+const toastFor = (message: string) => expect.objectContaining({
+  type: 'app:showToast',
+  detail: { message, tone: 'warning' },
 });
 
 function setup(initial: AuthState = INITIAL_AUTH_STATE) {
@@ -80,12 +86,14 @@ test.each([
 
 test('clicking the signed-out avatar reports an unavailable SDK without displaying a fake login form', async () => {
   const { api } = setup();
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
   render(<AuthEntry />);
   const button = await screen.findByRole('button', { name: 'authLogin' });
   await waitFor(() => expect(button.hasAttribute('disabled')).toBe(false));
   fireEvent.click(button);
-  await screen.findByText('authSdkUnavailable');
+  await waitFor(() => expect(dispatch).toHaveBeenCalledWith(toastFor('authSdkUnavailable')));
   expect(api.login).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('region')).toBeNull();
   expect(screen.queryByRole('textbox')).toBeNull();
 });
 
@@ -225,12 +233,13 @@ test('an obsolete SDK failure cannot reopen the account panel after a newer logi
 
 test('an invocation failure shows a generic account hint without exposing the SDK error', async () => {
   const context = setup();
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
   vi.mocked(context.api.login).mockRejectedValueOnce(new Error('sensitive-sdk-detail'));
   render(<AuthEntry compact />);
   const avatar = await screen.findByRole('button', { name: 'authLogin' });
   fireEvent.click(avatar);
-  await screen.findByText('authUnavailable');
-  expect(screen.queryByText('sensitive-sdk-detail')).toBeNull();
+  await waitFor(() => expect(dispatch).toHaveBeenCalledWith(toastFor('authUnavailable')));
+  expect(screen.queryByRole('region')).toBeNull();
 });
 
 test('an obsolete rejected invocation cannot show an error after a newer signed-in notification', async () => {
@@ -279,6 +288,7 @@ test.each([null, AuthErrorCode.LogoutFailed])(
   async errorCode => {
     const signedIn = { ...imported, status: AuthStatus.SignedIn };
     const context = setup(signedIn);
+    const dispatch = vi.spyOn(window, 'dispatchEvent');
     let complete!: (result: AuthActionResult) => void;
     vi.mocked(context.api.logout).mockImplementationOnce(
       () => new Promise(resolve => {
@@ -310,7 +320,9 @@ test.each([null, AuthErrorCode.LogoutFailed])(
     expect(avatar.getAttribute('aria-label')).toBe('authLogin');
     expect(avatar.hasAttribute('disabled')).toBe(false);
     expect(avatar.querySelector('.auth-entry-button__spinner')).toBeNull();
-    expect(screen.queryByRole('alert')?.textContent ?? null).toBe(errorCode ? 'authLogoutFailed' : null);
+    if (errorCode) expect(dispatch).toHaveBeenCalledWith(toastFor('authLogoutFailed'));
+    else expect(dispatch).not.toHaveBeenCalledWith(toastFor('authLogoutFailed'));
+    expect(screen.queryByRole('region')).toBeNull();
   },
 );
 
@@ -328,20 +340,33 @@ test('an old initial query cannot undo a newer account notification', async () =
   expect(screen.getByText('Alice')).toBeTruthy();
 });
 
-test('failed service synchronization remains separate from the account and offers a retry', async () => {
-  const context = setup({
-    ...imported,
-    status: AuthStatus.SignedIn,
-    syncStatus: AuthSyncStatus.Failed,
-    errorCode: 'sync-failed',
+test.each([true, false])('committed sign-in or sign-out shows a non-modal sync warning (sign in: %s)', async signIn => {
+  const signedIn = { ...imported, status: AuthStatus.SignedIn };
+  const committed = signIn ? signedIn : INITIAL_AUTH_STATE;
+  const context = setup(signIn ? INITIAL_AUTH_STATE : signedIn);
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
+  vi.mocked(signIn ? context.api.login : context.api.logout).mockResolvedValueOnce({
+    success: true,
+    state: { ...committed, revision: 3, syncStatus: AuthSyncStatus.Failed },
   });
-  render(<AuthEntry />);
-  await screen.findByText('authSignedIn');
-  fireEvent.click(screen.getByRole('button', { name: 'authAccountMenu' }));
-  await screen.findByText('authSyncFailed');
+  vi.mocked(context.api.retrySync).mockResolvedValueOnce({
+    success: true,
+    state: { ...committed, revision: 4, syncStatus: AuthSyncStatus.Completed },
+  });
+  render(<AuthEntry compact />);
+
+  fireEvent.click(await screen.findByRole('button', { name: signIn ? 'authLogin' : 'authAccountMenu' }));
+  if (!signIn) fireEvent.click(screen.getByRole('button', { name: 'authLogout' }));
+
+  await waitFor(() => expect(dispatch).toHaveBeenCalledWith(toastFor('authSyncFailed')));
+  expect(screen.queryByRole('region')).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  const entry = screen.getByRole('button', { name: 'authAccountMenu' });
+  expect(entry.hasAttribute('disabled')).toBe(false);
+  fireEvent.click(entry);
+  expect(screen.getByText('authSyncFailed')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'authRetrySync' }));
-  await waitFor(() => expect(context.api.retrySync).toHaveBeenCalledTimes(1));
-  expect(screen.getAllByText('Alice')).toHaveLength(2);
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'authRetrySync' })).toBeNull());
 });
 
 test('Escape closes the account panel and restores focus to the avatar', async () => {

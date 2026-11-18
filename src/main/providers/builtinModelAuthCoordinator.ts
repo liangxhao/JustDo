@@ -189,8 +189,7 @@ export class BuiltinModelAuthCoordinator {
     try {
       this.dependencies.invalidate?.();
     } finally {
-      // Snapshot revocation can fail on Windows. Still enter the existing config
-      // cleanup, whose failure stops Gateway instead of retaining usable secrets.
+      // Still attempt config cleanup if local snapshot revocation fails.
       await this.dependencies.logout();
       if (generation === this.generation) this.applied = null;
     }

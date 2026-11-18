@@ -15,6 +15,7 @@ import {
   HISTORY_FAILURE_PARTIAL_BATCH_MAX_CHARS,
   type HistoryFailurePartial,
 } from './contracts/history-failure';
+import { BUILTIN_MODEL_PROVIDER_ID, BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE } from './contracts/model-auth';
 import { registerCustody } from './custody/service';
 import { registerCommandResultPolicy } from './execution/command-result-policy';
 import { registerExecutionFailureObservation } from './execution/failure-observation';
@@ -23,7 +24,7 @@ import { readPreparedManagedExecutionDescriptor } from './execution/prepared-pro
 import { registerExternalMcp } from './external-mcp';
 import { isEmptyFailureSourceContent, projectFailurePartialContent } from './history-failure';
 import { registerMcpAppHistory } from './mcp-app-history';
-import { buildBuiltinModelAuthProvider } from './model-auth';
+import { buildBuiltinModelAuthProvider, captureBuiltinModelRequestAuth, replaceBuiltinAuthHeaders } from './model-auth';
 import { registerModelCallObservations } from './model-call-observations';
 import { registerReplayAdmissionObservations } from './replay-admission-observations';
 import { registerScheduledTaskHistory } from './scheduled-task-history';
@@ -548,21 +549,32 @@ const plugin = {
         const baseUrl = options.remote?.baseUrl?.trim().replace(/\/+$/, '');
         const model = options.model.trim();
         if (!baseUrl || !model) return { provider: null };
+        const key = options.remote?.apiKey;
+        const builtin = options.config.models?.providers?.[BUILTIN_MODEL_PROVIDER_ID];
+        // The adapter receives either the SecretRef or the value OpenClaw resolved for both providers.
+        const usesBuiltinKey = (isRecord(key) && key.source === 'exec' &&
+          key.provider === BUILTIN_SECRET_SOURCE && key.id === BUILTIN_SECRET_ID) ||
+          (typeof key === 'string' && key.length > 0 && key === builtin?.apiKey);
+        const readCredential = usesBuiltinKey
+          ? captureBuiltinModelRequestAuth(options.config, builtin?.baseUrl)
+          : undefined;
         const headers: Record<string, string> = {
           accept: 'application/json',
           'content-type': 'application/json',
           ...(options.remote?.headers ?? {}),
         };
-        const apiKey =
-          typeof options.remote?.apiKey === 'string' ? options.remote.apiKey.trim() : '';
-        if (apiKey && !headers.authorization) headers.authorization = `Bearer ${apiKey}`;
+        const apiKey = typeof key === 'string' ? key.trim() : '';
+        if (!readCredential && apiKey && !headers.authorization) headers.authorization = `Bearer ${apiKey}`;
         const endpointUrl = `${baseUrl}/embeddings`;
         const request = async (inputs: unknown[], signal?: AbortSignal): Promise<number[][]> => {
+          const requestHeaders = readCredential
+            ? replaceBuiltinAuthHeaders(headers, (await readCredential(baseUrl, signal)).token, false)
+            : headers;
           const { response, release } = await fetchWithSsrFGuard({
             url: endpointUrl,
             init: {
               method: 'POST',
-              headers,
+              headers: requestHeaders,
               body: JSON.stringify({ model, input: inputs.map(toEmbeddingText) }),
               ...(signal ? { signal } : {}),
             },

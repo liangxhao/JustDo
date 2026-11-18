@@ -2,6 +2,7 @@ import {
   type AuthActionResult,
   AuthErrorCode,
   type AuthState,
+  AuthSyncStatus,
   INITIAL_AUTH_STATE,
 } from '@shared/app/auth';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -50,7 +51,7 @@ export function useAuth() {
   const act = useCallback(
     async (
       action: () => Promise<AuthActionResult>,
-    ): Promise<Pick<AuthActionResult, 'success' | 'errorCode'> | null> => {
+    ): Promise<AuthErrorCode | null> => {
       const startedRevision = revision.current;
       try {
         const result = await action();
@@ -61,13 +62,14 @@ export function useAuth() {
           result.errorCode !== AuthErrorCode.SessionChanged
         ) {
           setErrorCode(result.errorCode ?? null);
-          return result;
+          return result.errorCode ?? (!result.canceled && result.state.syncStatus === AuthSyncStatus.Failed
+            ? AuthErrorCode.SyncFailed : null);
         }
         return null;
       } catch {
         if (!active.current || revision.current !== startedRevision) return null;
         setErrorCode(AuthErrorCode.Unavailable);
-        return { success: false, errorCode: AuthErrorCode.Unavailable };
+        return AuthErrorCode.Unavailable;
       }
     },
     [apply],

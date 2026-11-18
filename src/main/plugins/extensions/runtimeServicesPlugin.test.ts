@@ -13,6 +13,13 @@ import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
+import {
+  BUILTIN_MODEL_PROVIDER_ID,
+  BUILTIN_SECRET_ID,
+  BUILTIN_SECRET_SOURCE,
+  MODEL_AUTH_SESSION_ENV,
+  MODEL_AUTH_TYPE_ENV,
+} from '../../../../plugins/extensions/runtime-services/contracts/model-auth';
 import { SPEECH_SYNTHESIS_METHOD } from '../../../../plugins/extensions/runtime-services/contracts/speech';
 import runtimeServicesPlugin from '../../../../plugins/extensions/runtime-services/index';
 
@@ -25,6 +32,7 @@ const sdk = vi.hoisted(() => ({
     text.replace(/Bearer secret-token/g, 'Bearer [REDACTED]'),
   ),
   fetchWithSsrFGuard: vi.fn(),
+  resolveSecretRefValues: vi.fn(),
   ssrfPolicyFromHttpBaseUrlAllowedHostname: vi.fn(() => ({ allowedHostnames: ['example.test'] })),
 }));
 vi.mock('openclaw/plugin-sdk/plugin-runtime', () => ({}));
@@ -79,6 +87,9 @@ vi.mock('openclaw/plugin-sdk/ssrf-runtime', () => ({
 vi.mock('openclaw/plugin-sdk/secret-input', () => ({
   normalizeResolvedSecretInputString: vi.fn(),
 }));
+vi.mock('openclaw/plugin-sdk/secret-ref-runtime', () => ({
+  resolveSecretRefValues: sdk.resolveSecretRefValues,
+}));
 vi.mock('openclaw/plugin-sdk/tts-runtime', () => ({
   resolveExplicitTtsOverrides: vi.fn(),
   synthesizeSpeech: vi.fn(),
@@ -92,7 +103,7 @@ type HookContext = {
 };
 type Hook = (event: Record<string, unknown>, context: HookContext) => void;
 type EmbeddingAdapter = {
-  create: (options: { model: string; remote: { baseUrl: string } }) => Promise<{
+  create: (options: { config: object; model: string; remote: { baseUrl: string; apiKey?: string } }) => Promise<{
     provider: {
       embedBatch: (inputs: string[], options?: { signal?: AbortSignal }) => Promise<number[][]>;
     };
@@ -187,7 +198,7 @@ function registerPlugin() {
   };
 }
 
-async function createEmbeddingProvider(data: unknown, ok = true) {
+async function createEmbeddingProvider(data: unknown, ok = true, options?: Parameters<EmbeddingAdapter['create']>[0]) {
   const release = vi.fn();
   sdk.fetchWithSsrFGuard.mockResolvedValue({
     response: { ok, status: ok ? 200 : 503, json: async () => data },
@@ -195,7 +206,8 @@ async function createEmbeddingProvider(data: unknown, ok = true) {
   });
   const { registerEmbeddingProvider } = registerPlugin();
   const adapter = registerEmbeddingProvider.mock.calls[0][0] as EmbeddingAdapter;
-  const { provider } = await adapter.create({
+  const { provider } = await adapter.create(options ?? {
+    config: {},
     model: 'test-embedding',
     remote: { baseUrl: 'https://example.test/v1/' },
   });
@@ -311,6 +323,30 @@ describe('runtime services startup and progress', () => {
 });
 
 describe('runtime services embeddings', () => {
+  test('stops using a resolved built-in key after logout even on the same adapter', async () => {
+    const baseUrl = 'https://models.example.test/v1';
+    const apiKey = 'previously-resolved';
+    const { provider } = await createEmbeddingProvider({ data: [{ embedding: [1] }] }, true, {
+      model: 'test-embedding',
+      remote: { baseUrl, apiKey },
+      config: {
+        models: { providers: { [BUILTIN_MODEL_PROVIDER_ID]: { baseUrl, apiKey } } },
+        secrets: { providers: { [BUILTIN_SECRET_SOURCE]: { source: 'exec', env: {
+          [MODEL_AUTH_SESSION_ENV]: 'a'.repeat(32), [MODEL_AUTH_TYPE_ENV]: 'jwt',
+        } } } },
+      },
+    });
+    sdk.resolveSecretRefValues
+      .mockResolvedValueOnce(new Map([[`exec:${BUILTIN_SECRET_SOURCE}:${BUILTIN_SECRET_ID}`, 'current-key']]))
+      .mockRejectedValueOnce(new Error('revoked'));
+
+    await expect(provider.embedBatch(['before logout'])).resolves.toEqual([[1]]);
+    await expect(provider.embedBatch(['after logout'])).rejects.toThrow('Managed model credentials are unavailable.');
+    expect(sdk.fetchWithSsrFGuard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      init: expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer current-key' }) }),
+    }));
+  });
+
   test('restores request order for indexed responses while retaining proxy and abort support', async () => {
     const { provider, release } = await createEmbeddingProvider({
       data: [

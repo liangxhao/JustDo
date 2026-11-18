@@ -568,6 +568,14 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.gatewayConfigReloadMonitor.waitForGatewayReadyAfter(generation, timeoutMs);
   }
 
+  async waitForGatewayStartInProgress(): Promise<void> {
+    const starting = this.restartGatewayPromise ?? this.startGatewayPromise;
+    if (starting) await starting;
+    else if (this.gatewayConfigReloadMonitor.isGatewayRestartPending()) {
+      await this.waitForGatewayReadyAfter(this.getGatewayLifecycleGeneration());
+    }
+  }
+
   getGatewayProcessGeneration(): number {
     return this.gatewayProcessGeneration;
   }

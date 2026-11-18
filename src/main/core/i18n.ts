@@ -190,6 +190,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     engineRestartReadyUnconfirmed: '引擎已接受重启，但尚未确认就绪。未追加重启，请稍后查看状态。',
     engineConfigApplicationUnconfirmed:
       '设置已保存，但重启请求的结果尚未确认。未追加重启，设置是否生效仍待确认。',
+    builtinModelRuntimeSyncUnconfirmed: '尚未确认内置模型配置已在 Gateway 生效，请重试服务同步。',
     modelDefaultConfigSyncFailed: '默认模型配置同步失败，请重试。',
     extensionCredentialRefreshUnconfirmed: '扩展凭据已保存，但尚未确认运行时刷新成功。',
     extensionRuntimeServiceFailed: '扩展服务启动失败，请查看运行时诊断。',
@@ -455,6 +456,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The engine accepted the restart, but readiness is unconfirmed. No additional restart was requested. Check its status later.',
     engineConfigApplicationUnconfirmed:
       'Settings were saved, but the restart request outcome is unconfirmed. No additional restart was requested; application is still unconfirmed.',
+    builtinModelRuntimeSyncUnconfirmed: 'Gateway has not confirmed the built-in model settings. Retry service sync.',
     modelDefaultConfigSyncFailed: 'Could not synchronize the default model configuration. Please retry.',
     extensionCredentialRefreshUnconfirmed:
       'Extension credentials were saved, but runtime refresh is unconfirmed.',

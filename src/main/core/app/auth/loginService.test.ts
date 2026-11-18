@@ -154,9 +154,10 @@ test('a submitted dialog enters completion while the SDK still has to verify the
 test('failed model synchronization keeps the committed login and can be retried', async () => {
   const context = setup();
   context.onLoginCommitted.mockRejectedValueOnce(new Error('sensitive-server-detail'));
-  expect((await context.service.login()).errorCode).toBe(AuthErrorCode.SyncFailed);
-  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
-  expect(context.service.getState().syncStatus).toBe(AuthSyncStatus.Failed);
+  expect(await context.service.login()).toEqual({
+    success: true,
+    state: expect.objectContaining({ status: AuthStatus.SignedIn, syncStatus: AuthSyncStatus.Failed, errorCode: null }),
+  });
   expect(context.store.read()?.values.mtoken).toBe(session.mtoken);
   expect((await context.service.retrySync()).success).toBe(true);
   expect(context.service.getState().syncStatus).toBe(AuthSyncStatus.Completed);
@@ -170,8 +171,10 @@ test('logout deletes all login fields before cleanup and stays signed out if run
     expect(fs.existsSync(context.file)).toBe(false);
     throw new Error('runtime failure');
   });
-  expect((await context.service.logout()).errorCode).toBe(AuthErrorCode.SyncFailed);
-  expect(context.service.getState().status).toBe(AuthStatus.SignedOut);
+  expect(await context.service.logout()).toEqual({
+    success: true,
+    state: expect.objectContaining({ status: AuthStatus.SignedOut, syncStatus: AuthSyncStatus.Failed, errorCode: null }),
+  });
   expect(context.service.getState().profile).toBeNull();
   expect((await context.service.retrySync()).success).toBe(true);
   expect(context.onLogoutCommitted).toHaveBeenCalledTimes(2);

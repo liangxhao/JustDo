@@ -142,7 +142,7 @@ export class LoginService {
       return this.failure(AuthErrorCode.StorageFailed);
     }
     this.applyLogin(null, AuthStatus.SignedOut);
-    const synced = await this.sync(null);
+    await this.sync(null);
     let sdkCleared = true;
     try {
       await this.dependencies.adapter.logout?.({
@@ -152,7 +152,6 @@ export class LoginService {
       sdkCleared = false;
     }
     this.setState({ operation: AuthOperation.Idle });
-    if (!synced) return this.failure(AuthErrorCode.SyncFailed);
     return sdkCleared ? this.success() : this.failure(AuthErrorCode.LogoutFailed);
   }
 
@@ -422,9 +421,9 @@ export class LoginService {
         }
         const login = this.dependencies.store.writeLogin(result.session);
         this.applyLogin(login, AuthStatus.SignedIn);
-        const synced = await this.sync(login);
+        await this.sync(login);
         this.setState({ operation: AuthOperation.Idle });
-        return synced ? this.success() : this.failure(AuthErrorCode.SyncFailed);
+        return this.success();
       });
     } catch (error) {
       sdkPending = false;
@@ -453,7 +452,7 @@ export class LoginService {
       this.setState({ syncStatus: AuthSyncStatus.Completed, errorCode: null });
       return true;
     } catch {
-      this.setState({ syncStatus: AuthSyncStatus.Failed, errorCode: AuthErrorCode.SyncFailed });
+      this.setState({ syncStatus: AuthSyncStatus.Failed });
       return false;
     }
   }

@@ -1,4 +1,8 @@
-import type { ProviderPlugin, ProviderWrapStreamFnContext } from 'openclaw/plugin-sdk/plugin-entry';
+import type {
+  OpenClawConfig,
+  ProviderPlugin,
+  ProviderWrapStreamFnContext,
+} from 'openclaw/plugin-sdk/plugin-entry';
 
 import {
   BUILTIN_MODEL_PROVIDER_ID,
@@ -114,7 +118,7 @@ function routeKey(value: string | undefined): string | undefined {
   }
 }
 
-function replaceAuthHeaders(
+export function replaceBuiltinAuthHeaders(
   headers: Record<string, string> | undefined,
   token: string,
   jwt: boolean,
@@ -128,11 +132,12 @@ function replaceAuthHeaders(
   };
 }
 
-/** The captured exec environment binds this stream to one Main-owned login session. */
-export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
-  if (ctx.provider !== BUILTIN_MODEL_PROVIDER_ID || !ctx.streamFn) return undefined;
-  const inner = ctx.streamFn;
-  const provider = ctx.config?.secrets?.providers?.[BUILTIN_SECRET_SOURCE];
+/** The captured exec environment binds each request to one Main-owned login session. */
+export function captureBuiltinModelRequestAuth(
+  sourceConfig: OpenClawConfig | undefined,
+  baseUrl: string | undefined,
+) {
+  const provider = sourceConfig?.secrets?.providers?.[BUILTIN_SECRET_SOURCE];
   const sessionId =
     provider?.source === 'exec' && 'env' in provider
       ? provider.env?.[MODEL_AUTH_SESSION_ENV]
@@ -141,25 +146,20 @@ export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
     provider?.source === 'exec' && 'env' in provider
       ? provider.env?.[MODEL_AUTH_TYPE_ENV]
       : undefined;
-  const baseUrl = routeKey(ctx.config?.models?.providers?.[BUILTIN_MODEL_PROVIDER_ID]?.baseUrl);
+  const route = routeKey(baseUrl);
   const config = provider
     ? { secrets: { providers: { [BUILTIN_SECRET_SOURCE]: structuredClone(provider) } } }
     : undefined;
 
-  return async (
-    model: Parameters<typeof inner>[0],
-    context: Parameters<typeof inner>[1],
-    options: Parameters<typeof inner>[2],
-  ) => {
-    options?.signal?.throwIfAborted();
+  return async (requestBaseUrl: string, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
     let rejection: AuthFailureReason | undefined;
     if (!config) rejection = AuthFailureReason.MissingProviderConfig;
     else if (!sessionId) rejection = AuthFailureReason.MissingSession;
     else if (!MODEL_AUTH_SESSION_PATTERN.test(sessionId)) rejection = AuthFailureReason.InvalidSession;
     else if (authType !== 'jwt' && authType !== 'api-key') rejection = AuthFailureReason.InvalidAuthType;
-    else if (!baseUrl) rejection = AuthFailureReason.InvalidConfiguredRoute;
-    else if (model.provider !== BUILTIN_MODEL_PROVIDER_ID) rejection = AuthFailureReason.ProviderMismatch;
-    else if (routeKey(model.baseUrl) !== baseUrl) rejection = AuthFailureReason.RouteMismatch;
+    else if (!route) rejection = AuthFailureReason.InvalidConfiguredRoute;
+    else if (routeKey(requestBaseUrl) !== route) rejection = AuthFailureReason.RouteMismatch;
     if (!config || rejection) {
       logAuthFailure(rejection ?? AuthFailureReason.MissingProviderConfig);
       throw new Error(AUTH_UNAVAILABLE);
@@ -189,18 +189,41 @@ export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
     } catch (error) {
       // Resolver diagnostics can contain paths/secret provider errors. Never expose them
       // through a model error, and never fall back to the old run credential.
-      options?.signal?.throwIfAborted();
+      signal?.throwIfAborted();
       logAuthFailure(failureReason, error, resolverStage);
       throw new Error(AUTH_UNAVAILABLE);
     }
+    signal?.throwIfAborted();
+    return { token, jwt: authType === 'jwt' };
+  };
+}
+
+export function wrapBuiltinModelAuth(ctx: ProviderWrapStreamFnContext) {
+  if (ctx.provider !== BUILTIN_MODEL_PROVIDER_ID || !ctx.streamFn) return undefined;
+  const inner = ctx.streamFn;
+  const readCredential = captureBuiltinModelRequestAuth(
+    ctx.config,
+    ctx.config?.models?.providers?.[BUILTIN_MODEL_PROVIDER_ID]?.baseUrl,
+  );
+  return async (
+    model: Parameters<typeof inner>[0],
+    context: Parameters<typeof inner>[1],
+    options: Parameters<typeof inner>[2],
+  ) => {
+    options?.signal?.throwIfAborted();
+    if (model.provider !== BUILTIN_MODEL_PROVIDER_ID) {
+      logAuthFailure(AuthFailureReason.ProviderMismatch);
+      throw new Error(AUTH_UNAVAILABLE);
+    }
+    const { token, jwt } = await readCredential(model.baseUrl, options?.signal);
     options?.signal?.throwIfAborted();
     return inner(
-      { ...model, headers: replaceAuthHeaders(model.headers, token, authType === 'jwt') },
+      { ...model, headers: replaceBuiltinAuthHeaders(model.headers, token, jwt) },
       context,
       {
         ...options,
         apiKey: token,
-        headers: replaceAuthHeaders(options?.headers, token, authType === 'jwt'),
+        headers: replaceBuiltinAuthHeaders(options?.headers, token, jwt),
       },
     );
   };
