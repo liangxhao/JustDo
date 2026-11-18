@@ -38,7 +38,10 @@ beforeEach(() => {
   handlers.clear();
   vi.clearAllMocks();
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 function fixture(
   beforeAgentTeamDisable?: () => Promise<() => void>,
@@ -133,7 +136,8 @@ test('passes explicit data deletion through the existing package owner', async (
   })).resolves.toMatchObject({ success: true });
 
   expect(f.service.delete).toHaveBeenCalledExactlyOnceWith(
-    'feature-plugin', expect.any(Function), apply, { deleteData: true },
+    'feature-plugin', expect.any(Function), apply,
+    { deleteData: true, onRemovalUnconfirmed: expect.any(Function) },
   );
 });
 
@@ -305,6 +309,163 @@ test('uninstalling a plugin clears its menu entries in every open window', async
   });
 });
 
+test.each([true, false])(
+  'publishes a later confirmed removal after releasing package ownership (correlated request: %s)',
+  async correlated => {
+    let packageActive = false;
+    let resolveConfirmation!: (confirmed: boolean) => void;
+    const confirmation = new Promise<boolean>(resolve => { resolveConfirmation = resolve; });
+    const confirm = vi.fn(() => {
+      expect(packageActive).toBe(false);
+      return confirmation;
+    });
+    const f = fixture(undefined, async operation => {
+      packageActive = true;
+      try { return await operation(); }
+      finally { packageActive = false; }
+    });
+    f.service.delete.mockImplementation(async (_id, _report, _apply, options) => {
+      options.onRemovalUnconfirmed(confirm, () => true);
+      return { success: false, operationUnconfirmed: true };
+    });
+    const context = correlated ? { requestId: 'pending-removal' } : undefined;
+
+    await expect(handlers.get(ExtensionIpc.Delete)!(
+      f.event, { extensionId: 'feature-plugin' }, context,
+    )).resolves.toMatchObject({ success: false, operationUnconfirmed: true });
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(f.forgetMarketplace).not.toHaveBeenCalled();
+    f.sender.send.mockClear();
+    f.peer.send.mockClear();
+    f.service.listCatalog.mockResolvedValue([]);
+
+    resolveConfirmation(true);
+
+    await vi.waitFor(() => expect(f.forgetMarketplace).toHaveBeenCalledExactlyOnceWith(
+      PluginKind.EXTENSION, 'feature-plugin',
+    ));
+    await vi.waitFor(() => expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
+      extensionId: 'feature-plugin', enabled: false,
+    }));
+    if (correlated) {
+      await vi.waitFor(() => expect(f.sender.send).toHaveBeenCalledWith(ExtensionIpc.RemovalConfirmed, {
+        requestId: 'pending-removal', extensionId: 'feature-plugin',
+      }));
+    } else expect(f.sender.send.mock.calls.some(([channel]) => channel === ExtensionIpc.RemovalConfirmed)).toBe(false);
+    expect(f.peer.send.mock.calls.some(([channel]) => channel === ExtensionIpc.RemovalConfirmed)).toBe(false);
+    expect(f.service.delete).toHaveBeenCalledOnce();
+  },
+);
+
+test.each(['not confirmed', 'new mutation before cleanup', 'new mutation during publication'])(
+  'does not publish a stale removal confirmation after %s',
+  async interruption => {
+    let current = true;
+    const f = fixture();
+    const confirm = vi.fn(async () => {
+      if (interruption === 'new mutation before cleanup') current = false;
+      return interruption !== 'not confirmed';
+    });
+    f.service.delete.mockImplementation(async (_id, _report, _apply, options) => {
+      options.onRemovalUnconfirmed(confirm, () => current);
+      return { success: false, operationUnconfirmed: true };
+    });
+    if (interruption === 'new mutation during publication') {
+      f.service.listCatalog.mockResolvedValueOnce([]).mockImplementationOnce(async () => {
+        current = false;
+        return [];
+      });
+    }
+
+    await handlers.get(ExtensionIpc.Delete)!(
+      f.event, { extensionId: 'feature-plugin' }, { requestId: 'pending-removal' },
+    );
+
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+    expect(f.sender.send.mock.calls.some(([channel]) => channel === ExtensionIpc.RemovalConfirmed)).toBe(false);
+    expect(f.forgetMarketplace).toHaveBeenCalledTimes(interruption === 'new mutation during publication' ? 1 : 0);
+    expect(f.service.delete).toHaveBeenCalledOnce();
+  },
+);
+
+test('retries a failed confirmed-removal publication before announcing success', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  let resolveConfirmation!: (confirmed: boolean) => void;
+  const confirmation = new Promise<boolean>(resolve => { resolveConfirmation = resolve; });
+  const confirm = vi.fn(() => confirmation);
+  const f = fixture();
+  f.service.delete.mockImplementation(async (_id, _report, _apply, options) => {
+    options.onRemovalUnconfirmed(confirm, () => true);
+    return { success: false, operationUnconfirmed: true };
+  });
+  await handlers.get(ExtensionIpc.Delete)!(
+    f.event, { extensionId: 'feature-plugin' }, { requestId: 'pending-removal' },
+  );
+  f.sender.send.mockClear();
+  f.peer.send.mockClear();
+  f.service.listCatalog
+    .mockRejectedValueOnce(new Error('Inventory temporarily unavailable'))
+    .mockResolvedValue([]);
+
+  resolveConfirmation(true);
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(f.forgetMarketplace).toHaveBeenCalledExactlyOnceWith(PluginKind.EXTENSION, 'feature-plugin');
+  expect(f.peer.send).not.toHaveBeenCalled();
+  expect(f.sender.send).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(999);
+  expect(f.sender.send).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+
+  expect(f.peer.send).toHaveBeenCalledExactlyOnceWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin', enabled: false,
+  });
+  expect(f.sender.send).toHaveBeenCalledWith(ExtensionIpc.RemovalConfirmed, {
+    requestId: 'pending-removal', extensionId: 'feature-plugin',
+  });
+  expect(confirm).toHaveBeenCalledOnce();
+  expect(f.service.delete).toHaveBeenCalledOnce();
+  expect(f.forgetMarketplace).toHaveBeenCalledOnce();
+});
+
+test.each(['deadline elapsed', 'new mutation'])(
+  'stops confirmed-removal publication retries after %s',
+  async interruption => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let current = true;
+    let resolveConfirmation!: (confirmed: boolean) => void;
+    const confirmation = new Promise<boolean>(resolve => { resolveConfirmation = resolve; });
+    const confirm = vi.fn(() => confirmation);
+    const f = fixture();
+    f.service.delete.mockImplementation(async (_id, _report, _apply, options) => {
+      options.onRemovalUnconfirmed(confirm, () => current);
+      return { success: false, operationUnconfirmed: true };
+    });
+    await handlers.get(ExtensionIpc.Delete)!(
+      f.event, { extensionId: 'feature-plugin' }, { requestId: 'pending-removal' },
+    );
+    f.sender.send.mockClear();
+    f.peer.send.mockClear();
+    f.service.listCatalog.mockRejectedValue(new Error('Inventory temporarily unavailable'));
+    if (interruption === 'deadline elapsed') await vi.advanceTimersByTimeAsync(59_000);
+
+    resolveConfirmation(true);
+    await vi.advanceTimersByTimeAsync(0);
+    const readsAfterFirstPublication = f.service.listCatalog.mock.calls.length;
+    if (interruption === 'new mutation') current = false;
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(f.service.listCatalog).toHaveBeenCalledTimes(readsAfterFirstPublication);
+    expect(f.sender.send).not.toHaveBeenCalled();
+    expect(f.peer.send).not.toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(f.service.delete).toHaveBeenCalledOnce();
+  },
+);
+
 test('installations notify consumers through the shared installer used by custom and marketplace installs', async () => {
   const f = fixture();
   f.service.importPath.mockResolvedValue({ success: true, extensionId: 'feature-plugin' });
@@ -419,7 +580,9 @@ test('passes removal through the same outer reservation without an unconditional
   expect(await handlers.get(ExtensionIpc.Delete)!(f.event, { extensionId: 'feature-plugin' }))
     .toMatchObject({ success: true });
   expect(withExtensionPackageMutation).toHaveBeenCalledOnce();
-  expect(f.service.delete).toHaveBeenCalledExactlyOnceWith('feature-plugin', expect.any(Function), apply);
+  expect(f.service.delete).toHaveBeenCalledExactlyOnceWith(
+    'feature-plugin', expect.any(Function), apply, { onRemovalUnconfirmed: expect.any(Function) },
+  );
   expect(mutateAppPackage).not.toHaveBeenCalled();
 });
 

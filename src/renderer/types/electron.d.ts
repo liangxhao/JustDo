@@ -629,6 +629,9 @@ interface IElectronAPI {
     ) => Promise<PluginOperationFeedback & { success: boolean; skills?: Skill[]; error?: string }>;
   };
   extensions: {
+    onRemovalConfirmed: (
+      callback: (event: import('../../shared/plugins/extensions').ExtensionRemovalConfirmedEvent) => void,
+    ) => () => void;
     dataInfo: (
       request: import('../../shared/plugins/extensions').ExtensionDataInfoRequest,
     ) => Promise<import('../../shared/plugins/extensions').ExtensionDataInfoResult>;

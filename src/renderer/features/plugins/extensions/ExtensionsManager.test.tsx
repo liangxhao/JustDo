@@ -3,6 +3,7 @@
 import type {
   ExtensionChangedEvent,
   ExtensionImportResult,
+  ExtensionRemovalConfirmedEvent,
   ExtensionSetEnabledResult,
   InstalledOpenClawExtension,
   OpenClawPluginCapabilityReview,
@@ -14,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import PluginOperationFeedback from '@/features/plugins/shared/PluginOperationFeedback';
 import { getPluginOperationOwner } from '@/features/plugins/shared/pluginOperationService';
+import PluginOperationStatus from '@/features/plugins/shared/PluginOperationStatus';
 
 import type { AppView } from '../app/browserRegistry';
 const app = vi.hoisted(() => ({
@@ -1033,10 +1035,12 @@ describe('ExtensionsManager extension toggle', () => {
     expect(deleteExtension).toHaveBeenCalledOnce();
   });
 
-  test.each([true, false])(
-    'shows deletion progress until the operation ends (success: %s)',
-    async success => {
-      const reply = deferred<{ success: boolean; error?: string }>();
+  test.each(['success', 'failure', 'unconfirmed'] as const)(
+    'closes the removal confirmation immediately and keeps it closed after %s feedback is dismissed',
+    async outcome => {
+      const success = outcome === 'success';
+      const error = outcome === 'unconfirmed' ? 'Removal result not confirmed' : 'Delete refused';
+      const reply = deferred<{ success: boolean; error?: string; operationUnconfirmed?: true }>();
       let installed = true;
       let inventoryAvailable = true;
       const deleteExtension = vi.fn(() => reply.promise);
@@ -1055,6 +1059,7 @@ describe('ExtensionsManager extension toggle', () => {
       render(
         <>
           <ExtensionsManager />
+          <PluginOperationStatus />
           <PluginOperationFeedback />
         </>,
       );
@@ -1064,13 +1069,10 @@ describe('ExtensionsManager extension toggle', () => {
       fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
       fireEvent.click(screen.getByRole('button', { name: 'delete' }));
 
-      const deleting = screen.getByRole('button', { name: 'extensionDeleting' });
-      expect(deleting.getAttribute('aria-busy')).toBe('true');
-      expect(deleting.hasAttribute('disabled')).toBe(true);
-      expect(deleting.querySelector('.animate-spin')).toBeTruthy();
-      expect(screen.getByRole('status').textContent).toBe('extensionDeleting');
-      expect(screen.getByRole('button', { name: 'cancel' }).hasAttribute('disabled')).toBe(true);
-      fireEvent.click(deleting);
+      expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'cancel' })).toBeNull();
+      expect(screen.getByText('pluginOperationAction.remove').closest('[role="status"]')).toBeTruthy();
+      expect(screen.getByText('pluginOperationStage.queued')).toBeTruthy();
       expect(deleteExtension).toHaveBeenCalledExactlyOnceWith(
         { extensionId: extension.id },
         { requestId: expect.any(String) },
@@ -1079,23 +1081,100 @@ describe('ExtensionsManager extension toggle', () => {
       await act(async () => {
         installed = !success;
         inventoryAvailable = success;
-        reply.resolve({ success, error: success ? undefined : 'Delete refused' });
+        reply.resolve({
+          success,
+          error: success ? undefined : error,
+          ...(outcome === 'unconfirmed' ? { operationUnconfirmed: true as const } : {}),
+        });
       });
 
-      await waitFor(() =>
-        expect(screen.queryByRole('button', { name: 'extensionDeleting' })).toBeNull(),
-      );
-      expect(screen.queryByText('extensionDeleting')).toBeNull();
+      await waitFor(() => expect(getPluginOperationOwner().snapshot()).toHaveLength(0));
+      expect(screen.queryByText('pluginOperationStage.queued')).toBeNull();
       if (success) {
         expect(screen.getByText('Extension "Sample Extension" deleted')).toBeTruthy();
+      } else if (outcome === 'unconfirmed') {
+        const notice = screen.getByText('pluginOperationFailureTitle.unconfirmed');
+        expect(notice.closest('[role="status"]')).toBeTruthy();
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+        expect(getPluginOperationOwner().failureSnapshot()[0]).toMatchObject({ operationUnconfirmed: true });
       } else {
         expect(screen.getByText('Delete refused')).toBeTruthy();
         expect(getPluginOperationOwner().failureSnapshot()[0]?.details).toBeUndefined();
-        const retry = screen.getByRole('button', { name: 'delete' });
-        expect(retry.getAttribute('aria-busy')).toBeNull();
-        expect(retry.hasAttribute('disabled')).toBe(false);
-        expect(retry.querySelector('.animate-spin')).toBeNull();
+        expect(screen.getByRole('alertdialog')).toBeTruthy();
       }
+      expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
+      fireEvent.click(screen.getByRole('button', {
+        name: outcome === 'failure' ? 'pluginOperationFailureDismiss' : 'pluginOperationNoticeDismiss',
+      }));
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'cancel' })).toBeNull();
+      expect(deleteExtension).toHaveBeenCalledOnce();
+    },
+  );
+
+  test.each([false, true])(
+    'automatically confirms the original removal notice and updates inventory (category left: %s)',
+    async categoryLeft => {
+      let installed = true;
+      const changeListeners = new Set<(event: ExtensionChangedEvent) => void>();
+      let removalConfirmed!: (event: ExtensionRemovalConfirmedEvent) => void;
+      const list = vi.fn(async () => ({ success: true, extensions: installed ? [extension] : [] }));
+      const deleteExtension = vi.fn(async (_request: unknown, _context: { requestId: string }) => ({
+        success: false,
+        operationUnconfirmed: true as const,
+        error: 'The original uninstall acknowledgement was unavailable',
+      }));
+      Object.defineProperty(window, 'electron', {
+        configurable: true,
+        value: {
+          extensions: {
+            list,
+            delete: deleteExtension,
+            onChanged: (listener: (event: ExtensionChangedEvent) => void) => {
+              changeListeners.add(listener);
+              return () => changeListeners.delete(listener);
+            },
+            onRemovalConfirmed: (listener: typeof removalConfirmed) => {
+              removalConfirmed = listener;
+              return vi.fn();
+            },
+          },
+        },
+      });
+      const category = render(<ExtensionsManager />);
+      render(<PluginOperationFeedback />);
+      fireEvent.click(await screen.findByRole('button', { name: 'subtaskShowInfo: Sample Extension' }));
+      fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
+      fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+      await screen.findByText('pluginOperationFailureTitle.unconfirmed');
+      await waitFor(() => expect(getPluginOperationOwner().snapshot()).toHaveLength(0));
+      const requestId = deleteExtension.mock.calls[0][1].requestId;
+      const initialReceipt = getPluginOperationOwner().failureSnapshot()[0];
+      expect(initialReceipt).toMatchObject({ requestId, targetId: extension.id, operationUnconfirmed: true });
+      const notice = screen.getByText('pluginOperationFailureTitle.unconfirmed').closest('.rounded-xl');
+      if (categoryLeft) category.unmount();
+
+      await act(async () => {
+        installed = false;
+        removalConfirmed({ requestId, extensionId: extension.id });
+        for (const listener of changeListeners)
+          listener({ extensionId: extension.id, enabled: false });
+      });
+      if (categoryLeft) render(<ExtensionsManager />);
+
+      await waitFor(() => expect(screen.queryByRole('button', {
+        name: 'subtaskShowInfo: Sample Extension',
+      })).toBeNull());
+      expect(screen.getByText('pluginOperationCompleted.remove').closest('.rounded-xl')).toBe(notice);
+      expect(screen.getByText('extensionRemovalConfirmed')).toBeTruthy();
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'delete' })).toBeNull();
+      expect(getPluginOperationOwner().failureSnapshot()).toEqual([
+        { ...initialReceipt, removalConfirmed: true },
+      ]);
+      expect(list.mock.calls.length).toBeGreaterThan(2);
+      expect(deleteExtension).toHaveBeenCalledOnce();
     },
   );
 

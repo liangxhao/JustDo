@@ -1,4 +1,5 @@
 import { redactLogText } from '@shared/diagnostics/redaction';
+import type { ExtensionRemovalConfirmedEvent } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import {
   PluginOperationAction,
@@ -11,9 +12,13 @@ import {
 export interface ActivePluginOperation extends PluginOperationProgress {
   label: string;
   startedAt: number;
+  targetId?: string;
 }
 
 type ProgressBridge = {
+  extensions?: {
+    onRemovalConfirmed?: (callback: (event: ExtensionRemovalConfirmedEvent) => void) => () => void;
+  };
   plugins?: {
     onOperationProgress: (callback: (progress: PluginOperationProgress) => void) => () => void;
   };
@@ -23,6 +28,7 @@ export type PluginOperationOptions = {
   kind: PluginKind;
   action: PluginOperationAction;
   label: string;
+  targetId?: string;
 };
 
 export const PluginOperationFailureState = {
@@ -76,6 +82,8 @@ export type PluginOperationFailure = PluginOperationOptions & {
   inventoryRefreshOnly?: true;
   /** Presentation-only confirmation of current engine admission; original receipt flags stay intact. */
   runtimeRecovered?: true;
+  /** Later authoritative confirmation; the original unknown receipt remains intact. */
+  removalConfirmed?: true;
   items?: PluginOperationFailureInput['items'];
 };
 
@@ -119,6 +127,11 @@ export const isPluginOperationCompletedRefreshFailure = (
   !operation.items?.length;
 
 export const isPluginOperationNotice = (operation: PluginOperationFailure) =>
+  (operation.kind === PluginKind.EXTENSION &&
+    operation.action === PluginOperationAction.REMOVE &&
+    (operation.state === PluginOperationFailureState.UNCONFIRMED ||
+      operation.operationUnconfirmed === true ||
+      operation.installSourceInUse === true)) ||
   isPluginOperationRecoveryPending(operation) ||
   isPluginOperationCompletedRefreshFailure(operation) ||
   (operation.action === PluginOperationAction.REMOVE &&
@@ -136,6 +149,8 @@ class PluginOperationOwner {
   private readonly listeners = new Set<() => void>();
   private readonly failureListeners = new Set<() => void>();
   private stopProgress: (() => void) | undefined;
+  private stopRemovalConfirmation: (() => void) | undefined;
+  private readonly earlyRemovalConfirmations = new Set<string>();
 
   constructor(private readonly bridge: ProgressBridge) {}
 
@@ -149,6 +164,22 @@ class PluginOperationOwner {
   };
   dismissFailure = (requestId: string) => {
     this.publishFailures(this.failures.filter(failure => failure.requestId !== requestId));
+  };
+  confirmRemoval = (event: ExtensionRemovalConfirmedEvent) => {
+    const matches = (operation: PluginOperationOptions & { requestId: string }) =>
+      operation.kind === PluginKind.EXTENSION &&
+      operation.action === PluginOperationAction.REMOVE &&
+      operation.requestId === event.requestId && operation.targetId === event.extensionId;
+    if (this.operations.some(matches)) this.earlyRemovalConfirmations.add(event.requestId);
+    let changed = false;
+    const failures = this.failures.map(failure => {
+      if (!matches(failure) || failure.removalConfirmed ||
+          (!failure.operationUnconfirmed && failure.state !== PluginOperationFailureState.UNCONFIRMED))
+        return failure;
+      changed = true;
+      return { ...failure, removalConfirmed: true as const };
+    });
+    if (changed) this.publishFailures(failures);
   };
   confirmRuntimeRecovery = (requestIds: readonly string[]) => {
     const confirmed = new Set(requestIds);
@@ -174,6 +205,7 @@ class PluginOperationOwner {
 
   private publish(operations: readonly ActivePluginOperation[]) {
     this.operations = operations;
+    this.updateRemovalSubscription();
     for (const listener of this.listeners) {
       try {
         listener();
@@ -185,12 +217,34 @@ class PluginOperationOwner {
 
   private publishFailures(failures: readonly PluginOperationFailure[]) {
     this.failures = failures;
+    this.updateRemovalSubscription();
     for (const listener of this.failureListeners) {
       try {
         listener();
       } catch {
         // A result view cannot change the outcome or release a mutation lock.
       }
+    }
+  }
+
+  private updateRemovalSubscription() {
+    const active = this.operations.some(operation =>
+      operation.kind === PluginKind.EXTENSION && operation.action === PluginOperationAction.REMOVE &&
+      Boolean(operation.targetId));
+    const pending = this.failures.some(operation =>
+      operation.kind === PluginKind.EXTENSION && operation.action === PluginOperationAction.REMOVE &&
+      !operation.removalConfirmed && Boolean(operation.targetId) &&
+      (operation.operationUnconfirmed || operation.state === PluginOperationFailureState.UNCONFIRMED));
+    try {
+      if (!active && !pending) {
+        const stop = this.stopRemovalConfirmation;
+        this.stopRemovalConfirmation = undefined;
+        stop?.();
+      } else if (!this.stopRemovalConfirmation && this.bridge.extensions?.onRemovalConfirmed) {
+        this.stopRemovalConfirmation = this.bridge.extensions.onRemovalConfirmed(this.confirmRemoval);
+      }
+    } catch {
+      // Observing a later confirmation cannot prevent the original mutation.
     }
   }
 
@@ -321,6 +375,10 @@ class PluginOperationOwner {
       finish: () => {
         if (finished) return;
         finished = true;
+        if (failure && this.earlyRemovalConfirmations.has(context.requestId) &&
+            (failure.operationUnconfirmed || failure.state === PluginOperationFailureState.UNCONFIRMED))
+          failure = { ...failure, removalConfirmed: true };
+        this.earlyRemovalConfirmations.delete(context.requestId);
         this.publish(
           this.operations.filter(operation => operation.requestId !== context.requestId),
         );

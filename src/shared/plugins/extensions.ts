@@ -17,11 +17,18 @@ export const ExtensionIpc = {
   SetEnabled: 'extensions:set-enabled',
   UpdateConfiguration: 'extensions:update-configuration',
   Changed: 'extensions:changed',
+  RemovalConfirmed: 'extensions:removal-confirmed',
 } as const;
 
 export type ExtensionChangedEvent = {
   extensionId: string;
   enabled: boolean;
+};
+
+/** Main confirmed the original removal against its captured native identity and path. */
+export type ExtensionRemovalConfirmedEvent = {
+  requestId: string;
+  extensionId: string;
 };
 
 export type OpenClawExtensionConfigurationField = {

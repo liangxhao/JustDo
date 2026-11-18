@@ -113,6 +113,22 @@ async function extensionSubscriptions() {
   return { emitter, subscribe, change };
 }
 
+test('forwards correlated removal confirmations without exposing the Electron event', async () => {
+  const { emitter, bridge } = await preloadEvents();
+  const receive = vi.fn();
+  const release = bridge.extensions.onRemovalConfirmed(receive);
+  const confirmation = { requestId: 'removal-request', extensionId: 'example-extension' };
+
+  emitter.emit(ExtensionIpc.RemovalConfirmed, { sender: 'private event' }, confirmation);
+
+  expect(receive).toHaveBeenCalledExactlyOnceWith(confirmation);
+  expect(electronMocks.invoke).not.toHaveBeenCalled();
+  release();
+  emitter.emit(ExtensionIpc.RemovalConfirmed, {}, confirmation);
+  expect(receive).toHaveBeenCalledOnce();
+  expect(emitter.listenerCount(ExtensionIpc.RemovalConfirmed)).toBe(0);
+});
+
 test('shares one IPC listener across many cards and releases it after the last subscriber', async () => {
   const { emitter, subscribe, change } = await extensionSubscriptions();
   const callbacks = Array.from({ length: 24 }, () => vi.fn());

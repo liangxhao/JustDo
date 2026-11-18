@@ -43,6 +43,7 @@ describe('extension removal receipts and package lifecycle', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     fs.rmSync(fixtureRoot, { recursive: true, force: true });
   });
@@ -372,7 +373,7 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(apply).toHaveBeenCalledOnce();
     expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
       pluginId: 'network-plugin',
-    });
+    }, { timeoutMs: 600_000 });
     expect(f.runCommand).not.toHaveBeenCalled();
     expect(f.recoveringGateway).not.toHaveBeenCalled();
     expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
@@ -393,7 +394,7 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(apply).toHaveBeenCalledOnce();
     expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
       pluginId: 'first-entry',
-    });
+    }, { timeoutMs: 600_000 });
     expect(f.runCommand).not.toHaveBeenCalled();
   });
 
@@ -505,6 +506,176 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(fs.existsSync(f.installedDir)).toBe(true);
   });
 
+  it('waits for a slow native uninstall receipt without restarting the running Gateway', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway.mockImplementationOnce(async () => {
+      await new Promise(resolve => setTimeout(resolve, 31_000));
+      fs.rmSync(f.installedDir, { recursive: true });
+      return { ok: true, restartRequired: false };
+    });
+
+    const pending = f.service.delete('network-plugin');
+    await vi.advanceTimersByTimeAsync(31_000);
+
+    await expect(pending).resolves.toEqual({ success: true });
+    expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
+      pluginId: 'network-plugin',
+    }, { timeoutMs: 600_000 });
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it.each(['stale inventory', 'temporary read failure'])(
+    'confirms an uncertain removal after %s while the same Gateway keeps running',
+    async initialRead => {
+      vi.useFakeTimers();
+      const f = fixture({ connectedOnly: true });
+      f.requestGateway
+        .mockRejectedValueOnce(Object.assign(new Error('Gateway reply was lost'), {
+          code: 'CLIENT_TIMEOUT', requestSent: true,
+        }))
+        .mockImplementationOnce(async () => {
+          if (initialRead === 'temporary read failure')
+            throw Object.assign(new Error('Gateway read timed out'), { code: 'CLIENT_TIMEOUT' });
+          return { plugins: [{ id: 'network-plugin', installed: true }] };
+        })
+        .mockImplementationOnce(async () => {
+          fs.rmSync(f.installedDir, { recursive: true });
+          return { plugins: [] };
+        });
+
+      const pending = f.service.delete('network-plugin');
+      await vi.advanceTimersByTimeAsync(100);
+
+      await expect(pending).resolves.toEqual({ success: true });
+      expect(f.requestGateway.mock.calls.map(([method]) => method)).toEqual([
+        'plugins.uninstall', 'plugins.list', 'plugins.list', 'plugins.refresh',
+      ]);
+      expect(f.requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {}, { timeoutMs: 5000 });
+      expect(f.runCommand).not.toHaveBeenCalled();
+      expect(f.recoveringGateway).not.toHaveBeenCalled();
+      expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+    },
+  );
+
+  it('bounds confirmation and keeps removal unconfirmed when its original directory remains', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway
+      .mockRejectedValueOnce(Object.assign(new Error('Gateway reply was lost'), { code: 'CLIENT_TIMEOUT' }))
+      .mockResolvedValue({ plugins: [] });
+    let settled = false;
+
+    const pending = f.service.delete('network-plugin').finally(() => { settled = true; });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(pending).resolves.toMatchObject({ success: false, operationUnconfirmed: true });
+    expect(f.requestGateway.mock.calls.filter(([method]) => method === 'plugins.uninstall')).toHaveLength(1);
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('continues a timed-out removal observation after the original result without replaying any mutation', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway
+      .mockRejectedValueOnce(Object.assign(new Error('Gateway reply was lost'), { code: 'CLIENT_TIMEOUT' }))
+      .mockImplementation(async () => ({
+        plugins: fs.existsSync(f.installedDir) ? [{ id: 'network-plugin', installed: true }] : [],
+      }));
+    const onRemovalUnconfirmed = vi.fn();
+    const pending = f.service.delete('network-plugin', undefined, undefined, { onRemovalUnconfirmed });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expect(pending).resolves.toMatchObject({ success: false, operationUnconfirmed: true });
+    const [confirm, isCurrent] = onRemovalUnconfirmed.mock.calls[0] as [() => Promise<boolean>, () => boolean];
+    const confirmation = confirm();
+    expect(confirm()).toBe(confirmation);
+    await vi.advanceTimersByTimeAsync(1000);
+    fs.rmSync(f.installedDir, { recursive: true });
+    await vi.advanceTimersByTimeAsync(1000);
+
+    await expect(confirmation).resolves.toBe(true);
+    expect(isCurrent()).toBe(true);
+    expect(onRemovalUnconfirmed).toHaveBeenCalledOnce();
+    expect(f.requestGateway.mock.calls.filter(([method]) => method !== 'plugins.list')).toEqual([
+      ['plugins.uninstall', { pluginId: 'network-plugin' }, { timeoutMs: 600_000 }],
+    ]);
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('stops the retained observation after 60 seconds without claiming completion', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway
+      .mockRejectedValueOnce(Object.assign(new Error('Gateway reply was lost'), { code: 'CLIENT_TIMEOUT' }))
+      .mockResolvedValue({ plugins: [] });
+    const onRemovalUnconfirmed = vi.fn();
+    const pending = f.service.delete('network-plugin', undefined, undefined, { onRemovalUnconfirmed });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pending;
+    const confirm = onRemovalUnconfirmed.mock.calls[0][0] as () => Promise<boolean>;
+    let settled = false;
+    const confirmation = confirm().finally(() => { settled = true; });
+
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(confirmation).resolves.toBe(false);
+    const reads = f.requestGateway.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.requestGateway).toHaveBeenCalledTimes(reads);
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('cancels the retained observation when a newer extension mutation reuses its target', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway
+      .mockRejectedValueOnce(Object.assign(new Error('Gateway reply was lost'), { code: 'CLIENT_TIMEOUT' }))
+      .mockResolvedValue({ plugins: [] });
+    const onRemovalUnconfirmed = vi.fn();
+    const pending = f.service.delete('network-plugin', undefined, undefined, { onRemovalUnconfirmed });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await pending;
+    const [confirm, isCurrent] = onRemovalUnconfirmed.mock.calls[0] as [() => Promise<boolean>, () => boolean];
+    const confirmation = confirm();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect(f.service.delete('network-plugin', undefined, async () => {
+      throw new Error('New package mutation admitted');
+    })).rejects.toThrow('New package mutation admitted');
+    fs.rmSync(f.installedDir, { recursive: true });
+    await vi.advanceTimersByTimeAsync(200);
+
+    await expect(confirmation).resolves.toBe(false);
+    expect(isCurrent()).toBe(false);
+    expect(f.requestGateway.mock.calls.filter(([method]) => method === 'plugins.uninstall')).toHaveLength(1);
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it('rejects a late absence response after the Gateway generation changes', async () => {
+    const f = fixture({ connectedOnly: true });
+    f.requestGateway
+      .mockRejectedValueOnce(Object.assign(new Error('Gateway reply was lost'), { code: 'CLIENT_TIMEOUT' }))
+      .mockImplementationOnce(async () => {
+        fs.rmSync(f.installedDir, { recursive: true });
+        f.state.generation += 1;
+        return { plugins: [] };
+      });
+
+    await expect(f.service.delete('network-plugin')).resolves.toMatchObject({
+      success: false, operationUnconfirmed: true,
+    });
+    expect(f.requestGateway.mock.calls.map(([method]) => method)).toEqual(['plugins.uninstall', 'plugins.list']);
+    expect(f.recoveringGateway).not.toHaveBeenCalled();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  });
+
   it('preserves a confirmed removal without restarting a newer Gateway generation', async () => {
     const f = fixture({ connectedOnly: true });
     f.requestGateway.mockImplementationOnce(async () => {
@@ -601,7 +772,7 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(result.error).toContain(t('extensionRemovalPolicyCleanupFailed'));
     expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
       pluginId: 'network-plugin',
-    });
+    }, { timeoutMs: 600_000 });
     expect(f.runCommand).not.toHaveBeenCalled();
     expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
   });

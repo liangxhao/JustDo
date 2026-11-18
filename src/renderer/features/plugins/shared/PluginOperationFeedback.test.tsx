@@ -7,6 +7,7 @@ import {
 } from '@shared/app/initialization';
 import { StartupRoute } from '@shared/app/startup/routing';
 import { EnginePhase, type OpenClawEngineStatus } from '@shared/openclaw/engineStatus';
+import type { ExtensionRemovalConfirmedEvent } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import {
   PluginOperationAction,
@@ -54,7 +55,14 @@ afterEach(() => {
 
 function setup() {
   let notify!: (progress: PluginOperationProgress) => void;
+  let removalConfirmed!: (event: ExtensionRemovalConfirmedEvent) => void;
   const bridge = {
+    extensions: {
+      onRemovalConfirmed: vi.fn((callback: typeof removalConfirmed) => {
+        removalConfirmed = callback;
+        return vi.fn();
+      }),
+    },
     plugins: {
       onOperationProgress: vi.fn((callback: typeof notify) => {
         notify = callback;
@@ -67,6 +75,7 @@ function setup() {
     bridge,
     owner: getPluginOperationOwner(bridge),
     notify: (progress: PluginOperationProgress) => notify(progress),
+    notifyRemoval: (event: ExtensionRemovalConfirmedEvent) => removalConfirmed(event),
   };
 }
 
@@ -143,6 +152,76 @@ function openReportDetails() {
   if (!details.open) fireEvent.click(details.querySelector('summary')!);
   return details;
 }
+
+test.each(['zh', 'en'] as const)(
+  'updates the same unknown removal notice to confirmed success without losing history (%s)',
+  language => {
+    useActualTranslations(language);
+    const { owner, notifyRemoval } = setup();
+    const operation = owner.start({
+      ...options,
+      action: PluginOperationAction.REMOVE,
+      targetId: 'library-tool',
+    });
+    operation.fail({
+      message: 'Original uninstall acknowledgement was unavailable',
+      failedStage: PluginOperationStage.CONFIRMING,
+      operationUnconfirmed: true,
+    });
+    operation.finish();
+    const originalReceipt = owner.failureSnapshot()[0];
+    render(<PluginOperationFeedback />);
+    const notice = screen.getByText(i18nService.t('pluginOperationFailureTitle.unconfirmed'))
+      .closest('.rounded-xl');
+    expect(notice).toBeTruthy();
+
+    act(() => notifyRemoval({ ...operation.context, extensionId: 'library-tool' }));
+
+    expect(screen.getByText(i18nService.t('pluginOperationCompleted.remove')).closest('.rounded-xl'))
+      .toBe(notice);
+    expect(screen.getByText(i18nService.t('extensionRemovalConfirmed'))).toBeTruthy();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(owner.failureSnapshot()).toEqual([{ ...originalReceipt, removalConfirmed: true }]);
+    openReportDetails();
+    expect(screen.getByText('Original uninstall acknowledgement was unavailable')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: i18nService.t('pluginOperationNoticeDismiss') }));
+    expect(owner.failureSnapshot()).toEqual([]);
+    act(() => notifyRemoval({ ...operation.context, extensionId: 'library-tool' }));
+    expect(screen.queryByText(i18nService.t('pluginOperationCompleted.remove'))).toBeNull();
+  },
+);
+
+test('keeps a later-confirmed removal notice and its unresolved package recovery error until dismissed', () => {
+  vi.useFakeTimers();
+  const { owner, notifyRemoval } = setup();
+  const operation = owner.start({
+    ...options,
+    action: PluginOperationAction.REMOVE,
+    targetId: 'library-tool',
+  });
+  const message = 'Native removal unconfirmed\nPackage runtime recovery failed\nGateway port is occupied';
+  operation.fail({
+    message,
+    failedStage: PluginOperationStage.CONFIRMING,
+    operationUnconfirmed: true,
+  });
+  operation.finish();
+  render(<PluginOperationFeedback />);
+  const notice = screen.getByText('pluginOperationFailureTitle.unconfirmed').closest('.rounded-xl');
+
+  act(() => notifyRemoval({ ...operation.context, extensionId: 'library-tool' }));
+  act(() => vi.advanceTimersByTime(10_000));
+
+  expect(screen.getByText('pluginOperationCompleted.remove').closest('.rounded-xl')).toBe(notice);
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(owner.failureSnapshot()).toEqual([
+    expect.objectContaining({ message, operationUnconfirmed: true, removalConfirmed: true }),
+  ]);
+  openReportDetails();
+  expect(screen.getByText(message, { normalizer: value => value })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'pluginOperationNoticeDismiss' }));
+  expect(owner.failureSnapshot()).toEqual([]);
+});
 
 function showRemovalFailure(input: PluginOperationFailureInput) {
   const { owner } = setup();
@@ -278,6 +357,10 @@ test('offers conditional file-use and permission remedies for a known uninstall 
 
 test.each([
   {
+    state: PluginOperationFailureState.UNCONFIRMED,
+    failedStage: PluginOperationStage.CONFIRMING,
+  },
+  {
     state: PluginOperationFailureState.REFRESH_FAILED,
     failedStage: PluginOperationStage.RESTARTING_GATEWAY,
     operationUnconfirmed: true as const,
@@ -288,18 +371,33 @@ test.each([
     installSourceInUse: true as const,
   },
 ])(
-  'never claims removal finished when an unknown flag is present: $state / $failedStage',
-  input => {
+  'shows unknown removal as a notice without claiming completion: $state / $failedStage',
+  async input => {
     useActualTranslations('zh');
-    const { dialog } = showRemovalFailure({ message: '尚未收到原生卸载的最终回执。', ...input });
-    expect(screen.getByRole('alertdialog', { name: '操作状态待确认' })).toBe(dialog);
+    const { owner } = setup();
+    const operation = owner.start({ ...options, action: PluginOperationAction.REMOVE });
+    operation.fail({ message: '尚未收到原生卸载的最终回执。', ...input });
+    operation.finish();
+    const initialReceipt = owner.failureSnapshot()[0];
+    render(<PluginOperationFeedback />);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    const notice = screen.getByText('操作状态待确认').closest('[role="status"]')!;
+    expect(notice).toBeTruthy();
+    expect(notice.closest('.fixed')?.className).toContain('bottom-4 right-4');
     expect(screen.getByText('最后已知步骤')).toBeTruthy();
-    const guidance = screen.getByRole('heading', { name: '接下来可以做什么' }).nextElementSibling!
-      .textContent!;
-    expect(guidance).toContain('核对最新状态');
-    expect(guidance).toContain('不要重复提交');
-    expect(guidance).not.toMatch(/无需再次卸载|再手动卸载|启动 AI 引擎|设置|启用/);
-    expect(dialog.textContent).not.toContain('插件已卸载');
+    expect(document.body.textContent).not.toContain('插件已卸载');
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    openReportDetails();
+    fireEvent.click(screen.getByRole('button', { name: '复制错误详情' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    expect(writeText.mock.calls[0][0]).toContain('尚未收到原生卸载的最终回执。');
+    expect(writeText.mock.calls[0][0]).toContain('核对最新状态');
+    expect(writeText.mock.calls[0][0]).toContain('不要重复提交');
+    expect(writeText.mock.calls[0][0]).not.toContain('重新进入');
+    expect(owner.failureSnapshot()[0]).toBe(initialReceipt);
+    fireEvent.click(screen.getByRole('button', { name: '关闭提示' }));
+    expect(owner.failureSnapshot()).toEqual([]);
   },
 );
 

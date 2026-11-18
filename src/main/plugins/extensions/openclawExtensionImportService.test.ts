@@ -578,7 +578,7 @@ describe('OpenClawExtensionImportService', () => {
 
     expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
       pluginId: 'demo',
-    });
+    }, { timeoutMs: 600_000 });
     expect(manager.buildCliEnvironment).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
     expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
@@ -1339,7 +1339,7 @@ describe('OpenClawExtensionImportService', () => {
       await expect(service.delete('sample-extension')).resolves.toEqual({ success: true });
       expect(requestGateway).toHaveBeenNthCalledWith(1, 'plugins.uninstall', {
         pluginId: 'sample-extension',
-      });
+      }, { timeoutMs: 600_000 });
       expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.refresh', {});
       if (restartRequired) {
         expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith('extension-delete');
@@ -1398,7 +1398,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.uninstall', {
       pluginId: 'sample-extension',
-    });
+    }, { timeoutMs: 600_000 });
   });
 
   it('reports a Gateway uninstall file lock without stopping the Gateway or retrying destructive commands', async () => {
@@ -1462,8 +1462,8 @@ describe('OpenClawExtensionImportService', () => {
     await expect(service.delete('locked-extension')).resolves.toMatchObject({ success: false });
     expect(requestGateway).toHaveBeenNthCalledWith(1, 'plugins.uninstall', {
       pluginId: 'locked-extension',
-    });
-    expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {});
+    }, { timeoutMs: 600_000 });
+    expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {}, { timeoutMs: 5000 });
     expect(runCommand).not.toHaveBeenCalled();
     expect(stop).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
@@ -1519,7 +1519,7 @@ describe('OpenClawExtensionImportService', () => {
       success: false,
       operationUnconfirmed: true,
     });
-    expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {});
+    expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {}, { timeoutMs: 5000 });
     expect(manager.buildCliEnvironment).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
     expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
@@ -1561,7 +1561,7 @@ describe('OpenClawExtensionImportService', () => {
       await expect(service.delete('pending-extension')).resolves.toMatchObject({
         success: readable,
       });
-      expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {});
+      expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {}, { timeoutMs: 5000 });
       expect(runCommand).not.toHaveBeenCalled();
       expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
     },
@@ -1592,7 +1592,7 @@ describe('OpenClawExtensionImportService', () => {
     });
     expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.uninstall', {
       pluginId: 'rejected-extension',
-    });
+    }, { timeoutMs: 600_000 });
     expect(manager.buildCliEnvironment).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
   });
@@ -1738,7 +1738,7 @@ describe('OpenClawExtensionImportService', () => {
     });
 
     await expect(service.delete('removed-extension')).resolves.toEqual({ success: true });
-    expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {});
+    expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.list', {}, { timeoutMs: 5000 });
     expect(requestGateway).toHaveBeenLastCalledWith('plugins.refresh', {});
     expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();

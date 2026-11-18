@@ -321,7 +321,10 @@ import {
 import { StorageDirectoryIpc } from '../../shared/storage/storageDirectory';
 import { StorageRelocationIpc } from '../../shared/storage/storageRelocation';
 import { createAutomaticErrorRetryApi } from './automaticErrorRetry';
-import { createExtensionChangedSubscription } from './extensions';
+import {
+  createExtensionChangedSubscription,
+  createExtensionRemovalConfirmedSubscription,
+} from './extensions';
 import { createIpcSubscription } from './ipcSubscription';
 import { createMcpAppPreloadApi } from './mcpApps';
 import { createPluginOperationSubscription } from './pluginOperations';
@@ -409,6 +412,7 @@ contextBridge.exposeInMainWorld('electron', {
     importPath: (request: ExtensionImportRequest, context?: PluginOperationContext) =>
       ipcRenderer.invoke(ExtensionIpc.Import, request, context),
     onChanged: createExtensionChangedSubscription(),
+    onRemovalConfirmed: createExtensionRemovalConfirmedSubscription(),
   },
   hooks: {
     list: () => ipcRenderer.invoke(HookIpc.List),

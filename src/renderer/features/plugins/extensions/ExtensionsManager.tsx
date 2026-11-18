@@ -1,6 +1,5 @@
 import {
   ArchiveBoxIcon,
-  ArrowPathIcon,
   ArrowUpTrayIcon,
   ChevronDownIcon,
   ExclamationTriangleIcon,
@@ -598,10 +597,12 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const handleConfirmDelete = async () => {
     if (!pendingDelete || extensionActionBusy) return;
     const extension = pendingDelete;
+    setPendingDelete(null);
     const operation = startPluginOperation({
       kind: PluginKind.EXTENSION,
       action: PluginOperationAction.REMOVE,
       label: extension.name,
+      targetId: extension.id,
     });
     let mutationResult: Awaited<ReturnType<typeof window.electron.extensions.delete>> | undefined;
     try {
@@ -616,7 +617,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
         operation.fail(pluginOperationFailure(result, i18nService.t('extensionDeleteFailed')));
         return;
       }
-      setPendingDelete(null);
     } catch (error) {
       operation.fail({
         message:
@@ -647,9 +647,6 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             ].join('\n'),
           });
         }
-      }
-      if (latestExtensions && !latestExtensions.some(item => item.id === extension.id)) {
-        setPendingDelete(null);
       }
       setDeletingExtensionId(null);
       operation.finish();
@@ -1349,9 +1346,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       {pendingDelete &&
         createPortal(
           <Modal
-            onClose={() => {
-              if (!deletingExtensionId) setPendingDelete(null);
-            }}
+            onClose={() => setPendingDelete(null)}
             overlayClassName="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
             className="mx-4 w-full max-w-sm rounded-2xl border border-border bg-surface p-5 shadow-2xl"
           >
@@ -1381,17 +1376,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
                 type="button"
                 onClick={() => void handleConfirmDelete()}
                 disabled={deletingExtensionId !== null}
-                aria-busy={deletingExtensionId !== null || undefined}
                 className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-500 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {deletingExtensionId && (
-                  <ArrowPathIcon aria-hidden="true" className="h-4 w-4 animate-spin" />
-                )}
-                <span role={deletingExtensionId ? 'status' : undefined}>
-                  {deletingExtensionId
-                    ? i18nService.t('extensionDeleting')
-                    : i18nService.t('delete')}
-                </span>
+                {i18nService.t('delete')}
               </button>
             </div>
           </Modal>,

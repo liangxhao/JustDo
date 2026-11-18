@@ -19,6 +19,7 @@ type FailureContext = Pick<
   | 'mutationCompleted'
   | 'runtimeRecoveryPending'
   | 'inventoryRefreshOnly'
+  | 'removalConfirmed'
 >;
 type PresentationContext = FailureContext & Pick<PluginOperationFailure, 'items'>;
 
@@ -82,7 +83,9 @@ const operationGuidanceKey = (operation: FailureContext) => {
 
 export function pluginOperationFailureGuidance(operation: FailureContext): string {
   if (pluginOperationNeedsConfirmation(operation)) {
-    return i18nService.t('pluginOperationFailureNext.unconfirmed');
+    return i18nService.t(operation.action === PluginOperationAction.REMOVE
+      ? 'pluginOperationRemovalUnconfirmedNext'
+      : 'pluginOperationFailureNext.unconfirmed');
   }
   const next = i18nService.t(`pluginOperationFailureGuidance.${operationGuidanceKey(operation)}`);
   return operation.state === PluginOperationFailureState.COMMITTED
@@ -93,6 +96,14 @@ export function pluginOperationFailureGuidance(operation: FailureContext): strin
 export const pluginOperationHasPendingRecovery = isPluginOperationRecoveryPending;
 
 export function pluginOperationFailurePresentation(operation: PresentationContext) {
+  if (operation.action === PluginOperationAction.REMOVE && operation.removalConfirmed) {
+    const nextStep = i18nService.t('extensionRemovalConfirmed');
+    return {
+      title: i18nService.t('pluginOperationCompleted.remove'),
+      guidance: nextStep,
+      nextStep,
+    };
+  }
   if (pluginOperationHasPendingRecovery(operation)) {
     return {
       title: i18nService.t(`pluginOperationCompleted.${operation.action}`),
@@ -188,7 +199,9 @@ export function pluginOperationFailurePresentation(operation: PresentationContex
   return {
     title: i18nService.t(titleKey).replace('{problem}', problem),
     guidance: pluginOperationFailureGuidance(operation),
-    nextStep: i18nService.t(
+    nextStep: operation.action === PluginOperationAction.REMOVE && pluginOperationNeedsConfirmation(operation)
+      ? i18nService.t('pluginOperationRemovalUnconfirmedNext')
+      : i18nService.t(
       `pluginOperationFailureShortNext.${
         pluginOperationNeedsConfirmation(operation)
           ? 'unconfirmed'

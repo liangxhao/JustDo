@@ -193,7 +193,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     extensionCredentialRefreshUnconfirmed: '扩展凭据已保存，但尚未确认运行时刷新成功。',
     extensionRuntimeServiceFailed: '扩展服务启动失败，请查看运行时诊断。',
     extensionOperationBusy: '另一个插件或配置操作仍在处理中，请等待完成后再试。',
-    extensionUninstallUnconfirmed: '扩展卸载结果尚未确认，请稍后刷新状态；未重复执行卸载。',
+    extensionUninstallUnconfirmed: '扩展卸载结果尚未确认，请勿重复执行卸载。',
     extensionToggleUnconfirmed: '扩展开关结果尚未确认，请稍后刷新状态；未重复执行启停。',
     extensionHotToggleUnavailable: '暂时无法连接插件热更新服务，请恢复 Gateway 连接后再操作。',
     extensionCatalogUnavailable: 'Gateway 连接暂时不可用，插件列表将在连接恢复后刷新。',
@@ -461,7 +461,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     extensionOperationBusy:
       'Another plugin or configuration operation is still in progress. Wait for it to finish, then try again.',
     extensionUninstallUnconfirmed:
-      'The extension uninstall result is not confirmed. Refresh its status later; uninstall was not repeated.',
+      'The extension uninstall result is not confirmed. Do not repeat uninstall.',
     extensionToggleUnconfirmed:
       'The extension toggle result is not confirmed. Refresh its status later; the toggle was not repeated.',
     extensionCatalogUnavailable:

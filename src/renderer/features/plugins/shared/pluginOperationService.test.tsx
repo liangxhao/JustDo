@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { ExtensionRemovalConfirmedEvent } from '@shared/plugins/extensions';
 import { PluginKind } from '@shared/plugins/marketplace';
 import {
   PluginOperationAction,
@@ -28,8 +29,15 @@ afterEach(() => {
 
 function setup() {
   let notify!: (progress: PluginOperationProgress) => void;
+  let removalConfirmed!: (event: ExtensionRemovalConfirmedEvent) => void;
   const unsubscribe = vi.fn();
   const bridge = {
+    extensions: {
+      onRemovalConfirmed: vi.fn((callback: typeof removalConfirmed) => {
+        removalConfirmed = callback;
+        return vi.fn();
+      }),
+    },
     plugins: {
       onOperationProgress: vi.fn((callback: typeof notify) => {
         notify = callback;
@@ -41,6 +49,7 @@ function setup() {
   return {
     owner: getPluginOperationOwner(bridge),
     notify: (progress: PluginOperationProgress) => notify(progress),
+    notifyRemoval: (event: ExtensionRemovalConfirmedEvent) => removalConfirmed(event),
     unsubscribe,
     bridge,
   };
@@ -51,6 +60,122 @@ const options = {
   action: PluginOperationAction.INSTALL,
   label: 'Diagram editor',
 };
+
+const removalOptions = {
+  ...options,
+  action: PluginOperationAction.REMOVE,
+  targetId: 'diagram-editor',
+};
+
+test('confirms only the exact unknown removal and preserves its original receipt', () => {
+  const { owner, notifyRemoval, bridge } = setup();
+  const operation = owner.start(removalOptions);
+  expect(bridge.extensions.onRemovalConfirmed).toHaveBeenCalledOnce();
+  operation.fail({
+    message: 'The uninstall acknowledgement was unavailable',
+    details: 'Original diagnostic information',
+    failedStage: PluginOperationStage.CONFIRMING,
+    operationUnconfirmed: true,
+  });
+  operation.finish();
+  const before = owner.failureSnapshot();
+  const event = { ...operation.context, extensionId: removalOptions.targetId };
+
+  notifyRemoval({ ...event, requestId: 'another-request' });
+  notifyRemoval({ ...event, extensionId: 'another-extension' });
+  expect(owner.failureSnapshot()).toBe(before);
+  notifyRemoval(event);
+
+  expect(owner.failureSnapshot()).toEqual([{ ...before[0], removalConfirmed: true }]);
+  expect(owner.failureSnapshot()[0]).toMatchObject({
+    requestId: operation.context.requestId,
+    targetId: removalOptions.targetId,
+    state: 'unconfirmed',
+    operationUnconfirmed: true,
+    message: 'The uninstall acknowledgement was unavailable',
+    details: 'Original diagnostic information',
+    failedStage: PluginOperationStage.CONFIRMING,
+  });
+  const confirmed = owner.failureSnapshot();
+  notifyRemoval(event);
+  expect(owner.failureSnapshot()).toBe(confirmed);
+});
+
+test.each(['before failure', 'before finish'])(
+  'retains an early exact removal confirmation arriving %s',
+  timing => {
+    const { owner, notifyRemoval } = setup();
+    const operation = owner.start(removalOptions);
+    const event = { ...operation.context, extensionId: removalOptions.targetId };
+    if (timing === 'before failure') notifyRemoval(event);
+    operation.fail({ message: 'Original removal outcome unknown', operationUnconfirmed: true });
+    if (timing === 'before finish') notifyRemoval(event);
+    expect(owner.failureSnapshot()).toEqual([]);
+
+    operation.finish();
+
+    expect(owner.failureSnapshot()).toEqual([
+      expect.objectContaining({ ...operation.context, operationUnconfirmed: true, removalConfirmed: true }),
+    ]);
+  },
+);
+
+test.each([
+  { kind: PluginKind.SKILL, action: PluginOperationAction.REMOVE, unknown: true },
+  { kind: PluginKind.EXTENSION, action: PluginOperationAction.INSTALL, unknown: true },
+  { kind: PluginKind.EXTENSION, action: PluginOperationAction.REMOVE, unknown: false },
+])('does not confirm another kind, action or a known failure: %j', ({ kind, action, unknown }) => {
+  const { owner } = setup();
+  const operation = owner.start({ ...removalOptions, kind, action });
+  const event = { ...operation.context, extensionId: removalOptions.targetId };
+  owner.confirmRemoval(event);
+  operation.fail({
+    message: unknown ? 'Original result unknown' : 'Native uninstall rejected',
+    ...(unknown ? { operationUnconfirmed: true as const } : {}),
+  });
+  operation.finish();
+  const before = owner.failureSnapshot();
+
+  owner.confirmRemoval(event);
+
+  expect(owner.failureSnapshot()).toBe(before);
+  expect(owner.failureSnapshot()[0].removalConfirmed).toBeUndefined();
+});
+
+test('keeps tracking removal after presentation subscribers leave and never revives a dismissed card', () => {
+  const { owner, notifyRemoval } = setup();
+  const operation = owner.start(removalOptions);
+  operation.fail({ message: 'Removal status unknown', operationUnconfirmed: true });
+  operation.finish();
+  const detach = owner.subscribeFailures(vi.fn());
+  detach();
+  const event = { ...operation.context, extensionId: removalOptions.targetId };
+
+  notifyRemoval(event);
+
+  expect(owner.failureSnapshot()[0].removalConfirmed).toBe(true);
+  owner.dismissFailure(operation.context.requestId);
+  notifyRemoval(event);
+  expect(owner.failureSnapshot()).toEqual([]);
+});
+
+test('does not revive a dismissed pending removal or confirm a later request for the same target', () => {
+  const { owner, notifyRemoval } = setup();
+  const dismissed = owner.start(removalOptions);
+  dismissed.fail({ message: 'Earlier removal outcome unknown', operationUnconfirmed: true });
+  dismissed.finish();
+  owner.dismissFailure(dismissed.context.requestId);
+  const following = owner.start(removalOptions);
+  following.fail({ message: 'Later removal outcome unknown', operationUnconfirmed: true });
+  following.finish();
+  const before = owner.failureSnapshot();
+
+  notifyRemoval({ ...dismissed.context, extensionId: removalOptions.targetId });
+
+  expect(owner.failureSnapshot()).toBe(before);
+  expect(owner.failureSnapshot()).toHaveLength(1);
+  expect(owner.failureSnapshot()[0].removalConfirmed).toBeUndefined();
+});
 
 test('preserves explicit mutation completion and pending runtime recovery without deriving them from progress', () => {
   const { owner } = setup();

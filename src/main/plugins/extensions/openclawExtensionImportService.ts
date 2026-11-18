@@ -92,7 +92,14 @@ const PLUGIN_ARCHIVE_ROOT_MARKERS = [
   '.cursor-plugin/plugin.json',
   'plugin.json',
 ];
-const GATEWAY_INSTALL_TIMEOUT_MS = 600_000;
+const GATEWAY_PACKAGE_MUTATION_TIMEOUT_MS = 600_000;
+const REMOVAL_CONFIRMATION_TIMEOUT_MS = 30_000;
+const REMOVAL_CONFIRMATION_READ_TIMEOUT_MS = 5_000;
+const REMOVAL_BACKGROUND_CONFIRMATION_TIMEOUT_MS = 60_000;
+type RemovalUnconfirmedHandler = (
+  confirm: () => Promise<boolean>,
+  isCurrent: () => boolean,
+) => void;
 const appendRecoveryFailure = (primary: string, recovery?: string): string =>
   recovery && recovery !== primary
     ? `${primary}\n${t('extensionPackageRecoveryFailed')}\n${recovery}`
@@ -878,6 +885,7 @@ export class OpenClawExtensionImportService {
   private readonly runCommand: NonNullable<OpenClawExtensionImportServiceDeps['runCommand']>;
   private readonly directoryOperations: ManagedDirectoryOperationCoordinator;
   private mutationTail: Promise<void> = Promise.resolve();
+  private mutationEpoch = 0;
   private catalogRead: Promise<ExtensionCatalogProjection> | undefined;
   // A failed config write or restart must not make a credential retry a no-op.
   // This state is process-local: a fresh Gateway startup reads the saved secret file.
@@ -934,6 +942,7 @@ export class OpenClawExtensionImportService {
     configMutation = true,
   ): Promise<T> {
     const run = async (): Promise<T> => {
+      this.mutationEpoch += 1;
       // Concurrent readers may share discovery only within the same mutation
       // epoch. A pre-mutation request must never supply a post-mutation refresh.
       this.catalogRead = undefined;
@@ -1812,7 +1821,7 @@ export class OpenClawExtensionImportService {
     extensionId: string,
     onProgress?: OperationProgress,
     applyPackageMutation?: ApplyExtensionPackageMutation,
-    options: { deleteData?: boolean } = {},
+    options: { deleteData?: boolean; onRemovalUnconfirmed?: RemovalUnconfirmedHandler } = {},
   ): Promise<ExtensionDeleteResult> {
     onProgress?.(PluginOperationStage.QUEUED);
     return this.runMutationExclusive(async () => {
@@ -1841,6 +1850,7 @@ export class OpenClawExtensionImportService {
             : undefined;
           const result = await this.deleteExclusive(
             extensionId, onProgress, installed, mode, !!applyPackageMutation,
+            options.onRemovalUnconfirmed,
           );
           if (!removal || !result.success || result.operationUnconfirmed) return result;
           onProgress?.(PluginOperationStage.CLEANING_PLUGIN_DATA);
@@ -1881,6 +1891,7 @@ export class OpenClawExtensionImportService {
     installedBeforeGateway?: InstalledOpenClawExtension,
     mode: ExtensionPackageLifecycleMode = ExtensionPackageLifecycleMode.HOT,
     routed = false,
+    onRemovalUnconfirmed?: RemovalUnconfirmedHandler,
   ): Promise<ExtensionDeleteResult> {
     let currentStage: PluginOperationStage = PluginOperationStage.VALIDATING;
     const onProgress: OperationProgress = stage => {
@@ -1906,12 +1917,44 @@ export class OpenClawExtensionImportService {
     const gatewayClient = this.deps.getConnectedGatewayClient?.();
     const gatewayProcessId = manager.getGatewayProcessId?.();
     const gatewayGeneration = manager.getGatewayProcessGeneration?.();
+    const mutationEpoch = this.mutationEpoch;
     const ownsGateway = (): boolean =>
-      !this.deps.getConnectedGatewayClient ||
+      this.mutationEpoch === mutationEpoch && (!this.deps.getConnectedGatewayClient ||
         (manager === this.deps.getOpenClawEngineManager() &&
           gatewayClient === this.deps.getConnectedGatewayClient() &&
           gatewayProcessId === manager.getGatewayProcessId?.() &&
-          gatewayGeneration === manager.getGatewayProcessGeneration?.());
+          gatewayGeneration === manager.getGatewayProcessGeneration?.()));
+    const confirmRemoval = async (
+      waitForCompletion = true,
+      timeoutMs = REMOVAL_CONFIRMATION_TIMEOUT_MS,
+    ): Promise<boolean> => {
+      if (!installedBeforeGateway || !requestGateway) return false;
+      const deadline = Date.now() + timeoutMs;
+      let interval = 100;
+      while (ownsGateway() && manager.getStatus().phase === 'running' && Date.now() < deadline) {
+        try {
+          const catalog = await requestGateway<{
+            plugins: Array<{ id: string; installed: boolean }>;
+          }>('plugins.list', {}, {
+            timeoutMs: Math.min(REMOVAL_CONFIRMATION_READ_TIMEOUT_MS, deadline - Date.now()),
+          });
+          if (!ownsGateway() || !Array.isArray(catalog?.plugins)) return false;
+          if (!catalog.plugins.some(plugin => plugin.id === extensionId && plugin.installed) &&
+              !fs.existsSync(installedBeforeGateway.installPath)) return true;
+        } catch (error) {
+          // Only observation is retried. A replacement Gateway cannot confirm
+          // this request, and an explicit native rejection remains authoritative.
+          if (!isGatewayUnavailableError(error) || (isRecord(error) && 'gatewayCode' in error))
+            return false;
+        }
+        if (!waitForCompletion) return false;
+        const remaining = deadline - Date.now();
+        if (!ownsGateway() || remaining <= 0) return false;
+        await new Promise(resolve => setTimeout(resolve, Math.min(interval, remaining)));
+        interval = Math.min(interval * 2, 2000);
+      }
+      return false;
+    };
     const policyDigestBefore = this.deps.outboundHeaderPolicy?.reconcile().digest;
     type FollowupFailure = { error: string; failedStage: PluginOperationStage };
     let removalConfirmed = false;
@@ -2006,7 +2049,9 @@ export class OpenClawExtensionImportService {
           ok: true;
           restartRequired: boolean;
           warnings?: string[];
-        }>('plugins.uninstall', { pluginId: extensionId }, undefined, {
+        }>('plugins.uninstall', { pluginId: extensionId }, {
+          timeoutMs: GATEWAY_PACKAGE_MUTATION_TIMEOUT_MS,
+        }, {
           onAdmissionWait: () => onProgress?.(PluginOperationStage.QUEUED),
           onAdmissionResume: () => onProgress?.(PluginOperationStage.UNINSTALLING),
         }, requestGateway);
@@ -2034,22 +2079,8 @@ export class OpenClawExtensionImportService {
           isDirectoryLockError(error) &&
           (!isGatewayUnavailableError(error) || (isRecord(error) && 'gatewayCode' in error))
         ) {
-          let gatewayReportsInstalled: boolean | undefined;
-          try {
-            onProgress?.(PluginOperationStage.CONFIRMING);
-            const catalog = await requestGateway<{
-              plugins: Array<{ id: string; installed: boolean }>;
-            }>('plugins.list', {});
-            gatewayReportsInstalled = catalog.plugins.some(
-              plugin => plugin.id === extensionId && plugin.installed,
-            );
-          } catch {
-            // A failed confirmation never permits replaying a destructive command.
-          }
-          if (
-            gatewayReportsInstalled === false &&
-            installedBeforeGateway && !fs.existsSync(installedBeforeGateway.installPath)
-          ) {
+          onProgress(PluginOperationStage.CONFIRMING);
+          if (await confirmRemoval(false)) {
             // The uninstall committed and only its response was lost. Do not
             // repeat the destructive mutation; only converge the live runtime.
             return completedRemoval(await convergePolicy(true, true));
@@ -2072,24 +2103,21 @@ export class OpenClawExtensionImportService {
           isGatewayUnavailableError(error) &&
           (!isRecord(error) || !('gatewayCode' in error))
         ) {
-          let absentFromInventory = false;
-          try {
-            onProgress?.(PluginOperationStage.CONFIRMING);
-            const catalog = await requestGateway<{
-              plugins: Array<{ id: string; installed: boolean }>;
-            }>('plugins.list', {});
-            absentFromInventory = !catalog.plugins.some(
-              plugin => plugin.id === extensionId && plugin.installed,
-            );
-          } catch {
-            // Transport failure cannot be turned into a removal receipt.
-          }
-          if (
-            absentFromInventory &&
-            installedBeforeGateway &&
-            !fs.existsSync(installedBeforeGateway.installPath)
-          ) {
+          onProgress(PluginOperationStage.CONFIRMING);
+          if (await confirmRemoval()) {
             return completedRemoval(await convergePolicy(true, true));
+          }
+          if (installedBeforeGateway && ownsGateway()) {
+            let confirmation: Promise<boolean> | undefined;
+            try {
+              onRemovalUnconfirmed?.(
+                () => confirmation ??= confirmRemoval(true, REMOVAL_BACKGROUND_CONFIRMATION_TIMEOUT_MS),
+                () => ownsGateway() && manager.getStatus().phase === 'running' &&
+                  !fs.existsSync(installedBeforeGateway.installPath),
+              );
+            } catch {
+              // Observers cannot change the original unknown mutation result.
+            }
           }
           return {
             success: false,
@@ -2834,7 +2862,7 @@ export class OpenClawExtensionImportService {
                       ? { acknowledgeCapabilities: { reviewToken } } : {}),
                     ...(preserveActivation || appCompanion ? { enable: false } : {}),
                   },
-                  { timeoutMs: GATEWAY_INSTALL_TIMEOUT_MS },
+                  { timeoutMs: GATEWAY_PACKAGE_MUTATION_TIMEOUT_MS },
                   {
                     onAdmissionWait: () => reportOperationProgress(PluginOperationStage.QUEUED),
                     onAdmissionResume: () => reportOperationProgress(PluginOperationStage.INSTALLING),

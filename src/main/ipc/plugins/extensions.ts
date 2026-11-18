@@ -7,6 +7,7 @@ import {
   type ExtensionDeleteRequest,
   type ExtensionImportRequest,
   ExtensionIpc,
+  type ExtensionRemovalConfirmedEvent,
   type ExtensionSetEnabledRequest,
   type ExtensionUpdateConfigurationRequest,
   type InstalledOpenClawExtension,
@@ -39,6 +40,9 @@ import {
   type PluginOperationReporter,
   withPluginOperationFailure,
 } from './pluginOperationProgress';
+
+const REMOVAL_BACKGROUND_REFRESH_TIMEOUT_MS = 60_000;
+const REMOVAL_BACKGROUND_REFRESH_INTERVAL_MS = 1000;
 
 type ExtensionHandlerDependencies = {
   extensionImportService: OpenClawExtensionImportService;
@@ -328,19 +332,26 @@ export const registerExtensionHandlers = ({
           return progress.result({ success: false, error: 'Extension id is required' });
         }
         const extensionId = request.extensionId.trim();
+        let pendingConfirmation: {
+          confirm: () => Promise<boolean>;
+          isCurrent: () => boolean;
+        } | undefined;
+        const removalOptions = {
+          ...(request.deleteData === true ? { deleteData: true } : {}),
+          onRemovalUnconfirmed: (confirm: () => Promise<boolean>, isCurrent: () => boolean) => {
+            pendingConfirmation = { confirm, isCurrent };
+          },
+        };
         let result;
         let refreshWarning = false;
         try {
           const reportProgress = progress.report;
           result = withExtensionPackageMutation
             ? await withExtensionPackageMutation(apply =>
-              request.deleteData === true
-                ? extensionImportService.delete(extensionId, reportProgress, apply, { deleteData: true })
-                : extensionImportService.delete(extensionId, reportProgress, apply))
+              extensionImportService.delete(extensionId, reportProgress, apply, removalOptions))
             : await removeExtensionPackage(
-              () => request.deleteData === true
-                ? extensionImportService.delete(extensionId, reportProgress, undefined, { deleteData: true })
-                : extensionImportService.delete(extensionId, reportProgress), mutateAppPackage);
+              () => extensionImportService.delete(extensionId, reportProgress, undefined, removalOptions),
+              mutateAppPackage);
           progress.result(result);
         } catch (error) {
           progress.captureFailure();
@@ -350,6 +361,35 @@ export const registerExtensionHandlers = ({
           refreshWarning = !(await publishExtensionState(extensionId));
         }
         if (result.success) onMarketplacePluginDeleted?.(PluginKind.EXTENSION, extensionId);
+        if (result.operationUnconfirmed && pendingConfirmation) {
+          // The original package/configuration owners have released their leases.
+          // Continue only their captured observation, never the original mutation.
+          const confirmation = pendingConfirmation;
+          void (async () => {
+            const deadline = Date.now() + REMOVAL_BACKGROUND_REFRESH_TIMEOUT_MS;
+            if (!await confirmation.confirm() || !confirmation.isCurrent()) return;
+            onMarketplacePluginDeleted?.(PluginKind.EXTENSION, extensionId);
+            while (confirmation.isCurrent() && Date.now() < deadline) {
+              const published = await publishExtensionState(extensionId);
+              if (!confirmation.isCurrent()) return;
+              if (published) {
+                if (!context || event.sender.isDestroyed()) return;
+                const confirmed: ExtensionRemovalConfirmedEvent = {
+                  requestId: context.requestId,
+                  extensionId,
+                };
+                event.sender.send(ExtensionIpc.RemovalConfirmed, confirmed);
+                return;
+              }
+              const remaining = deadline - Date.now();
+              if (remaining <= 0) return;
+              await new Promise(resolve => setTimeout(resolve,
+                Math.min(REMOVAL_BACKGROUND_REFRESH_INTERVAL_MS, remaining)));
+            }
+          })().catch(() => {
+            // A lost observation or closing window cannot change the original result.
+          });
+        }
         return progress.result({
           ...result,
           ...(refreshWarning ? { refreshWarning: true as const } : {}),

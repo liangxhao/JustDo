@@ -50,7 +50,7 @@ const PluginOperationFeedback = () => {
         <OperationResultNotice
           key={operation.requestId}
           result={{
-            type: pluginOperationHasPendingRecovery(operation) ? 'success' : 'error',
+            type: operation.removalConfirmed || pluginOperationHasPendingRecovery(operation) ? 'success' : 'error',
             title: pluginOperationFailurePresentation(operation).title,
           }}
           operation={operation}
