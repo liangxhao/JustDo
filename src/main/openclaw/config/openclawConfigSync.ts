@@ -1,3 +1,6 @@
+import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+
 import fs from 'fs';
 import path from 'path';
 
@@ -178,6 +181,25 @@ export type ModelDefaultsConfigPublication = {
   result: OpenClawConfigSyncResult;
   isCurrent: () => boolean;
   matchesRuntimeConfig: (config: unknown) => boolean;
+};
+
+type NativeMcpDataConfigPublication = {
+  changed: boolean;
+  publish: (assertCurrent: () => void) => void;
+  isCurrent: () => boolean;
+  matchesRuntimeConfig: (config: unknown) => boolean;
+};
+
+const configRecord = (value: unknown): Record<string, unknown> => isRecord(value) ? value : {};
+const ownsConfigInclude = (value: unknown): boolean =>
+  isRecord(value) && Object.hasOwn(value, '$include');
+const mcpDataServers = (config: unknown) => configRecord(configRecord(configRecord(config).mcp).servers);
+const mcpDataEntries = (config: unknown) => configRecord(configRecord(configRecord(config).plugins).entries);
+const mcpDataDirectory = (entry: unknown) => configRecord(configRecord(entry).config).dataDirectory;
+const publicMcpLaunch = (value: unknown) => {
+  if (!isRecord(value)) return undefined;
+  const { command, args, cwd, url, enabled } = value;
+  return { command, args, cwd, url, enabled: enabled !== false };
 };
 
 export class OpenClawConfigSync {
@@ -370,6 +392,72 @@ export class OpenClawConfigSync {
         try { fs.unlinkSync(temporaryPath); } catch { /* Only this uncommitted temporary file. */ }
       }
     }
+  }
+
+  /** Plan only the managed data keys and keep the old bytes until the owning caller publishes. */
+  planNativeMcpDataPublication(
+    configPath: string,
+    original: string,
+    bindings: readonly NativeMcpDataBinding[],
+  ): NativeMcpDataConfigPublication | undefined {
+    let config: unknown;
+    try { config = JSON.parse(original); }
+    catch { throw new Error('The existing native configuration is unavailable.'); }
+    if (!isRecord(config)) throw new Error('The existing native configuration is unavailable.');
+    const next = structuredClone(config);
+    const receipt = projectNativeMcpData(next, bindings, this.engineManager.getStateDir(), configPath,
+      new Set(this.getMcpServers?.().map(server => server.name)));
+    if (receipt === undefined) return;
+
+    const changed = hasOpenClawConfigChanged(original, next);
+    const oldEntries = mcpDataEntries(config);
+    const nextEntries = mcpDataEntries(next);
+    const oldServers = mcpDataServers(config);
+    const nextServers = mcpDataServers(next);
+    const changedDirectories = [...new Set([...Object.keys(oldEntries), ...Object.keys(nextEntries)])]
+      .filter(id => mcpDataDirectory(oldEntries[id]) !== mcpDataDirectory(nextEntries[id]));
+    const changedServers = [...new Set([...Object.keys(oldServers), ...Object.keys(nextServers)])]
+      .filter(name => !isDeepStrictEqual(oldServers[name], nextServers[name]));
+    // A root file cannot claim values supplied by an operator's included file.
+    const directoryScopes = changedDirectories.flatMap(id => [oldEntries[id], configRecord(oldEntries[id]).config]);
+    const directoryInclude = changedDirectories.length > 0 &&
+      [config.plugins, oldEntries, ...directoryScopes].some(ownsConfigInclude);
+    const serverScopes = changedServers.map(name => oldServers[name]);
+    const serverInclude = changedServers.length > 0 &&
+      [config.mcp, oldServers, ...serverScopes].some(ownsConfigInclude);
+    if (changed && (ownsConfigInclude(config) || directoryInclude || serverInclude)) {
+      throw new Error('Plugin data configuration is owned by an included file.');
+    }
+    const content = changed ? `${JSON.stringify(next, null, 2)}\n` : original;
+    return {
+      changed,
+      publish: assertCurrent => {
+        const publish = (temporaryPath?: string) => publishNativeMcpDataReceipt(configPath, receipt, () => {
+          assertCurrent();
+          if (fs.readFileSync(configPath, 'utf8') !== original)
+            throw new Error('The native configuration changed before plugin data publication.');
+          if (temporaryPath) fs.renameSync(temporaryPath, configPath);
+        });
+        if (!changed) return publish();
+        const temporaryPath = `${configPath}.${randomUUID()}.tmp`;
+        this.writeConfigTemporaryFile(temporaryPath, content);
+        try { publish(temporaryPath); }
+        finally { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); }
+      },
+      isCurrent: () => {
+        try { return fs.readFileSync(configPath, 'utf8') === content; } catch { return false; }
+      },
+      // Gateway redacts MCP environment values. Check the visible affected
+      // definitions as well as the receipt-bound file and applied revision.
+      matchesRuntimeConfig: runtime => {
+        const entries = mcpDataEntries(runtime);
+        const servers = mcpDataServers(runtime);
+        return isRecord(runtime) && changedDirectories.every(id =>
+          mcpDataDirectory(entries[id]) === mcpDataDirectory(nextEntries[id])) &&
+          changedServers.every(name =>
+            isDeepStrictEqual(publicMcpLaunch(servers[name]), publicMcpLaunch(nextServers[name])));
+      },
+    };
   }
 
   private applyManagedRuntimeConfiguration(config: Record<string, unknown>, configPath: string): void {

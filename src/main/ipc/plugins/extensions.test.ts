@@ -49,6 +49,7 @@ function fixture(
   mutateAppPlugin?: <T>(id: string, enabled: boolean, operation: () => Promise<T>) => Promise<T>,
   approveInstalledAppPackage?: (input: { nativePluginId: string; installPath: string }) => Promise<void>,
   withExtensionPackageMutation?: WithExtensionPackageMutation,
+  syncNativeMcpData?: (isCurrent?: () => boolean) => Promise<boolean>,
 ) {
   const sender = { isDestroyed: vi.fn(() => false), send: vi.fn() };
   const peer = { isDestroyed: vi.fn(() => false), send: vi.fn() };
@@ -79,6 +80,7 @@ function fixture(
     mutateAppPackage,
     withExtensionPackageMutation,
     approveInstalledAppPackage,
+    syncNativeMcpData,
     mutateAppPlugin: mutateAppPlugin ?? (() => {
       let lane: Promise<unknown> = Promise.resolve();
       return <T>(_id: string, enabled: boolean, operation: () => Promise<T>) => {
@@ -298,6 +300,52 @@ test('a rejected enable request publishes the observed setting instead of the re
   });
 });
 
+test('publishes an enabled extension only after its managed MCP configuration applies', async () => {
+  let finishProjection!: (changed: boolean) => void;
+  const sync = vi.fn(() => new Promise<boolean>(resolve => { finishProjection = resolve; }));
+  const f = fixture(undefined, undefined, undefined, undefined, undefined, sync);
+  f.service.setEnabled.mockResolvedValue({ success: true });
+  f.service.listCatalog.mockResolvedValue([{ id: 'feature-plugin', enabled: true }]);
+
+  const result = handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'feature-plugin', enabled: true,
+  });
+  await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce());
+  expect(f.service.setEnabled).toHaveBeenCalledBefore(sync);
+  expect(f.service.listCatalog).not.toHaveBeenCalled();
+  expect(f.peer.send).not.toHaveBeenCalled();
+  finishProjection(true);
+
+  await expect(result).resolves.toEqual({ success: true });
+  expect(f.peer.send).toHaveBeenCalledExactlyOnceWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin', enabled: true,
+  });
+});
+
+test.each([true, false])('preserves the toggle outcome when managed MCP data cannot be applied (confirmed: %s)', async confirmed => {
+  const sync = vi.fn(async () => { throw new Error('Gateway has not applied the data configuration.'); });
+  const f = fixture(undefined, undefined, undefined, undefined, undefined, sync);
+  f.service.setEnabled.mockResolvedValue(confirmed
+    ? { success: true }
+    : { success: false, operationUnconfirmed: true, error: 'The toggle acknowledgement was unavailable.' });
+  const result = await handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'feature-plugin', enabled: true,
+  });
+
+  expect(sync).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+  expect(result).toMatchObject(confirmed ? {
+    success: true,
+    refreshWarning: true,
+    failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    error: expect.stringContaining(t('extensionNativeMcpDataSyncFailed')),
+  } : {
+    success: false, operationUnconfirmed: true, error: 'The toggle acknowledgement was unavailable.',
+  });
+  expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin', enabled: false,
+  });
+});
+
 test('uninstalling a plugin clears its menu entries in every open window', async () => {
   const f = fixture();
   f.service.delete.mockResolvedValue({ success: true });
@@ -319,11 +367,12 @@ test.each([true, false])(
       expect(packageActive).toBe(false);
       return confirmation;
     });
+    const sync = vi.fn(async () => false);
     const f = fixture(undefined, async operation => {
       packageActive = true;
       try { return await operation(); }
       finally { packageActive = false; }
-    });
+    }, undefined, undefined, undefined, sync);
     f.service.delete.mockImplementation(async (_id, _report, _apply, options) => {
       options.onRemovalUnconfirmed(confirm, () => true);
       return { success: false, operationUnconfirmed: true };
@@ -334,6 +383,7 @@ test.each([true, false])(
       f.event, { extensionId: 'feature-plugin' }, context,
     )).resolves.toMatchObject({ success: false, operationUnconfirmed: true });
     expect(confirm).toHaveBeenCalledOnce();
+    expect(sync).not.toHaveBeenCalled();
     expect(f.forgetMarketplace).not.toHaveBeenCalled();
     f.sender.send.mockClear();
     f.peer.send.mockClear();
@@ -347,6 +397,7 @@ test.each([true, false])(
     await vi.waitFor(() => expect(f.peer.send).toHaveBeenCalledWith(ExtensionIpc.Changed, {
       extensionId: 'feature-plugin', enabled: false,
     }));
+    expect(sync).toHaveBeenCalledExactlyOnceWith(expect.any(Function));
     if (correlated) {
       await vi.waitFor(() => expect(f.sender.send).toHaveBeenCalledWith(ExtensionIpc.RemovalConfirmed, {
         requestId: 'pending-removal', extensionId: 'feature-plugin',
@@ -361,7 +412,8 @@ test.each(['not confirmed', 'new mutation before cleanup', 'new mutation during 
   'does not publish a stale removal confirmation after %s',
   async interruption => {
     let current = true;
-    const f = fixture();
+    const sync = vi.fn(async () => false);
+    const f = fixture(undefined, undefined, undefined, undefined, undefined, sync);
     const confirm = vi.fn(async () => {
       if (interruption === 'new mutation before cleanup') current = false;
       return interruption !== 'not confirmed';
@@ -384,6 +436,7 @@ test.each(['not confirmed', 'new mutation before cleanup', 'new mutation during 
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
     expect(f.sender.send.mock.calls.some(([channel]) => channel === ExtensionIpc.RemovalConfirmed)).toBe(false);
     expect(f.forgetMarketplace).toHaveBeenCalledTimes(interruption === 'new mutation during publication' ? 1 : 0);
+    if (interruption !== 'new mutation during publication') expect(sync).not.toHaveBeenCalled();
     expect(f.service.delete).toHaveBeenCalledOnce();
   },
 );

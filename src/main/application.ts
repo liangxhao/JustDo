@@ -1891,6 +1891,8 @@ if (agentBridgeArgv) {
     withExtensionPackageMutation: operation =>
       getAppPlugins().withExtensionPackageMutation(operation),
     approveInstalledAppPackage: input => getAppPlugins().approveInstalledPackage(input),
+    syncNativeMcpData: isCurrent =>
+      getOpenClawConfigSyncService().syncNativeMcpDataAfterMutation(isCurrent),
     extensionImportService: getOpenClawExtensionImportService(),
     installationService: pluginInstallationService,
     onMarketplacePluginDeleted: (kind, runtimeId) =>

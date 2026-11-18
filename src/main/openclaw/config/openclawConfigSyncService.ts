@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import type { BrowserMode } from '../../../shared/browser/browser';
 import { EnginePhase } from '../../../shared/openclaw/engineStatus';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
@@ -198,6 +200,14 @@ type ConfigSnapshot = {
   };
 };
 
+type NativeMcpDataConfigSnapshot = {
+  valid?: boolean;
+  configRevisionHash?: string;
+  appliedConfigHash?: string;
+  sourceConfig?: unknown;
+  config?: unknown;
+};
+
 type ModelAuthStatusSnapshot = {
   unavailable?: unknown;
   providers?: Array<{
@@ -229,6 +239,7 @@ const removePersistentApprovalGrants = (
 
 const DEFERRED_RESTART_POLL_MS = 3_000;
 export const MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS = 90_000;
+const NATIVE_MCP_DATA_HOT_RELOAD_TIMEOUT_MS = 90_000;
 
 export type OpenClawConfigApplyMode = 'none' | 'native-reload' | 'hard-restart';
 
@@ -299,6 +310,74 @@ export class OpenClawConfigSyncService {
         .then(publication => publication.observation);
     }
     return this.enqueueSyncOperation(() => this.syncConfigExclusive(options));
+  }
+
+  /** Reconcile managed data after native mutation. False means no file delta, not a runtime ACK. */
+  syncNativeMcpDataAfterMutation(isMutationCurrent = () => true): Promise<boolean> {
+    return this.enqueueSyncOperation(async () => {
+      const discover = this.deps.getNativeMcpDataBindings;
+      if (!discover) return false;
+      const manager = this.deps.getOpenClawEngineManager();
+      const configPath = manager.getConfigPath();
+      const stateDirectory = manager.getStateDir();
+      const phase = manager.getStatus().phase;
+      const pid = manager.getGatewayProcessId();
+      const processGeneration = manager.getGatewayProcessGeneration();
+      const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
+      const client = this.deps.getGatewayClient();
+      const unconfirmed = () => new Error('Plugin data configuration could not be confirmed.');
+      const assertOwner = () => {
+        if (!isMutationCurrent() || this.deps.getOpenClawEngineManager() !== manager ||
+            manager.getConfigPath() !== configPath || manager.getStateDir() !== stateDirectory ||
+            manager.getStatus().phase !== phase || manager.getGatewayProcessId() !== pid ||
+            manager.getGatewayProcessGeneration() !== processGeneration ||
+            manager.getGatewayLifecycleGeneration() !== lifecycleGeneration ||
+            this.deps.getGatewayClient() !== client) throw unconfirmed();
+      };
+      assertOwner();
+      const original = fs.readFileSync(configPath, 'utf8');
+      const assertSource = () => {
+        assertOwner();
+        if (fs.readFileSync(configPath, 'utf8') !== original) throw unconfirmed();
+      };
+      const bindings = await discover();
+      assertSource();
+      const online = phase === EnginePhase.Running && pid !== null && pid > 0 ? client : null;
+      const offline = phase !== EnginePhase.Starting && phase !== EnginePhase.Running &&
+        pid === null && client === null;
+      const missing = bindings.filter(binding => {
+        try { nativeMcpDataDirectory(stateDirectory, binding.pluginId); return false; }
+        catch { return true; }
+      }).map(binding => binding.pluginId);
+      if (missing.length) {
+        if (!online && !offline) throw unconfirmed();
+        await prepareNativeMcpData(stateDirectory, missing);
+        assertSource();
+      }
+      const publication = this.getConfigSync().planNativeMcpDataPublication(configPath, original, bindings);
+      if (!publication) return false;
+      if (!online && !offline) throw unconfirmed();
+      if (!publication.changed || !online) {
+        publication.publish(assertOwner);
+        return publication.changed;
+      }
+      const before = await online.request<NativeMcpDataConfigSnapshot>('config.get', {}, { timeoutMs: 5_000 });
+      assertSource();
+      if (before.valid !== true || typeof before.configRevisionHash !== 'string' || !before.configRevisionHash)
+        throw unconfirmed();
+      const reloadGeneration = manager.getGatewayConfigReloadGeneration();
+      publication.publish(assertOwner);
+      const reloaded = await manager.waitForGatewayConfigReload(reloadGeneration, NATIVE_MCP_DATA_HOT_RELOAD_TIMEOUT_MS);
+      assertOwner();
+      if (!reloaded || !publication.isCurrent()) throw unconfirmed();
+      const applied = await online.request<NativeMcpDataConfigSnapshot>('config.get', {}, { timeoutMs: 5_000 });
+      assertOwner();
+      if (!publication.isCurrent() || applied.valid !== true || !applied.configRevisionHash ||
+          applied.configRevisionHash === before.configRevisionHash ||
+          applied.appliedConfigHash !== applied.configRevisionHash ||
+          !publication.matchesRuntimeConfig(applied.sourceConfig ?? applied.config)) throw unconfirmed();
+      return true;
+    });
   }
 
   runConfigMutationExclusive<T>(

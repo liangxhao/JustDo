@@ -55,6 +55,7 @@ type ExtensionHandlerDependencies = {
     nativePluginId: string;
     installPath: string;
   }) => Promise<void>;
+  syncNativeMcpData?: (isCurrent?: () => boolean) => Promise<boolean>;
 };
 
 export const registerExtensionHandlers = ({
@@ -65,14 +66,49 @@ export const registerExtensionHandlers = ({
   mutateAppPackage,
   withExtensionPackageMutation,
   approveInstalledAppPackage,
+  syncNativeMcpData,
 }: ExtensionHandlerDependencies): void => {
+  const applyNativeMcpData = async <T extends {
+    success: boolean;
+    error?: string;
+    failedStage?: string;
+    operationUnconfirmed?: true;
+    runtimeRecoveryPending?: true;
+    installSourceInUse?: true;
+  }>(result: T, report?: (stage: PluginOperationStage) => void): Promise<T> => {
+    if (!syncNativeMcpData || !result.success || result.operationUnconfirmed ||
+        result.runtimeRecoveryPending || result.installSourceInUse) return result;
+    report?.(PluginOperationStage.APPLYING_CONFIGURATION);
+    try {
+      // Native has released the earlier config write. The data sync acquires its
+      // own turn and reads the selected providers from the current configuration.
+      await syncNativeMcpData();
+      return result;
+    } catch (error) {
+      const detail = sanitizeInstallationFailureReason(
+        error instanceof Error ? error.message : undefined, [], { preserveLocalPaths: true },
+      );
+      return {
+        ...result,
+        refreshWarning: true as const,
+        failedStage: result.failedStage ?? PluginOperationStage.APPLYING_CONFIGURATION,
+        error: [result.error, t('extensionNativeMcpDataSyncFailed'), detail].filter(Boolean).join('\n'),
+      };
+    }
+  };
+
   // Mutations can persist before reporting a restart error. Publish observed state,
   // including installs/removals, and keep catalog notifications in completion order.
   let stateNotification = Promise.resolve();
-  const publishExtensionState = (extensionId: string): Promise<boolean> => {
+  const publishExtensionState = (
+    extensionId: string,
+    isCurrent = () => true,
+  ): Promise<boolean> => {
     const notification = stateNotification.then(async () => {
       try {
+        if (!isCurrent()) return false;
         const extensions = await extensionImportService.listCatalog();
+        if (!isCurrent()) return false;
         const change: ExtensionChangedEvent = {
           extensionId,
           enabled: extensions.find(extension => extension.id === extensionId)?.enabled ?? false,
@@ -168,11 +204,12 @@ export const registerExtensionHandlers = ({
               ? { applyPackageMutation, onInstalled: approveInstalled } : {}),
           },
         );
-      const result = withExtensionPackageMutation
+      const installed = withExtensionPackageMutation
         ? await withExtensionPackageMutation(importPackage)
         : await installExtensionPackage(async () => approveInstalled(
           await importPackage(),
         ), mutateAppPackage);
+      const result = await applyNativeMcpData(installed, stage => request.onProgress?.({ stage, percent: 0 }));
       if (
         (result.success || result.installationCommitted) &&
         result.extensionId &&
@@ -352,6 +389,7 @@ export const registerExtensionHandlers = ({
             : await removeExtensionPackage(
               () => extensionImportService.delete(extensionId, reportProgress, undefined, removalOptions),
               mutateAppPackage);
+          result = await applyNativeMcpData(result, reportProgress);
           progress.result(result);
         } catch (error) {
           progress.captureFailure();
@@ -369,8 +407,17 @@ export const registerExtensionHandlers = ({
             const deadline = Date.now() + REMOVAL_BACKGROUND_REFRESH_TIMEOUT_MS;
             if (!await confirmation.confirm() || !confirmation.isCurrent()) return;
             onMarketplacePluginDeleted?.(PluginKind.EXTENSION, extensionId);
+            if (syncNativeMcpData) {
+              // This reconciliation acquires a new config turn and cannot delay
+              // publication of the already confirmed native removal.
+              void syncNativeMcpData(confirmation.isCurrent).then(changed => {
+                if (changed) return publishExtensionState(extensionId, confirmation.isCurrent);
+              }).catch(() => {
+                console.warn('[Extensions] Managed MCP data could not be reconciled after confirmed removal');
+              });
+            }
             while (confirmation.isCurrent() && Date.now() < deadline) {
-              const published = await publishExtensionState(extensionId);
+              const published = await publishExtensionState(extensionId, confirmation.isCurrent);
               if (!confirmation.isCurrent()) return;
               if (published) {
                 if (!context || event.sender.isDestroyed()) return;
@@ -440,6 +487,7 @@ export const registerExtensionHandlers = ({
                 : undefined,
               progress?.report,
             );
+            result = await applyNativeMcpData(result, progress?.report);
             withPluginOperationFailure(progress, result);
           } catch (error) {
             progress?.captureFailure();
