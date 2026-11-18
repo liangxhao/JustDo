@@ -50,7 +50,8 @@ Var JustDoInstallLog
 Var JustDoShowLogButton
 Var JustDoResourceProgressFile
 Var JustDoLastResourceActivity
-Var JustDoLastResourceProgress
+Var InstallerResourceStage
+Var InstallerResourceStarted
 Var JustDoInstallLogPath
 Var JustDoResourceLogPath
 Var JustDoInstallStartedTick
@@ -76,6 +77,7 @@ Var JustDoPreviousTemp
 Var JustDoPreviousTmp
 Var InstallerUpgradeDirectory
 Var InstallerPreviousUninstallRoot
+Var InstallerOldChildActive
 
 !include "${PROJECT_DIR}\scripts\packaging\nsis-extractor-launch.nsh"
 
@@ -270,6 +272,10 @@ Function JustDoInstallerUserAbort
     SetErrorLevel 0
     Quit
   ${EndIf}
+  ${If} $InstallerOldChildActive == "1"
+    MessageBox MB_OK|MB_ICONINFORMATION "旧版卸载尚未结束。请等待此步骤完成后再关闭安装器。 The previous uninstaller is still running. Wait for this step to finish before closing setup." /SD IDOK
+    Abort
+  ${EndIf}
   ${If} $JustDoExtractorActive == "1"
     MessageBox MB_OK|MB_ICONINFORMATION "安装文件仍在写入和校验中，请等待此步骤完成后再关闭安装程序。 Installation files are still being written and verified; wait for this step to finish before closing setup." /SD IDOK
     Abort
@@ -330,11 +336,21 @@ Function .onGUIEnd
   Call JustDoWriteInstallSessionEnd
 FunctionEnd
 
+!macro JustDoSetInstallStatus _ZH_TEXT _EN_TEXT
+  ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+  ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+    SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:${_ZH_TEXT}"
+  ${Else}
+    SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:${_EN_TEXT}"
+  ${EndIf}
+!macroend
+
 Function JustDoPollResourceProgress
   Push $0
   Push $1
   Push $2
   Push $3
+  Push $4
   Call InstallerPresentationTick
 
   ${If} $JustDoResourceProgressFile != ""
@@ -344,51 +360,63 @@ Function JustDoPollResourceProgress
     ${IfNot} ${Errors}
       FileRead $0 $1
       FileRead $0 $2
+      StrCpy $4 ""
+      FileRead $0 $4
       FileRead $0 $3
       FileClose $0
+      ClearErrors
       ${TrimNewLines} "$1" $1
       ${TrimNewLines} "$2" $2
       ${TrimNewLines} "$3" $3
+      ${TrimNewLines} "$4" $4
+      ${If} $4 != $InstallerResourceStage
+        StrCpy $InstallerResourceStage "$4"
+        !insertmacro InstallerMarkPhase
+      ${EndIf}
 
       ${If} $1 == "determinate"
       ${AndIf} $2 != ""
-        StrCpy $JustDoLastResourceProgress $2
-        ${If} $JustDoProgressBar != ""
-          SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
-          ShowWindow $JustDoProgressBar 0
-        ${EndIf}
         ShowWindow $JustDoNativeProgressBar 5
         SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETRANGE32} 0 100
         SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETPOS} $2 0
-        ${If} $JustDoStatusText != ""
-          ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
-          ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-            StrCpy $1 "正在读取核心资源：$2%…"
-          ${Else}
-            StrCpy $1 "Reading core resources: $2%…"
-          ${EndIf}
-          SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:$1"
-        ${EndIf}
       ${Else}
-        ${If} $JustDoProgressBar != ""
-          SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
-          ShowWindow $JustDoProgressBar 0
+        ShowWindow $JustDoNativeProgressBar 0
+      ${EndIf}
+
+      ${If} $4 == "archive"
+        !insertmacro JustDoSetInstallStatus "正在读取离线资源归档：$2%…" "Reading offline archive: $2%…"
+      ${ElseIf} $4 == "entries"
+        ${If} $2 != ""
+          !insertmacro JustDoSetInstallStatus "正在处理离线资源条目：$2%…" "Processing resource entries: $2%…"
+        ${Else}
+          !insertmacro JustDoSetInstallStatus "正在逐项处理离线资源…" "Processing resource entries…"
         ${EndIf}
-        ; Validation and filesystem flushes have no trustworthy percentage.
-        ; Keep the native bar at the last measured value instead of showing a
-        ; looping marquee that can look like flicker or backward progress.
-        ShowWindow $JustDoNativeProgressBar 5
-        SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETRANGE32} 0 100
-        SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETPOS} $JustDoLastResourceProgress 0
-        ${If} $JustDoStatusText != ""
-          ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
-          ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-            StrCpy $1 "正在展开或校验核心资源…"
-          ${Else}
-            StrCpy $1 "Expanding or validating core resources…"
-          ${EndIf}
-          SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:$1"
-        ${EndIf}
+      ${ElseIf} $4 == "writing"
+        !insertmacro JustDoSetInstallStatus "归档已读完，正在等待文件写入结束…" "Archive read. Waiting for file writes…"
+      ${ElseIf} $4 == "validating"
+        !insertmacro JustDoSetInstallStatus "正在校验离线运行时文件…" "Verifying offline runtime files…"
+      ${ElseIf} $4 == "recovering"
+        !insertmacro JustDoSetInstallStatus "正在恢复上次中断的安装…" "Recovering an interrupted installation…"
+      ${ElseIf} $4 == "rollback"
+        !insertmacro JustDoSetInstallStatus "解压未完成，正在恢复旧运行时文件…" "Extraction did not finish. Restoring previous runtime files…"
+      ${ElseIf} $4 == "backup"
+        !insertmacro JustDoSetInstallStatus "正在备份旧运行时…" "Backing up the previous runtime…"
+      ${ElseIf} $4 == "compatible"
+        !insertmacro JustDoSetInstallStatus "正在使用兼容方式解压离线资源…" "Using the compatible resource extractor…"
+      ${ElseIf} $4 == "opening"
+        !insertmacro JustDoSetInstallStatus "正在打开离线资源归档…" "Opening the offline resource archive…"
+      ${ElseIf} $4 == "preparing"
+        !insertmacro JustDoSetInstallStatus "正在准备运行时替换…" "Preparing to replace the runtime files…"
+      ${ElseIf} $4 == "expanding"
+        !insertmacro JustDoSetInstallStatus "正在展开离线资源…" "Expanding offline resources…"
+      ${ElseIf} $4 == "cleanup"
+        !insertmacro JustDoSetInstallStatus "正在清理运行时临时备份…" "Removing temporary runtime backups…"
+      ${ElseIf} $4 == "verified"
+        !insertmacro JustDoSetInstallStatus "核心资源已验证，正在完成安装…" "Core resources verified. Finishing setup…"
+      ${ElseIf} $4 == "failed"
+        !insertmacro JustDoSetInstallStatus "离线资源处理失败，正在收集错误详情…" "Resource setup failed. Collecting error details…"
+      ${Else}
+        !insertmacro JustDoSetInstallStatus "正在准备或展开离线资源…" "Preparing or expanding offline resources…"
       ${EndIf}
 
       ${If} $3 != ""
@@ -401,6 +429,7 @@ Function JustDoPollResourceProgress
     ${EndIf}
   ${EndIf}
 
+  Pop $4
   Pop $3
   Pop $2
   Pop $1
@@ -418,13 +447,141 @@ FunctionEnd
   SetDetailsPrint none
 !macroend
 
-!macro JustDoSetInstallStatus _ZH_TEXT _EN_TEXT
+!macro InstallerShowCorePhase _ZH_TEXT _EN_TEXT
+  ${IfNot} ${Silent}
+    ShowWindow $JustDoNativeProgressBar 0
+    !insertmacro InstallerMarkPhase
+    !insertmacro JustDoSetInstallStatus "${_ZH_TEXT}" "${_EN_TEXT}"
+    !insertmacro JustDoAddInstallActivity "${_ZH_TEXT}" "${_EN_TEXT}"
+    System::Call 'user32::UpdateWindow(p $JustDoStatusText)i'
+  ${EndIf}
+!macroend
+
+!macro InstallerShowPreviousWait _SECONDS
+  ${IfNot} ${Silent}
+    ShowWindow $JustDoNativeProgressBar 0
+    ${If} $InstallerOldAttempt == 2
+      !insertmacro JustDoSetInstallStatus "正在重试清理旧版（已等待 ${_SECONDS} 秒）…" "Retrying previous-version removal (${_SECONDS} s)…"
+    ${Else}
+      !insertmacro JustDoSetInstallStatus "正在等待旧版卸载（${_SECONDS} 秒）…" "Waiting for previous-version removal (${_SECONDS} s)…"
+    ${EndIf}
+    ${If} ${_SECONDS} == 0
+      !insertmacro InstallerMarkPhase
+      ${If} $InstallerOldScope == "HKEY_LOCAL_MACHINE"
+        !insertmacro JustDoAddInstallActivity "正在清理所有用户的旧版安装" "Removing the previous all-users installation"
+      ${Else}
+        !insertmacro JustDoAddInstallActivity "正在清理当前用户的旧版安装" "Removing the previous current-user installation"
+      ${EndIf}
+      !insertmacro JustDoAddInstallActivity "此步骤没有可用的文件百分比，请保持安装器打开" "File progress is unavailable for this step. Keep setup open."
+    ${ElseIf} ${_SECONDS} == 60
+      !insertmacro JustDoAddInstallActivity "旧版卸载程序尚未退出；安装器仍在等待，尚未写入新文件" "The previous uninstaller has not exited. Setup is waiting and has not written new application files."
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro InstallerPreviousRetryText _TARGET _ZH _EN
   ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
   ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-    SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:${_ZH_TEXT}"
+    StrCpy ${_TARGET} "${_ZH}$\r$\n请关闭旧应用和占用安装目录的窗口，然后点击“重试”。安装器将重新核对位置，并继续清理旧版，不会恢复已删除的程序文件。"
   ${Else}
-    SendMessage $JustDoStatusText ${JUSTDO_WM_SETTEXT} 0 "STR:${_EN_TEXT}"
+    StrCpy ${_TARGET} "${_EN}$\r$\nClose the old app and any programs using its installation folder, then choose Retry. Setup will verify the old location and retry removal, not restore files already removed."
   ${EndIf}
+!macroend
+
+!macro InstallerShowPreviousFailure
+  !insertmacro InstallerMarkPhase
+  !insertmacro JustDoSetInstallStatus "旧版未能移除，等待重试或取消…" "Previous version was not removed. Waiting for Retry or Cancel…"
+!macroend
+
+!include "${PROJECT_DIR}\scripts\packaging\nsis-previous-uninstaller.nsh"
+
+!macro InstallerLogArchiveStageResult _PHASE
+  ${If} ${Errors}
+    !insertmacro JustDoLogInstallEvent "phase=${_PHASE}-stage-returned result=write-error"
+    SetErrors
+  ${Else}
+    !insertmacro JustDoLogInstallEvent "phase=${_PHASE}-stage-returned result=ok"
+  ${EndIf}
+!macroend
+
+!macro InstallerPublishBrowserAuthenticationAlias
+  StrCpy $R2 "open-staged-file"
+  System::Call 'kernel32::CreateFileW(w "$R3", i 0x10080, i 1, p 0, i 3, i 0x200000, p 0)p.r2 ?e'
+  Pop $1
+  StrCpy $0 "0"
+  ${If} $2 != -1
+    StrCpy $R2 "check-staged-file"
+    System::Call 'kernel32::GetFileInformationByHandleEx(p r2, i 9, *l .r3, i 8)i.r0 ?e'
+    Pop $1
+    ${If} $0 != 0
+      IntOp $1 $3 & 0x410
+      ${If} $1 != 0
+        StrCpy $0 "0"
+        StrCpy $1 "not-regular-file"
+      ${Else}
+        StrCpy $R2 "publish"
+        StrCpy $4 "$INSTDIR\${BROWSER_AUTHENTICATION_EXECUTABLE}"
+        StrLen $5 $4
+        IntOp $5 $5 * 2
+        IntOp $6 $5 + 14
+        System::Call '*(i 0, p 0, i r5, &w${NSIS_MAX_STRLEN} r4)p.r7'
+        ${If} $7 == 0
+          StrCpy $0 "0"
+          StrCpy $1 "rename-buffer-allocation-failed"
+        ${Else}
+          System::Call 'kernel32::SetFileInformationByHandle(p r2, i 3, p r7, i r6)i.r0 ?e'
+          Pop $1
+          System::Free $7
+        ${EndIf}
+      ${EndIf}
+    ${EndIf}
+    ${If} $0 == 0
+      System::Call 'kernel32::SetFileInformationByHandle(p r2, i 4, *i 1, i 1)i'
+    ${EndIf}
+    System::Call 'kernel32::CloseHandle(p r2)i'
+  ${EndIf}
+!macroend
+
+!macro InstallerWriteBrowserAuthenticationAlias
+!if "${BROWSER_AUTHENTICATION_EXECUTABLE}" != ""
+!if "${APP_EXECUTABLE_FILENAME}" != "${BROWSER_AUTHENTICATION_EXECUTABLE}"
+  !insertmacro InstallerShowCorePhase "正在准备企业认证组件…" "Preparing enterprise authentication…"
+  !insertmacro JustDoLogInstallEvent "phase=browser-authentication-alias-start name=${BROWSER_AUTHENTICATION_EXECUTABLE}"
+  StrCpy $R3 "$INSTDIR\.browser-auth-$JustDoInstallerSessionId.tmp"
+  StrCpy $R2 "check-source"
+  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\${APP_EXECUTABLE_FILENAME}")i.r0 ?e'
+  Pop $1
+  ${If} $0 == -1
+    StrCpy $0 "0"
+  ${Else}
+    IntOp $1 $0 & 0x410
+    ${If} $1 != 0
+      StrCpy $0 "0"
+      StrCpy $1 "not-regular-file"
+    ${Else}
+      StrCpy $R2 "copy"
+      System::Call 'kernel32::CopyFileExW(w "$INSTDIR\${APP_EXECUTABLE_FILENAME}", w "$R3", p 0, p 0, p 0, i 0x801)i.r0 ?e'
+      Pop $1
+      ${If} $0 != 0
+        !insertmacro InstallerPublishBrowserAuthenticationAlias
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+  ${If} $0 == 0
+    !insertmacro JustDoLogInstallEvent "phase=browser-authentication-alias-failed operation=$R2 result=$1 name=${BROWSER_AUTHENTICATION_EXECUTABLE}"
+    ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
+    ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
+      StrCpy $0 "无法写入企业认证组件（${BROWSER_AUTHENTICATION_EXECUTABLE}，错误 $1）。诊断日志：$\r$\n$JustDoInstallLogPath"
+    ${Else}
+      StrCpy $0 "Could not write the enterprise authentication executable (${BROWSER_AUTHENTICATION_EXECUTABLE}, error $1). Diagnostic log:$\r$\n$JustDoInstallLogPath"
+    ${EndIf}
+    MessageBox MB_OK|MB_ICONSTOP "$0" /SD IDOK
+    SetErrorLevel 2
+    Abort "Could not write the enterprise authentication executable."
+  ${EndIf}
+  !insertmacro JustDoLogInstallEvent "phase=browser-authentication-alias-complete name=${BROWSER_AUTHENTICATION_EXECUTABLE}"
+!endif
+!endif
 !macroend
 
 !include "${PROJECT_DIR}\scripts\packaging\nsis-install-presentation.nsh"
@@ -463,10 +620,6 @@ FunctionEnd
 !macroend
 
 !macro customPageAfterChangeDir
-  ; electron-builder defers the final all-users mode and custom directory until
-  ; after customInit. Its elevated inner instance also skips the normal section
-  ; process check, so run that check from the install-page PRE callback, after
-  ; restoring an upgrade's directory or normalizing a first-install selection.
   !ifdef MUI_PAGE_CUSTOMFUNCTION_PRE
     !undef MUI_PAGE_CUSTOMFUNCTION_PRE
   !endif
@@ -507,10 +660,6 @@ FunctionEnd
       !endif
     ${EndIf}
     StrCpy $JustDoInstallMode "$installMode"
-    ${If} ${UAC_IsInnerInstance}
-      !insertmacro JustDoLogInstallEvent "phase=inner-instance-process-check-start"
-      Call JustDoCheckAppRunning
-    ${EndIf}
   FunctionEnd
 !macroend
 !endif
@@ -672,6 +821,9 @@ Function JustDoCheckAppRunning
           Goto JustDoInstallProcessCheck
 
         JustDoInstallAutoClose:
+          !insertmacro JustDoSetInstallStatus "正在等待旧应用退出…" "Waiting for the previous application to close…"
+          !insertmacro InstallerMarkPhase
+          !insertmacro JustDoAddInstallActivity "正在请求旧应用退出，退出后才会开始清理" "Requesting shutdown before removing the previous version"
           ; Signal existing Main directly. Never launch the installed EXE: old
           ; versions and cross-account launches may open the startup UI instead.
           ; Versions without an endpoint use the already-confirmed scoped stop.
@@ -683,6 +835,8 @@ Function JustDoCheckAppRunning
           ${EndIf}
 
           ${If} $0 == "1"
+            !insertmacro JustDoSetInstallStatus "正在结束仍占用安装目录的进程…" "Closing processes still using the installation…"
+            !insertmacro InstallerMarkPhase
             !insertmacro JustDoLogInstallEvent "phase=forced-shutdown-start reason=graceful-timeout"
             !insertmacro StopJustDoProcesses $0
             !insertmacro JustDoLogInstallEvent "phase=forced-shutdown-result result=$0 detail=$R9"
@@ -718,13 +872,7 @@ Function JustDoCheckAppRunning
   !insertmacro JustDoLogInstallEvent "phase=process-check-complete result=ready"
   System::Call 'kernel32::GetTickCount()i.r0'
   StrCpy $JustDoCoreInstallStartedTick $0
-  !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-start steps=old-version-cleanup,archive-extraction,atomic-copy,registry,shortcuts"
-  !insertmacro JustDoSetInstallStatus \
-    "正在解压并写入应用文件…" \
-    "Extracting and writing application files…"
-  !insertmacro JustDoAddInstallActivity \
-    "正在将应用文件解压到安全临时目录并写入安装位置" \
-    "Expanding application files to a safe staging area and writing the installation"
+  !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-start steps=old-version-cleanup,archive-staging,archive-extraction,registry,shortcuts"
   System::Call 'user32::UpdateWindow(p $JustDoInstFilesPage)i.r0'
   System::Call 'user32::UpdateWindow(p $HWNDPARENT)i.r0'
   StrCpy $JustDoProcessCheckComplete "1"
@@ -759,9 +907,9 @@ Function InstallerCheckPreviousUninstall
   !insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-result root=$InstallerPreviousUninstallRoot result=failed reason=uninstaller-launch"
   ${If} $LANGUAGE == ${JUSTDO_LANG_SIMPCHINESE}
   ${OrIf} $LANGUAGE == ${JUSTDO_LANG_TRADCHINESE}
-    StrCpy $0 "无法启动旧版本卸载程序，安装已停止。请查看安装详情，确认旧版本及安装目录可用后重试。"
+    StrCpy $0 "无法确认旧版本已安全移除，安装已停止。请查看安装详情，关闭占用安装目录的程序后重试。"
   ${Else}
-    StrCpy $0 "The previous version's uninstaller could not start. Setup has stopped. See the installation details and check that the previous version and installation folder are available before trying again."
+    StrCpy $0 "Setup could not confirm removal of the previous version. See the installation details, close programs using the installation folder, and try again."
   ${EndIf}
 
   InstallerPreviousUninstallFailed:
@@ -980,24 +1128,14 @@ FunctionEnd
         Abort "The update installation target could not be confirmed."
       ${EndIf}
     ${EndIf}
-    ; Silent installs do not visit the install page, so its PRE callback cannot
-    ; capture the final mode or prepare an elevated inner upgrade. initMultiUser
-    ; has already resolved command-line/registry mode and $INSTDIR here.
     StrCpy $JustDoInstallMode "$installMode"
-    ${If} ${UAC_IsInnerInstance}
-      !insertmacro JustDoLogInstallEvent "phase=inner-instance-process-check-start mode=silent"
-      Call JustDoCheckAppRunning
-    ${EndIf}
   ${EndIf}
 !macroend
 
 !macro customInstall
   Push "resources"
   Call InstallerPresentationSetStage
-  ; ─── Install Timing Log ───
-  ; Write timestamps to help diagnose slow installation phases.
-  ; Log directory was selected and verified by preInit.
-
+  !insertmacro InstallerShowCorePhase "正在核对应用文件…" "Checking the application files…"
   ; The final installation directory now exists and old-version removal is
   ; finished. Only log files may use this fallback when Roaming is unavailable.
   StrCpy $JustDoPayloadLogsAllowed "1"
@@ -1056,6 +1194,7 @@ FunctionEnd
   ${EndIf}
   !insertmacro JustDoLogInstallEvent "phase=electron-builder-core-validation-complete result=passed"
 
+  !insertmacro InstallerShowCorePhase "正在配置应用启动权限…" "Configuring application access…"
   !insertmacro InstallerRequireSandboxReadAccess
 
   ; Re-probe both logs together before the long resource phase. If either path
@@ -1091,21 +1230,18 @@ FunctionEnd
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "custom-install-start: $5-$4-$3 $7:$8:$9$\r$\n"
-  ; NSIS has finished the application archive. The remaining runtime work mixes
-  ; streaming extraction, validation and transactional filesystem operations,
-  ; so no single percentage would be truthful. Keep the bar stationary until
-  ; the extractor reports a measured value; status/activity text shows work.
-  StrCpy $JustDoLastResourceProgress "0"
+  ; The worker reports a percentage only for a specific measurable operation.
+  StrCpy $InstallerResourceStage ""
   ${If} $JustDoProgressBar != ""
     SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 0 0
     ShowWindow $JustDoProgressBar 0
   ${EndIf}
-  ShowWindow $JustDoNativeProgressBar 5
+  ShowWindow $JustDoNativeProgressBar 0
   SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETRANGE32} 0 100
-  SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETPOS} $JustDoLastResourceProgress 0
   !insertmacro JustDoSetInstallStatus \
     "应用文件已就绪，正在配置运行环境（安装程序仍在运行）…" \
     "Application files are ready. Configuring the runtime; setup is still working…"
+  !insertmacro InstallerMarkPhase
   !insertmacro JustDoAddInstallActivity \
     "应用文件写入完成" \
     "Application files written"
@@ -1207,12 +1343,7 @@ FunctionEnd
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "tar-extract-start: $5-$4-$3 $7:$8:$9$\r$\n"
-  !insertmacro JustDoSetInstallStatus \
-    "正在展开核心资源；此阶段无法精确计算百分比，请稍候…" \
-    "Expanding core resources; an exact percentage is unavailable. Please wait…"
-  !insertmacro JustDoAddInstallActivity \
-    "正在整理核心资源" \
-    "Preparing core resources"
+  !insertmacro InstallerShowCorePhase "正在启动离线资源解压工具…" "Starting the offline resource extractor…"
   FileWrite $2 "tar-extract-command: $INSTDIR\${APP_EXECUTABLE_FILENAME} $INSTDIR\resources\unpack-cfmind.cjs $INSTDIR\resources\win-resources.tar.zst $INSTDIR\resources <reserved> $INSTDIR\resources\win-resources-metadata.json <progress-file> $JustDoResourceLogPath <session-id> ${VERSION}$\r$\n"
   FileWrite $2 "tar-extract-detail-log: $JustDoResourceLogPath$\r$\n"
   ${If} ${FileExists} "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
@@ -1260,15 +1391,26 @@ FunctionEnd
     Goto TarExtractFailed
   ${EndIf}
   StrCpy $JustDoExtractorActive "1"
+  System::Call 'kernel32::GetProcessId(p $JustDoExtractorProcessHandle)i.r1'
+  FileWrite $2 "tar-extract-child-launched: session=$JustDoInstallerSessionId pid=$1$\r$\n"
+  System::Call 'kernel32::GetTickCount()i.r1'
+  StrCpy $InstallerResourceStarted $1
 
   ${If} ${Silent}
     System::Call 'kernel32::WaitForSingleObject(p $JustDoExtractorProcessHandle, i -1)i.r0'
   ${Else}
     JustDoResourceWait:
-    Sleep 150
-    Call JustDoPollResourceProgress
-    System::Call 'kernel32::WaitForSingleObject(p $JustDoExtractorProcessHandle, i 0)i.r0'
+    System::Call 'kernel32::WaitForSingleObject(p $JustDoExtractorProcessHandle, i 250)i.r0'
     ${If} $0 == 258
+      Call JustDoPollResourceProgress
+      ${If} $InstallerResourceStarted != ""
+        System::Call 'kernel32::GetTickCount()i.r1'
+        IntOp $1 $1 - $InstallerResourceStarted
+        ${If} $1 >= 60000
+          !insertmacro JustDoAddInstallActivity "核心资源仍在处理；请保持安装器打开" "Core resources are still being processed. Keep setup open."
+          StrCpy $InstallerResourceStarted ""
+        ${EndIf}
+      ${EndIf}
       Goto JustDoResourceWait
     ${ElseIf} $0 != 0
       System::Call 'kernel32::GetLastError()i.r1'
@@ -1288,14 +1430,15 @@ FunctionEnd
     FileWrite $2 "tar-extract-wait-error: wait=$0 win32=$1$\r$\n"
     StrCpy $0 "wait-win32-$1"
   ${EndIf}
-  System::Call 'kernel32::CloseHandle(p $JustDoExtractorProcessHandle)i.r1'
+  System::Call 'kernel32::GetProcessId(p $JustDoExtractorProcessHandle)i.r1'
+  System::Call 'kernel32::CloseHandle(p $JustDoExtractorProcessHandle)i'
   StrCpy $JustDoExtractorProcessHandle "0"
+  FileWrite $2 "tar-extract-child-wait-returned: session=$JustDoInstallerSessionId pid=$1 result=$0$\r$\n"
   Call JustDoPollResourceProgress
   StrCpy $JustDoExtractorActive "0"
+  !insertmacro InstallerShowCorePhase "正在整理资源解压日志…" "Collecting the resource extraction log…"
   Call JustDoAppendExtractorStdioLog
   FileWrite $2 "tar-extract-stdio-appended: result=$JustDoExtractorStdioCopied error=$JustDoExtractorStdioCopyError path=$JustDoExtractorStdioLog$\r$\n"
-
-  FileWrite $2 "tar-extract-process-exit: $0$\r$\n"
 
   StrCmp $0 "0" TarExtractOK
     TarExtractFailed:
@@ -1358,9 +1501,7 @@ FunctionEnd
 
   ${GetTime} "" "L" $3 $4 $5 $6 $7 $8 $9
   FileWrite $2 "tar-extract-done: $5-$4-$3 $7:$8:$9 exit=$0$\r$\n"
-  !insertmacro JustDoSetInstallStatus \
-    "核心资源已就绪，正在完成配置（安装程序仍在运行）…" \
-    "Core resources are ready. Finishing setup; setup is still working…"
+  !insertmacro InstallerShowCorePhase "正在清理安装压缩包和临时文件…" "Removing the installation archive and temporary files…"
   !insertmacro JustDoAddInstallActivity \
     "核心资源准备完成" \
     "Core resources prepared"
@@ -1422,9 +1563,7 @@ FunctionEnd
     FileClose $0
     FileWrite $2 "nsis-install-marker: written$\r$\n"
   ${EndIf}
-  !insertmacro JustDoSetInstallStatus \
-    "正在进行最后检查（安装程序仍在运行）…" \
-    "Running final checks; setup is still working…"
+  !insertmacro InstallerShowCorePhase "正在完成最后的安装配置…" "Finishing the installation configuration…"
   !insertmacro JustDoAddInstallActivity \
     "本机配置已保存" \
     "Local configuration saved"
@@ -1476,14 +1615,32 @@ FunctionEnd
     Quit
   ${EndIf}
   ClearErrors
-  ; In interactive mode, ask the user to close the app instead of silently
-  ; killing it. Closing the main app also gives its gateway and child processes
-  ; a chance to shut down cleanly. Silent uninstall keeps the non-interactive
-  ; cleanup behavior expected by managed deployment tools.
+  !ifdef ONE_CLICK
+    !insertmacro InstallerCheckUninstallProcesses
+  !else
+    ${If} ${Silent}
+      !insertmacro InstallerCheckUninstallProcesses
+    ${EndIf}
+  !endif
+!macroend
+
+!macro InstallerCheckUninstallProcesses
   InitPluginsDir
   File /oname=$PLUGINSDIR\justdo-process-helper.ps1 "${PROJECT_DIR}\scripts\packaging\nsis-process-helper.ps1"
   ${If} ${Silent}
-    !insertmacro StopJustDoProcesses $0
+    ${If} ${isUpdated}
+      !insertmacro FindJustDoProcesses $0
+      ${If} $0 == "0"
+        SetErrorLevel 2
+        Abort "The previous application is still using this installation."
+      ${EndIf}
+    ${Else}
+      !insertmacro StopJustDoProcesses $0
+      ${If} $0 == "1"
+        SetErrorLevel 2
+        Abort "The application is still using this installation."
+      ${EndIf}
+    ${EndIf}
   ${Else}
     JustDoUninstallProcessCheck:
       !insertmacro FindJustDoProcesses $0
@@ -1503,6 +1660,16 @@ FunctionEnd
       ${EndIf}
   ${EndIf}
 !macroend
+
+!ifdef BUILD_UNINSTALLER
+!ifndef ONE_CLICK
+!macro customCheckAppRunning
+  ${IfNot} ${Silent}
+    !insertmacro InstallerCheckUninstallProcesses
+  ${EndIf}
+!macroend
+!endif
+!endif
 
 !ifdef BUILD_UNINSTALLER
 Function un.JustDoDeleteCurrentUserData

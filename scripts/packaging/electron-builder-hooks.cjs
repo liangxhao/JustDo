@@ -3,8 +3,6 @@
 const path = require('path');
 const os = require('os');
 const {
-  constants,
-  copyFileSync,
   createReadStream,
   existsSync,
   readdirSync,
@@ -20,7 +18,7 @@ const {
 const { spawnSync } = require('child_process');
 const { createHash } = require('crypto');
 const { pipeline } = require('stream/promises');
-const { createZstdDecompress } = require('zlib');
+const { createZstdDecompress, crc32 } = require('zlib');
 const asar = require('@electron/asar');
 const {
   OPENCLAW_CLI_ROOT_FILES,
@@ -1430,23 +1428,8 @@ function sha512File(filePath) {
 }
 
 async function afterSign(context) {
-  if (isMacTarget(context)) {
-    await require('./notarize.js').default(context);
-    return;
-  }
-  if (!isWindowsTarget(context) || !BROWSER_AUTHENTICATION_EXECUTABLE) return;
-
-  const executable = `${context.packager.appInfo.productFilename}.exe`;
-  if (executable.toLowerCase() === BROWSER_AUTHENTICATION_EXECUTABLE) return;
-
-  // Copy after resource editing, fuses and signing so the helper is the same PE image.
-  const source = path.join(context.appOutDir, executable);
-  const helper = path.join(context.appOutDir, BROWSER_AUTHENTICATION_EXECUTABLE);
-  copyFileSync(source, helper, constants.COPYFILE_EXCL);
-  const [sourceHash, helperHash] = await Promise.all([sha512File(source), sha512File(helper)]);
-  if (sourceHash !== helperHash) {
-    throw new Error('[electron-builder-hooks] Browser authentication executable differs from the application executable.');
-  }
+  if (!isMacTarget(context)) return;
+  await require('./notarize.js').default(context);
 }
 
 function findSingleWindowsInstaller(artifactPaths) {
@@ -1486,11 +1469,16 @@ function verifyWindowsInstallerArchiveListing(listing, productFilename) {
       .map(line => line.slice('Path = '.length).trim().replace(/\\/g, '/').toLowerCase()),
   );
   const mainExecutable = `${productFilename}.exe`;
+  const needsAuthenticationAlias = BROWSER_AUTHENTICATION_EXECUTABLE &&
+    mainExecutable.toLowerCase() !== BROWSER_AUTHENTICATION_EXECUTABLE;
+  if (needsAuthenticationAlias && archivedPaths.has(BROWSER_AUTHENTICATION_EXECUTABLE)) {
+    throw new Error(
+      `[electron-builder-hooks] Rebuild the Windows application without the redundant ${BROWSER_AUTHENTICATION_EXECUTABLE}; setup creates it from the installed executable.`,
+    );
+  }
   const requiredPaths = [
     mainExecutable,
-    ...(BROWSER_AUTHENTICATION_EXECUTABLE && mainExecutable.toLowerCase() !== BROWSER_AUTHENTICATION_EXECUTABLE
-      ? [BROWSER_AUTHENTICATION_EXECUTABLE, 'resources/browser-transport/relay.cjs']
-      : []),
+    ...(needsAuthenticationAlias ? ['resources/browser-transport/relay.cjs'] : []),
     'chrome_100_percent.pak',
     'icudtl.dat',
     'libEGL.dll',
@@ -1531,7 +1519,16 @@ function verifyWindowsInstallerArchive(installerPath, productFilename, options =
         (detail ? `: ${detail}` : '.'),
     );
   }
-  verifyWindowsInstallerArchiveListing(String(listingResult.stdout || ''), productFilename);
+  const listing = String(listingResult.stdout || '');
+  verifyWindowsInstallerArchiveListing(listing, productFilename);
+  if (options.prepackaged) {
+    const entry = listing.split(/\r?\n\r?\n/).find(block => /^Path = resources[\\/]app\.asar$/mi.test(block));
+    const archivedCrc = entry && /^CRC = ([0-9A-F]{8})$/mi.exec(entry)?.[1];
+    const inputCrc = crc32(readFileSync(path.join(options.prepackaged, 'resources', 'app.asar')));
+    if (!archivedCrc || Number.parseInt(archivedCrc, 16) !== inputCrc) {
+      throw new Error('[electron-builder-hooks] Installer contains a different prepackaged application. Rebuild in a clean output directory.');
+    }
+  }
 
   // Listing only reads archive headers. Test every compressed stream and CRC so
   // a truncated/corrupt data block cannot pass solely because paths survived.
@@ -1567,7 +1564,9 @@ function artifactBuildCompleted(context) {
 
   // This hook runs after signing but before artifactCreated schedules publish.
   // Reject an unreadable installer before any publisher can observe the EXE.
-  verifyWindowsInstallerArchive(context.file, context.packager.appInfo.productFilename);
+  verifyWindowsInstallerArchive(context.file, context.packager.appInfo.productFilename, {
+    prepackaged: context.packager.packagerOptions?.prepackaged,
+  });
 }
 
 async function buildWindowsUpdateManifest({

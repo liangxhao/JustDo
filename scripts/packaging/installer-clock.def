@@ -1,6 +1,7 @@
 LIBRARY installer-clock
 EXPORTS
   Start=_Start@12
+  MarkPhase=_MarkPhase@8
   Stop=_Stop@4
   Destroy=_Destroy@4
   CompleteActions=_CompleteActions@16

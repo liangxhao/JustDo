@@ -159,6 +159,28 @@ both result-button captions and enables Close after NSIS applies its own final
 button state. It copies the localized captions and does not enter the script VM.
 Worker polling remains a fallback if
 Windows cannot start the native clock. Time is measured, not estimated progress.
+After a named operation begins, the clock shows that operation's elapsed time,
+including during synchronous archive writes. At a terminal result it shows the
+frozen total. A running clock indicates that the interface can still update;
+it does not establish that the file operation is making progress.
+
+The former application-extraction label is split into: verify the previous
+installation → prepare and wait for its uninstaller → write the application
+archive into the chosen installation folder → prepare 7-Zip → expand and write
+application files → remove extraction scratch files → write the uninstaller and
+register shortcuts. Setup then checks the installed shell, applies permissions,
+and opens and expands the separate offline runtime archive. The runtime worker
+reports archive reading or entry processing, file-write completion waits,
+validation, backup cleanup, and final verification as separate milestones. The
+installer collects diagnostics and removes temporary files before success.
+
+Only a measured operation shows a bar: 7-Zip application extraction, compressed
+runtime archive reads, or compatible tar entry processing. These are not a
+percentage of all setup work. Built-in archive staging, old-uninstaller waits,
+and validation show the operation and its elapsed time instead of a guessed or
+frozen percentage. Directory validation precedes Windows administrator approval;
+Windows owns that approval prompt and installer bootstrap work before a window
+is available cannot show an installation page.
 
 The caption uses a visibly distinct cool gray-blue (`#E6E9F2`) on supported DWM
 versions, above the near-white (`#FBFBFD`) content, retaining native caption dragging,
@@ -294,14 +316,31 @@ ports and never installs the application or requests administrator credentials.
 
 ### Previous-version removal failures
 
-Before copying a new payload, setup must finish the existing installation's
-uninstaller. A launch failure or nonzero exit now aborts the installation worker
-and leaves the native failed result open, with details available, until the user
-closes it. It must not call `Quit`, continue into payload replacement, or launch the
-application as though installation succeeded. The supported electron-builder
-uninstall-result hooks apply this rule to both the selected shell scope and an
-additional current-user installation removed by an all-users upgrade. Silent
-installs still return a nonzero result without showing UI.
+Before copying a new payload, setup must confirm that the existing installation's
+uninstaller succeeded. An unrecovered failure leaves the native failed result and
+details open; it does not write a new payload, register it, or launch the app.
+This applies to both the selected shell scope and an additional current-user
+installation removed by an all-users upgrade.
+
+Setup makes an exclusive temporary copy for each scope and attempt. If that
+copy cannot be made or launched, setup tries the verified original in place.
+After a confirmed nonzero exit or an executable that could not start, assisted
+setup offers one **Retry / Cancel** for that same scope. It re-reads the
+registration and checks the directory and uninstaller identities before replay.
+For a secondary current-user removal under an all-users installer, run the
+standalone current-user uninstall or retry setup after resolving the error;
+the elevated installer does not replay that secondary removal in place.
+A missing or changed target, an unconfirmed child exit, a cancelled retry or a
+second failure stops setup. Silent setup neither retries nor prompts. A retry
+never re-runs a successfully removed scope.
+
+The writing page is visible before process checks, including after elevation.
+It separates waiting for the old app to exit from waiting for the old
+uninstaller. The uninstaller wait shows real elapsed seconds, not an invented
+percentage, and identifies the installation scope in Details. Setup does not
+kill the old uninstaller on a timer. Logs attribute attempts to the child PID
+and record wait results and durations. Resource expansion reports archive
+milestones; the window's clock continues independently of resource writes.
 
 Details and the append-only installation log retain the removal scope and actual
 exit code or launch-failure reason. A focused native fixture exercises failed
@@ -390,20 +429,35 @@ temporary-storage corrections in this change.
 ### Process handling
 
 When `executableName` is set in the [deployment configuration](../src/config/browserAuthentication.ts),
-the Windows package includes a sibling executable with that name. The setting defaults
-to empty. The helper is copied from the finalized desktop executable after
-resource editing and signing. The installed desktop executable, shortcuts and
-upgrade identity use the product name. The installer verifies the configured
-helper and TCP relay script in the application payload. The branded application
-keeps the browser session, and the sibling executable opens the local SPES
-connection. Normal shutdown retires the helper. Installer process checks use
-the exact installation-directory paths.
+the installed application has a sibling executable with that name unless it
+already matches the main executable. The setting defaults to empty. To avoid
+compressing the same executable twice, setup creates the sibling locally from
+the finalized desktop executable, preserving its exact bytes and any signature.
+It stages the copy and publishes it without replacing an unexpected file, before
+creating registry entries or shortcuts. This reduces setup download size, not
+the size of the installed application. The directory build and `--prepackaged`
+input do not include the sibling; use an installed build to test a configured
+enterprise login. Repackaging checks that the application was built with the
+same authentication executable configuration. The final archive check requires the TCP relay when
+a distinct alias is configured and rejects a redundant bundled alias. The
+branded application keeps the browser session, and the sibling executable opens
+the local SPES connection. Normal shutdown retires the helper. Installer process
+checks use the exact installation-directory paths.
 
 - A pristine install, with no per-user or per-machine registration and an empty
   target directory, does not start the PowerShell helper. No previous process
   tree or runtime exists to protect or stage.
 - Upgrade checks use `Get-Process` plus the executable path and do not depend on
   CIM/WMI.
+- Newly generated assisted uninstallers also skip the upstream PowerShell
+  capability probes and CIM check. A silent upgrade checks the final target
+  once before removing files and refuses to proceed if the application was
+  confirmed running again. Standalone uninstall retains its scoped process
+  handling. This saves process starts on upgrades from the new uninstaller;
+  it does not retroactively change an already installed legacy uninstaller.
+  In three local empty-target comparisons, the old probe sequence plus the
+  fixed delay and scoped helper took 2.17–2.62 s, versus 0.35–0.42 s for the
+  scoped check alone. This is process-check timing, not an upgrade duration.
 - Process enumeration is advisory. If Windows cannot provide a trustworthy
   inventory, setup falls back to probing the installed executable for an
   exclusive file lock and then lets old-version removal/atomic copy make the
@@ -578,8 +632,17 @@ This preserves completion and exit-code semantics for deployment automation.
 - No free-space reserve, system-temp disk monitor, total extraction deadline or
   Python process/import check rejects an otherwise writable installation. Actual
   extraction/write errors still fail setup and restore the runtime backups.
-- Native tar failures retry with the bundled npm tar extractor, including failures
-  on older Windows tar implementations. Both attempts are logged.
+- Native tar launch and extraction failures can retry with the bundled npm tar
+  extractor, including failures on older Windows tar implementations. An
+  explicit Zstd decoder error does not trigger a second pass with the same
+  decoder and input. It fails with the original cause after the native child
+  closes. Both extractor attempts and the retry decision are logged. An
+  Electron-as-Node fixture with a damaged frame checksum verified rollback and
+  no retry; this is not a separate compressed-stream integrity check.
+- The resource percentage describes this phase, not setup as a whole. Reading
+  compressed bytes or preparing tar entries does not indicate completed writes.
+  These counters stay below 100%; resource progress reaches 100% only after
+  extraction and required resource checks succeed.
 - Plugin directory declarations are ordered before custom includes, avoiding the
   upstream asynchronous header race that can report a missing UAC plugin while
   compiling the uninstaller. A final failure
@@ -838,7 +901,51 @@ Use the interactive checkbox to request data deletion instead.
 
 ## Diagnostics
 
+### Installation latency audit
+
+A successful local upgrade logged on 2026-11-12 spent 84.7 s waiting for the
+previous uninstaller, 4.6 s extracting the application shell and 42.7 s in the
+resource extractor. The process check through worker completion took about
+134 s. This shows where one slow upgrade spent time, not what blocked a
+reported one-hour installation. The released old uninstaller moves files one by
+one into its plugin temporary directory before cleanup. The new installer waits
+for that installed executable to return; it cannot change how that executable
+moves files. An isolated run of the upstream move loop hit a 261-character
+staging destination after 81.2 s. A basic Win32 probe on the same machine failed
+with that destination length but succeeded with a shorter one. This is also a
+reason to record the installation and temporary volumes and paths, without
+assuming a long path or cross-volume move explains every report.
+
+An isolated 2026-11-18 resource extraction replay used the same 197.6 MB archive
+for all runs (39,739 files, including 37,626 OpenClaw files; about 1.02 GB of tar
+data). In one mechanical-disk run, native extraction took 171.5 s; the compatible
+extractor took 170.1 s in a separate run. A native run on the local NVMe volume
+took 111.7 s under overlapping host activity. These runs exercised the production
+extraction script with Node in disposable directories, not the complete wizard,
+installer upgrade, endpoint-security effects, or first launch. They demonstrate
+the cost of creating many files, not a controlled disk or extractor speed ratio.
+
+In a separate exploratory HDD pair using Windows tar's direct `.zst` path,
+preserving modification times took 170.4 s and omitting them took 161.2 s.
+The single ordered pair did not justify changing installed file metadata.
+
+Compare setup through `install-done` separately from first launch and time spent
+on the result page before dismissal.
+`phase=application-open-request` records a launch handoff, not a ready window or
+Gateway. If the last timing record is an old-uninstaller start, collect a short
+file-operation trace for the verified old uninstaller and its destination before
+tuning compression. If extraction starts, compare its child PID/exit record with
+resource-log attempt durations and retry decisions. Keep the customer's endpoint
+policy and use the same account, target volume and existing version in comparisons.
+
 ### Release resource selection
+
+NSIS stores the already compressed Zstd sidecar without another zlib pass.
+It restores the normal compression setting for subsequent installer files.
+In a sidecar-only compiler fixture, this changed compile time from 5.8 to 1.5 s
+and write time from 4.8 to 3.5 s, at a cost of 214 kB in the outer executable.
+Both fixtures produced the same sidecar bytes. This does not change runtime
+expansion costs or the final artifact checks.
 
 Windows runtime archives use Zstandard level 19 with long-distance matching and
 a 64 MiB window. The installer's default decoder limit remains unchanged.
@@ -1015,9 +1122,26 @@ process may leave a START without an END; the next run still appends a new block
 Relevant events are:
 
 - `phase=process-check-skipped reason=pristine-install`
+- `phase=previous-installation-removal-start` / `phase=previous-installation-removal-returned`, by scope
+- `phase=shell-archive-stage-start` / `phase=shell-archive-stage-returned`, for writing the embedded 7z
+- `phase=shell-extractor-launched` / `phase=shell-extractor-wait-returned`, with the child PID and wait result before diagnostic capture is appended
+- `phase=runtime-archive-stage-start` / `phase=runtime-archive-stage-returned`, for copying the compressed offline archive before expanding it
+- `phase=browser-authentication-alias-start` and its result (only for a distinct alias)
+- `phase=application-registration-start` / `phase=electron-builder-core-returned`
 - `extractor-temp-root`
+- `tar-extract-child-launched` / `tar-extract-child-wait-returned`, before output is appended
 - `event=archive-extractor-failed` (native attempt; a fallback may still succeed)
 - `event=resource-install-failed` (final failure with its actual cause)
+
+For an apparent stall, capture the live status and latest details rows, and copy
+the matching timing log session before stopping setup. If shell extraction
+started, also copy the `detail-log=` file from the installation directory if it
+exists. The older “Expanding application files to a safe staging area” details
+row also covered previous-version removal, so it cannot establish which process
+is blocked. A running clock or unchanged percentage is not proof of I/O progress.
+A short Process Monitor trace filtered to the setup process, its children and the
+installation directory can help distinguish active writes, blocked I/O and
+unrelated activity. Review logs and traces for local paths before sharing.
 
 For a future recurrence of `SampleDir`, collect a Process Monitor trace filtered
 to `Path begins with <reported SampleDir>` and include Process Name, PID,

@@ -3,7 +3,10 @@
 const fs = require('fs');
 const path = require('path');
 const shutdownPolicy = require('../../src/shared/app/shutdownPolicy.json');
-const { BROWSER_AUTHENTICATION_EXECUTABLE } = require('./browser-authentication-config.cjs');
+const {
+  BROWSER_AUTHENTICATION_EXECUTABLE,
+  verifyPackagedBrowserAuthentication,
+} = require('./browser-authentication-config.cjs');
 
 function installerShutdownDefinitions() {
   // Cover Main cleanup, its emergency exit observation, and scheduling margin.
@@ -25,6 +28,10 @@ function createWindowsInstallerScript(templatesDir) {
   if (installerFiles.split(cacheCopy).length !== 2) {
     throw new Error('The upstream NSIS installer cache seam changed; review the template.');
   }
+  const writeUninstaller = 'File "/oname=${UNINSTALL_FILENAME}" "${UNINSTALLER_OUT_FILE}"';
+  if (installerFiles.split(writeUninstaller).length !== 2) {
+    throw new Error('The upstream NSIS installed-uninstaller seam changed; review the template.');
+  }
   let extraction = read('include/extractAppPackage.nsh');
   // The old version has already been removed by this point. Expand the shell
   // directly into INSTDIR instead of making a second full copy in user TEMP.
@@ -32,6 +39,35 @@ function createWindowsInstallerScript(templatesDir) {
     '$PLUGINSDIR\\app-',
     '$INSTDIR\\.justdo-app-$JustDoInstallerSessionId-',
   );
+  const stageArchive = '!insertmacro compute_files_for_current_arch';
+  const extractArchive = '!insertmacro decompress';
+  const stageSidecars = '!insertmacro custom_files_post_decompression';
+  if ([stageArchive, extractArchive, stageSidecars].some(seam => extraction.split(seam).length !== 2)) {
+    throw new Error('The upstream NSIS archive staging seam changed; review the template.');
+  }
+  extraction = extraction
+    .replace(stageArchive, [
+      '!insertmacro InstallerShowCorePhase "正在向安装目录写入应用压缩包…" "Writing the application archive to the install folder…"',
+      '!insertmacro JustDoLogInstallEvent "phase=shell-archive-stage-start arch=$packageArch destination=$INSTDIR"',
+      stageArchive,
+      '!insertmacro InstallerLogArchiveStageResult "shell-archive"',
+    ].join('\n  '))
+    .replace(extractArchive, [
+      '!insertmacro InstallerShowCorePhase "正在准备应用解压工具…" "Preparing the application extractor…"',
+      extractArchive,
+    ].join('\n  '))
+    .replace(stageSidecars, [
+      '!insertmacro InstallerShowCorePhase "正在写入离线运行时压缩包…" "Writing the offline runtime archive…"',
+      '!insertmacro JustDoLogInstallEvent "phase=runtime-archive-stage-start destination=$INSTDIR"',
+      '!ifdef COMPRESS',
+      '  SetCompress off',
+      '!endif',
+      stageSidecars,
+      '!ifdef COMPRESS',
+      '  SetCompress "${COMPRESS}"',
+      '!endif',
+      '!insertmacro InstallerLogArchiveStageResult "runtime-archive"',
+    ].join('\n  '));
   const extractStart = extraction.indexOf('!macro extractUsing7za FILE');
   if (extractStart < 0) throw new Error('The upstream NSIS extraction seam changed.');
   const shellExtractorPath = path
@@ -59,6 +95,7 @@ function createWindowsInstallerScript(templatesDir) {
   StrCpy $InstallerShellExecutable "$R4"
   StrCpy $InstallerShellArchive "\${FILE}"
   StrCpy $InstallerShellLog "$R3"
+  !insertmacro InstallerShowCorePhase "正在解压并写入应用文件…" "Extracting and writing application files…"
   ; The shared native launcher captures both streams and returns immediately.
   ; Poll measured 7-Zip progress while the installation UI remains responsive.
   !insertmacro JustDoLogInstallEvent "phase=shell-extraction-start archive=\${FILE} destination=$INSTDIR detail-log=$R3"
@@ -72,6 +109,7 @@ function createWindowsInstallerScript(templatesDir) {
   \${Else}
     StrCpy $R5 "$JustDoExtractorStdioCopyError"
   \${EndIf}
+  !insertmacro InstallerShowCorePhase "正在清理应用解压临时文件…" "Removing temporary application extraction files…"
   Delete "$R4"
   \${If} $R2 != "0"
     !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=shell-extraction-failed exit=$R2 detail-log=$R3"
@@ -89,7 +127,11 @@ function createWindowsInstallerScript(templatesDir) {
 `;
   const files = installerFiles
     .replace(cacheCopy, '; Installer caching is deferred to the running updater.')
-    .replace('!include "extractAppPackage.nsh"', extraction);
+    .replace('!include "extractAppPackage.nsh"', extraction)
+    .replace(writeUninstaller, () => [
+      '!insertmacro InstallerShowCorePhase "正在写入卸载程序…" "Writing the uninstaller…"',
+      writeUninstaller,
+    ].join('\n  '));
   const installSection = read('installSection.nsh');
   if (installSection.split('InitPluginsDir').length !== 2) {
     throw new Error('The upstream NSIS install-section entry seam changed; review the template.');
@@ -102,19 +144,40 @@ function createWindowsInstallerScript(templatesDir) {
       '',
       'InitPluginsDir',
     ].join('\n'));
+  const skipInnerProcessCheck = '  ${ifNot} ${UAC_IsInnerInstance}\n    !insertmacro CHECK_APP_RUNNING\n  ${endif}';
+  if (section.replaceAll('\r\n', '\n').split(skipInnerProcessCheck).length !== 2) {
+    throw new Error('The upstream NSIS install-section process-check seam changed; review the template.');
+  }
+  section = section.replaceAll('\r\n', '\n').replace(skipInnerProcessCheck, '  !insertmacro CHECK_APP_RUNNING');
   for (const root of ['SHELL_CONTEXT', 'HKEY_CURRENT_USER']) {
     const removal = `!insertmacro uninstallOldVersion ${root}`;
-    if (section.split(removal).length !== 2) {
+    const result = `!insertmacro handleUninstallResult ${root}`;
+    if (section.split(removal).length !== 2 || section.split(result).length !== 2) {
       throw new Error('The upstream NSIS previous-version removal seam changed; review the template.');
     }
     section = section.replace(removal, [
       ...(root === 'SHELL_CONTEXT' ? [
         '!insertmacro InstallerRequireSandboxTarget "$JustDoCurrentUserAppData" "$JustDoCurrentUserLocalAppData"',
       ] : []),
+      '!insertmacro InstallerShowCorePhase "正在核对旧版安装位置…" "Checking the previous installation location…"',
       `!insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-start root=${root}"`,
       removal,
+    ].join('\n')).replace(result, [
+      result,
+      `!insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-returned root=${root}"`,
     ].join('\n'));
   }
+  const installFiles = '\n!insertmacro installApplicationFiles';
+  if (section.split(installFiles).length !== 2) {
+    throw new Error('The upstream NSIS application file seam changed; review the template.');
+  }
+  section = section.replace(installFiles, [
+    '',
+    '!insertmacro installApplicationFiles',
+    '!insertmacro InstallerWriteBrowserAuthenticationAlias',
+    '!insertmacro InstallerShowCorePhase "正在注册应用并创建快捷方式…" "Registering the application and creating shortcuts…"',
+    '!insertmacro JustDoLogInstallEvent "phase=application-registration-start"',
+  ].join('\n'));
   const assistedSource = read('assistedInstaller.nsh');
   const nativeModeUi = '!include multiUserUi.nsh';
   if (assistedSource.split(nativeModeUi).length !== 2) {
@@ -167,7 +230,21 @@ function createWindowsInstallerScript(templatesDir) {
   if (Array.from(installUtil.matchAll(unusedParentFunction)).length !== 1) {
     throw new Error('The upstream NSIS previous-installation path helper changed; review the template.');
   }
-  const verifiedInstallUtil = installUtil.replace(previousDirectory, [
+  const previousUninstallRetry = /^  StrCpy \$uninstallerFileNameTemp "\$PLUGINSDIR\\old-uninstaller\.exe"\n  !insertmacro copyFile "\$uninstallerFileName" "\$uninstallerFileNameTemp"\n\n  # Retry counter\n[\s\S]*?^  DoesNotExist:\n    SetErrors(?=\nFunctionEnd)/gm;
+  if (Array.from(installUtil.matchAll(previousUninstallRetry)).length !== 1) {
+    throw new Error('The upstream NSIS previous-uninstaller execution seam changed; review the template.');
+  }
+  const previousUninstallLookup = /^  Push 0\n  Pop \$R0\n\n(?=  !insertmacro readReg \$uninstallString)/gm;
+  const missingUninstaller = /^    !endif\n    \x24\{if\} \$uninstallString == ""\n      ClearErrors\n      Return\n    \x24\{endif\}/gm;
+  if ([previousUninstallLookup, missingUninstaller].some(seam => Array.from(installUtil.matchAll(seam)).length !== 1)) {
+    throw new Error('The upstream NSIS previous-uninstaller lookup seam changed; review the template.');
+  }
+  const verifiedInstallUtil = installUtil.replace(missingUninstaller, match => match.replace('      ClearErrors', [
+    '      ${if} $InstallerOldAttempt == 2',
+    '        Goto InstallerPreviousUninstallTargetChanged',
+    '      ${endif}',
+    '      ClearErrors',
+  ].join('\n'))).replace(previousDirectory, [
     '  ; Scope, upgrade target and the uninstaller share the same evidence.',
     '  StrCpy $InstallerLookupMode "$installMode"',
     '  ${if} $rootKey == "HKEY_CURRENT_USER"',
@@ -176,7 +253,20 @@ function createWindowsInstallerScript(templatesDir) {
     '    StrCpy $InstallerLookupMode "all"',
     '  ${endif}',
     '  Call InstallerResolveRegisteredDirectory',
+    '  StrCpy $InstallerOldScope "HKEY_CURRENT_USER"',
+    '  StrCpy $InstallerOldRetryAllowed "1"',
+    '  ${if} $InstallerLookupMode == "all"',
+    '    StrCpy $InstallerOldScope "HKEY_LOCAL_MACHINE"',
+    '  ${elseif} $installMode == "all"',
+    '    StrCpy $InstallerOldRetryAllowed "0"',
+    '  ${endif}',
     '  StrCpy $installationDir "$InstallerLookupUninstallDirectory"',
+    '  ${if} $InstallerOldAttempt == 2',
+    '    ${if} $installationDir != $InstallerOldDirectory',
+    '    ${orIf} $uninstallString != $InstallerOldRegistration',
+    '      Goto InstallerPreviousUninstallTargetChanged',
+    '    ${endif}',
+    '  ${endif}',
     '  ${if} $installationDir == ""',
     '    ${if} $InstallerLookupState == "missing"',
     '      !insertmacro JustDoLogInstallEvent "phase=previous-installation-removal-skipped root=$rootKey reason=missing-product-files"',
@@ -210,6 +300,9 @@ function createWindowsInstallerScript(templatesDir) {
     '    ${endif}',
     '  ${endif}',
     '  ${if} $2 == "1"',
+    '    ${if} $InstallerOldAttempt == 2',
+    '      Goto InstallerPreviousUninstallTargetChanged',
+    '    ${endif}',
     '    ClearErrors',
     '    ${if} $InstallerLookupMode == "all"',
     '      WriteRegStr HKLM "${INSTALL_REGISTRY_KEY}" InstallLocation "$installationDir"',
@@ -235,7 +328,93 @@ function createWindowsInstallerScript(templatesDir) {
     '    InstallerPreviousLocationCorrectionDone:',
     '  ${endif}',
     '  ClearErrors',
-  ].join('\n')).replace(unusedParentFunction, '');
+  ].join('\n')).replace(unusedParentFunction, '').replace(previousUninstallLookup, [
+    '  StrCpy $InstallerOldAttempt "1"',
+    '  StrCpy $InstallerOldKeepIdentityOpen "0"',
+    '  InstallerPreviousUninstallResolve:',
+    '  StrCpy $R0 0',
+    '',
+    '',
+  ].join('\n')).replace(previousUninstallRetry, [
+    '  StrCpy $InstallerOldIdentityKind 16',
+    '  StrCpy $InstallerOldIdentityPath "$installationDir"',
+    '  Call InstallerReadPreviousIdentity',
+    '  ${if} $InstallerOldAttempt == 1',
+    '    StrCpy $InstallerOldDirectory "$installationDir"',
+    '    StrCpy $InstallerOldRegistration "$uninstallString"',
+    '    StrCpy $InstallerOldDirectoryIdentity "$InstallerOldIdentity"',
+    '  ${elseif} $InstallerOldIdentity != $InstallerOldDirectoryIdentity',
+    '    Goto InstallerPreviousUninstallTargetChanged',
+    '  ${endif}',
+    '  StrCpy $InstallerOldIdentityKind 0',
+    '  StrCpy $InstallerOldIdentityPath "$uninstallerFileName"',
+    '  ${if} $InstallerOldAttempt == 2',
+    '    StrCpy $InstallerOldKeepIdentityOpen "1"',
+    '  ${endif}',
+    '  Call InstallerReadPreviousIdentity',
+    '  ${if} $InstallerOldAttempt == 1',
+    '    StrCpy $InstallerOldFileIdentity "$InstallerOldIdentity"',
+    '  ${elseif} $InstallerOldIdentity != $InstallerOldFileIdentity',
+    '    Goto InstallerPreviousUninstallTargetChanged',
+    '  ${endif}',
+    '  StrCpy $InstallerOldArguments "/S /KEEP_APP_DATA $0 _?=$installationDir"',
+    '  !insertmacro InstallerShowCorePhase "正在准备并启动旧版卸载程序…" "Preparing and starting the previous uninstaller…"',
+    '  StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\\old-$InstallerLookupMode-$InstallerOldAttempt.exe"',
+    '  System::Call \'kernel32::CopyFileW(w "$uninstallerFileName", w "$uninstallerFileNameTemp", i 1)i.r1 ?e\'',
+    '  Pop $2',
+    '  ${if} $InstallerOldIdentityHandle != -1',
+    '    System::Call \'kernel32::CloseHandle(p $InstallerOldIdentityHandle)i\'',
+    '    StrCpy $InstallerOldIdentityHandle "-1"',
+    '  ${endif}',
+    '  StrCmp $1 0 InstallerPreviousUninstallCopyFailed',
+    '  StrCpy $InstallerOldExecutable "$uninstallerFileNameTemp"',
+    '  StrCpy $InstallerOldLaunchMode "copied"',
+    '  Call InstallerRunPreviousUninstaller',
+    '  StrCmp $InstallerOldResult "not-started" 0 InstallerPreviousUninstallReturned',
+    '  !insertmacro JustDoLogInstallEvent "phase=previous-uninstaller-launch-failed root=$rootKey attempt=$InstallerOldAttempt win32=$InstallerOldError fallback=in-place"',
+    '  InstallerPreviousUninstallInPlace:',
+    '    ${if} $InstallerOldAttempt == 2',
+    '      Call InstallerReadPreviousIdentity',
+    '      ${if} $InstallerOldIdentity != $InstallerOldFileIdentity',
+    '        Goto InstallerPreviousUninstallTargetChanged',
+    '      ${endif}',
+    '    ${endif}',
+    '    StrCpy $InstallerOldExecutable "$uninstallerFileName"',
+    '    StrCpy $InstallerOldLaunchMode "in-place"',
+    '    Call InstallerRunPreviousUninstaller',
+    '  InstallerPreviousUninstallReturned:',
+    '    ${if} $InstallerOldResult == "not-started"',
+    '      !insertmacro JustDoLogInstallEvent "phase=previous-uninstaller-launch-failed root=$rootKey attempt=$InstallerOldAttempt win32=$InstallerOldError launch=in-place"',
+    '    ${endif}',
+    '    ${if} $InstallerOldResult == "exited"',
+    '    ${andIf} $InstallerOldError == 0',
+    '      StrCpy $R0 0',
+    '      ClearErrors',
+    '      Return',
+    '    ${endif}',
+    '    Call InstallerAskPreviousRetry',
+    '    ${if} $InstallerOldRetry == 1',
+    '      StrCpy $InstallerOldAttempt "2"',
+    '      Goto InstallerPreviousUninstallResolve',
+    '    ${endif}',
+    '    ${if} $InstallerOldResult == "exited"',
+    '      StrCpy $R0 "$InstallerOldError"',
+    '      ClearErrors',
+    '      Return',
+    '    ${endif}',
+    '    SetErrors',
+    '    Return',
+    '  InstallerPreviousUninstallCopyFailed:',
+    '    !insertmacro JustDoLogInstallEvent "phase=previous-uninstaller-copy-failed root=$rootKey attempt=$InstallerOldAttempt win32=$2 fallback=in-place"',
+    '    Goto InstallerPreviousUninstallInPlace',
+    '  InstallerPreviousUninstallTargetChanged:',
+    '    ${if} $InstallerOldIdentityHandle != -1',
+    '      System::Call \'kernel32::CloseHandle(p $InstallerOldIdentityHandle)i\'',
+    '      StrCpy $InstallerOldIdentityHandle "-1"',
+    '    ${endif}',
+    '    !insertmacro JustDoLogInstallEvent "phase=previous-uninstaller-retry-refused root=$rootKey reason=target-changed"',
+    '    SetErrors',
+  ].join('\n'));
   return installer
     .replace(assistedInclude, () => assistedWithDirectoryLock)
     .replace('!include "installSection.nsh"', section)
@@ -262,11 +441,14 @@ function configureWindowsInstallerScript(projectDir) {
   // nsis.script bypasses electron-builder's signed-uninstaller generation.
   // Compose at the final-script seam instead, for this project only, so both
   // normal compiler passes and all upstream signing/update behavior are retained.
-  NsisTarget.prototype.computeFinalScript = function (source, ...args) {
+  NsisTarget.prototype.computeFinalScript = function (source, isInstaller, archs) {
     if (ownsTarget(this) && !this.isPortable) {
+      if (isInstaller) {
+        for (const directory of archs.values()) verifyPackagedBrowserAuthentication(directory);
+      }
       source = createWindowsInstallerScript(templatesDir);
     }
-    return original.call(this, source, ...args);
+    return original.call(this, source, isInstaller, archs);
   };
   NsisTarget.prototype.computeCommonInstallerScriptHeader = async function () {
     const header = await originalHeader.call(this);

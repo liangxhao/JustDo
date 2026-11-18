@@ -266,7 +266,7 @@ describe('bundled installer clock assets', () => {
     const bytes = readFileSync(prepared.path);
     expect(peTables(bytes)).toEqual({
       imports: ['kernel32.dll', 'user32.dll'],
-      exports: ['CompleteActions', 'Destroy', 'Start', 'Stop'],
+      exports: ['CompleteActions', 'Destroy', 'MarkPhase', 'Start', 'Stop'],
     });
   });
 
@@ -398,7 +398,7 @@ describe.runIf(toolchainAvailable)('native installer clock assets', () => {
     expect(bytes.readUInt32LE(optional + 208)).toBe(0); // No managed runtime.
     expect(peTables(bytes)).toEqual({
       imports: ['kernel32.dll', 'user32.dll'],
-      exports: ['CompleteActions', 'Destroy', 'Start', 'Stop'],
+      exports: ['CompleteActions', 'Destroy', 'MarkPhase', 'Start', 'Stop'],
     });
     expect(readdirSync(first.directory).sort()).toEqual(['installer-clock.dll', 'manifest.json']);
     const manifest = path.join(first.directory, 'manifest.json');

@@ -92,7 +92,6 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler))('native ins
         '!macro setInstallModePerUser', '!macroend', '!macro setInstallModePerAllUsers', '!macroend',
         'Function InstallerCombinedSaveDraft', 'FunctionEnd',
         'Function InstallerCombinedApplyMode', '  StrCpy $installMode "$InstallerCombinedMode"', 'FunctionEnd',
-        'Function JustDoCheckAppRunning', 'FunctionEnd',
         isolateRegistry(lookup),
         isolateRegistry(sourceFunction(setup, 'InstallerCombinedResolveUpgradeMode')),
         sourceFunction(setup, 'InstallerCombinedScopeChanged'),

@@ -621,7 +621,7 @@ foreach($case in $cases){
     Wait-For { (Test-Path -LiteralPath (Join-Path $FixtureRoot 'finished.txt')) -and [InstallerSetupProbe]::IsWindowEnabled([InstallerSetupProbe]::GetDlgItem($window,1)) } 'The harmless installation section did not finish.'
     $finished=[IO.File]::ReadAllText((Join-Path $FixtureRoot 'finished.txt'),[Text.Encoding]::Unicode) -split '\|'
     Assert-Condition ($finished[0] -eq $expectedMode -and $finished[1] -eq $expectedPath) "Wrong final mode or installation directory ($case): $($finished -join '|') expected=$expectedMode|$expectedPath"
-    if($case -eq 'inner'){Assert-Condition ($finished[2] -eq '1') 'The elevated inner instance skipped the occupancy preflight.'}
+    if($case -eq 'inner'){Assert-Condition ($finished[2] -eq '1') 'The elevated inner instance did not reach the install worker process check.'}
     Assert-Condition (![InstallerSetupProbe]::HasVisibleArea([InstallerSetupProbe]::GetDlgItem($window,3))) 'The installation result exposed Back.'
     Assert-Condition ([InstallerSetupProbe]::IsWindowVisible([IntPtr][long]$pageState[8]) -and ![InstallerSetupProbe]::IsWindowVisible([InstallerSetupProbe]::GetDlgItem([IntPtr][long]$pageState[2],1027))) 'Installation did not show its log directly or retained the details link.'
     Native-Command $window 1

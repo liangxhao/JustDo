@@ -10,6 +10,8 @@ import { reactHooksRefreshPlugin } from './scripts/build/vite-react-hooks-refres
 import { startupPresentationPlugin } from './scripts/build/startupPresentationPlugin.mjs';
 import applicationLicenses from './scripts/packaging/application-license-assets.cjs';
 import { appPluginAssetsPlugin } from './scripts/plugins/vite-app-plugin-assets.mjs';
+import { BROWSER_AUTHENTICATION_CONFIG } from './src/config/browserAuthentication';
+import { BROWSER_AUTHENTICATION_BUILD_FILE, resolveBrowserAuthenticationConfig } from './src/shared/browser/browserAuthentication';
 
 // https://vitejs.dev/config/
 const devPort = Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port);
@@ -49,7 +51,19 @@ export default defineConfig({
           resolve: { alias: {
             '@app-plugin/sdk/execution-source': path.join(projectRoot, 'plugins/sdk/app-plugin-sdk/execution-source.ts'),
           } },
-          plugins: [createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'main' })],
+          plugins: [
+            createApplicationLicensePlugin({ repoRoot: projectRoot, scope: 'main' }),
+            {
+              name: 'browser-authentication-build-config',
+              generateBundle() {
+                this.emitFile({
+                  type: 'asset',
+                  fileName: BROWSER_AUTHENTICATION_BUILD_FILE,
+                  source: JSON.stringify(resolveBrowserAuthenticationConfig(BROWSER_AUTHENTICATION_CONFIG).executableName),
+                });
+              },
+            },
+          ],
           build: {
             sourcemap: !isProductionBuild,
             outDir: 'dist-electron',

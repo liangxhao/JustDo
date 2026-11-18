@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import { crc32 } from 'node:zlib';
 import { afterEach, describe, expect, test } from 'vitest';
 
 import { BROWSER_AUTHENTICATION_CONFIG } from '../../src/config/browserAuthentication';
@@ -15,7 +16,6 @@ const {
   normalizeUpdateVersion,
   readReleaseNotes,
   hasWindowsInstallerTarget,
-  afterSign,
   verifyWindowsInstallerArchive,
   verifyWindowsInstallerArchiveListing,
   afterAllArtifactBuild,
@@ -36,16 +36,12 @@ const {
   normalizeUpdateVersion: (version: string) => string;
   readReleaseNotes: (filePath: string) => string;
   hasWindowsInstallerTarget: (targets: Map<{ nodeName: string }, Map<string, unknown>>) => boolean;
-  afterSign: (context: {
-    electronPlatformName: string;
-    appOutDir: string;
-    packager: { appInfo: { productFilename: string } };
-  }) => Promise<void>;
   verifyWindowsInstallerArchive: (
     installerPath: string,
     productFilename: string,
     options?: {
       sevenZipExecutable?: string;
+      prepackaged?: string;
       spawnSync?: (executable: string, args: string[], options: unknown) => unknown;
     },
   ) => void;
@@ -61,7 +57,7 @@ const hooksWithAuthenticationExecutable = (executableName: string) => {
   try {
     config.exports = { BROWSER_AUTHENTICATION_EXECUTABLE: executableName };
     delete require.cache[hooksPath];
-    return require(hooksPath) as { afterSign: typeof afterSign; verifyWindowsInstallerArchiveListing: typeof verifyWindowsInstallerArchiveListing };
+    return require(hooksPath) as { verifyWindowsInstallerArchiveListing: typeof verifyWindowsInstallerArchiveListing };
   } finally {
     config.exports = originalConfig;
     require.cache[hooksPath] = originalHooks;
@@ -69,6 +65,12 @@ const hooksWithAuthenticationExecutable = (executableName: string) => {
 };
 
 const fixtureAuthenticationExecutable = 'chrome.exe';
+const { BROWSER_AUTHENTICATION_BUILD_FILE, verifyPackagedBrowserAuthentication } = require(
+  '../../scripts/packaging/browser-authentication-config.cjs',
+) as {
+  BROWSER_AUTHENTICATION_BUILD_FILE: string;
+  verifyPackagedBrowserAuthentication: (directory: string) => void;
+};
 
 const { validateReleaseHistory } = require('../../scripts/packaging/verify-windows-update-artifacts.cjs') as {
   validateReleaseHistory: (history: unknown, manifest: Record<string, unknown>) => boolean;
@@ -296,35 +298,6 @@ describe('Windows signed application payload', () => {
       .toThrow('localEndpoint');
   });
 
-  test('skips staging a helper when authentication is disabled', async () => {
-    const appOutDir = makeTemporaryDirectory();
-    writeFileSync(path.join(appOutDir, 'Fixture.exe'), 'application');
-    await hooksWithAuthenticationExecutable('').afterSign({ electronPlatformName: 'win32', appOutDir, packager: { appInfo: { productFilename: 'Fixture' } } });
-    expect(readdirSync(appOutDir)).toEqual(['Fixture.exe']);
-  });
-
-  test('preserves the branded application and copies its exact bytes for browser authentication', async () => {
-    const appOutDir = makeTemporaryDirectory();
-    const application = path.join(appOutDir, 'Fixture.exe');
-    const bytes = Buffer.from([0x4d, 0x5a, 0, 0xff, 0x7f]);
-    writeFileSync(application, bytes);
-
-    await hooksWithAuthenticationExecutable(fixtureAuthenticationExecutable).afterSign({ electronPlatformName: 'win32', appOutDir, packager: { appInfo: { productFilename: 'Fixture' } } });
-
-    expect(readFileSync(application)).toEqual(bytes);
-    expect(readFileSync(path.join(appOutDir, fixtureAuthenticationExecutable))).toEqual(bytes);
-  });
-
-  test('uses the existing executable when its name already matches the helper', async () => {
-    const appOutDir = makeTemporaryDirectory();
-    const productFilename = 'CHROME';
-    const application = path.join(appOutDir, `${productFilename}.exe`);
-    writeFileSync(application, 'existing application');
-
-    await hooksWithAuthenticationExecutable(fixtureAuthenticationExecutable).afterSign({ electronPlatformName: 'win32', appOutDir, packager: { appInfo: { productFilename } } });
-
-    expect(readFileSync(application, 'utf8')).toBe('existing application');
-  });
 });
 
 describe('Windows installer application archive', () => {
@@ -356,9 +329,22 @@ Method = LZMA2:20
 `;
   const authenticationEntry = (name: string) => name ? `Path = ${name}\nMethod = BCJ LZMA2:20\n` : '';
   const relayEntry = 'Path = resources/browser-transport/relay.cjs\nMethod = LZMA2:20\n';
-  const deployedAuthenticationEntry = BROWSER_AUTHENTICATION_EXECUTABLE
-    ? authenticationEntry(BROWSER_AUTHENTICATION_EXECUTABLE) + relayEntry
-    : '';
+  const deployedAuthenticationEntry = BROWSER_AUTHENTICATION_EXECUTABLE ? relayEntry : '';
+
+  test.each([true, false])('checks that prepackaged authentication configuration matches setup (%s)', async matches => {
+    const root = makeTemporaryDirectory();
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'resources');
+    mkdirSync(path.join(source, 'dist-electron'), { recursive: true });
+    mkdirSync(resources);
+    const executable = matches ? BROWSER_AUTHENTICATION_EXECUTABLE : `${BROWSER_AUTHENTICATION_EXECUTABLE}different`;
+    writeFileSync(path.join(source, 'dist-electron', BROWSER_AUTHENTICATION_BUILD_FILE), JSON.stringify(executable));
+    await require('@electron/asar').createPackage(source, path.join(resources, 'app.asar'));
+
+    const verify = () => verifyPackagedBrowserAuthentication(root);
+    if (matches) expect(verify).not.toThrow();
+    else expect(verify).toThrow('Rebuild the Windows application');
+  });
 
   test('accepts single-stream BCJ application archives', () => {
     const listing = `Type = 7z\nMethod = LZMA2:20 BCJ\n${deployedAuthenticationEntry}${requiredEntries}`;
@@ -383,17 +369,16 @@ Method = LZMA2:20
     );
   });
 
-  test('requires the authentication executable unless the main executable already has that name', () => {
+  test('keeps one application executable and requires the relay for a distinct authentication alias', () => {
     const { verifyWindowsInstallerArchiveListing: verifyEnabled } = hooksWithAuthenticationExecutable(fixtureAuthenticationExecutable);
     const listing = `Type = 7z\nMethod = LZMA2:20 BCJ\n${requiredEntries}`;
-    expect(() => verifyEnabled(listing + relayEntry, 'JustDo')).toThrow(
-      `application archive is missing: ${fixtureAuthenticationExecutable}`,
-    );
-    const withExecutable = listing + authenticationEntry(fixtureAuthenticationExecutable);
-    expect(() => verifyEnabled(withExecutable, 'JustDo')).toThrow(
+    expect(() => verifyEnabled(listing, 'JustDo')).toThrow(
       'application archive is missing: resources/browser-transport/relay.cjs',
     );
-    expect(() => verifyEnabled(withExecutable + relayEntry, 'JustDo')).not.toThrow();
+    expect(() => verifyEnabled(listing + relayEntry + authenticationEntry('CHROME.exe'), 'JustDo')).toThrow(
+      `without the redundant ${fixtureAuthenticationExecutable}`,
+    );
+    expect(() => verifyEnabled(listing + relayEntry, 'JustDo')).not.toThrow();
     expect(() => verifyEnabled(listing.replace('JustDo.exe', 'CHROME.exe'), 'CHROME')).not.toThrow();
   });
 
@@ -424,5 +409,22 @@ Method = LZMA2:20
     ).toThrow('Could not decompress and CRC-test');
     expect(calls.map(args => args[0])).toEqual(['l', 't']);
     expect(calls.every(args => args.includes('-t7z:s9437184b'))).toBe(true);
+  });
+
+  test('rejects a cached archive containing a different prepackaged application', () => {
+    const root = makeTemporaryDirectory();
+    const installerPath = path.join(root, 'Setup.exe');
+    writeFileSync(installerPath, 'setup');
+    mkdirSync(path.join(root, 'resources'));
+    writeFileSync(path.join(root, 'resources', 'app.asar'), 'current payload');
+    const staleCrc = crc32('cached payload').toString(16).padStart(8, '0');
+    const listing = `Type = 7z\nMethod = LZMA2:20 BCJ\n${deployedAuthenticationEntry}${requiredEntries}`
+      .replace('Path = resources/app.asar\nMethod = LZMA2:20', `\nPath = resources\\app.asar\nCRC = ${staleCrc}\nMethod = LZMA2:20\n`);
+
+    expect(() => verifyWindowsInstallerArchive(installerPath, 'JustDo', {
+      prepackaged: root,
+      sevenZipExecutable: '7za',
+      spawnSync: () => ({ status: 0, stdout: listing }),
+    })).toThrow('Installer contains a different prepackaged application');
   });
 });

@@ -11,10 +11,13 @@
 
 typedef struct ClockContext {
   DWORD started;
+  DWORD phaseStarted;
   DWORD stoppedAt;
   BOOL stopped;
+  BOOL phase;
   UINT_PTR timer;
   WCHAR prefix[CLOCK_PREFIX_CAPACITY];
+  WCHAR phasePrefix[CLOCK_PREFIX_CAPACITY];
 } ClockContext;
 
 typedef struct PendingActions {
@@ -40,14 +43,16 @@ static BOOL PinModule(void) {
 }
 
 static void FormatElapsed(const ClockContext *context, DWORD now, WCHAR *text) {
-  DWORD seconds = (now - context->started) / 1000;
+  const WCHAR *prefix = context->phase ? context->phasePrefix : context->prefix;
+  DWORD started = context->phase ? context->phaseStarted : context->started;
+  DWORD seconds = (now - started) / 1000;
   DWORD minutes = seconds / 60;
   DWORD digitCount = 0;
   WCHAR digits[10];
   DWORD position = 0;
 
-  while (context->prefix[position] != L'\0') {
-    text[position] = context->prefix[position];
+  while (prefix[position] != L'\0') {
+    text[position] = prefix[position];
     position++;
   }
   do {
@@ -142,6 +147,28 @@ BOOL WINAPI Start(HWND label, DWORD started, LPCWSTR prefix) {
   return TRUE;
 }
 
+BOOL WINAPI MarkPhase(HWND label, LPCWSTR prefix) {
+  ClockContext *context;
+  DWORD length = 0;
+  DWORD index;
+  BOOL updated = FALSE;
+  if (prefix == NULL) return FALSE;
+  while (prefix[length] != L'\0') {
+    if (length >= CLOCK_PREFIX_CAPACITY - 1) return FALSE;
+    length++;
+  }
+  AcquireSRWLockExclusive(&clockLock);
+  context = (ClockContext *)GetPropW(label, clockProperty);
+  if (context != NULL && !context->stopped) {
+    context->phase = TRUE;
+    context->phaseStarted = GetTickCount();
+    for (index = 0; index <= length; index++) context->phasePrefix[index] = prefix[index];
+    updated = TRUE;
+  }
+  ReleaseSRWLockExclusive(&clockLock);
+  return updated;
+}
+
 BOOL WINAPI Stop(HWND label) {
   ClockContext *context;
   WCHAR text[CLOCK_TEXT_CAPACITY];
@@ -156,6 +183,7 @@ BOOL WINAPI Stop(HWND label) {
   if (!context->stopped) {
     context->stopped = TRUE;
     context->stoppedAt = GetTickCount();
+    context->phase = FALSE;
   }
   timer = context->timer;
   FormatElapsed(context, context->stoppedAt, text);

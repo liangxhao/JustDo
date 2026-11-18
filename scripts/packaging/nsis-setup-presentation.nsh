@@ -853,6 +853,8 @@ FunctionEnd
 ; are sanitized by NSIS, which must not silently change invalid typed input.
 Function InstallerCombinedValidateDirectory
   !insertmacro InstallerSetupSave
+  !insertmacro InstallerText $InstallerCombinedHint "正在核对安装目录…" "Checking the installation folder…"
+  System::Call 'user32::UpdateWindow(p $InstallerCombinedHint)i'
   StrCpy $InstallerCombinedPathValid "0"
   Call InstallerRestoreUpgradeDirectory
   StrCpy $InstallerCombinedLockedDirectory "$InstallerUpgradeDirectory"
@@ -883,7 +885,6 @@ Function InstallerCombinedValidateDirectory
   ${EndIf}
   StrCpy $InstallerCombinedSelectionPath "$InstallerCombinedPath"
   StrCpy $INSTDIR "$InstallerCombinedSelectionPath"
-  Call InstallerCombinedRefreshFacts
   Goto InstallerCombinedValidateDone
   InstallerCombinedInvalidDirectory:
   StrCpy $InstallerCombinedPathValid "0"
@@ -899,6 +900,9 @@ Function InstallerCombinedEnsureElevation
   StrCpy $InstallerCombinedElevationResult "ok"
   ${If} $InstallerCombinedMode == "all"
   ${AndIfNot} ${UAC_IsAdmin}
+    !insertmacro InstallerText $InstallerCombinedHint "正在等待管理员授权…" "Waiting for administrator approval…"
+    System::Call 'user32::UpdateWindow(p $InstallerCombinedHint)i'
+    !insertmacro JustDoLogInstallEvent "phase=setup-elevation-requested"
     ShowWindow $HWNDPARENT 0
     !insertmacro UAC_RunElevated
     !insertmacro JustDoLogInstallEvent "phase=setup-elevation-result result=$0 wrapper=$1 child-exit=$2"

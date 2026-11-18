@@ -85,7 +85,6 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('native instal
           'installMode', 'JustDoInstallMode', 'ProbeCase', 'ProbeInner', 'ProbeSwitch', 'ProbeProcessChecks']
           .map(name => `Var ${name}`),
         '!macro JustDoLogInstallEvent TEXT', '  DetailPrint "${TEXT}"', '!macroend',
-        'Function JustDoCheckAppRunning', '  IntOp $ProbeProcessChecks $ProbeProcessChecks + 1', 'FunctionEnd',
         policy,
         'Function .onInit', '  SetRegView 64',
         '  ${GetParameters} $0', '  ${GetOptions} $0 "/case=" $ProbeCase',
@@ -122,7 +121,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('native instal
         const lines = readFileSync(path.join(root, 'result.txt'), 'utf16le').trim().split(/\r?\n/);
         expect(lines, scenario.id).toEqual([
           `initial\t${initial}\t${scenario.mode}`,
-          `final\t${registered || path.join(selection, 'DirectoryFixture')}\t${selectedMode}\t${Number('inner' in scenario && scenario.inner)}`,
+          `final\t${registered || path.join(selection, 'DirectoryFixture')}\t${selectedMode}\t0`,
         ]);
       }
     } finally {

@@ -155,6 +155,7 @@ test.runIf(process.platform === 'win32' && existsSync(compiler))('the native aut
     '!macro StopJustDoProcesses RESULT', 'StrCpy ${RESULT} $StopResult', '!macroend',
     '!macro JustDoSetInstallStatus ZH EN', 'DetailPrint "${EN}"', '!macroend',
     '!macro JustDoAddInstallActivity ZH EN', 'DetailPrint "${EN}"', '!macroend',
+    '!macro InstallerMarkPhase', '!macroend',
     'Function InstallerPresentationSetStage', 'Pop $0', 'FunctionEnd', check,
     'Function .onInit', `StrCpy $INSTDIR "${literal(f.installRoot)}"`, 'StrCpy $JustDoInstFilesPage 0',
     '${GetParameters} $0', '${GetOptions} $0 "/stop=" $StopResult', 'FunctionEnd',

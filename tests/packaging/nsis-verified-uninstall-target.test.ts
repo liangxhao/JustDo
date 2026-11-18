@@ -47,6 +47,22 @@ const scenarios = [
     customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: true, executes: false, corrections: 1 },
   { id: 'already-paired-does-not-write', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
     customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: false, executes: true, corrections: 0 },
+  { id: 'uninstaller-nonzero', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: false, executes: true, corrections: 1 },
+  { id: 'copied-uninstaller-cannot-start', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: false, executes: true, corrections: 1 },
+  { id: 'copy-failure-with-existing-file', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: false, executes: true, corrections: 1 },
+  { id: 'retry-failed-current-user-scope', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: false, executes: true, corrections: 1 },
+  { id: 'no-embedded-retry-for-secondary-scope', mode: 'all', rootKey: 'HKEY_CURRENT_USER',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: false, executes: true, corrections: 1 },
+  { id: 'retry-target-replaced', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: true, executes: true, corrections: 1 },
+  { id: 'retry-registration-removed', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: true, executes: true, corrections: 1 },
+  { id: 'slow-uninstaller', mode: 'CurrentUser', rootKey: 'SHELL_CONTEXT',
+    customLive: false, arpLive: true, arp: 'actual', state: 'confirmed', error: false, executes: true, corrections: 1 },
 ] as const;
 
 describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plugins))(
@@ -61,6 +77,8 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
       const missingDirectory = path.join(fixture, 'missing-extra-entry');
       const observedFile = path.join(fixture, 'child-observed.txt');
       const resultFile = path.join(fixture, 'result.txt');
+      const exitNonzero = path.join(fixture, 'return-nonzero');
+      const slowChild = path.join(fixture, 'slow-child');
       for (const directory of [customDirectory, actualDirectory]) mkdirSync(directory);
       const compile = (name: string, source: string): string => {
         const script = path.join(fixture, `${name}.nsi`);
@@ -107,16 +125,39 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           // NSIS consumes _?= before exposing $CMDLINE; record the Win32 command
           // line as well as the resulting $INSTDIR to exercise the real handoff.
           "  System::Call 'kernel32::GetCommandLineW()w.r1'",
-          `  FileOpen $0 "${nsisLiteral(observedFile)}" w`,
+          `  FileOpen $0 "${nsisLiteral(observedFile)}" a`,
+          '  FileSeek $0 0 END',
           String.raw`  FileWriteUTF16LE $0 "$INSTDIR$\r$\n$1$\r$\n"`,
-          '  FileClose $0', '  SetErrorLevel 0', 'SectionEnd',
-        ].join('\n'));
+          '  FileClose $0',
+          '  IfFileExists "@SLOW@" 0 +2', '    Sleep 1700',
+          `  \${If} \${FileExists} "${nsisLiteral(exitNonzero)}"`,
+          '    SetErrorLevel 17', '  ${Else}', '    SetErrorLevel 0', '  ${EndIf}', 'SectionEnd',
+        ].join('\n').replace('@SLOW@', nsisLiteral(slowChild)));
         const created = spawnSync(creator, [], { windowsHide: true, encoding: 'utf8', timeout: 10_000 });
         expect(created.status, `${created.stdout}\n${created.stderr}`).toBe(0);
         expect(existsSync(path.join(actualDirectory, 'Uninstall Wedax.exe'))).toBe(true);
 
         const composed = createWindowsInstallerScript(templates);
         const lookup = isolateRegistry(readFileSync(path.join(repositoryRoot, 'scripts/packaging/nsis-existing-installation.nsh'), 'utf8'));
+        const previousUninstaller = readFileSync(path.join(repositoryRoot, 'scripts/packaging/nsis-previous-uninstaller.nsh'), 'utf8')
+          .replace('${IfNot} ${Silent}', '${If} $ProbeCase != "uninstaller-nonzero"')
+          .replace('${If} ${Silent}\n    System::Call', '${If} $ProbeCase != "slow-uninstaller"\n    System::Call')
+          .replace(/^[ \t]*MessageBox MB_RETRYCANCEL[^\r\n]*/m, [
+            '    ${If} $ProbeCase == "retry-failed-current-user-scope"',
+            '    ${OrIf} $ProbeCase == "retry-target-replaced"',
+            '    ${OrIf} $ProbeCase == "retry-registration-removed"',
+            '      ${If} $ProbeCase == "retry-target-replaced"',
+            '        Rename "$InstallerOldIdentityPath" "$InstallerOldIdentityPath.original"',
+            '        CopyFiles /SILENT "$InstallerOldIdentityPath.original" "$InstallerOldIdentityPath"',
+            '      ${ElseIf} $ProbeCase == "retry-registration-removed"',
+            '        DeleteRegValue HKCU "${UNINSTALL_REGISTRY_KEY}\\user" UninstallString',
+            '      ${EndIf}',
+            '      Delete "@EXIT_SENTINEL@"',
+            '      Goto InstallerOldRetryAccepted',
+            '    ${Else}',
+            '      Goto InstallerOldRetryDone',
+            '    ${EndIf}',
+          ].join('\n').replace('@EXIT_SENTINEL@', nsisLiteral(exitNonzero)));
         // Redirect only registry IO to the random fixture HKCU key; retain the
         // production root-selection branches and actual uninstaller execution.
         const readReg = sourceMacro(composed, 'readReg')
@@ -128,8 +169,19 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
             line => ['  IntOp $ProbeCorrections $ProbeCorrections + 1',
               '  ${If} $ProbeCase == "registration-write-denied"', '    SetErrors',
               '  ${Else}', line, '  ${EndIf}'].join('\n'))
-          .replace('!insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"',
-            'IntOp $ProbeCopies $ProbeCopies + 1\n  !insertmacro copyFile "$uninstallerFileName" "$uninstallerFileNameTemp"');
+          .replace('StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\\old-$InstallerLookupMode-$InstallerOldAttempt.exe"', [
+            'StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\\old-$InstallerLookupMode-$InstallerOldAttempt.exe"',
+            '  IntOp $ProbeCopies $ProbeCopies + 1',
+            '  ${If} $ProbeCase == "copy-failure-with-existing-file"',
+            '    CopyFiles /SILENT "$uninstallerFileName" "$uninstallerFileNameTemp"',
+            '  ${EndIf}',
+          ].join('\n'))
+          .replace('StrCmp $1 0 InstallerPreviousUninstallCopyFailed', [
+            'StrCmp $1 0 InstallerPreviousUninstallCopyFailed',
+            '  ${If} $ProbeCase == "copied-uninstaller-cannot-start"',
+            '    Delete "$uninstallerFileNameTemp"',
+            '  ${EndIf}',
+          ].join('\n'));
         const initializers = scenarios.flatMap(scenario => [
           `  \${If} $ProbeCase == "${scenario.id}"`,
           `    StrCpy $installMode "${scenario.mode}"`, `    StrCpy $ProbeRootKey "${scenario.rootKey}"`,
@@ -151,13 +203,17 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           `!define INSTALL_REGISTRY_KEY "${registryKey}\\product"`,
           `!define UNINSTALL_REGISTRY_KEY "${registryKey}\\arp"`,
           '!define isDeleteAppData \'$ProbeDeleteAppData == "1"\'',
-          'LangString appCannotBeClosed 1033 "Fixture uninstaller did not exit successfully"',
           ...['installMode', 'appExe', 'ProbeCase', 'ProbeRootKey', 'ProbeErrors', 'ProbeDeleteAppData',
-            'ProbeShellScope', 'ProbeLookupScope', 'ProbeCorrections', 'ProbeCopies']
+            'ProbeShellScope', 'ProbeLookupScope', 'ProbeCorrections', 'ProbeCopies', 'ProbeWaitSeconds']
             .map(name => `Var ${name}`),
           '!macro JustDoLogInstallEvent TEXT', '  DetailPrint "${TEXT}"', '  ClearErrors', '!macroend',
-          lookup, sourceFunction(composed, 'GetInQuotes'), sourceMacro(composed, 'GetInQuotes'),
-          readReg, sourceMacro(composed, 'copyFile'), 'Var isTryToKeepShortcuts',
+          '!macro InstallerShowPreviousWait SECONDS', '  StrCpy $ProbeWaitSeconds "${SECONDS}"', '!macroend',
+          '!macro InstallerShowCorePhase ZH EN', '!macroend',
+          '!macro InstallerPreviousRetryText TARGET ZH EN', '  StrCpy ${TARGET} "${EN}"', '!macroend',
+          '!macro InstallerShowPreviousFailure', '!macroend',
+          'Var InstallerOldChildActive',
+          previousUninstaller, lookup, sourceFunction(composed, 'GetInQuotes'), sourceMacro(composed, 'GetInQuotes'),
+          readReg, 'Var isTryToKeepShortcuts',
           sourceMacro(composed, 'setIsTryToKeepShortcuts'), uninstall,
           'Function .onInit', '  InitPluginsDir', '  SetRegView 64', '  SetShellVarContext current',
           `  DeleteRegKey HKCU "${registryKey}"`,
@@ -172,11 +228,18 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           String.raw`  FileWriteUTF16LE $3 "$InstallerLookupDirectory$\r$\n$InstallerLookupUninstallDirectory$\r$\n"`,
           '  ReadRegStr $4 HKCU "${INSTALL_REGISTRY_KEY}\\$ProbeLookupScope" InstallLocation',
           String.raw`  FileWriteUTF16LE $3 "$4$\r$\n$ProbeCorrections$\r$\n$ProbeCopies$\r$\n"`,
+          String.raw`  FileWriteUTF16LE $3 "$ProbeWaitSeconds$\r$\n"`,
           '  FileClose $3', `  DeleteRegKey HKCU "${registryKey}"`, '  SetErrorLevel 0', 'SectionEnd',
         ].join('\n'));
 
         for (const scenario of scenarios) {
           rmSync(observedFile, { force: true });
+          if (scenario.id === 'slow-uninstaller') writeFileSync(slowChild, '');
+          else rmSync(slowChild, { force: true });
+          const childExit = ['uninstaller-nonzero', 'copied-uninstaller-cannot-start', 'no-embedded-retry-for-secondary-scope']
+            .includes(scenario.id) ? 17 : 0;
+          if (childExit !== 0 || scenario.id.startsWith('retry-')) writeFileSync(exitNonzero, '');
+          else rmSync(exitNonzero, { force: true });
           for (const [directory, live] of [[customDirectory, scenario.customLive], [actualDirectory, scenario.arpLive]] as const) {
             const executable = path.join(directory, 'Wedax.exe');
             if (live) writeFileSync(executable, 'fixture executable');
@@ -188,22 +251,39 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           expect(result.status, `${scenario.id}: ${result.stdout}\n${result.stderr}`).toBe(0);
           const lines = readFileSync(resultFile, 'utf16le').split(/\r?\n/);
           const mode = scenario.rootKey === 'HKEY_CURRENT_USER' ? 'CurrentUser' : scenario.mode;
+          const stateAfterLookup = scenario.id === 'retry-registration-removed' ? 'confirmed' : scenario.state;
           expect(lines[0], `${scenario.id}: ${JSON.stringify(lines)}, child=${existsSync(observedFile)}`)
-            .toBe(`${scenario.error ? 1 : 0}\t0\t${scenario.arp === 'absent' ? '' : mode}\t${scenario.state}`);
+            .toBe(`${scenario.error ? 1 : 0}\t${childExit}\t${scenario.arp === 'absent' ? '' : mode}\t${stateAfterLookup}`);
           expect(lines[1], scenario.id).toBe(scenario.state === 'confirmed'
             ? (scenario.customLive ? customDirectory : actualDirectory) : '');
           expect(lines[2], scenario.id).toBe(scenario.executes || scenario.id === 'registration-write-denied' ? actualDirectory : '');
           expect(lines[3], `${scenario.id}: child=${existsSync(observedFile) ? readFileSync(observedFile, 'utf16le') : 'none'}`)
             .toBe(scenario.executes ? actualDirectory : customDirectory);
           expect(lines[4], scenario.id).toBe(String(scenario.corrections));
-          expect(lines[5], scenario.id).toBe(scenario.executes ? '1' : '0');
+          const retrySuccess = scenario.id === 'retry-failed-current-user-scope';
+          expect(lines[5], scenario.id).toBe(retrySuccess ? '2' : scenario.executes ? '1' : '0');
+          if (scenario.id === 'slow-uninstaller') expect(Number(lines[6])).toBeGreaterThanOrEqual(1);
           expect(existsSync(observedFile), scenario.id).toBe(scenario.executes);
           if (scenario.executes) {
-            const [directory, command] = readFileSync(observedFile, 'utf16le').split(/\r?\n/);
+            const invocations = readFileSync(observedFile, 'utf16le').trimEnd().split(/\r?\n/);
+            expect(invocations, scenario.id).toHaveLength(retrySuccess ? 4 : 2);
+            const [directory, command] = invocations;
             expect(directory, scenario.id).toBe(actualDirectory);
             expect(command, scenario.id).toContain(`_?=${actualDirectory}`);
             expect(command, scenario.id).toContain('/KEEP_APP_DATA');
             expect(command, scenario.id).toContain(mode === 'all' ? '/allusers' : '/currentuser');
+            expect(command, scenario.id).not.toContain(mode === 'all' ? '/currentuser' : '/allusers');
+            expect(command, scenario.id).toContain('--updated');
+            expect(command, scenario.id).not.toContain('--delete-app-data');
+            const inPlace = scenario.id === 'copied-uninstaller-cannot-start' || scenario.id === 'copy-failure-with-existing-file';
+            expect(command, scenario.id).toContain(inPlace
+              ? path.join(actualDirectory, 'Uninstall Wedax.exe') : `old-${mode}-1.exe`);
+            if (retrySuccess) {
+              expect(invocations[2]).toBe(actualDirectory);
+              expect(invocations[3]).toContain('old-CurrentUser-2.exe');
+              expect(invocations[3]).toContain('/currentuser');
+              expect(invocations[3]).not.toContain('/allusers');
+            }
           }
           expect(existsSync(path.join(actualDirectory, 'Uninstall Wedax.exe'))).toBe(true);
         }

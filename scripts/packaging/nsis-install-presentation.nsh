@@ -22,7 +22,6 @@ Var InstallerBitmap
 Var InstallerTitle
 Var InstallerSubtitle
 Var InstallerExplanation
-Var InstallerElapsed
 Var InstallerStepCheck
 Var InstallerStepWrite
 Var InstallerStepDone
@@ -54,7 +53,6 @@ Var InstallerLoopStarted
 Var InstallerPresentationStarted
 Var InstallerElapsedSecond
 Var InstallerPresentationReady
-Var InstallerClockActive
 
 !include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-window.nsh"
 !include "${PROJECT_DIR}\scripts\packaging\nsis-presentation-motion.nsh"
@@ -337,6 +335,7 @@ Function InstallerPresentationSetStage
     ${EndIf}
     !insertmacro InstallerText $InstallerTitle "安装完成" "Installation complete"
     !insertmacro JustDoSetInstallStatus "安装完成。" "Installation complete."
+    ShowWindow $JustDoNativeProgressBar 5
     SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETPOS} 100 0
     !insertmacro InstallerText $InstallerSubtitle "应用文件已安装到所选目录。" "The application files are installed in your selected location."
     !insertmacro InstallerText $InstallerExplanation "点击“打开应用”立即使用，或关闭安装器稍后打开。" "Open the application now, or close setup and open it later."
@@ -361,6 +360,7 @@ Function InstallerPresentationSetStage
       SendMessage $InstallerScene ${INSTALLER_ACM_STOP} 0 0
     ${EndIf}
     !insertmacro InstallerText $InstallerTitle "安装未完成" "Installation did not complete"
+    ShowWindow $JustDoNativeProgressBar 0
     !insertmacro JustDoSetInstallStatus "安装未完成，请查看安装详情。" "Installation did not complete. See the details."
     !insertmacro InstallerText $InstallerSubtitle "文件写入遇到问题，请查看安装详情。" "Setup encountered a file error. See the installation details."
     !insertmacro InstallerText $InstallerStepWrite "! 写入文件" "! Write files"
@@ -821,6 +821,7 @@ Function InstallerPresentationShow
   SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETRANGE32} 0 100
   SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETBARCOLOR} 0 0xE8645F
   SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETBKCOLOR} 0 0xF0EAE9
+  ShowWindow $JustDoNativeProgressBar 0
   !insertmacro InstallerScale $0 15
   IntOp $R3 $R3 + $0
   !insertmacro InstallerScale $R4 32

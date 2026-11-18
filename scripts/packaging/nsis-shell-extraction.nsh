@@ -28,7 +28,18 @@ Function InstallerRenderShellProgress
   ${If} ${Silent}
     Return
   ${EndIf}
+  ${If} $InstallerShellProgress == 100
+    !ifmacrodef InstallerMarkPhase
+      !insertmacro InstallerMarkPhase
+    !endif
+    ShowWindow $JustDoNativeProgressBar 0
+    !insertmacro JustDoSetInstallStatus \
+      "应用解压数据已处理，正在等待写入结束…" \
+      "Application data processed. Waiting for file writes…"
+    Return
+  ${EndIf}
   ${If} $JustDoNativeProgressBar != ""
+    ShowWindow $JustDoNativeProgressBar 5
     SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETRANGE32} 0 100
     SendMessage $JustDoNativeProgressBar ${JUSTDO_PBM_SETPOS} $InstallerShellProgress 0
   ${EndIf}
@@ -167,6 +178,8 @@ Function InstallerExtractShell
     StrCpy $InstallerShellExitCode "launch-$JustDoExtractorLaunchError"
     Goto InstallerShellProcessDone
   ${EndIf}
+  System::Call 'kernel32::GetProcessId(p $JustDoExtractorProcessHandle)i.r3'
+  !insertmacro JustDoLogInstallEvent "phase=shell-extractor-launched child-pid=$3"
   ${If} ${Silent}
     System::Call 'kernel32::WaitForSingleObject(p $JustDoExtractorProcessHandle, i -1)i.r0 ?e'
     Pop $1
@@ -201,6 +214,7 @@ Function InstallerExtractShell
   ${EndIf}
   System::Call 'kernel32::CloseHandle(p $JustDoExtractorProcessHandle)i.r0'
   StrCpy $JustDoExtractorProcessHandle "0"
+  !insertmacro JustDoLogInstallEvent "phase=shell-extractor-wait-returned child-pid=$3 exit=$InstallerShellExitCode"
 
   InstallerShellProcessDone:
   StrCpy $JustDoExtractorActive "0"
@@ -209,8 +223,10 @@ Function InstallerExtractShell
   ; process exit establishes completion of this phase, never whole setup.
   ${If} $InstallerShellExitCode == "0"
     StrCpy $InstallerShellProgress "100"
-    Call InstallerRenderShellProgress
   ${EndIf}
+  !ifmacrodef InstallerShowCorePhase
+    !insertmacro InstallerShowCorePhase "正在整理应用解压日志…" "Collecting the application extraction log…"
+  !endif
   Call JustDoAppendExtractorStdioLog
   ClearErrors
   Pop $3

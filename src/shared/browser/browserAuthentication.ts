@@ -1,3 +1,5 @@
+export const BROWSER_AUTHENTICATION_BUILD_FILE = 'browser-authentication-build.json';
+
 function normalizeBrowserAuthenticationExecutable(value: unknown): string {
   const executable = typeof value === 'string' ? value.trim() : null;
   if (executable === '') return '';

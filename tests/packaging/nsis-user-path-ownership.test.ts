@@ -98,7 +98,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler))('installer ini
         // UAC synchronization also replaces handle registers. A late sync must
         // not clobber an already opened log handle or select another profile.
         'StrCpy $2 "outer-register-value"', '!macroend',
-        'Function JustDoCheckAppRunning', 'FunctionEnd', body,
+        body,
         'Section',
         ...variables.map(name => `StrCpy $${name} ""`),
         '!insertmacro preInit', '!insertmacro customInit',

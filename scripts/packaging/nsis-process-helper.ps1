@@ -164,7 +164,9 @@ try {
       exit 1
     }
     'Stop' {
-      Get-InstalledProcesses | ForEach-Object {
+      $processes = @(Get-InstalledProcesses)
+      if ($processes.Count -eq 0) { exit 0 }
+      $processes | ForEach-Object {
         Stop-MatchedProcess $_
       }
       for ($attempt = 0; $attempt -lt 15; $attempt++) {

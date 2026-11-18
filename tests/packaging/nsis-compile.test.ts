@@ -95,7 +95,8 @@ describe('Windows NSIS template compilation', () => {
         const target = { packager: { projectDir: repoRoot }, isPortable: false };
         // Both real builder passes prepend sharedHeader before finalScript.
         // Animation definitions must precede the custom include in the header.
-        const sharedHeader = await NsisTarget.prototype.computeCommonInstallerScriptHeader.call(target);
+        const sharedHeader = (await NsisTarget.prototype.computeCommonInstallerScriptHeader.call(target))
+          .replace(/^!define BROWSER_AUTHENTICATION_EXECUTABLE "[^"]*"/m, '!define BROWSER_AUTHENTICATION_EXECUTABLE "electron.exe"');
         const definitions: Record<string, string> = {
           APP_ID: 'com.justdo.compile.test',
           APP_DESCRIPTION: 'Compile smoke fixture',
@@ -122,6 +123,7 @@ describe('Windows NSIS template compilation', () => {
             ...(buildUninstaller ? ['!define BUILD_UNINSTALLER'] : []),
             `!define APP_64 "${path.join(root, 'app.7z')}"`,
             '!define COMPRESSION_METHOD 7z',
+            '!define COMPRESS auto',
             '!define INSTALL_MODE_PER_ALL_USERS_REQUIRED',
             '!define MULTIUSER_INSTALLMODE_ALLOW_ELEVATION',
             '!define allowToChangeInstallationDirectory',

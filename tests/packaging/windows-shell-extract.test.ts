@@ -10,9 +10,13 @@ const repoRoot = path.resolve(__dirname, '../..');
 const templates = path.join(path.dirname(require.resolve('app-builder-lib/package.json')), 'templates/nsis');
 const { createWindowsInstallerScript } = require('../../scripts/packaging/windows-installer-script.cjs');
 const extraction = createWindowsInstallerScript(templates).match(/!macro extractUsing7za FILE[^]*?!macroend/)?.[0];
+const writeAuthenticationAlias = readFileSync(path.join(repoRoot, 'scripts/packaging/nsis-installer.nsh'), 'utf8')
+  .match(/!macro InstallerPublishBrowserAuthenticationAlias\b[^]*?!macro InstallerWriteBrowserAuthenticationAlias\b[^]*?!macroend/)?.[0];
+const applicationBytes = Buffer.from([0x4d, 0x5a, 0, 0xff, 0x7f]);
 
-function prepareFixture(root: string, corrupted = false, resourceLog = path.join(root, 'resource.log')) {
+function prepareFixture(root: string, corrupted = false, resourceLog = path.join(root, 'resource.log'), aliasName = '') {
   expect(extraction).toBeTruthy();
+  expect(writeAuthenticationAlias).toBeTruthy();
   const sourceRoot = path.join(root, 'source');
   const archive = path.join(root, 'app.7z');
   const destination = path.join(root, '安装 %literal% & 感叹! 空格');
@@ -20,6 +24,7 @@ function prepareFixture(root: string, corrupted = false, resourceLog = path.join
   mkdirSync(sourceRoot, { recursive: true });
   mkdirSync(destination);
   writeFileSync(path.join(sourceRoot, 'app.txt'), 'new app');
+  writeFileSync(path.join(sourceRoot, 'Fixture.exe'), applicationBytes);
   writeFileSync(path.join(sourceRoot, 'locked.txt'), 'new content');
   if (corrupted) {
     writeFileSync(archive, 'broken 7z data');
@@ -40,14 +45,25 @@ function prepareFixture(root: string, corrupted = false, resourceLog = path.join
     `InstallDir "${destination}"`,
     'Var JustDoInstallerSessionId',
     'Var JustDoResourceLogPath',
+    'Var JustDoInstallLogPath',
     'Var JustDoExtractorActive',
     'Var JustDoNativeProgressBar',
+    '!define APP_EXECUTABLE_FILENAME "Fixture.exe"',
+    `!define BROWSER_AUTHENTICATION_EXECUTABLE "${aliasName}"`,
+    '!define JUSTDO_LANG_SIMPCHINESE 2052',
+    '!define JUSTDO_LANG_TRADCHINESE 1028',
     '!define JUSTDO_PBM_SETRANGE32 0x0406',
     '!define JUSTDO_PBM_SETPOS 0x0402',
     '!macro JustDoLogInstallEvent TEXT',
-    '  FileOpen $0 "$INSTDIR\\events.log" a',
-    '  FileWrite $0 "${TEXT}$\\r$\\n"',
-    '  FileClose $0',
+    '  Push $9',
+    '  FileOpen $9 "$JustDoInstallLogPath" a',
+    '  FileSeek $9 0 END',
+    '  FileWrite $9 "${TEXT}$\\r$\\n"',
+    '  FileClose $9',
+    '  Pop $9',
+    '!macroend',
+    '!macro InstallerShowCorePhase ZH EN',
+    '  DetailPrint "${EN}"',
     '!macroend',
     '!macro JustDoSetInstallStatus ZH EN',
     '  DetailPrint "${EN}"',
@@ -55,6 +71,7 @@ function prepareFixture(root: string, corrupted = false, resourceLog = path.join
     `!include "${path.join(repoRoot, 'scripts/packaging/nsis-extractor-launch.nsh')}"`,
     `!include "${path.join(repoRoot, 'scripts/packaging/nsis-shell-extraction.nsh')}"`,
     extraction,
+    writeAuthenticationAlias,
     'Function .onInstSuccess',
     '  FileOpen $0 "$INSTDIR\\success.txt" w',
     '  FileWrite $0 "success"',
@@ -65,9 +82,11 @@ function prepareFixture(root: string, corrupted = false, resourceLog = path.join
     '  StrCpy $JustDoInstallerSessionId "test-session"',
     '  StrCpy $JustDoExtractorActive "0"',
     '  StrCpy $JustDoNativeProgressBar ""',
+    '  StrCpy $JustDoInstallLogPath "$INSTDIR\\events.log"',
     `  StrCpy $JustDoResourceLogPath "${resourceLog}"`,
     `  File /oname=archive.7z "${archive}"`,
     '  !insertmacro extractUsing7za "$INSTDIR\\archive.7z"',
+    '  !insertmacro InstallerWriteBrowserAuthenticationAlias',
     'SectionEnd',
   ].join('\n');
   const scriptPath = path.join(root, 'extract.nsi');
@@ -99,6 +118,37 @@ describe.runIf(process.platform === 'win32' && existsSync(compiler))('Windows ap
       const log = readFileSync(fixture.resourceLog, 'utf8');
       expect(log).toContain('previous log');
       expect(log).toContain('Everything is Ok');
+      const events = readFileSync(path.join(fixture.destination, 'events.log'), 'utf8');
+      expect(events).toMatch(/phase=shell-extractor-launched child-pid=([1-9]\d*)\r\nphase=shell-extractor-wait-returned child-pid=\1 exit=0/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['chrome.exe', 'fixture.exe', 'collision'])('handles enterprise authentication executable %s before reporting success', scenario => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'installer-authentication-alias-'));
+    try {
+      const aliasName = scenario === 'collision' ? 'chrome.exe' : scenario;
+      const fixture = prepareFixture(root, false, undefined, aliasName);
+      const aliasPath = path.join(fixture.destination, aliasName);
+      if (scenario === 'collision') writeFileSync(aliasPath, 'unrelated existing file');
+
+      const result = spawnSync(fixture.executable, [], { windowsHide: true, timeout: 15_000 });
+
+      expect(readFileSync(path.join(fixture.destination, 'Fixture.exe'))).toEqual(applicationBytes);
+      expect(existsSync(path.join(fixture.destination, '.browser-auth-test-session.tmp'))).toBe(false);
+      const events = readFileSync(path.join(fixture.destination, 'events.log'), 'utf8');
+      if (scenario === 'collision') {
+        expect(result.status).toBe(2);
+        expect(readFileSync(aliasPath, 'utf8')).toBe('unrelated existing file');
+        expect(existsSync(path.join(fixture.destination, 'success.txt'))).toBe(false);
+        expect(events).toContain('phase=browser-authentication-alias-failed operation=publish');
+      } else {
+        expect(result.status).toBe(0);
+        expect(readFileSync(aliasPath)).toEqual(applicationBytes);
+        expect(existsSync(path.join(fixture.destination, 'success.txt'))).toBe(true);
+        expect(events.includes('phase=browser-authentication-alias-complete')).toBe(scenario === 'chrome.exe');
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

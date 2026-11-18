@@ -44,7 +44,6 @@ const productVersion = process.argv[9] || 'unknown';
 const diagnosticStartedAt = Date.now();
 let progressWriteWarningShown = false;
 let lastProgressPercent = null;
-let lastProgressMode = 'indeterminate';
 let diagnosticWriteWarningShown = false;
 
 function appendDiagnostic(content) {
@@ -171,14 +170,13 @@ function activity(text) {
   console.log(text);
 }
 
-function reportProgress(percent, text, mode = 'indeterminate') {
+function reportProgress(percent, text, mode = 'indeterminate', stage = '') {
   const normalizedMode = mode === 'determinate' ? 'determinate' : 'indeterminate';
   const normalizedPercent =
     normalizedMode === 'determinate' && Number.isFinite(percent)
       ? Math.max(0, Math.min(100, Math.round(percent)))
       : null;
   lastProgressPercent = normalizedPercent;
-  lastProgressMode = normalizedMode;
   writeDiagnostic('info', 'progress', {
     mode: normalizedMode,
     percent: normalizedPercent ?? 'unavailable',
@@ -187,10 +185,11 @@ function reportProgress(percent, text, mode = 'indeterminate') {
   if (!progressPath) return;
 
   const temporaryPath = `${progressPath}.${process.pid}.tmp`;
+  const summary = text.replace(/[\r\n]+/g, ' ').slice(0, 512);
   try {
     fs.writeFileSync(
       temporaryPath,
-      `${normalizedMode}\n${normalizedPercent ?? ''}\n${text}`,
+      [normalizedMode, normalizedPercent ?? '', stage, summary].join('\n'),
       'utf8',
     );
     fs.renameSync(temporaryPath, progressPath);
@@ -239,7 +238,7 @@ function createEntryProgressReporter(totalEntries) {
   const onEntry = () => {
     extractedEntries += 1;
     const extractionPercent = totalEntries
-      ? Math.min(100, Math.floor((extractedEntries / totalEntries) * 100))
+      ? Math.min(99, Math.floor((extractedEntries / totalEntries) * 100))
       : null;
 
     if (
@@ -251,6 +250,7 @@ function createEntryProgressReporter(totalEntries) {
         extractionPercent,
         `Prepared ${extractedEntries.toLocaleString('en-US')}${totalSuffix} resource entries`,
         extractionPercent === null ? 'indeterminate' : 'determinate',
+        'entries',
       );
       lastReportedPercent = extractionPercent;
     }
@@ -262,11 +262,6 @@ function createEntryProgressReporter(totalEntries) {
   return {
     complete() {
       if (totalEntries) extractedEntries = totalEntries;
-      reportProgress(
-        totalEntries ? 100 : null,
-        `${extractedEntries.toLocaleString('en-US')} resource entries expanded`,
-        totalEntries ? 'determinate' : 'indeterminate',
-      );
     },
     get count() {
       return extractedEntries;
@@ -280,7 +275,6 @@ async function extractArchive(entryProgress) {
   const nativeTarPath = windowsRoot ? path.join(windowsRoot, 'System32', 'tar.exe') : '';
   const nativeTarDisabled = process.env.JUSTDO_INSTALLER_DISABLE_NATIVE_TAR === '1';
   const isZstd = tarPath.toLowerCase().endsWith('.zst');
-  const extractionStartedAt = Date.now();
 
   if (
     process.platform === 'win32' &&
@@ -288,6 +282,7 @@ async function extractArchive(entryProgress) {
     nativeTarPath &&
     fs.existsSync(nativeTarPath)
   ) {
+    const startedAt = Date.now();
     activity('Using Windows native resource extraction...');
     writeDiagnostic('info', 'archive-extractor-selected', {
       extractor: 'windows-native-tar',
@@ -312,15 +307,6 @@ async function extractArchive(entryProgress) {
       pid: child.pid || '',
     });
     let stderr = '';
-    const startedAt = Date.now();
-    const heartbeat = setInterval(() => {
-      const elapsedSeconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
-      reportProgress(
-        lastProgressPercent,
-        `Expanding core resources - ${elapsedSeconds}s elapsed`,
-        lastProgressMode,
-      );
-    }, 1000);
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', chunk => {
       // Preserve the complete native error stream on disk without retaining
@@ -344,13 +330,13 @@ async function extractArchive(entryProgress) {
     const archiveReadProgress = new Transform({
       transform(chunk, encoding, callback) {
         archiveBytesRead += chunk.length;
-        const percent = archiveSize > 0 ? Math.min(100, (archiveBytesRead / archiveSize) * 100) : 0;
-        const roundedPercent = Math.round(percent);
+        const roundedPercent = archiveSize > 0 ? Math.min(99, Math.floor((archiveBytesRead / archiveSize) * 100)) : 0;
         if (roundedPercent !== lastArchivePercent) {
           reportProgress(
-            percent,
+            roundedPercent,
             `Reading compressed core resources - ${roundedPercent}%`,
             'determinate',
+            'archive',
           );
           lastArchivePercent = roundedPercent;
         }
@@ -360,7 +346,7 @@ async function extractArchive(entryProgress) {
     const pumpResultPromise = isZstd
       ? pipeline(fs.createReadStream(tarPath), archiveReadProgress, decoder, child.stdin).then(
           () => {
-            reportProgress(null, 'Compressed resources read; writing extracted files');
+            reportProgress(null, 'Compressed resources read; writing extracted files', 'indeterminate', 'writing');
             return null;
           },
           error => {
@@ -370,18 +356,17 @@ async function extractArchive(entryProgress) {
         )
       : Promise.resolve(null);
 
-    let processResult;
-    let pumpError;
-    try {
-      [processResult, pumpError] = await Promise.all([processResultPromise, pumpResultPromise]);
-    } finally {
-      clearInterval(heartbeat);
-    }
+    const [processResult, pumpError] = await Promise.all([processResultPromise, pumpResultPromise]);
 
     if (processResult.error || processResult.code !== 0 || pumpError) {
+      const decoderFailed = typeof pumpError?.code === 'string' &&
+        (pumpError.code.startsWith('ZSTD_error_') || pumpError.code === 'Z_BUF_ERROR');
       const detail = stderr.trim();
       writeDiagnostic('error', 'archive-extractor-failed', {
         extractor: 'windows-native-tar',
+        durationMs: Date.now() - startedAt,
+        archiveBytesRead,
+        nextAction: decoderFailed ? 'rollback' : 'compatible-fallback',
         exitCode: processResult.code ?? 'unavailable',
         processError: processResult.error?.message || '',
         pumpError: pumpError?.message || '',
@@ -389,6 +374,7 @@ async function extractArchive(entryProgress) {
         ...diagnosticErrorDetails(pumpError, 'pumpError'),
         stderr: detail,
       });
+      if (decoderFailed) throw pumpError;
       const causes = [];
       if (processResult.error) causes.push(`process launch: ${processResult.error.message}`);
       if (processResult.code !== 0) {
@@ -400,17 +386,18 @@ async function extractArchive(entryProgress) {
       );
     } else {
       entryProgress.complete();
-      reportProgress(null, 'Core resource files expanded; validating runtimes');
       writeDiagnostic('info', 'archive-extractor-complete', {
         extractor: 'windows-native-tar',
-        durationMs: Date.now() - extractionStartedAt,
+        durationMs: Date.now() - startedAt,
         exitCode: processResult.code,
       });
       return;
     }
   }
 
+  const fallbackStartedAt = Date.now();
   activity('Using the compatible resource extractor...');
+  reportProgress(null, 'Using the compatible resource extractor', 'indeterminate', 'compatible');
   writeDiagnostic('info', 'archive-extractor-selected', {
     extractor: 'npm-tar',
     nativeTarCandidate: nativeTarDisabled ? 'disabled' : nativeTarPath || 'unavailable',
@@ -426,7 +413,7 @@ async function extractArchive(entryProgress) {
   entryProgress.complete();
   writeDiagnostic('info', 'archive-extractor-complete', {
     extractor: 'npm-tar',
-    durationMs: Date.now() - extractionStartedAt,
+    durationMs: Date.now() - fallbackStartedAt,
   });
 }
 
@@ -543,7 +530,7 @@ async function main() {
       progressFile: progressPath || 'none',
     });
     activity('Reading resource package...');
-    reportProgress(null, 'Reading resource package');
+    reportProgress(null, 'Reading resource package', 'indeterminate', 'opening');
 
     const archiveMetadata = readArchiveMetadata();
     const t0 = Date.now();
@@ -630,7 +617,7 @@ async function main() {
         interruptedOriginals = new Set(managedRuntimes.map(runtime => runtime.name));
       }
       activity('Recovering runtimes from an interrupted installation...');
-      reportProgress(null, 'Recovering an interrupted installation');
+      reportProgress(null, 'Recovering an interrupted installation', 'indeterminate', 'recovering');
       for (const runtime of [...managedRuntimes].reverse()) {
         if (fs.existsSync(runtime.backupDir)) {
           fs.rmSync(runtime.dir, { recursive: true, force: true });
@@ -658,7 +645,7 @@ async function main() {
         throw new Error(`Unable to remove stale ${runtime.name} runtime backup.`);
       }
     }
-    reportProgress(null, 'Previous runtime state checked');
+    reportProgress(null, 'Previous runtime state checked', 'indeterminate', 'preparing');
 
     const hadOriginal = new Set();
     const backedUp = new Set();
@@ -671,7 +658,7 @@ async function main() {
       'utf8',
     );
     fs.renameSync(transactionStateTempPath, transactionStatePath);
-    reportProgress(null, 'Runtime upgrade transaction started');
+    reportProgress(null, 'Runtime upgrade transaction started', 'indeterminate', 'preparing');
     writeDiagnostic('info', 'runtime-upgrade-transaction-started', {
       originals: [...hadOriginal].map(runtime => runtime.name).join(',') || 'none',
     });
@@ -680,18 +667,14 @@ async function main() {
       for (const runtime of managedRuntimes) {
         if (!hadOriginal.has(runtime)) continue;
         activity(`Backing up the previous ${runtime.name} runtime...`);
-        reportProgress(null, `Backing up the previous ${runtime.name} runtime`);
+        reportProgress(null, `Backing up the previous ${runtime.name} runtime`, 'indeterminate', 'backup');
         fs.renameSync(runtime.dir, runtime.backupDir);
         backedUp.add(runtime);
       }
 
-      // Windows ships a native bsdtar implementation that is substantially
-      // faster at creating thousands of files on NTFS. A lightweight heartbeat
-      // keeps the marquee active without slowing extraction with verbose output;
-      // npm tar remains the compatibility fallback with entry-based progress.
-      reportProgress(null, 'Expanding core resources');
+      reportProgress(null, 'Expanding core resources', 'indeterminate', 'expanding');
       await extractArchive(entryProgress);
-      reportProgress(null, 'Core resources expanded; validating runtimes');
+      reportProgress(null, 'Core resources expanded; validating runtimes', 'indeterminate', 'validating');
       writeDiagnostic('info', 'runtime-validation-started');
 
       const gitCandidates = [
@@ -727,7 +710,7 @@ async function main() {
           throw new Error(`Python extraction is missing required file: ${candidate}`);
         }
       }
-      reportProgress(null, 'Git and Python runtime files verified');
+      reportProgress(null, 'Git and Python runtime files verified', 'indeterminate', 'validating');
       writeDiagnostic('info', 'runtime-files-verified', {
         gitExecutable: installedGit,
         pythonExecutable: path.join(pythonDir, 'python.exe'),
@@ -750,7 +733,7 @@ async function main() {
         }
       }
 
-      reportProgress(null, 'OpenClaw runtime verified');
+      reportProgress(null, 'OpenClaw runtime verified', 'indeterminate', 'validating');
       writeDiagnostic('info', 'runtime-validation-complete');
       fs.rmSync(transactionStatePath, { force: true });
       if (fs.existsSync(transactionStatePath)) {
@@ -758,6 +741,7 @@ async function main() {
       }
     } catch (error) {
       writeDiagnostic('error', 'runtime-upgrade-failed', diagnosticErrorDetails(error));
+      reportProgress(null, 'Restoring previous runtime files after failure', 'indeterminate', 'rollback');
       const rollbackErrors = [];
       for (const runtime of [...managedRuntimes].reverse()) {
         try {
@@ -808,7 +792,7 @@ async function main() {
     }
 
     // Committed backup cleanup is best-effort.
-    reportProgress(null, 'Removing temporary runtime backups');
+    reportProgress(null, 'Removing temporary runtime backups', 'indeterminate', 'cleanup');
     for (const runtime of managedRuntimes) {
       try {
         fs.rmSync(runtime.backupDir, { recursive: true, force: true });
@@ -816,7 +800,7 @@ async function main() {
         diagnosticWarning(`unable to remove ${runtime.name} runtime backup`, error);
       }
     }
-    reportProgress(null, 'Temporary runtime backups removed');
+    reportProgress(null, 'Temporary runtime backups removed', 'indeterminate', 'cleanup');
 
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     activity(
@@ -833,7 +817,7 @@ async function main() {
     }
 
     activity('Core resources verified');
-    reportProgress(100, 'Core resources verified', 'determinate');
+    reportProgress(100, 'Core resources verified', 'determinate', 'verified');
     writeDiagnostic('info', 'resource-install-complete', {
       durationMs: Date.now() - t0,
       extractedEntries: entryProgress.count,
@@ -843,7 +827,7 @@ async function main() {
     process.exit(0);
   } catch (err) {
     console.error('[unpack-cfmind] Extraction failed:', err);
-    reportProgress(null, `Extraction failed: ${err.message}`);
+    reportProgress(null, `Extraction failed: ${err.message}`, 'indeterminate', 'failed');
     if (progressPath) {
       try {
         fs.writeFileSync(

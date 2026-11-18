@@ -344,7 +344,7 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
       $first = [InstallerPresentationProbe]::Pixels($scene)
       Wait-For { $first -ne [InstallerPresentationProbe]::Pixels($scene) } 'Animation pixels did not change while the install worker was busy.'
     }
-    $elapsedPrefix = if($isChinese){'已用时 '}else{'Elapsed '}
+    $elapsedPrefix = if($isChinese){'本步 '}else{'Step '}
     $elapsed = [InstallerPresentationProbe]::Child($window,'Static',$elapsedPrefix)
     Assert-Condition ($elapsed -ne [IntPtr]::Zero) 'Elapsed label was not created.'
     Assert-Condition (Test-Path -LiteralPath (Join-Path $FixtureRoot 'blocked-worker.txt')) 'Worker did not enter its synchronous operation.'
@@ -442,6 +442,8 @@ foreach ($mode in @('complete','close','failed','short','silent')) {
     # A one-frame terminal seek is painted asynchronously after playback stops.
     Start-Sleep -Milliseconds 400
     $elapsedStopped = [InstallerPresentationProbe]::Text($elapsed)
+    $totalPrefix = if($isChinese){'已用时 '}else{'Elapsed '}
+    Assert-Condition ($elapsedStopped.StartsWith($totalPrefix)) 'Terminal clock did not switch back to total duration.'
     if ($mode -ne 'short') { $stopped = [InstallerPresentationProbe]::Pixels($scene) }
     Start-Sleep -Milliseconds 1100
     if ($mode -ne 'short') {

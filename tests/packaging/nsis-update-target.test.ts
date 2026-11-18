@@ -39,11 +39,8 @@ test('prepares verified update targets before updater page skipping and silent p
   const silent = customInit.slice(customInit.indexOf('${If} ${Silent}'));
   expect(silent).toContain('${isUpdated}');
   expect(silent.indexOf('Call InstallerCombinedPrepareUpgradeMode')).toBeGreaterThanOrEqual(0);
-  expect(silent.indexOf('Call InstallerCombinedPrepareUpgradeMode'))
-    .toBeLessThan(silent.indexOf('Call JustDoCheckAppRunning'));
   expect(silent.indexOf('Call InstallerCombinedApplyUpgradeMode')).toBeGreaterThanOrEqual(0);
-  expect(silent.indexOf('Call InstallerCombinedApplyUpgradeMode'))
-    .toBeLessThan(silent.indexOf('Call JustDoCheckAppRunning'));
+  expect(silent).not.toContain('Call JustDoCheckAppRunning');
   const innerBranch = silent.slice(silent.indexOf('${If} ${UAC_IsInnerInstance}'), silent.indexOf('${Else}'));
   expect(innerBranch).toContain('StrCpy $InstallerCombinedMode "all"');
   expect(innerBranch).toContain('Call InstallerCombinedApplyUpgradeMode');
@@ -58,6 +55,7 @@ test('restores the registered target after upstream silent scope selection and b
   const restore = section.indexOf('Call InstallerRestoreUpgradeDirectory');
   expect(restore).toBeGreaterThan(section.indexOf('!insertmacro setInstallModePerAllUsers'));
   expect(restore).toBeLessThan(section.indexOf('StrCpy $appExe'));
+  expect(restore).toBeLessThan(section.indexOf('!insertmacro CHECK_APP_RUNNING'));
   expect(restore).toBeLessThan(section.indexOf('!insertmacro uninstallOldVersion SHELL_CONTEXT'));
 });
 

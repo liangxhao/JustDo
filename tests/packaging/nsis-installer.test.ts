@@ -442,7 +442,7 @@ describe('Windows installer process handling', () => {
     expect(existsSync(path.join(installResources, '.mingit-upgrade-backup'))).toBe(false);
     expect(existsSync(path.join(installResources, '.python-win-upgrade-backup'))).toBe(false);
     expect(existsSync(managedTempRoot)).toBe(false);
-    expect(readFileSync(progressPath, 'utf8')).toBe('determinate\n100\nCore resources verified');
+    expect(readFileSync(progressPath, 'utf8')).toBe('determinate\n100\nverified\nCore resources verified');
     const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
     expect(diagnosticLog).toContain('event=resource-install-start');
     expect(diagnosticLog).toContain('event=archive-inspected');
@@ -452,7 +452,9 @@ describe('Windows installer process handling', () => {
     expect(diagnosticLog).toContain('event=runtime-validation-complete');
     expect(diagnosticLog).toContain('event=resource-install-complete');
     expect(diagnosticLog).toContain('event=extractor-temp-cleanup-complete');
-    expect(diagnosticLog).toContain('mode=determinate percent=100 message=Core resources verified');
+    expect(diagnosticLog.split('\n').filter(line => line.includes('percent=100 '))).toEqual([
+      expect.stringContaining('mode=determinate percent=100 message=Core resources verified'),
+    ]);
     if (process.platform === 'win32') {
       expect(result.stdout).toContain('Using Windows native resource extraction');
       expect(result.stdout).not.toContain('0 resource entries ready');
@@ -570,7 +572,7 @@ fs.statfsSync = (...args) => {
       const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
       expect(diagnosticLog).toContain('extractor=npm-tar');
       expect(diagnosticLog).toContain('mode=determinate percent=100');
-      expect(readFileSync(progressPath, 'utf8')).toBe('determinate\n100\nCore resources verified');
+      expect(readFileSync(progressPath, 'utf8')).toBe('determinate\n100\nverified\nCore resources verified');
     },
   );
 
@@ -656,11 +658,17 @@ cp.spawn = (executable, args, options) => original(
     const archive = path.join(root, 'broken.tar.zst');
     mkdirSync(resources);
     writeFileSync(archive, 'broken compressed archive');
-    const result = spawnSync(process.execPath, [unpackScriptPath, archive, resources, '', '', progress], { encoding: 'utf8' });
+    const diagnosticLog = path.join(root, 'install-resource.log');
+    const result = spawnSync(process.execPath, [unpackScriptPath, archive, resources, '', '', progress, diagnosticLog], { encoding: 'utf8' });
     expect(result.status).toBe(1);
     const error = readFileSync(progress + '.error', 'utf16le');
     expect(error.length).toBeGreaterThan(1);
     expect(result.stderr).toContain(error.slice(1));
+    const log = readFileSync(diagnosticLog, 'utf8');
+    if (log.includes('extractor=windows-native-tar')) {
+      expect(log).toMatch(/event=archive-extractor-failed .*nextAction=rollback.*pumpErrorCode=ZSTD_error_/);
+      expect(log).not.toContain('extractor=npm-tar');
+    }
     expect(nsisScript).toContain('FileReadUTF16LE $3 $4');
     const failureDialog = nsisScript.slice(
       nsisScript.indexOf('TarExtractFailed:'),
@@ -1312,7 +1320,7 @@ describe('Windows installer presentation', () => {
     const unInit = nsisScript.slice(start, nsisScript.indexOf('!macroend', start));
     expect(unInit).toContain('${GetOptions} $0 "--delete-app-data" $1');
     expect(unInit).toContain('SetErrorLevel 2');
-    expect(unInit.indexOf('Quit')).toBeLessThan(unInit.indexOf('InitPluginsDir'));
+    expect(unInit.indexOf('Quit')).toBeLessThan(unInit.indexOf('!insertmacro InstallerCheckUninstallProcesses'));
   });
 
   it('defines the uninstall option for every electron-builder bundled language', () => {
@@ -1489,11 +1497,10 @@ describe('Windows installer presentation', () => {
     expect(nsisScript).not.toContain(
       'SendMessage $JustDoProgressBar ${JUSTDO_PBM_SETMARQUEE} 1 35',
     );
-    expect(nsisScript).toContain('StrCpy $JustDoLastResourceProgress $2');
-    expect(nsisScript).toContain('${JUSTDO_PBM_SETPOS} $JustDoLastResourceProgress 0');
+    expect(nsisScript).toContain('StrCpy $InstallerResourceStage "$4"');
 
     expect(nsisScript).not.toContain('JustDoSetInstallProgress');
-    expect(nsisScript).toContain('Reading core resources: $2%');
+    expect(nsisScript).toContain('Reading offline archive: $2%');
     expect(nsisScript).not.toContain('actual compressed bytes');
     expect(presentationScript).toContain('Keep setup open.');
     expect(nsisScript).toContain('${JUSTDO_PBM_SETPOS} $2 0');
@@ -1503,9 +1510,9 @@ describe('Windows installer presentation', () => {
     expect(unpackScript).toContain("'indeterminate'");
   });
 
-  it('keeps resource extraction responsive with heartbeat activity', () => {
+  it('keeps resource extraction responsive while waiting for the child', () => {
     expect(nsisScript).toContain('Call JustDoLaunchResourceExtractor');
-    expect(nsisScript).toContain('WaitForSingleObject(p $JustDoExtractorProcessHandle, i 0)');
+    expect(nsisScript).toContain('WaitForSingleObject(p $JustDoExtractorProcessHandle, i 250)');
     expect(nsisScript).toContain('WaitForSingleObject(p $JustDoExtractorProcessHandle, i -1)');
     expect(nsisScript).toContain('justdo-resource-progress.txt');
     expect(nsisScript).toContain('Function JustDoPollResourceProgress');
@@ -1518,7 +1525,6 @@ describe('Windows installer presentation', () => {
     expect(unpackScript).toContain("['-xf', '-', '-C', destDir]");
     expect(unpackScript).toContain('createZstdDecompress()');
     expect(unpackScript).toContain('child.stdin');
-    expect(unpackScript).toContain('Expanding core resources - ${elapsedSeconds}s elapsed');
     expect(unpackScript).toContain('Reading compressed core resources - ${roundedPercent}%');
     expect(nsisScript).toContain('JUSTDO_PBM_SETMARQUEE} 0 0');
     expect(unpackScript).toContain('createEntryProgressReporter');
@@ -1652,7 +1658,7 @@ describe('Windows installer presentation', () => {
     expect(sync).toBeLessThan(preInit.indexOf('$2 "$JustDoInstallLogPath"'));
   });
 
-  it('runs UAC inner process preparation only after the final directory is normalized', () => {
+  it('leaves process preparation to the install worker after the progress page opens', () => {
     const customInit = nsisScript.slice(
       nsisScript.indexOf('!macro customInit'),
       nsisScript.indexOf('!macroend', nsisScript.indexOf('!macro customInit')),
@@ -1662,18 +1668,14 @@ describe('Windows installer presentation', () => {
       nsisScript.indexOf('FunctionEnd', nsisScript.indexOf('Function JustDoInstFilesPre')),
     );
 
-    expect(customInit).toMatch(
-      /\$\{If\} \$\{Silent\}[\s\S]*StrCpy \$JustDoInstallMode "\$installMode"[\s\S]*\$\{If\} \$\{UAC_IsInnerInstance\}[\s\S]*Call JustDoCheckAppRunning/,
-    );
+    expect(customInit).not.toContain('Call JustDoCheckAppRunning');
     expect(nsisScript).toContain('!define MUI_PAGE_CUSTOMFUNCTION_PRE JustDoInstFilesPre');
     expect(instFilesPre).toContain('Call instFilesPre');
     expect(instFilesPre).toMatch(
       /Call InstallerRestoreUpgradeDirectory\s*\$\{If\} \$InstallerUpgradeDirectory == ""\s*!ifdef allowToChangeInstallationDirectory\s*Call instFilesPre\s*!endif\s*\$\{EndIf\}/,
     );
     expect(instFilesPre).toContain('StrCpy $JustDoInstallMode "$installMode"');
-    expect(instFilesPre).toMatch(
-      /Call instFilesPre[\s\S]*\$\{If\} \$\{UAC_IsInnerInstance\}[\s\S]*Call JustDoCheckAppRunning/,
-    );
+    expect(instFilesPre).not.toContain('Call JustDoCheckAppRunning');
   });
 
   it('throws when the fallback tar module is unavailable so the transaction can roll back', () => {

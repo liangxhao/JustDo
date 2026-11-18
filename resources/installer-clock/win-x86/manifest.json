@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "fingerprint": "2ad0040b2c02f417ec2bbc0985a2ff313ec2f0c5779cd3279dffeb59959d74bd",
+  "fingerprint": "941a954bc4eaabe0a7bee3540a85bec41cd2ecd97192319707963bb331f0a333",
   "inputs": {
     "schemaVersion": 1,
     "target": "win32-ia32",
     "sources": [
       {
         "path": "scripts/packaging/installer-clock.c",
-        "size": 9804,
-        "sha256": "4f1c330ff781a1bfc44cb1e157480510ec06558ce24ff7d1960fd2d6461c0670"
+        "size": 10719,
+        "sha256": "52c94f6a1ce7baa78a24a1c1dead0959bef158cc7564990f1b31d480648defce"
       },
       {
         "path": "scripts/packaging/installer-clock.def",
-        "size": 124,
-        "sha256": "55800f6a326d01b84c5acfc08cf37768b2641733ca52b5444c3a21eb820614ff"
+        "size": 149,
+        "sha256": "e73d2606ca8077d412126e4189279ebd9703316f3687bd8dccb28ef81c2270b1"
       },
       {
         "path": "scripts/packaging/installer-clock-assets.cjs",
@@ -53,7 +53,7 @@
     "sdkVersion": "10.0.26100.0"
   },
   "dll": {
-    "size": 5632,
-    "sha256": "ef4b3685933d5209c44486cf7f06bbe4aba12f2fc1ab651fae6ba5639a636516"
+    "size": 6144,
+    "sha256": "5845e6d872f5a5a9d0b730f94d0025cfef4c6eafaf21324e863e11a6333206fa"
   }
 }
