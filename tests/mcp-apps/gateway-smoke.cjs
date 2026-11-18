@@ -1,19 +1,341 @@
 'use strict';
 
-// Isolated real Gateway + synthetic stdio MCP server. Makes no model requests.
+// Isolated real Gateway + synthetic stdio MCP server. Any model requests stay on loopback.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
-const { randomBytes } = require('node:crypto');
+const { randomBytes, randomUUID } = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 
+async function verifyModelSelection({
+  client,
+  scope,
+  target,
+  view,
+  receipts,
+  modelInputs,
+  until,
+  runEvents,
+  getClientGeneration,
+  configPath,
+  workspace,
+}) {
+  const readSession = async () =>
+    (await client.request('sessions.describe', { key: scope.sessionKey })).session;
+  const session = await readSession();
+  const initialConnection = getClientGeneration();
+  const pid = receipts().pid;
+  assert.ok(pid > 0, 'The launched App must have a live stdio server');
+  const patch = async changes => {
+    const params = {
+      key: scope.sessionKey,
+      expectedSessionId: session.sessionId,
+      expectedLifecycleRevision: session.lifecycleRevision,
+      ...changes,
+    };
+    const before = await readSession();
+    try {
+      return await client.request('sessions.patch', params);
+    } catch (error) {
+      if (
+        typeof changes.model !== 'string' ||
+        error.gatewayCode !== 'UNAVAILABLE' ||
+        error.retryable !== true ||
+        error.message !== 'Session patch failed unexpectedly. Retry the request.'
+      )
+        throw error;
+      const current = await readSession();
+      const fields = [
+        'sessionId',
+        'lifecycleRevision',
+        'modelProvider',
+        'model',
+        'modelOverrideSource',
+      ];
+      assert.deepEqual(
+        fields.map(field => current[field]),
+        fields.map(field => before[field]),
+        'Only retry a rejected fixture selection when the session and selected model are unchanged',
+      );
+      return await client.request('sessions.patch', params);
+    }
+  };
+  const reloadConfig = async (change, matches) => {
+    const before = await client.request('config.get', {});
+    const authored = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    change(authored);
+    const temporary = `${configPath}.next`;
+    fs.writeFileSync(temporary, JSON.stringify(authored) + '\n', { flag: 'wx' });
+    fs.renameSync(temporary, configPath);
+    const after = await until(async () => {
+      const current = await client.request('config.get', {});
+      if (
+        current.valid &&
+        current.configRevisionHash !== before.configRevisionHash &&
+        current.configRevisionHash === current.appliedConfigHash &&
+        matches(current.config)
+      )
+        return current;
+    });
+    assert.equal(
+      getClientGeneration(),
+      initialConnection,
+      'The original native connection must stay open',
+    );
+    return { before: before.config, after: after.config };
+  };
+  const setDefault = async primary => {
+    const { before, after } = await reloadConfig(
+      config => {
+        config.agents.defaults.model.primary = primary;
+      },
+      config => config.agents.defaults.model.primary === primary,
+    );
+    const expected = structuredClone(before);
+    expected.agents.defaults.model.primary = primary;
+    assert.deepEqual(after.agents, expected.agents);
+    assert.deepEqual(after.models, before.models);
+    assert.deepEqual(after.mcp, before.mcp);
+  };
+  const call = (toolName, args = {}) =>
+    client.request('mcp.app.callTool', {
+      ...target,
+      toolName,
+      arguments: args,
+    });
+  const checkApp = async (launches = 1) => {
+    const current = await client.request('mcp.app.view', target);
+    assert.equal(current.html, view.html);
+    assert.equal(current.sandboxUrl, view.sandboxUrl);
+    assert.equal(current.sandboxPort, view.sandboxPort);
+    assert.deepEqual(current.toolResult, view.toolResult);
+    assert.equal(
+      current.messageSupported,
+      true,
+      'The original native view must remain interactive',
+    );
+    assert.equal(current.updateModelContextSupported, true);
+    assert.equal((await call('settings_read')).structuredContent.values.enabled, true);
+    assert.equal(
+      (
+        await client.request('mcp.app.readResource', {
+          ...target,
+          uri: 'fixture://data',
+        })
+      ).contents[0].text,
+      'Fixture resource',
+    );
+    assert.equal(receipts().pid, pid, 'The App must keep its original MCP server');
+    assert.equal(receipts().calls.show, launches, 'Changing model must not replay an App launch');
+  };
+  const markers = [];
+  const readContext = async (app = target) =>
+    (await client.request('mcp.app.modelContext', app)).state;
+  const publishContext = async (marker, app = target) => {
+    const content = [{ type: 'text', text: marker }];
+    await client.request('mcp.app.updateModelContext', { ...app, content });
+    const state = await readContext(app);
+    assert.deepEqual(state.content, content);
+    return state;
+  };
+  const send = async (model, marker, stagedContext, app = target) => {
+    if (stagedContext) assert.deepEqual(await readContext(app), stagedContext);
+    else if (marker) await publishContext(marker, app);
+    const before = modelInputs.length;
+    const sent = await client.request('chat.send', {
+      ...scope,
+      sessionId: session.sessionId,
+      message: `Synthetic turn ${before + 1}.`,
+      idempotencyKey: randomUUID(),
+      deliver: false,
+    });
+    const terminal = await until(
+      () =>
+        runEvents.find(
+          event =>
+            event.event === 'agent' &&
+            event.payload?.runId === sent.runId &&
+            event.payload?.stream === 'lifecycle' &&
+            event.payload?.data?.executionSettled === true,
+        ),
+      90000,
+    );
+    assert.equal(terminal.payload.data.phase, 'end');
+    assert.equal(
+      modelInputs.length,
+      before + 1,
+      'One native send must produce one synthetic model request',
+    );
+    const input = modelInputs[before];
+    assert.equal(input.model, model, 'The selected model must receive the actual turn');
+    const inputText = JSON.stringify(input);
+    if (marker)
+      assert.equal(inputText.split(marker).length, 2, 'Fresh App context must appear exactly once');
+    for (const previous of markers)
+      assert.ok(!inputText.includes(previous), 'Consumed App context resurfaced');
+    if (marker) markers.push(marker);
+    assert.equal(await readContext(app), null);
+    assert.equal(
+      (await client.request('sessions.describe', { key: scope.sessionKey })).session.sessionId,
+      session.sessionId,
+    );
+  };
+  const waitForApproval = async operation => {
+    let settled = false;
+    const result = operation
+      .then(
+        value => ({ value }),
+        error => ({ error }),
+      )
+      .finally(() => {
+        settled = true;
+      });
+    const approval = await until(async () => {
+      const active = (await client.request('plugin.approval.list')).find(
+        item => item.request.pluginId === 'bundle-mcp' && item.request.toolName === 'echo',
+      );
+      if (active) return active;
+      assert.equal(settled, false, 'The tool settled without a new approval');
+    }, 10000);
+    return { id: approval.id, result };
+  };
+
+  await checkApp();
+  await send('alpha', 'APP_CONTEXT_ALPHA_INITIAL_410');
+  const initialApproval = await waitForApproval(call('echo', { value: 'alpha' }));
+  await client.request('plugin.approval.resolve', {
+    id: initialApproval.id,
+    decision: 'allow-always',
+  });
+  assert.equal((await initialApproval.result).value?.content[0].text, 'echo:alpha');
+  assert.equal((await call('echo', { value: 'alpha-again' })).content[0].text, 'echo:alpha-again');
+
+  const stagedMarker = 'APP_CONTEXT_STAGED_BEFORE_BETA_415';
+  const stagedContext = await publishContext(stagedMarker);
+  await patch({ model: 'fixture/beta' });
+  await checkApp();
+  assert.deepEqual(await readContext(), stagedContext);
+  await setDefault('fixture/beta');
+  await checkApp();
+  await send('beta', stagedMarker, stagedContext);
+  await send('beta', 'APP_CONTEXT_BETA_420');
+  const renewedApproval = await waitForApproval(call('echo', { value: 'beta' }));
+  await client.request('plugin.approval.resolve', {
+    id: renewedApproval.id,
+    decision: 'allow-once',
+  });
+  assert.equal((await renewedApproval.result).value?.content[0].text, 'echo:beta');
+  const staleApproval = await waitForApproval(call('echo', { value: 'stale-beta' }));
+  await patch({ model: 'fixture/alpha' });
+  await patch({ model: 'fixture/beta' });
+  await client
+    .request('plugin.approval.resolve', { id: staleApproval.id, decision: 'allow-once' })
+    .catch(() => {}); // The authority may already have removed the pending approval.
+  assert.ok(
+    (await staleApproval.result).error,
+    'Returning to a previous model must not revive its pending approval',
+  );
+  assert.equal(receipts().calls.echo, 3);
+
+  await patch({ model: 'fixture/alpha' });
+  await setDefault('fixture/alpha');
+  await checkApp();
+  await send('alpha', 'APP_CONTEXT_ALPHA_RETURN_430');
+  await send('alpha');
+  await checkApp();
+  const filePath = path.join(workspace, 'model-selection.txt');
+  fs.writeFileSync(filePath, 'Original workspace file');
+  const fileApp = await client.request('mcp.app.launch', {
+    ...scope,
+    serverName: 'fixture',
+    toolName: 'show',
+    entrypointType: 'file',
+    filePath,
+  });
+  const fileTarget = { ...scope, viewId: fileApp.viewId };
+  const fileView = await client.request('mcp.app.view', fileTarget);
+  const uri = fileView.toolInput.file.resourceUri;
+  const readFile = async () => (
+    await client.request('mcp.app.readResource', {
+      ...fileTarget,
+      uri,
+      _meta: { 'openai/resource': { representation: 'text' } },
+    })
+  ).contents[0];
+  const writeFile = (file, text, ifMatch) =>
+    client.request('mcp.app.writeResource', { ...file, uri, text, ifMatch });
+  const originalFile = await readFile();
+  const originalEtag = originalFile._meta['openai/resource'].etag;
+  assert.equal(originalFile.text, 'Original workspace file');
+  const fileMarker = 'APP_CONTEXT_STAGED_FROM_FILE_440';
+  const fileContext = await publishContext(fileMarker, fileTarget);
+  await patch({ model: 'fixture/beta' });
+  await setDefault('fixture/beta');
+  assert.equal((await client.request('mcp.app.view', fileTarget)).fileResourcesSupported, true);
+  assert.deepEqual(await readFile(), originalFile);
+  await send('beta', fileMarker, fileContext, fileTarget);
+  await assert.rejects(writeFile(target, 'unauthorized', originalEtag));
+  assert.equal((await writeFile(fileTarget, 'Saved after switch', originalEtag)).outcome, 'saved');
+  const conflict = await writeFile(fileTarget, 'Stale revision', originalEtag);
+  assert.equal(conflict.outcome, 'conflict');
+  assert.equal(fs.readFileSync(filePath, 'utf8'), 'Saved after switch');
+  await checkApp(2);
+  const foreign = 'agent:main:mcp-app-model-selection-foreign';
+  await client.request('sessions.create', { key: foreign });
+  const readCount = receipts().calls.settings_read;
+  await assert.rejects(
+    client.request('mcp.app.callTool', {
+      ...target,
+      sessionKey: foreign,
+      toolName: 'settings_read',
+      arguments: {},
+    }),
+  );
+  await patch({ toolOverrides: { mcpToolsDeny: { fixture: ['settings_read'] } } });
+  await assert.rejects(call('settings_read'));
+  await patch({ toolOverrides: null });
+  await checkApp(2);
+  await reloadConfig(
+    config => {
+      config.agents.defaults.modelPolicy = { allow: ['fixture/beta'] };
+    },
+    config => config.agents.defaults.modelPolicy?.allow?.[0] === 'fixture/beta',
+  );
+  await assert.rejects(call('settings_read'));
+  assert.equal(
+    receipts().calls.settings_read,
+    readCount + 1,
+    'Denied calls must not reach the MCP server',
+  );
+  await assert.rejects(readFile());
+  assert.equal(receipts().calls.show, 2);
+}
+
 (async () => {
   const root = path.resolve(__dirname, '../..');
-  const runtime = path.join(root, 'vendor/openclaw-runtime/current');
+  const modelSelection = process.argv.includes('--model-selection');
+  const sourceRuntime = process.argv.includes('--source');
+  const runtimeOption = process.argv.indexOf('--runtime-dir');
+  const selectedRuntime = runtimeOption >= 0 ? process.argv[runtimeOption + 1] : undefined;
+  assert.ok(
+    runtimeOption === -1 || (selectedRuntime && !selectedRuntime.startsWith('--')),
+    'Pass a prepared runtime directory after --runtime-dir',
+  );
+  assert.ok(!modelSelection || selectedRuntime, '--model-selection requires --runtime-dir');
+  const runtime =
+    modelSelection && !sourceRuntime
+      ? (await import('../openclaw/runtime/native-smoke-target.mjs')).resolveNativeSmokeTarget(
+          selectedRuntime,
+        ).runtimeRoot
+      : selectedRuntime
+        ? fs.realpathSync(selectedRuntime)
+        : path.join(root, 'vendor/openclaw-runtime/current');
   const historyRecovery = process.argv.includes('--history-recovery');
-  const state = fs.mkdtempSync(path.join(root, '.agent-tasks/mcp-apps/gateway-'));
+  const evidence = path.join(root, '.agent-tasks/mcp-apps');
+  fs.mkdirSync(evidence, { recursive: true });
+  const state = fs.mkdtempSync(path.join(evidence, 'gateway-'));
   const workspace = path.join(state, 'workspace');
   fs.mkdirSync(workspace);
   const receiptsPath = path.join(state, 'receipts.json');
@@ -21,30 +343,37 @@ const { pathToFileURL } = require('node:url');
   const firstSend = process.argv.includes('--first-send');
   const workspaceStartup = process.argv.includes('--workspace-startup');
   assert.ok(!firstSend || drawio, '--first-send requires --drawio');
+  assert.ok(
+    !modelSelection || !(drawio || workspaceStartup || historyRecovery),
+    '--model-selection uses the generic fixture',
+  );
   const modelInputs = [];
-  const model = firstSend
-    ? require('node:http').createServer(async (request, response) => {
-        let body = '';
-        for await (const chunk of request) body += chunk;
-        modelInputs.push(JSON.parse(body));
-        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        response.end(
-          `data: ${JSON.stringify({
-            id: 'first-send-fixture',
-            object: 'chat.completion.chunk',
-            model: 'fixture',
-            choices: [
-              {
-                index: 0,
-                delta: { role: 'assistant', content: 'Diagram received.' },
-                finish_reason: 'stop',
-              },
-            ],
-            usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 },
-          })}\n\ndata: [DONE]\n\n`,
-        );
-      })
-    : undefined;
+  const modelIds = modelSelection ? ['alpha', 'beta'] : ['fixture'];
+  const model =
+    firstSend || modelSelection
+      ? require('node:http').createServer(async (request, response) => {
+          let body = '';
+          for await (const chunk of request) body += chunk;
+          const input = JSON.parse(body);
+          modelInputs.push(input);
+          response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+          response.end(
+            `data: ${JSON.stringify({
+              id: 'model-fixture',
+              object: 'chat.completion.chunk',
+              model: input.model,
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: 'assistant', content: 'Fixture received.' },
+                  finish_reason: 'stop',
+                },
+              ],
+              usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 },
+            })}\n\ndata: [DONE]\n\n`,
+          );
+        })
+      : undefined;
   if (model) {
     await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
     model.unref();
@@ -93,11 +422,14 @@ const { pathToFileURL } = require('node:url');
     },
   };
   const configPath = path.join(state, 'openclaw.json');
-  if (firstSend) {
-    config.agents.defaults.model = { primary: 'fixture/fixture' };
-    config.agents.defaults.models = { 'fixture/fixture': { agentRuntime: { id: 'openclaw' } } };
+  if (model) {
+    config.agents.defaults.model = { primary: `fixture/${modelIds[0]}` };
+    config.agents.defaults.models = Object.fromEntries(
+      modelIds.map(id => [`fixture/${id}`, { agentRuntime: { id: 'openclaw' } }]),
+    );
     config.agents.defaults.skipBootstrap = true;
     config.agents.defaults.heartbeat = { every: '0m' };
+    if (modelSelection) config.agents.defaults.embeddedAgent = { cyberFailover: { mode: 'off' } };
     config.models = {
       mode: 'replace',
       catalogRefresh: { enabled: false },
@@ -108,15 +440,13 @@ const { pathToFileURL } = require('node:url');
           apiKey: 'fixture-only',
           agentRuntime: { id: 'openclaw' },
           request: { allowPrivateNetwork: true },
-          models: [
-            {
-              id: 'fixture',
-              name: 'Fixture',
-              input: ['text'],
-              contextWindow: 200000,
-              maxTokens: 2000,
-            },
-          ],
+          models: modelIds.map(id => ({
+            id,
+            name: id,
+            input: ['text'],
+            contextWindow: 200000,
+            maxTokens: 2000,
+          })),
         },
       },
     };
@@ -154,14 +484,34 @@ const { pathToFileURL } = require('node:url');
     config.plugins.load = { paths: [fixture] };
   }
   fs.writeFileSync(configPath, JSON.stringify(config));
-  Object.assign(process.env, {
+  const env = modelSelection
+    ? Object.fromEntries(
+        Object.entries(process.env).filter(([key]) =>
+          /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|TEMP|TMP|PROCESSOR_ARCHITECTURE|PROGRAMFILES|PROGRAMDATA)$/i.test(
+            key,
+          ),
+        ),
+      )
+    : process.env;
+  Object.assign(env, {
     OPENCLAW_HOME: state,
     OPENCLAW_STATE_DIR: state,
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_NO_RESPAWN: '1',
     NODE_DISABLE_COMPILE_CACHE: '1',
   });
-  const entry = process.argv.includes('--source')
+  if (modelSelection)
+    Object.assign(env, {
+      USERPROFILE: state,
+      HOME: state,
+      APPDATA: state,
+      LOCALAPPDATA: state,
+      OPENCLAW_SKIP_CHANNELS: '1',
+      OPENCLAW_SKIP_CRON: '1',
+      OPENCLAW_DISABLE_BONJOUR: '1',
+      JUSTDO_ELECTRON_PATH: process.execPath,
+    });
+  const entry = sourceRuntime
     ? path.join(runtime, 'dist/entry.js')
     : process.argv.includes('--bundle')
       ? path.join(runtime, 'gateway-bundle.mjs')
@@ -169,7 +519,7 @@ const { pathToFileURL } = require('node:url');
   const child = spawn(
     process.execPath,
     [entry, 'gateway', 'run', '--allow-unconfigured', '--port', String(port)],
-    { env: process.env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+    { env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
   );
   let output = '';
   const recordOutput = chunk => {
@@ -248,7 +598,7 @@ const { pathToFileURL } = require('node:url');
           resolve(value);
         },
         onEvent: event => {
-          if (firstSend) runEvents.push(event);
+          if (model) runEvents.push(event);
           if (event.event === 'mcp.app.resourceUpdated') fileEvents.push(event.payload);
         },
         onConnectError: error => {
@@ -650,6 +1000,23 @@ const { pathToFileURL } = require('node:url');
       await client.request('plugin.approval.resolve', { id: approval.id, decision });
       return rejection;
     };
+    if (modelSelection) {
+      await verifyModelSelection({
+        client,
+        scope,
+        target,
+        view,
+        receipts,
+        modelInputs,
+        until,
+        runEvents,
+        getClientGeneration: () => clientGeneration,
+        configPath,
+        workspace,
+      });
+      console.log('MCP App model selection smoke passed. Artifacts: ' + state);
+      return;
+    }
     const echo = await approved(
       () =>
         client.request('mcp.app.callTool', {

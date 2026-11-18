@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { i18nService } from '@/services/i18n';
 import { OwnerDocumentContext } from '@/shared/dom/ownerDocument';
 
+import { WorkspaceFileIconContext } from '../shared/WorkspaceFileIconContext';
 import WorkspaceFilesPanel from './WorkspaceFilesPanel';
 
 const listWorkspaceDirectory = vi.fn();
@@ -175,6 +176,50 @@ const choose = async (key: Parameters<typeof i18nService.t>[0]) => {
     fireEvent.click(menuItem(key));
   });
 };
+
+test('offers both matching file apps only on explicit context menu selection', async () => {
+  const filePath = 'C:/workspace/monthly.CSV';
+  listWorkspaceDirectory.mockResolvedValue({
+    success: true,
+    truncated: false,
+    entries: [{ filePath, kind: 'file', name: 'monthly.CSV', relativePath: 'monthly.CSV' }],
+  });
+  const onOpenFile = vi.fn();
+  const catalog = {
+    servers: ['sheets', 'analysis'].map(serverName => ({
+      serverName,
+      label: serverName,
+      entrypoints: [{
+        toolName: 'preview_file',
+        title: serverName,
+        resourceUri: `ui://${serverName}/app.html`,
+        entrypoint: { type: 'file' as const, extensions: ['.csv', '.tsv'] },
+      }],
+    })),
+  };
+  render(
+    <WorkspaceFileIconContext.Provider value={catalog}>
+      <WorkspaceFilesPanel sessionId="session" onOpenFile={onOpenFile} />
+    </WorkspaceFileIconContext.Provider>,
+  );
+  const file = await screen.findByRole('treeitem', { name: 'monthly.CSV' });
+  await openMenu(file);
+  expect(screen.getByRole('menuitem', {
+    name: i18nService.t('coworkWorkspaceFilesOpenWithApp').replace('{app}', 'sheets'),
+  })).toBeDefined();
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+  expect(onOpenFile).not.toHaveBeenCalled();
+  fireEvent.click(file);
+  expect(onOpenFile).toHaveBeenLastCalledWith(filePath);
+  await openMenu(file);
+  fireEvent.click(screen.getByRole('menuitem', {
+    name: i18nService.t('coworkWorkspaceFilesOpenWithApp').replace('{app}', 'analysis'),
+  }));
+  expect(onOpenFile).toHaveBeenLastCalledWith(
+    filePath,
+    JSON.stringify(['analysis', 'preview_file', 'ui://analysis/app.html']),
+  );
+});
 
 test('opens a file menu without opening or expanding it and supports path and reveal actions', async () => {
   mockFileOperationTree();

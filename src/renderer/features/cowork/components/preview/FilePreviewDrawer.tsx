@@ -50,6 +50,7 @@ import BrowserFilePreviewPanel from './BrowserFilePreviewPanel';
 import HtmlFilePreview from './HtmlFilePreview';
 import type { ImageFilePreview } from './imageFilePreview';
 import ImageFilePreviewPanel from './ImageFilePreviewPanel';
+import UnsupportedFilePreview from './UnsupportedFilePreview';
 
 export interface TextFilePreview {
   kind?: 'text';
@@ -57,9 +58,12 @@ export interface TextFilePreview {
   editToken: string;
   filePath: string;
   version: string;
+  resourcePreviewId?: string;
 }
 
-export type FilePreview = TextFilePreview | ImageFilePreview | BrowserFilePreview;
+export type FilePreview = (TextFilePreview | ImageFilePreview | BrowserFilePreview | {
+  kind: 'unsupported'; filePath: string;
+}) & { resourcePreviewId?: string };
 
 export interface FilePreviewDrawerHandle {
   requestTransition: () => Promise<boolean>;
@@ -195,11 +199,12 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
     const sharedToolbarTarget = useContext(FilePreviewToolbarContext);
     const toolbarTarget = embedded ? sharedToolbarTarget : null;
     const extension = getPreviewableFileExtension(preview.filePath) ?? '.txt';
-    const isMarkdown = extension === '.md' || extension === '.markdown';
-    const isHtml = extension === '.html' || extension === '.htm' || extension === '.xhtml';
+    const readOnly = Boolean(preview.resourcePreviewId);
+    const isMarkdown = !readOnly && (extension === '.md' || extension === '.markdown');
+    const isHtml = !readOnly && (extension === '.html' || extension === '.htm' || extension === '.xhtml');
     const hasRenderedPreview = isMarkdown || isHtml;
     const [drawerWidth, setDrawerWidth] = useState(() => clampDrawerWidth(DRAWER_DEFAULT_WIDTH));
-    const [mode, setMode] = useState<PreviewMode>(() => (hasRenderedPreview ? 'preview' : 'edit'));
+    const [mode, setMode] = useState<PreviewMode>(() => (hasRenderedPreview || readOnly ? 'preview' : 'edit'));
     const [savedContent, setSavedContent] = useState(preview.content);
     const [draft, setDraft] = useState(preview.content);
     const [isAuthorizing, setIsAuthorizing] = useState(false);
@@ -229,13 +234,13 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
     const editorLanguage = getFilePreviewEditorLanguage(extension);
     const fileTypeLabel = extension.slice(1).toUpperCase();
     const content = useMemo(() => {
-      if (!isJson) return draft;
+      if (readOnly || !isJson) return draft;
       try {
         return JSON.stringify(JSON.parse(draft), null, 2);
       } catch {
         return draft;
       }
-    }, [draft, isJson]);
+    }, [draft, isJson, readOnly]);
     const markdownHtml = useMemo(
       () =>
         isPreformatted
@@ -256,13 +261,13 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
       isEditAuthorizedRef.current = false;
       savedContentRef.current = preview.content;
       versionRef.current = preview.version;
-      setMode(hasRenderedPreview ? 'preview' : 'edit');
-      if (previousEditToken !== preview.editToken) {
+      setMode(hasRenderedPreview || readOnly ? 'preview' : 'edit');
+      if (previousEditToken && previousEditToken !== preview.editToken) {
         void window.electron.shell
           .revokePreviewFileEdit(previousEditToken)
           .catch((): undefined => undefined);
       }
-    }, [hasRenderedPreview, preview.content, preview.editToken, preview.filePath, preview.version]);
+    }, [hasRenderedPreview, preview.content, preview.editToken, preview.filePath, preview.version, readOnly]);
 
     useEffect(() => {
       if (!drawerRef.current) return;
@@ -278,6 +283,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
         confirmationRef.current?.resolve('cancel');
         confirmationRef.current = null;
         const editToken = editTokenRef.current;
+        if (!editToken) return;
         cancelDeferredRevokeRef.current = deferFilePreviewGrantRevocation(
           editToken,
           token => {
@@ -365,6 +371,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
     }, [preview.filePath]);
 
     const requestEditAuthorization = useCallback((): Promise<boolean> => {
+      if (readOnly) return Promise.resolve(false);
       if (isEditAuthorizedRef.current) return Promise.resolve(true);
       return runFilePreviewSingleFlight(authorizationPromiseRef, async () => {
         try {
@@ -393,11 +400,11 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
           if (mountedRef.current) setIsAuthorizing(false);
         }
       });
-    }, [reloadFromDisk]);
+    }, [reloadFromDisk, readOnly]);
 
     useEffect(() => {
-      if (!hasRenderedPreview) void requestEditAuthorization();
-    }, [hasRenderedPreview, preview.editToken, requestEditAuthorization]);
+      if (!hasRenderedPreview && !readOnly) void requestEditAuthorization();
+    }, [hasRenderedPreview, preview.editToken, readOnly, requestEditAuthorization]);
 
     const performSaveDraft = useCallback(async (): Promise<boolean> => {
       if (!(await requestEditAuthorization())) return false;
@@ -552,7 +559,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
     const fileActions = (
       <>
         <div className="file-preview-primary-actions">
-          {hasRenderedPreview && (
+          {hasRenderedPreview && !readOnly && (
             <div className="file-preview-mode-switch" role="group">
               <button
                 type="button"
@@ -624,7 +631,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
           )}
         </div>
         <div className="file-preview-title-actions">
-          <button
+          {!readOnly && <button
             type="button"
             onClick={() => void showInFolder()}
             disabled={isShowingInFolder}
@@ -633,7 +640,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
             title={i18nService.t('coworkFilePreviewShowInFolder')}
           >
             {isShowingInFolder ? <ArrowPathIcon className="animate-spin" /> : <FolderOpenIcon />}
-          </button>
+          </button>}
           {!toolbarTarget && (
             <button
               type="button"
@@ -907,12 +914,20 @@ const FilePreviewDrawer = forwardRef<FilePreviewDrawerHandle, FilePreviewDrawerP
         isObscured={props.isObscured}
         embedded={props.embedded}
       />
+    ) : props.preview.kind === 'unsupported' ? (
+      <UnsupportedFilePreview
+        filePath={props.preview.filePath}
+        onClose={props.onClose}
+        isObscured={props.isObscured}
+        readOnly
+      />
     ) : isBrowserFilePreview(props.preview) ? (
       <BrowserFilePreviewPanel
         preview={props.preview}
         onClose={props.onClose}
         isObscured={props.isObscured}
         embedded={props.embedded}
+        readOnly={Boolean(props.preview.resourcePreviewId)}
       />
     ) : (
       <TextPreviewDrawer {...props} preview={props.preview} ref={ref} />

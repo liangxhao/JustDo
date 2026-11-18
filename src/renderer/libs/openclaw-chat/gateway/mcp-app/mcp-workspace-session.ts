@@ -48,7 +48,7 @@ export class McpWorkspaceSession {
       canInteract?: () => boolean;
       getWorkingDirectory?: () => string | undefined;
       addDraft: (text: string) => Promise<boolean>;
-      openFile: (file: { path: string; name: string }) => Promise<boolean>;
+      openFile: NonNullable<McpAppViewContext['openFile']>;
     },
   ) {}
 

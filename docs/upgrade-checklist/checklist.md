@@ -103,6 +103,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 工具调用格式纠正补丁 029 不提供 MCP Apps 生命周期能力。
 完整契约见 [MCP Apps 宿主](../features/chat/mcp-apps.md#公开生命周期能力的边界)。
 
+- [ ] 下一次升级 OpenClaw 时删除 [039 跨模型视图补丁](../../scripts/patches/v2026.10.7/README.md#039-retained-mcp-app-view-after-a-model-change)。
+      普通模型切换只更新当前会话，默认模型通过显式设置更新。用目标版本验证原 App 视图继续交互、
+      已准备的上下文由新模型消费一次，并单独记录默认模型热更新后的视图行为。
 - [ ] 重读目标版本 WS 派发、App view/disposer、SDK 与方法描述，核对是否新增公开的精确请求取消、可确认的最终视图释放和多窗口隔离接口；有则通过公开接口接入，无则保留原生行为，不恢复补丁或访问私有 store。
 - [ ] 核对 TTL、授权范围、原生过期和后台收尾语义；分别测试本地 AbortSignal、已发出操作、等待审批/提问、断线、迟到响应，不把取消 ACK 当成副作用回滚。
 - [ ] 验证原生 view/launch/history/formResource 返回形态，普通工具 descriptor 与问题预览引用各从认证来源准入，不要求已删除的 `appIdentity` / `hostLeaseId`。

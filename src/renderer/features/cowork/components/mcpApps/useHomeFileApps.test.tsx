@@ -17,7 +17,7 @@ interface TestConnection {
 }
 const f = vi.hoisted(() => ({
   engine: { ready: false, pending: false, failed: false },
-  prepare: vi.fn<(host: TestHost) => Promise<TestHost>>(),
+  prepare: vi.fn<(host: TestHost) => Promise<TestHost & { sessionKey?: string }>>(),
   discover: vi.fn<() => Promise<McpAppDiscovery>>(),
   launch: vi.fn(),
   invalidate: vi.fn(),
@@ -62,6 +62,7 @@ vi.mock('@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session', () => ({
 }));
 vi.mock('@/libs/openclaw-chat/pipeline/native-mcp-app', () => ({
   decodeMcpAppLaunch: (value: unknown) => value,
+  readNativeMcpAppIdentity: (value?: { descriptor?: unknown }) => value?.descriptor,
 }));
 vi.mock('./workspaceApps', () => ({
   openWorkspaceAppFile: f.open,
@@ -115,8 +116,16 @@ function setup(running = false, prepare?: (host: TestHost) => Promise<TestHost>)
   f.prepare.mockImplementation(prepare ?? (async host => ({
     isCurrent: host.isCurrent,
     resume: () => ({ isCurrent: host.isCurrent }),
+    sessionKey: 'agent:main:home',
   })));
-  f.launch.mockResolvedValue({ viewId: 'view' });
+  f.launch.mockResolvedValue({
+    viewId: 'view',
+    descriptor: {
+      serverName: 'sheet',
+      uiResourceUri: 'ui://sheet/editor',
+      originSessionKey: 'agent:main:home',
+    },
+  });
   const options = {
     currentSessionId: null as string | null,
     currentSessionCwd: undefined as string | undefined,
@@ -214,6 +223,54 @@ test('reload discovers again and rejects a removed handler instead of replaying 
   f.discover.mockResolvedValueOnce({ servers: [] });
   await expect(loaded.context.reopen?.()).rejects.toThrow('no longer available');
   expect(f.launch).toHaveBeenCalledOnce();
+});
+
+test('opens only the explicit ambiguous file handler and rejects a replaced resource', async () => {
+  const { result, request } = setup();
+  const catalog = {
+    servers: ['sheet', 'analysis'].map(serverName => ({
+      serverName,
+      label: serverName,
+      entrypoints: [{
+        toolName: 'preview_file',
+        title: serverName,
+        resourceUri: `ui://${serverName}/editor`,
+        entrypoint: { type: 'file' as const, extensions: ['.csv'] },
+      }],
+    })),
+  };
+  f.discover.mockResolvedValue(catalog);
+  const filePath = 'E:/workspace/results.csv';
+  const handlerId = JSON.stringify(['analysis', 'preview_file', 'ui://analysis/editor']);
+  f.launch.mockResolvedValue({
+    viewId: 'view',
+    descriptor: {
+      serverName: 'analysis',
+      uiResourceUri: 'ui://analysis/editor',
+      originSessionKey: 'agent:main:home',
+    },
+  });
+  expect(await result.current.openFile({ ...request, filePath })).toBe(false);
+  expect(await result.current.openFile({ ...request, filePath, handlerId })).toBe(true);
+  const entry = f.open.mock.calls[0][0] as McpAppWorkspaceFileEntry;
+  expect(entry.fileHandlerId).toBe(handlerId);
+  const loaded = await entry.load(new AbortController().signal);
+  expect(f.launch).toHaveBeenCalledExactlyOnceWith(
+    { serverName: 'analysis', toolName: 'preview_file', entrypointType: 'file', filePath },
+    expect.any(AbortSignal),
+  );
+  f.launch.mockResolvedValueOnce({
+    viewId: 'foreign-view',
+    descriptor: {
+      serverName: 'analysis',
+      uiResourceUri: 'ui://analysis/editor',
+      originSessionKey: 'agent:main:foreign',
+    },
+  });
+  await expect(loaded.context.reopen?.()).rejects.toThrow('superseded');
+  f.discover.mockResolvedValue({ servers: [catalog.servers[0]] });
+  await expect(loaded.context.reopen?.()).rejects.toThrow('no longer available');
+  expect(f.launch).toHaveBeenCalledTimes(2);
 });
 
 test('opening the home menu discovers real global Apps and launches only the chosen entry', async () => {

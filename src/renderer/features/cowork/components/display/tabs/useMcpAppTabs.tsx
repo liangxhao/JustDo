@@ -131,6 +131,7 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
             id: pending.id,
             sessionId: pending.sessionId,
             filePath: pending.filePath,
+            fileHandlerId: pending.fileHandlerId,
             label: pending.label,
             ...result,
           };
@@ -281,12 +282,13 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
     },
     tabs,
     hasRetainedPanels: entries.some(entry => 'preview' in entry),
-    focusFile: (filePath: string) => {
+    focusFile: (filePath: string, handlerId?: string) => {
       const entry = entriesRef.current.find(
         item =>
           item.sessionId === sessionId &&
           'filePath' in item &&
           item.filePath === filePath &&
+          (handlerId === undefined || item.fileHandlerId === handlerId) &&
           ('load' in item ||
             ((views.current.get(item.id)?.context ?? item.context).isCurrent() &&
               !views.current.get(item.id)?.error &&

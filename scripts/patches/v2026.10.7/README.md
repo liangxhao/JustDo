@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037) and subagent model inventory admission (038). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 36 patches and preserves the remaining numbers. All current verifiers reject the pristine target, and all transformations apply and verify on their actual source owners. [pristine-targets.json](pristine-targets.json) records 81 exact pristine patch target hashes bound to the locked npm archive.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038) and MCP App continuity after a model change (039). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 37 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 82 exact pristine patch target hashes bound to the locked npm archive.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -29,7 +29,7 @@ The parent, native-contract and provider/plugin agents independently cross-revie
 
 ## Capability gaps and removal conditions
 
-The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage. The number 005 identifies the retired capability. 034 and 036–038 are later independently removable fixes.
+The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs preserve their v2026.10.6 lineage. The number 005 identifies the retired capability. 034 and 036–039 are later independently removable fixes.
 
 | Patch                                                                                            | Old ID | Retained capability / target gap                                                                                                                                      | Remove when                                                                                                                                    |
 | ------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -69,6 +69,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [036-acp-completion-lineage.cjs](036-acp-completion-lineage.cjs) | — | persist the structural spawn envelope for ordinary top-level ACP children before dispatch, so exact completion handoffs retain requester tools. | native ACP creation persists the same envelope independently of optional nested admission checks. |
 | [037-project-skill-precedence.cjs](037-project-skill-precedence.cjs) | — | select the admitted execution project's file skill when it shares a name with an assistant skill. | native skill resolution supports execution project precedence while preserving separate assistant and execution roots. |
 | [038-subagent-model-inventory.cjs](038-subagent-model-inventory.cjs) | — | verify the target model of a new subagent outside the parent turn's plugin generation. | native subagent model preflight succeeds after retirement of the parent inventory while preserving exact caller and model checks. |
+| [039-mcp-app-model-continuity.cjs](039-mcp-app-model-continuity.cjs) | — | retain the live MCP App view on compatible model changes within the same native MCP runtime. | remove at the next OpenClaw version upgrade and use native session model selection. |
 
 ## Locked target source owners
 
@@ -112,6 +113,7 @@ The following paths were returned by a clean application on the pristine target.
 | 036 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
 | 037 | `dist/workspace-skill-loader-sfXVTUiF.mjs` |
 | 038 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
+| 039 | `dist/mcp-app-extensions-abaft4XG.mjs`<br>`dist/mcp-app-host-files-CYEqGNXR.mjs` |
 
 ## Test ownership
 
@@ -157,6 +159,7 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 036 | `acp-completion-lineage.test.ts` |
 | 037 | `project-skill-precedence.test.ts`, `tests/openclaw/runtime/project-skill-precedence-contract.test.ts` |
 | 038 | `subagent-model-inventory.test.ts` |
+| 039 | `mcp-app-model-continuity.test.ts`, `tests/mcp-apps/gateway-smoke.cjs --model-selection` |
 
 ### 033: plugin directory publication and retained installed files
 
@@ -350,6 +353,40 @@ explicit configuration, target and workspace still go through exact native valid
 the separate parent model lease and Gateway caller stay in scope. The rest of spawn uses the
 original parent context. Remove this patch when the pristine preflight passes the retirement
 reproduction with unchanged model and caller checks.
+
+### 039: retained MCP App view after a model change
+
+The native manual launch captures the requested model and compares its entire selection
+with the live session when authorizing the retained view. Switching the same physical
+session from an embedded model to another disabled interaction and model context for the
+still-visible view, even while its original stdio server kept running. Launching again
+executes the App entry tool and can discard unsaved work. A historical view has read-only
+authority. The public plugin and AppBridge APIs offer no way to refresh the existing
+native interaction grant.
+
+Patch 039 composes with 030 in the native MCP App workspace path. The retained view may
+follow model selection within the same active embedded session MCP owner. It checks the
+requester and physical session, live owner, workspace, original tool grants and current tool
+policy. A hot config update can differ only in configured primary model references.
+Tool approval is requested under the current selection. A request waiting when the
+selection changes cannot use its old approval, including after switching back. A file
+opened in the same view still requires its original URI, requester and workspace, plus
+native write admission and the file revision check. Host file writes also check the model
+selection from admission through commit. Reads and subscriptions use the native live
+resource checks. Native launch and form uploads retain their original authority checks.
+
+Keep 039 for the locked `2026.10.7` runtime and remove it at the next OpenClaw version
+upgrade. [OpenClaw 2026.10.10](https://github.com/openclaw/openclaw/blob/v2026.10.10/src/gateway/mcp-app-extension-runtime.ts#L43-L81)
+already decouples session model selection from the retained App grant. An isolated Gateway
+from the unmodified `2026.11.5` npm package retained the original view and MCP process
+through A → B, and the new model consumed the staged context once. A default-model hot
+reload still invalidated interaction with that view.
+
+In the upgrade, keep ordinary model selection scoped to the current session and handle
+default-model changes as an explicit setting. Update the native smoke test for both
+paths and remove the 039 entries and patch-specific assertions from the target version's
+inventory and tests. Follow the [MCP Apps upgrade checklist](../../../docs/upgrade-checklist/checklist.md#21-mcp-apps-原生生命周期)
+for product acceptance. Keep 030 until its independent workspace reproduction passes upstream.
 
 ## Validation boundary
 

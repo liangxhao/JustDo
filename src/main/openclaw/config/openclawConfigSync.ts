@@ -155,6 +155,7 @@ import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels'
 import { t } from '../../core/i18n';
 import type { Agent, CoworkConfig } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { type NativeMcpDataBinding,projectNativeMcpData, publishNativeMcpDataReceipt } from '../../plugins/data/nativeMcpData';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
 import { getActiveBuiltinModelCredential } from '../../providers/builtinModelCredential';
@@ -196,6 +197,8 @@ export class OpenClawConfigSync {
   private readonly getAgentRuntimeSettings: () => AgentRuntimeSettings;
   private readonly getExternalAgentSettings: () => ExternalAgentSettings;
   private readonly getMcpServers?: () => McpServerRecord[];
+  private readonly getNativeMcpDataBindings?: () => readonly NativeMcpDataBinding[];
+  private nativeMcpDataReceipt?: string;
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
   private readonly getAppPluginDefaults: () => Record<string, { defaultEnabled: boolean; userToggleable: boolean }>;
@@ -209,7 +212,10 @@ export class OpenClawConfigSync {
   private readonly getSpeechOutputState: () => { enabled: boolean; mode: 'local' | 'online' };
   private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
 
-  constructor(deps: OpenClawConfigSyncDeps & { getControlUiEnabled?: () => boolean }) {
+  constructor(deps: OpenClawConfigSyncDeps & {
+    getControlUiEnabled?: () => boolean;
+    getNativeMcpDataBindings?: () => readonly NativeMcpDataBinding[];
+  }) {
     this.getNativeVideoCategory = deps.getNativeVideoCategory ?? (() => undefined);
     this.getSpeechModelSettings = deps.getSpeechModelSettings;
     this.getDecisionModelCategory = deps.getDecisionModelCategory ?? (() => undefined);
@@ -220,6 +226,7 @@ export class OpenClawConfigSync {
     this.getExternalAgentSettings =
       deps.getExternalAgentSettings ?? createDefaultExternalAgentSettings;
     this.getMcpServers = deps.getMcpServers;
+    this.getNativeMcpDataBindings = deps.getNativeMcpDataBindings;
     this.getHooks = deps.getHooks;
     this.getAgents = deps.getAgents;
     this.getAppPluginDefaults = deps.getAppPluginDefaults ?? (() => ({}));
@@ -364,7 +371,10 @@ export class OpenClawConfigSync {
     }
   }
 
-  private applyManagedRuntimeConfiguration(config: Record<string, unknown>): void {
+  private applyManagedRuntimeConfiguration(config: Record<string, unknown>, configPath: string): void {
+    this.nativeMcpDataReceipt = projectNativeMcpData(config, this.getNativeMcpDataBindings?.() ?? [],
+      this.engineManager.getStateDir(), configPath,
+      new Set(this.getMcpServers?.().map(server => server.name)));
     const gateway = isRecord(config.gateway) ? config.gateway : {};
     config.gateway = {
       ...gateway,
@@ -833,7 +843,7 @@ export class OpenClawConfigSync {
         },
       };
     }
-    this.applyManagedRuntimeConfiguration(configToPersist);
+    this.applyManagedRuntimeConfiguration(configToPersist, configPath);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
     if (configChanged) {
@@ -851,6 +861,7 @@ export class OpenClawConfigSync {
       }
     }
 
+    if (!configChanged) publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => {});
     const verification = verifyOpenClawConfigMatches(configPath, configToPersist);
     if (!verification.ok) {
       return {
@@ -996,7 +1007,9 @@ export class OpenClawConfigSync {
     ensureDir(path.dirname(configPath));
     const tmpPath = `${configPath}.tmp-${Date.now()}`;
     this.writeConfigTemporaryFile(tmpPath, content);
-    fs.renameSync(tmpPath, configPath);
+    try {
+      publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => fs.renameSync(tmpPath, configPath));
+    } finally { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); }
   }
 
   /** Atomic file write via tmp + rename, consistent with openclaw.json writes. */
@@ -1199,7 +1212,7 @@ export class OpenClawConfigSync {
         previousConfig.meta,
       );
     }
-    this.applyManagedRuntimeConfiguration(minimalConfig);
+    this.applyManagedRuntimeConfiguration(minimalConfig, configPath);
     minimalConfig = projectManagedOpenClawExecNotifications(
       projectManagedOpenClawBrowserConfig(withComputerControlPolicy(minimalConfig)),
     );
@@ -1207,8 +1220,10 @@ export class OpenClawConfigSync {
     const buildMinimalSyncResult = (
       expectedConfig: Record<string, unknown>,
       changed: boolean,
-    ): OpenClawConfigSyncResult =>
-      buildVerifiedConfigSyncResult(configPath, expectedConfig, changed);
+    ): OpenClawConfigSyncResult => {
+      publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => {});
+      return buildVerifiedConfigSyncResult(configPath, expectedConfig, changed);
+    };
 
     const isAuthLifecycleSync =
       reason === BuiltinModelSyncReason.AuthLogin || reason === BuiltinModelSyncReason.AuthLogout;
@@ -1219,7 +1234,7 @@ export class OpenClawConfigSync {
           const sanitizedConfig = withComputerControlPolicy(
             buildAuthScopedOpenClawConfig(existing, minimalConfig, reason),
           );
-          this.applyManagedRuntimeConfiguration(sanitizedConfig);
+          this.applyManagedRuntimeConfiguration(sanitizedConfig, configPath);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
             this.publishConfigFile(configPath, sanitizedContent);
@@ -1403,7 +1418,7 @@ export class OpenClawConfigSync {
               ),
             );
             const mergedConfig = projectManagedOpenClawExecNotifications(mergedBrowserConfig);
-            this.applyManagedRuntimeConfiguration(mergedConfig);
+            this.applyManagedRuntimeConfiguration(mergedConfig, configPath);
             const configToWrite = withComputerControlPolicy(mergedConfig);
             const mergedContent = `${JSON.stringify(configToWrite, null, 2)}\n`;
             if (hasOpenClawConfigChanged(currentContent, configToWrite)) {

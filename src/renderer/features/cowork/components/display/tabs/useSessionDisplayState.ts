@@ -31,6 +31,10 @@ import {
 
 export const HOME_DISPLAY_SESSION_KEY = '__home__';
 
+function releaseResourcePreview(id: string): void {
+  void window.electron.mcpApps.releaseResourcePreview(id).catch(() => undefined);
+}
+
 export interface CoworkTerminalTab {
   cwd: string;
   id: string;
@@ -450,6 +454,24 @@ export function useSessionDisplayState(
   }, [sessionId, validSessionIdsKey]);
 
   const previousSessionKeysRef = useRef(new Set<string>());
+  const resourcePreviews = useRef(new Set<string>());
+  const committedResourcePreviews = useRef(new Set<string>());
+  const trackResourcePreview = useCallback((id: string) => { resourcePreviews.current.add(id); }, []);
+  useEffect(() => {
+    const retained = new Set(Object.values(states).flatMap(displayState =>
+      displayState.filePreviews.flatMap(preview => preview.resourcePreviewId ? [preview.resourcePreviewId] : []),
+    ));
+    for (const id of committedResourcePreviews.current) {
+      if (retained.has(id)) continue;
+      resourcePreviews.current.delete(id);
+      releaseResourcePreview(id);
+    }
+    committedResourcePreviews.current = retained;
+  }, [states]);
+  useEffect(() => {
+    const owned = resourcePreviews.current;
+    return () => { owned.forEach(releaseResourcePreview); owned.clear(); };
+  }, []);
   useEffect(() => {
     const nextKeys = new Set(Object.keys(states));
     for (const key of previousSessionKeysRef.current) {
@@ -461,5 +483,5 @@ export function useSessionDisplayState(
     previousSessionKeysRef.current = nextKeys;
   }, [states]);
 
-  return { sessionKey, state, states, setters, setSessionField, openBrowserTab, promote };
+  return { sessionKey, state, states, setters, setSessionField, openBrowserTab, promote, trackResourcePreview };
 }

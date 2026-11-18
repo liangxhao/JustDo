@@ -269,7 +269,7 @@ const lacksBasicDirectoryMutationAccess = (targetPath: string): boolean => {
 export const renameDirectoryWithRetry = (
   sourceDir: string,
   targetDir: string,
-  options: { noReplace?: boolean } = {},
+  options: { noReplace?: boolean; beforeAttempt?: () => void } = {},
 ): void => {
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -278,6 +278,7 @@ export const renameDirectoryWithRetry = (
       if (options.noReplace && pathExists(targetDir)) {
         throw new ManagedDirectoryTargetExistsError(targetDir);
       }
+      options.beforeAttempt?.();
       fs.renameSync(sourceDir, targetDir);
       return;
     } catch (error) {

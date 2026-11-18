@@ -434,6 +434,7 @@ describe('MCP App native session authority', () => {
         gatewayCode: 'INVALID_REQUEST',
       }),
     );
+    request.mockResolvedValueOnce(fileLaunchReceipt(fileInput.toolName));
     await apps.launch(fileInput);
     expect(request.mock.calls.map(([method]) => method)).toEqual([
       'mcp-app-files.open.univer',
@@ -441,6 +442,31 @@ describe('MCP App native session authority', () => {
     ]);
     expect(request.mock.calls[1][1]).not.toHaveProperty('sessionId');
   });
+
+  it('rejects a native fallback receipt for a different file tool', async () => {
+    const { apps, request } = fixture();
+    request.mockRejectedValueOnce(Object.assign(new Error('unknown method: mcp-app-files.open.univer'), {
+      gatewayCode: 'INVALID_REQUEST',
+    }));
+    request.mockResolvedValueOnce(fileLaunchReceipt('open_editor'));
+    await expect(apps.launch(fileInput)).rejects.toThrow('did not match the selected file tool');
+  });
+
+  function fileLaunchReceipt(toolName: string) {
+    const viewId = 'mcp-app-file';
+    return {
+      viewId,
+      preview: {
+        kind: 'canvas',
+        view: { id: viewId, title: 'File' },
+        presentation: { target: 'assistant_message', sandbox: 'scripts' },
+        mcpApp: {
+          viewId, serverName: 'univer', toolName, toolCallId: 'file-open',
+          uiResourceUri: 'ui://sheets/app.html', originSessionKey: 'agent:a:conversation',
+        },
+      },
+    };
+  }
 
   it.each([
     new Error('request timeout'),

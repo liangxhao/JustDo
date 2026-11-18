@@ -11,12 +11,14 @@ export interface McpAppWorkspaceEntry {
   preview: McpAppPreview;
   context: McpAppViewContext;
   filePath?: string;
+  fileHandlerId?: string;
   label?: string;
 }
 export interface McpAppWorkspaceLoadEntry {
   id: string;
   sessionId: string;
   filePath?: string;
+  fileHandlerId?: string;
   label: string;
   /** Display-only icons from the chosen plugin entry, before a view exists. */
   icons?: readonly McpAppIcon[];

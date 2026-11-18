@@ -4,6 +4,8 @@ import { type McpAppHostApi, McpAppIpc } from '../../shared/plugins/mcpApps';
 
 export function createMcpAppPreloadApi(): McpAppHostApi {
   return {
+    stageResourcePreview: input => ipcRenderer.invoke(McpAppIpc.StageResourcePreview, input),
+    releaseResourcePreview: id => ipcRenderer.invoke(McpAppIpc.ReleaseResourcePreview, id),
     downloadFile: input => ipcRenderer.invoke(McpAppIpc.DownloadFile, input),
     createSession: input => ipcRenderer.invoke(McpAppIpc.CreateSession, input),
     prepare: sessionId => ipcRenderer.invoke(McpAppIpc.Prepare, sessionId),

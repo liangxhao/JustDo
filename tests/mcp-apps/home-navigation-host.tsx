@@ -1,3 +1,5 @@
+import { AppInitializationPhase } from '@shared/app/initialization';
+import { StartupRoute } from '@shared/app/startup/routing';
 import { EnginePhase } from '@shared/openclaw/engineStatus';
 import React, { createRef, useState } from 'react';
 import { flushSync } from 'react-dom';
@@ -25,6 +27,14 @@ const native = {
   agentId: 'main',
 };
 window.electron = {
+  initialization: {
+    getState: async () => ({
+      phase: AppInitializationPhase.Ready,
+      route: StartupRoute.Normal,
+      enginePreparationPending: false,
+    }),
+    onChanged: () => () => {},
+  },
   openclaw: {
     engine: {
       getPort: async () => ({ success: true, port: fixture.fixturePort }),
@@ -113,7 +123,7 @@ function Fixture() {
   // array children matter here: their placement can move a retained iframe.
   return (
     <div className="flex h-full flex-col">
-      <div className="cowork-display-host relative flex min-h-0 flex-1">
+      <div key="cowork-display-host" className="cowork-display-host relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">Ordinary conversation</div>
         <CoworkDisplayPanel
           key="cowork-display-panel"

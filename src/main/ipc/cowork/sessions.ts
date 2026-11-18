@@ -105,7 +105,8 @@ export const registerCoworkSessionHandlers = ({
     requestGateway,
     isParentDeleting: sessionId => [...deletingSessionSets].some(ids => ids.has(sessionId)),
   });
-  registerMcpAppHandlers({
+  const disposeMcpAppResourcePreviews = registerMcpAppHandlers({
+    isAllowedWorkspaceSender,
     getCoworkStore,
     getCoworkEngineRouter,
     requestGateway,
@@ -1324,5 +1325,5 @@ export const registerCoworkSessionHandlers = ({
       }
     },
   );
-  return { setSessionWorkspace, discoverNativeChildSessions };
+  return { setSessionWorkspace, discoverNativeChildSessions, disposeMcpAppResourcePreviews };
 };

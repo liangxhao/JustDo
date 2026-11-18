@@ -1,6 +1,7 @@
 export {
   discoverExtensionMcpOverrideNames,
   discoverExtensionMcpServers,
+  discoverNativeMcpDataBindings,
   readNativeMcpServerNames,
 } from './extensionMcpDiscovery';
 export { McpConfigSyncService } from './mcpConfigSyncService';

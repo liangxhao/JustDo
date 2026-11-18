@@ -75,4 +75,17 @@ describe('MCP App download admission', () => {
       ).toThrow();
     },
   );
+  it.each([
+    ['table.tsv', 'text/tab-separated-values', { text: '城市\t金额\n北京\t1' }],
+    ['table.ndjson', 'application/x-ndjson', { text: '{"城市":"北京"}\n' }],
+    ['table.arrow', 'application/vnd.apache.arrow.file', { blob: 'AP+A' }],
+  ])('preserves %s and rejects a mismatched extension', (fileName, mimeType, content) => {
+    const download = prepareMcpAppDownload(embedded({ uri: `file:///${fileName}`, mimeType, ...content }));
+    expect(download).toMatchObject({ fileName, mimeType });
+    expect(download.dataBase64).toBe(
+      typeof content.text === 'string' ? Buffer.from(content.text).toString('base64') : content.blob,
+    );
+    expect(() => prepareMcpAppDownload(embedded({ uri: 'file:///table.txt', mimeType, ...content })))
+      .toThrow('Unsupported App file');
+  });
 });

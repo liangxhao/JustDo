@@ -1,5 +1,6 @@
 import type { JSONRPCMessage, Transport } from '@modelcontextprotocol/client';
 import { App } from '@modelcontextprotocol/ext-apps';
+import { MCP_APP_PREVIEW_RESOURCE } from '@shared/plugins/mcpAppResourcePreview';
 import { McpAppMethod } from '@shared/plugins/mcpApps';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -28,6 +29,7 @@ async function fixture(
   historyTool?: (name: string, args?: Record<string, unknown>) => Promise<unknown>,
   workspaceFile?: { uri: string; name: string; writable: boolean },
   configure?: (app: App) => void,
+  previewResource?: Parameters<typeof createMcpAppBridge>[0]['previewResource'],
 ) {
   let interactive = true;
   const request = vi.fn(
@@ -96,6 +98,7 @@ async function fixture(
     confirmDraft,
     confirmFile,
     openFile,
+    previewResource,
     contextChanged,
     close,
   });
@@ -121,6 +124,42 @@ async function fixture(
 }
 
 describe('MCP Apps SDK round trip', () => {
+  it('opens a generic resource through the active view and discards a late resource read', async () => {
+    const uri = 'archive://source/example?part=0';
+    const params = {
+      name: 'report.txt', mimeType: 'text/plain', sha256: 'a'.repeat(64),
+      resources: [{ uri, byteLength: 3 }],
+    };
+    const payload = { contents: [{ uri, mimeType: 'text/plain', blob: 'YWJj' }] };
+    const preview = vi.fn(async () => true);
+    const { app, host, request, hide } = await fixture(undefined, undefined, undefined, preview);
+    const open = () => app.request({ method: MCP_APP_PREVIEW_RESOURCE, params },
+      z.object({ isError: z.boolean().optional() }));
+    try {
+      expect(app.getHostCapabilities()?.experimental?.[MCP_APP_PREVIEW_RESOURCE]).toEqual({ version: 1 });
+      request.mockResolvedValueOnce(payload);
+      await expect(open()).resolves.toEqual({});
+      expect(request).toHaveBeenCalledWith(McpAppMethod.ReadResource, { uri }, expect.any(AbortSignal));
+      expect(preview).toHaveBeenCalledOnce();
+      expect(preview).toHaveBeenCalledWith({
+        name: params.name, mimeType: params.mimeType, sha256: params.sha256,
+        parts: [{ byteLength: 3, blob: 'YWJj' }],
+      }, expect.any(Function));
+
+      let finish!: (value: unknown) => void;
+      request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+      const late = open();
+      await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+      hide();
+      finish(payload);
+      await expect(late).resolves.toEqual({ isError: true });
+      expect(preview).toHaveBeenCalledOnce();
+    } finally {
+      host.dispose();
+      await app.close();
+    }
+  });
+
   it('a hidden retained App cannot read historical tools or request its own teardown', async () => {
     const historical = vi.fn().mockResolvedValue({ content: [{ type: 'text', text: 'saved' }] });
     const { app, host, close, hide } = await fixture(historical);

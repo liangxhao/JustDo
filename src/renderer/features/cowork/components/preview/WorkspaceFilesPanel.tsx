@@ -19,12 +19,15 @@ import {
   WorkspaceFileTransferMode,
   workspaceParentDirectory,
 } from '@shared/preview/workspaceFiles';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
+import { findFileApps } from '../mcpApps/fileApps';
+import { McpAppIcon } from '../mcpApps/McpAppIcon';
 import WorkspaceFileIcon from '../shared/WorkspaceFileIcon';
+import { WorkspaceFileIconContext } from '../shared/WorkspaceFileIconContext';
 import { isFilePreviewWithinPath } from './filePreviewNavigation';
 import { useWorkspaceFileClipboard } from './useWorkspaceFileClipboard';
 import WorkspaceFileNameDialog from './WorkspaceFileNameDialog';
@@ -37,7 +40,7 @@ interface WorkspaceFilesPanelProps {
   isVisible?: boolean;
   revealPath?: string;
   revealVersion?: number;
-  onOpenFile: (filePath: string) => void;
+  onOpenFile: (filePath: string, appHandlerId?: string) => void;
   onBeforeMutation?: (affectedPaths: string[]) => Promise<boolean>;
   sessionId: string;
 }
@@ -61,6 +64,7 @@ const WorkspaceFilesPanel = ({
 }: WorkspaceFilesPanelProps) => {
   const ownerDocument = useOwnerDocument();
   const ownerWindow = useOwnerWindow();
+  const fileAppCatalog = useContext(WorkspaceFileIconContext);
   const treeRef = useRef<HTMLDivElement>(null);
   const [nameDialog, setNameDialog] = useState<NameDialogState | null>(null);
   const nameSubmission = useRef<symbol | null>(null);
@@ -372,6 +376,8 @@ const WorkspaceFilesPanel = ({
   const focusedPathIsVisible = visibleTree.some(row => row.entry.relativePath === focusedPath);
 
   const menuEntry = contextMenu?.entry;
+  const fileApps =
+    menuEntry && menuEntry.kind !== 'directory' ? findFileApps(fileAppCatalog, menuEntry.filePath) : [];
   const isFileMutationPending = (entry: WorkspaceDirectoryEntry) =>
     entry.kind !== 'directory' &&
     isTransferring &&
@@ -396,6 +402,18 @@ const WorkspaceFilesPanel = ({
                 ? toggleDirectory(menuEntry.relativePath)
                 : onOpenFile(menuEntry.filePath),
           },
+          ...(fileApps.length > 1 ? fileApps.map(app => {
+            const label = app.title && fileApps.some(other => other !== app && other.label === app.label)
+              ? `${app.label} · ${app.title}`
+              : app.label;
+            return {
+              id: app.id,
+              label: i18nService.t('coworkWorkspaceFilesOpenWithApp').replace('{app}', () => label),
+              icon: <McpAppIcon icons={app.icons} label={app.label} size="file" />,
+              disabled: isFileMutationPending(menuEntry),
+              onSelect: () => onOpenFile(menuEntry.filePath, app.id),
+            };
+          }) : []),
           {
             id: 'copy',
             label: i18nService.t('coworkWorkspaceFilesCopy'),

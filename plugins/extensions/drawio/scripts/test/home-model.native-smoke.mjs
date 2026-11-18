@@ -424,22 +424,25 @@ try {
       200,
     );
   await assertAssetsAlive();
-  const legacyContext = () =>
-    browser.request('mcp.app.updateModelContext', {
-      ...scope,
-      viewId: opened.viewId,
-      content: [{ type: 'text', text: 'Legacy canvas context' }],
-    });
-  await legacyContext();
-  // Reproduce the original regression even when explicit selection equals the default.
+  const checkNativeContext = async () => {
+    const target = { ...scope, viewId: opened.viewId };
+    const content = [{ type: 'text', text: 'Native canvas context probe' }];
+    await browser.request('mcp.app.updateModelContext', { ...target, content });
+    const { state } = await browser.request('mcp.app.modelContext', target);
+    assert.deepEqual(state?.content, content);
+    assert.equal(typeof state.updateId, 'string');
+    await browser.request('mcp.app.removeModelContext', { ...target, updateId: state.updateId });
+    assert.equal((await browser.request('mcp.app.modelContext', target)).state, null);
+  };
+  await checkNativeContext();
   await backend.request('sessions.patch', {
     key: scope.sessionKey,
     expectedSessionId: scope.sessionId,
     model: 'fixture/alpha',
   });
-  await assert.rejects(legacyContext, /runtime selection changed/);
+  await checkNativeContext();
   checks.push(
-    'negative control reproduces revoked native context after the first explicit model selection',
+    'the same native view can publish and clear context after the first explicit model selection',
   );
   let xml = fs.readFileSync(path.join(pluginRoot, 'tests/fixture.xml'), 'utf8');
   for (const selected of ['beta', 'alpha']) {
@@ -448,7 +451,7 @@ try {
       expectedSessionId: scope.sessionId,
       model: `fixture/${selected}`,
     });
-    await assert.rejects(legacyContext, /runtime selection changed/);
+    await checkNativeContext();
     await assertAssetsAlive();
     const runId = randomUUID();
     expected = {

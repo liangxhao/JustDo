@@ -6,6 +6,10 @@ import {
 } from '@modelcontextprotocol/client';
 import { AppBridge, type McpUiHostContext } from '@modelcontextprotocol/ext-apps/app-bridge';
 import {
+  MCP_APP_PREVIEW_RESOURCE,
+  type McpAppResourcePreviewStageInput,
+} from '@shared/plugins/mcpAppResourcePreview';
+import {
   MCP_APP_PREPARE_CONTEXT_META,
   MCP_APP_SHARED_HEADER,
   McpAppEvent,
@@ -17,6 +21,7 @@ import {
 import { z } from 'zod';
 
 import type { McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
+import { readMcpAppResourcePreview } from './resource-preview';
 
 const recordSchema = z.record(z.string(), z.unknown());
 type AppRequestContext = Parameters<NonNullable<AppBridge['oncalltool']>>[1];
@@ -49,6 +54,7 @@ export class McpAppHostBridge extends AppBridge {
       | 'openai/resources/write'
       | 'resources/subscribe'
       | 'resources/unsubscribe'
+      | typeof MCP_APP_PREVIEW_RESOURCE
       | 'openai/files/open',
     handler: (
       params: Record<string, unknown>,
@@ -69,6 +75,10 @@ export interface McpAppBridgeHost {
   confirmDraft: (content: unknown[], target: 'active' | 'new') => Promise<boolean>;
   confirmFile: (path: string) => Promise<boolean>;
   openFile: (file: { path: string; name: string }) => Promise<boolean>;
+  previewResource?: (
+    input: McpAppResourcePreviewStageInput,
+    isCurrent: () => boolean,
+  ) => Promise<boolean>;
   contextChanged: (state: McpAppModelContext | null) => void;
   close: () => void;
 }
@@ -150,6 +160,7 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
         : {}),
       experimental: {
         [MCP_APP_SHARED_HEADER]: { version: 1 },
+        ...(interactive && host.previewResource ? { [MCP_APP_PREVIEW_RESOURCE]: { version: 1 } } : {}),
         ...(payload.richModelContextSupported ? { 'openai/modelContext': {} } : {}),
         ...(interactive ? { 'openai/message': {} } : {}),
         ...(payload.fileResourcesSupported || payload.workspaceFile
@@ -286,6 +297,29 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
       );
       if (typeof params.uri === 'string') subscriptions.delete(params.uri);
       return response;
+    });
+  }
+  const previewResource = host.previewResource;
+  if (interactive && previewResource) {
+    let previewPending = false;
+    bridge.setExtension(MCP_APP_PREVIEW_RESOURCE, async (params, extra) => {
+      const signal = extra.mcpReq.signal;
+      const isCurrent = () =>
+        !disposed && !preparingContext && !signal.aborted && host.canInteract() && session.isCurrent();
+      if (previewPending || !isCurrent()) return { isError: true };
+      previewPending = true;
+      try {
+        const preview = await readMcpAppResourcePreview(
+          params,
+          uri => request(McpAppMethod.ReadResource, { uri }, signal),
+          isCurrent,
+        );
+        return isCurrent() && await previewResource(preview, isCurrent) ? {} : { isError: true };
+      } catch {
+        return { isError: true };
+      } finally {
+        previewPending = false;
+      }
     });
   }
   if (payload.openFilesSupported)

@@ -34,6 +34,8 @@ describe('shouldApplyApplicationCsp', () => {
     expect(scripts).toBe("script-src 'self'");
     expect(scripts).not.toContain("'unsafe-eval'");
     expect(policy).toContain("connect-src 'self' *");
+    expect(policy.split('; ').find((directive: string) => directive.startsWith('media-src')))
+      .toBe("media-src 'self' blob: data: localmedia: http://127.0.0.1:*");
   });
 
   it('protects the initialization session without opening the persistent default session', () => {

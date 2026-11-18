@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { BigIntStats } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, realpath, rename, rmdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -11,6 +12,7 @@ import {
   PLUGIN_DATA_OWNER_FILE,
   resolvePluginDataDirectory,
 } from '../../../../plugins/sdk/app-plugin-sdk/data';
+import { renameDirectoryWithRetry } from '../../core/filesystem/managedDirectoryOperations';
 
 interface Entry {
   file: string;
@@ -115,7 +117,7 @@ async function inventory(state: string, pluginId: string): Promise<Inventory> {
   return { directory, owner, ...inspected, ...(retained ? { retained: true as const } : {}) };
 }
 
-/** A stopped preparation may strengthen retention, but never remove a durable policy. */
+/** Preparation may strengthen retention, but never remove a durable policy. */
 async function retainOwner(directory: string, pluginId: string): Promise<void> {
   const directoryIdentity = id(await regularDirectory(directory));
   const marker = path.join(directory, PLUGIN_DATA_OWNER_FILE);
@@ -148,7 +150,7 @@ function sameInventory(previous: Inventory, next: Inventory): boolean {
       entry.file === next.entries[index].file && entry.stamp === next.entries[index].stamp);
 }
 
-/** Main calls only while it owns the stopped Gateway lease, or before any Gateway exists. */
+/** New directories can be prepared live. Legacy migration requires the caller's stopped Gateway lease. */
 export async function preparePluginDataDirectory(
   stateDirectory: string,
   pluginId: string,
@@ -217,7 +219,16 @@ export async function preparePluginDataDirectory(
           id(await regularDirectory(root)) !== id(rootInfo) ||
           id(await regularDirectory(staging)) !== stagingIdentity)
         throw new Error('Plugin data changed before preparation');
-      await rename(staging, directory);
+      renameDirectoryWithRetry(staging, directory, { noReplace: true, beforeAttempt: () => {
+        for (const [entry, expected] of [[state, id(stateInfo)], [root, id(rootInfo)], [staging, stagingIdentity]]) {
+          const info = lstatSync(entry, { bigint: true });
+          if (!info.isDirectory() || info.isSymbolicLink() || realpathSync(entry) !== entry || id(info) !== expected)
+            throw new Error('Plugin data changed before publication');
+        }
+        const info = lstatSync(marker);
+        if (lstatSync(directory, { throwIfNoEntry: false }) || !info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || info.size !== Buffer.byteLength(owner) ||
+            readFileSync(marker, 'utf8') !== owner) throw new Error('Plugin data changed before publication');
+      } });
     } catch (error) {
       // These paths were created by this invocation; never recursively remove
       // a directory or touch an unexpected child while recovering preparation.

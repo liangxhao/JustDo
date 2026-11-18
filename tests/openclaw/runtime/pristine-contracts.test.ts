@@ -96,6 +96,7 @@ const EXPECTED_PATCH_FILES = [
   '036-acp-completion-lineage.cjs',
   '037-project-skill-precedence.cjs',
   '038-subagent-model-inventory.cjs',
+  '039-mcp-app-model-continuity.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

@@ -15,11 +15,15 @@ import { i18nService } from '@/services/i18n';
 
 import type { OpenMcpAppFile } from '../mcpApps/fileApps';
 import type { FilePreview } from './FilePreviewDrawer';
-import { isCurrentFilePreviewRequest } from './filePreviewNavigation';
+import {
+  isCurrentFilePreviewRequest,
+  listenForResourceFilePreviews,
+} from './filePreviewNavigation';
 import { createImageFilePreview, IMAGE_PREVIEW_EVENT, isImageFilePath } from './imageFilePreview';
 
 export interface OpenFilePreviewOptions {
   filePath: string;
+  appHandlerId?: string;
   keepWorkspaceFilesOpen?: boolean;
   workingDirectory?: string;
   openUnsupportedInSystem?: boolean;
@@ -38,6 +42,7 @@ interface FilePreviewEventsOptions {
   setPreferredDisplayTabId: Dispatch<SetStateAction<string | null>>;
   setUnsupportedFilePreviews: Dispatch<SetStateAction<string[]>>;
   openAppFile?: OpenMcpAppFile;
+  trackResourcePreview?: (id: string) => void;
 }
 
 export function useFilePreviewEvents({
@@ -52,6 +57,7 @@ export function useFilePreviewEvents({
   setPreferredDisplayTabId,
   setUnsupportedFilePreviews,
   openAppFile,
+  trackResourcePreview,
 }: FilePreviewEventsOptions) {
   const openImage = useCallback(
     (src: string, label = '', workingDirectory?: string, keepWorkspaceFilesOpen = true) => {
@@ -83,7 +89,7 @@ export function useFilePreviewEvents({
   const openFilePreview = useCallback(
     async (detail: OpenFilePreviewOptions) => {
       if (!detail?.filePath || detail.isCurrent?.() === false) return;
-      if (isImageFilePath(detail.filePath)) {
+      if (!detail.appHandlerId && isImageFilePath(detail.filePath)) {
         openImage(detail.filePath, '', detail.workingDirectory, detail.keepWorkspaceFilesOpen);
         return;
       }
@@ -138,18 +144,26 @@ export function useFilePreviewEvents({
       let result: Awaited<ReturnType<typeof window.electron.shell.readPreviewFile>>;
       try {
         if (
-          !existingPreview &&
-          !getBrowserFilePreviewKind(detail.filePath) &&
-          !detail.openUnsupportedInSystem &&
-          openAppFile
+          detail.appHandlerId ||
+          (!existingPreview &&
+            !getBrowserFilePreviewKind(detail.filePath) &&
+            !detail.openUnsupportedInSystem &&
+            openAppFile)
         ) {
-          const opened = await openAppFile({
+          const opened = await openAppFile?.({
             filePath: detail.filePath,
             isCurrent: requestIsCurrent,
+            ...(detail.appHandlerId ? { handlerId: detail.appHandlerId } : {}),
           });
           if (!requestIsCurrent()) return;
           if (opened) {
             if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
+            return;
+          }
+          if (detail.appHandlerId) {
+            window.dispatchEvent(
+              new CustomEvent('app:showToast', { detail: i18nService.t('mcpAppsUnavailable') }),
+            );
             return;
           }
         }
@@ -264,6 +278,58 @@ export function useFilePreviewEvents({
       openImage,
     ],
   );
+  useEffect(
+    () =>
+      listenForResourceFilePreviews(({ preview, sessionId, isCurrent }) => {
+        if (!trackResourcePreview || sessionId !== currentSessionIdRef.current || !isCurrent())
+          return;
+        const { id } = preview.resourcePreview;
+        let prepared: FilePreview;
+        if (preview.kind === 'text' && typeof preview.content === 'string' && preview.version) {
+          prepared = {
+            kind: 'text',
+            filePath: preview.filePath,
+            content: preview.content,
+            editToken: '',
+            version: preview.version,
+            resourcePreviewId: id,
+          };
+        } else if (preview.kind === 'image' && preview.url) {
+          prepared = {
+            kind: 'image',
+            filePath: preview.filePath,
+            src: preview.url,
+            label: preview.resourcePreview.name,
+            resourcePreviewId: id,
+          };
+        } else if (isBrowserFilePreview(preview) && preview.url) {
+          prepared = {
+            kind: preview.kind,
+            filePath: preview.filePath,
+            url: preview.url,
+            resourcePreviewId: id,
+          };
+        } else if (preview.kind === 'unsupported') {
+          prepared = { kind: 'unsupported', filePath: preview.filePath, resourcePreviewId: id };
+        } else return Promise.resolve(false);
+        filePreviewRequestIdRef.current += 1;
+        trackResourcePreview(id);
+        setFilePreviews(current => [...current, prepared]);
+        setPreferredDisplayTabId(fileDisplayTabId(preview.filePath));
+        setIsDisplayPanelOpen(true);
+        return Promise.resolve(true);
+      }),
+    [
+      currentSessionIdRef,
+      fileDisplayTabId,
+      filePreviewRequestIdRef,
+      setFilePreviews,
+      setPreferredDisplayTabId,
+      setIsDisplayPanelOpen,
+      trackResourcePreview,
+    ],
+  );
+
   useEffect(() => {
     const handlePreviewImage = (event: Event) => {
       const detail = (event as CustomEvent<{ src: string; alt?: string }>).detail;

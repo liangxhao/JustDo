@@ -7,6 +7,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { WORKSPACE_FILES_DISPLAY_TAB_ID } from '../display/tabs/displayTabIds';
 import { useSessionDisplayState } from '../display/tabs/useSessionDisplayState';
 import type { OpenMcpAppFile } from '../mcpApps/fileApps';
+import { openResourceFilePreview } from './filePreviewNavigation';
 import { IMAGE_PREVIEW_EVENT } from './imageFilePreview';
 import { useFilePreviewEvents } from './useFilePreviewEvents';
 
@@ -17,7 +18,7 @@ function usePreviewHarness(openAppFile?: OpenMcpAppFile) {
   const currentSessionIdRef = useRef<string | null>('session-a');
   const navigationScope = useRef({});
   const filePreviewRequestIdRef = useRef(0);
-  const { state, setters } = useSessionDisplayState('session-a', 520);
+  const { state, setters, trackResourcePreview } = useSessionDisplayState('session-a', 520);
   const { filePreviews, unsupportedFilePreviews } = state;
   const {
     setFilePreviews,
@@ -32,6 +33,7 @@ function usePreviewHarness(openAppFile?: OpenMcpAppFile) {
   unsupportedFilePreviewsRef.current = unsupportedFilePreviews;
   const actions = useFilePreviewEvents({
     openAppFile,
+    trackResourcePreview,
     currentSessionIdRef,
     filePreviewRequestIdRef,
     filePreviewsRef,
@@ -46,6 +48,7 @@ function usePreviewHarness(openAppFile?: OpenMcpAppFile) {
   return {
     ...actions,
     ...state,
+    closeFiles: () => setters.setFilePreviews([]),
     captureNavigationScope: () => {
       const scope = navigationScope.current;
       return () => scope === navigationScope.current;
@@ -66,6 +69,45 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+test('an archived text resource opens in the owning sidebar without a disk copy and is released with its tab', async () => {
+  const filePath = 'mcp-resource://cache-id/archive.txt';
+  const readPreviewFile = vi.fn();
+  const releaseResourcePreview = vi.fn().mockResolvedValue({ success: true, value: null });
+  const revokePreviewFileEdit = vi.fn().mockResolvedValue({ success: true });
+  const openAppFile = vi.fn();
+  vi.stubGlobal('electron', {
+    shell: { readPreviewFile, revokePreviewFileEdit },
+    mcpApps: { releaseResourcePreview },
+  });
+  const owner = renderHook(() => usePreviewHarness(openAppFile));
+  const request = {
+    preview: {
+      kind: 'text' as const,
+      filePath,
+      content: 'archive',
+      version: '1',
+      resourcePreview: { id: 'cache-id', name: 'archive.txt' },
+    },
+    sessionId: 'session-a',
+    isCurrent: () => true,
+  };
+  await expect(openResourceFilePreview({ ...request, sessionId: 'unrelated' })).resolves.toBe(
+    false,
+  );
+  expect(readPreviewFile).not.toHaveBeenCalled();
+  await act(async () => expect(await openResourceFilePreview(request)).toBe(true));
+  expect(owner.result.current.preferredDisplayTabId).toEqual(fileDisplayTabId(filePath));
+  expect(owner.result.current.filePreviews).toMatchObject([
+    { filePath, resourcePreviewId: 'cache-id' },
+  ]);
+  expect(readPreviewFile).not.toHaveBeenCalled();
+  expect(revokePreviewFileEdit).not.toHaveBeenCalled();
+  expect(openAppFile).not.toHaveBeenCalled();
+  expect(releaseResourcePreview).not.toHaveBeenCalled();
+  act(() => owner.result.current.closeFiles());
+  expect(releaseResourcePreview).toHaveBeenCalledExactlyOnceWith('cache-id');
 });
 
 test('a direct message file action updates only its owning workspace', async () => {
@@ -109,6 +151,30 @@ test('a discovered file app handles a spreadsheet before the text preview reads 
   });
   expect(readPreviewFile).not.toHaveBeenCalled();
   expect(result.current.unsupportedFilePreviews).toEqual([]);
+});
+
+test('explicit App choice bypasses an existing plain preview and does not fall back if unavailable', async () => {
+  const filePath = 'E:/results.csv';
+  const handlerId = 'chosen-entry';
+  const readPreviewFile = vi.fn().mockResolvedValue({
+    success: true,
+    filePath,
+    content: 'city,visits',
+    editToken: 'grant',
+    version: '1',
+  });
+  const openAppFile = vi.fn().mockResolvedValue(false);
+  vi.stubGlobal('electron', { shell: { readPreviewFile } });
+  const { result } = renderHook(() => usePreviewHarness(openAppFile));
+  await act(async () => result.current.openFilePreview({ filePath }));
+  expect(readPreviewFile).toHaveBeenCalledOnce();
+  await act(async () => result.current.openFilePreview({ filePath, appHandlerId: handlerId }));
+  expect(openAppFile).toHaveBeenLastCalledWith({
+    filePath,
+    handlerId,
+    isCurrent: expect.any(Function),
+  });
+  expect(readPreviewFile).toHaveBeenCalledOnce();
 });
 
 test('unavailable file apps preserve the ordinary unsupported-file preview', async () => {

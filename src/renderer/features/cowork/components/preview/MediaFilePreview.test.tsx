@@ -75,3 +75,18 @@ it('preserves UNC host and escaped path characters without admitting other proto
   expect(localMediaPreviewUrl('javascript:alert(1)')).toBeNull();
   expect(localMediaPreviewUrl('https://example.com/movie.webm')).toBeNull();
 });
+
+it('plays the exact loopback resource URL only for a resource preview', () => {
+  const url = `http://127.0.0.1:23456/${'a'.repeat(64)}/original%20audio.wav`;
+  expect(localMediaPreviewUrl(url)).toBeNull();
+  render(<MediaFilePreview url={url} kind="audio" isVisible resourcePreview />);
+  expect(document.querySelector('audio')?.getAttribute('src')).toBe(url);
+  for (const invalid of [
+    url.replace('127.0.0.1', 'example.com'),
+    url.replace('127.0.0.1', 'localhost'),
+    url + '?other',
+    url + '#fragment',
+    url.replace(`/${'a'.repeat(64)}/`, '/other/'),
+  ])
+    expect(localMediaPreviewUrl(invalid, true)).toBeNull();
+});

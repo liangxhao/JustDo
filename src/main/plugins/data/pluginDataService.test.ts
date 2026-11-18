@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import fs, { existsSync } from 'node:fs';
 import { link, lstat, mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PLUGIN_DATA_OWNER_FILE,resolvePluginDataDirectory } from '../../../../plugins/sdk/app-plugin-sdk/data';
 import {
@@ -21,12 +21,40 @@ const migration = { directory: 'managed-v1', migrateLegacyDirectory: { requiredF
 const managed = (owner = 'sample') => path.join(state, 'plugin-data', owner);
 beforeEach(async () => { state = await mkdtemp(path.join(os.tmpdir(), 'plugin-data-test-')); });
 afterEach(async () => {
+  vi.restoreAllMocks();
   if (path.dirname(path.resolve(state)) !== path.resolve(os.tmpdir()) || !path.basename(state).startsWith('plugin-data-test-'))
     throw new Error('Unsafe test cleanup');
   await rm(state, { recursive: true, force: true });
 });
 
 describe('managed private plugin data', () => {
+  it('retries a refused first publication while preserving the prepared owner', async () => {
+    const original = fs.renameSync;
+    let refused = false;
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (String(from).includes('.preparing-sample-') && !refused) {
+        refused = true;
+        throw Object.assign(new Error('synthetic sharing violation'), { code: 'EPERM' });
+      }
+      return original(from, to);
+    });
+    const directory = await preparePluginDataDirectory(state, 'sample', retainedDeclaration);
+    expect(resolvePluginDataDirectory(state, 'sample', { retention: 'retain' })).toBe(directory);
+    expect(rename).toHaveBeenCalledTimes(2);
+  });
+
+  it('revalidates the staging owner before retrying a refused publication', async () => {
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementation(from => {
+      const marker = path.join(String(from), PLUGIN_DATA_OWNER_FILE);
+      const owner = JSON.parse(fs.readFileSync(marker, 'utf8'));
+      fs.writeFileSync(marker, JSON.stringify({ ...owner, dataId: randomUUID() }) + '\n');
+      throw Object.assign(new Error('synthetic sharing violation'), { code: 'EPERM' });
+    });
+    await expect(preparePluginDataDirectory(state, 'sample', retainedDeclaration)).rejects.toThrow('changed before publication');
+    expect(rename).toHaveBeenCalledOnce();
+    expect(existsSync(managed())).toBe(false);
+  });
+
   it('prepares a receipt owned directory shared by Main and Native, preserving its identity across updates', async () => {
     expect(await inspectPluginData(state, ['sample'])).toEqual({ exists: false, bytes: 0, canDelete: true });
     expect(existsSync(path.join(state, 'plugin-data'))).toBe(false);

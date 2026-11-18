@@ -12,6 +12,8 @@ import {
 import { t } from '../../core/i18n';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import type { NativeMcpDataBinding } from '../../plugins/data/nativeMcpData';
+import { nativeMcpDataDirectory } from '../../plugins/data/nativeMcpData';
 import { ensureExecutionReady } from '../runtime/executionReadiness';
 import { resolveManagedCredentialReloadTimeoutMs } from './models/credentialTimeouts';
 import {
@@ -293,6 +295,8 @@ describe('OpenClawConfigSyncService', () => {
     previousSecrets?: Record<string, string>;
     nextSecrets?: Record<string, string>;
     configPath?: string;
+    stateDir?: string;
+    getNativeMcpDataBindings?: () => Promise<readonly NativeMcpDataBinding[]>;
     permissionMode?: 'ask' | 'auto' | 'full';
     reportedPermissionMode?: 'ask' | 'auto' | 'full';
     configChanged?: boolean;
@@ -337,6 +341,8 @@ describe('OpenClawConfigSyncService', () => {
     });
     const engineManager = {
       getStatus,
+      getStateDir: () => options.stateDir,
+      withStoppedGatewayForMutation: vi.fn(),
       getGatewayConfigReloadGeneration: vi.fn(() => 7),
       getGatewayLifecycleGeneration: vi.fn(() => 1),
       waitForGatewayReadyAfter: vi.fn(async () => true),
@@ -459,6 +465,7 @@ describe('OpenClawConfigSyncService', () => {
       getOpenClawEngineManager: () => engineManager,
       getMcpStore: vi.fn(),
       getExtensionMcpServerNames: options.getExtensionMcpServerNames,
+      getNativeMcpDataBindings: options.getNativeMcpDataBindings,
       getHookStore: vi.fn(),
       disconnectGatewayClient,
       connectGatewayClient,
@@ -530,6 +537,28 @@ describe('OpenClawConfigSyncService', () => {
       },
     };
   };
+
+  it.each(['running', 'ready'] as const)(
+    'prepares owned data without stopping or restarting Gateway (phase=%s)', async phase => {
+      const state = fs.mkdtempSync(path.join(os.tmpdir(), 'native-mcp-preparation-'));
+      try {
+        const f = createHarness({ phase, stateDir: state,
+          getNativeMcpDataBindings: async () => [{ pluginId: 'not-prepared', servers: {} }],
+        });
+        const result = await f.service.syncConfig({ reason: 'plugin-data-test', discoverExternalMcpServers: false });
+        expect(result).toMatchObject({ success: true, configSynced: true });
+        expect(nativeMcpDataDirectory(state, 'not-prepared')).toBe(path.join(state, 'plugin-data', 'not-prepared'));
+        expect(f.engineManager.withStoppedGatewayForMutation).not.toHaveBeenCalled();
+        expect(f.stopGateway).not.toHaveBeenCalled();
+        expect(f.startGateway).not.toHaveBeenCalled();
+        expect(f.engineManager.restartGateway).not.toHaveBeenCalled();
+      } finally {
+        expect(path.dirname(state)).toBe(path.resolve(os.tmpdir()));
+        expect(path.basename(state).startsWith('native-mcp-preparation-')).toBe(true);
+        fs.rmSync(state, { recursive: true, force: true });
+      }
+    },
+  );
 
   const createPendingCredentialHarness = async (options: Parameters<typeof createHarness>[0] = {}) => {
     let sessionId = 'original-session';

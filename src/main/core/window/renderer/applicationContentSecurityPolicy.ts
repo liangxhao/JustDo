@@ -32,7 +32,7 @@ export const buildApplicationContentSecurityPolicy = ({
     // Connections use configured Gateway/model endpoints; their native policies apply.
     "connect-src 'self' *",
     "font-src 'self' data:",
-    "media-src 'self' blob: data: localmedia:",
+    "media-src 'self' blob: data: localmedia: http://127.0.0.1:*",
     "worker-src 'self' blob:",
     "frame-src 'self' https: http:",
     "object-src 'none'",

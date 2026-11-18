@@ -129,6 +129,7 @@ import FilePreviewDrawer, {
 import {
   type FilePreviewNavigationOptions,
   isFilePreviewWithinPath,
+  openResourceFilePreview,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import { MessageFileLinkContext } from '@/features/cowork/components/preview/messageFileLinks';
@@ -448,6 +449,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     },
     setSessionField,
     openBrowserTab,
+    trackResourcePreview,
     promote: promoteDisplaySession,
   } = useSessionDisplayState(
     currentSessionId,
@@ -668,9 +670,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   );
   const appFileOpenerRef = useRef<OpenMcpAppFile>(async () => false);
   const homeFileOpenerRef = useRef<OpenMcpAppFile>(async () => false);
-  appFileOpenerRef.current = async request => {
+  appFileOpenerRef.current = async input => {
+    const request = {
+      ...input,
+      focusExisting: (handlerId: string) => mcpAppTabs.focusFile(input.filePath, handlerId),
+    };
     if (!request.isCurrent()) return false;
-    if (mcpAppTabs.focusFile(request.filePath)) return true;
     if (!currentSessionId) return homeFileOpenerRef.current(request);
     return mcpAppMenu?.sessionId === currentSessionId
       ? ((await mcpAppMenu.openFile?.(request)) ?? false)
@@ -1832,6 +1837,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setPreferredDisplayTabId,
     setUnsupportedFilePreviews,
     openAppFile,
+    trackResourcePreview,
   });
 
   useEffect(() => {
@@ -3105,7 +3111,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
     return withMessageFileLinks(
       <div className="relative flex-1 flex flex-col h-full">
-        <div className="cowork-display-host relative flex min-h-0 flex-1">
+        <div key="cowork-display-host" className="cowork-display-host relative flex min-h-0 flex-1">
           <div ref={bindChatContentWidth} className="relative flex min-w-0 flex-1 flex-col">
             <div className="cowork-workspace-header relative flex shrink-0 items-center justify-between border-b border-border px-2">
               <div className="non-draggable flex h-7 min-w-0 flex-1 items-center overflow-hidden">
@@ -3438,6 +3444,11 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onOpenMcpAppFile={async file => {
                 const sessionId = currentSessionIdRef.current;
                 if (!sessionId || sessionId !== currentSession.id) return false;
+                if (file.preview) return openResourceFilePreview({
+                  preview: file.preview,
+                  sessionId,
+                  isCurrent: () => currentSessionIdRef.current === sessionId && file.isCurrent(),
+                });
                 window.dispatchEvent(
                   new CustomEvent('cowork:preview-file', {
                     detail: {
@@ -3684,11 +3695,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                     revealVersion={filesRevealVersion}
                     activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
                     sessionId={currentSession.id}
-                    onOpenFile={filePath => {
+                    onOpenFile={(filePath, appHandlerId) => {
                       window.dispatchEvent(
                         new CustomEvent('cowork:preview-file', {
                           detail: {
                             filePath,
+                            appHandlerId,
                             keepWorkspaceFilesOpen: true,
                             workingDirectory: currentSessionFolderPath,
                           },

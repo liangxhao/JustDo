@@ -9,7 +9,11 @@ export const MCP_APP_DOWNLOAD_TYPES: Readonly<Record<string, readonly string[]>>
   'application/pdf': ['pdf'],
   'text/plain': ['txt'],
   'text/csv': ['csv'],
+  'text/tab-separated-values': ['tsv'],
+  'application/x-ndjson': ['ndjson'],
+  'application/vnd.apache.arrow.file': ['arrow'],
   'text/markdown': ['md'],
+  'text/html': ['html'],
   'application/json': ['json'],
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['xlsx'],
 };

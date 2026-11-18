@@ -25,6 +25,7 @@ import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
+import { decodeMcpAppLaunch, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
 import type { GatewayClient, GatewayEventFrame } from '../client';
 
 export interface McpAppSessionBinding {
@@ -694,7 +695,12 @@ export class McpAppSessionView {
           throw error;
       }
     }
-    return this.request(McpAppMethod.Launch, { ...input }, signal);
+    const launched = await this.request(McpAppMethod.Launch, { ...input }, signal);
+    if (
+      input.entrypointType === 'file' &&
+      readNativeMcpAppIdentity(decodeMcpAppLaunch(launched))?.toolName !== input.toolName
+    ) throw new Error('MCP App launch did not match the selected file tool');
+    return launched;
   }
 
   private async dispatch<T = unknown>(

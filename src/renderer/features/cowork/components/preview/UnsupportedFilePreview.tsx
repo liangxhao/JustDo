@@ -17,6 +17,7 @@ interface UnsupportedFilePreviewProps {
   filePath: string;
   isObscured?: boolean;
   onClose: () => void;
+  readOnly?: boolean;
 }
 
 type PendingAction = 'default' | 'folder' | 'open-with' | null;
@@ -29,6 +30,7 @@ const UnsupportedFilePreview = ({
   filePath,
   isObscured = false,
   onClose,
+  readOnly = false,
 }: UnsupportedFilePreviewProps) => {
   const toolbarTarget = useContext(FilePreviewToolbarContext);
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
@@ -161,14 +163,17 @@ const UnsupportedFilePreview = ({
             <div className="truncate text-sm font-semibold text-foreground" title={fileName}>
               {fileName}
             </div>
-            <div className="truncate text-xs text-muted" title={filePath}>
-              {filePath}
-            </div>
+            {!readOnly && (
+              <div className="truncate text-xs text-muted" title={filePath}>
+                {filePath}
+              </div>
+            )}
           </div>
           {closeButton}
         </header>
       )}
-      {toolbarTarget &&
+      {!readOnly &&
+        toolbarTarget &&
         !isObscured &&
         createPortal(
           <div className="flex shrink-0 items-center gap-1">{fileActions}</div>,
@@ -183,14 +188,17 @@ const UnsupportedFilePreview = ({
           <h2 className="text-base font-semibold text-foreground">
             {i18nService.t('coworkUnsupportedFilePreviewTitle')}
           </h2>
-          <p className="mt-2 text-sm leading-6 text-secondary">
-            {i18nService.t('coworkUnsupportedFilePreviewDescription')}
-          </p>
-          {toolbarTarget ? (
-            <div className="mt-6">{renderOpenDefaultButton(false)}</div>
-          ) : (
-            <div className="mt-6 grid w-full gap-2">{fileActions}</div>
+          {!readOnly && (
+            <p className="mt-2 text-sm leading-6 text-secondary">
+              {i18nService.t('coworkUnsupportedFilePreviewDescription')}
+            </p>
           )}
+          {!readOnly &&
+            (toolbarTarget ? (
+              <div className="mt-6">{renderOpenDefaultButton(false)}</div>
+            ) : (
+              <div className="mt-6 grid w-full gap-2">{fileActions}</div>
+            ))}
         </div>
       </div>
     </section>

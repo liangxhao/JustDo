@@ -82,7 +82,7 @@ function debugLog(...args: unknown[]): void {
 interface JustDoChatWrapperProps {
   onWidgetDraft?: (sessionKey: string, text: string) => void | boolean;
   onWidgetLink?: (sessionKey: string, url: string) => void;
-  onOpenMcpAppFile?: (file: { path: string; name: string }) => Promise<boolean>;
+  onOpenMcpAppFile?: McpAppViewContext['openFile'];
   mcpAppFilePath?: string;
   onNewMcpAppDraft?: (text: string, content: unknown[]) => Promise<boolean>;
   onMcpAppMenuChange?: (menu: McpAppComposerMenu) => void;

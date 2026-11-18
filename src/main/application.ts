@@ -306,6 +306,7 @@ import {
   createPluginMarketplaceService,
   discoverExtensionMcpOverrideNames,
   discoverExtensionMcpServers,
+  discoverNativeMcpDataBindings,
   discoverOpenClawManagedMcpServers,
   McpServices,
   OpenClawExtensionImportService,
@@ -935,6 +936,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       getAppPluginPolicy: () => getAppPlugins().registry.nativePolicy(),
       getOpenClawEngineManager,
       getMcpStore,
+      getNativeMcpDataBindings: () => discoverNativeMcpDataBindings(getOpenClawEngineManager()),
       getExtensionMcpServerNames: () =>
         discoverExtensionMcpOverrideNames(
           getOpenClawEngineManager(),
@@ -2067,7 +2069,7 @@ if (agentBridgeArgv) {
       getCoworkEngineService().requestGateway<T>(method, params),
   });
 
-  const { setSessionWorkspace, discoverNativeChildSessions } = registerCoworkSessionHandlers({
+  const { setSessionWorkspace, discoverNativeChildSessions, disposeMcpAppResourcePreviews } = registerCoworkSessionHandlers({
     isAllowedWorkspaceSender: event =>
       !!mainWindow &&
       !mainWindow.isDestroyed() &&
@@ -2417,6 +2419,7 @@ if (agentBridgeArgv) {
           () => startupEnginePreparationController?.settle(),
           () => embeddedBrowserGatewayBridge?.revoke(),
           () => browserAgentBridge.stop(),
+          disposeMcpAppResourcePreviews,
           stopBrowserAuthenticationTransport,
           () => outboundHeaderProxy?.stop(),
         ]),

@@ -14,11 +14,13 @@ export default function BrowserFilePreviewPanel({
   onClose,
   isObscured = false,
   embedded = false,
+  readOnly = false,
 }: {
-  preview: BrowserFilePreview;
+  preview: BrowserFilePreview & { resourcePreviewId?: string };
   onClose: () => void;
   isObscured?: boolean;
   embedded?: boolean;
+  readOnly?: boolean;
 }) {
   const sharedToolbarTarget = useContext(FilePreviewToolbarContext);
   const toolbarTarget = embedded ? sharedToolbarTarget : null;
@@ -26,56 +28,60 @@ export default function BrowserFilePreviewPanel({
   const [isOpening, setIsOpening] = useState(false);
   const actions = (
     <>
-      <button
-        type="button"
-        className="rounded p-2 text-secondary hover:bg-surface-raised"
-        disabled={isOpening}
-        aria-label={i18nService.t('coworkUnsupportedFileOpenDefault')}
-        title={i18nService.t('coworkUnsupportedFileOpenDefault')}
-        onClick={() => {
-          setIsOpening(true);
-          void window.electron.shell
-            .openPath(preview.filePath)
-            .then(result => {
-              if (!result.success) throw new Error('Unable to open file');
-            })
-            .catch(() =>
-              window.dispatchEvent(
-                new CustomEvent('app:showToast', {
-                  detail: i18nService.t('coworkUnsupportedFileOpenFailed'),
-                }),
-              ),
-            )
-            .finally(() => setIsOpening(false));
-        }}
-      >
-        <ArrowTopRightOnSquareIcon className="h-4 w-4" />
-      </button>
-      <button
-        type="button"
-        className="rounded p-2 text-secondary hover:bg-surface-raised"
-        disabled={isShowingInFolder}
-        aria-label={i18nService.t('coworkFilePreviewShowInFolder')}
-        title={i18nService.t('coworkFilePreviewShowInFolder')}
-        onClick={() => {
-          setIsShowingInFolder(true);
-          void window.electron.shell
-            .showItemInFolder(preview.filePath)
-            .then(result => {
-              if (!result.success) throw new Error('Unable to show file');
-            })
-            .catch(() => {
-              window.dispatchEvent(
-                new CustomEvent('app:showToast', {
-                  detail: i18nService.t('coworkFilePreviewShowInFolderFailed'),
-                }),
-              );
-            })
-            .finally(() => setIsShowingInFolder(false));
-        }}
-      >
-        <FolderOpenIcon className="h-4 w-4" />
-      </button>
+      {!readOnly && (
+        <>
+          <button
+            type="button"
+            className="rounded p-2 text-secondary hover:bg-surface-raised"
+            disabled={isOpening}
+            aria-label={i18nService.t('coworkUnsupportedFileOpenDefault')}
+            title={i18nService.t('coworkUnsupportedFileOpenDefault')}
+            onClick={() => {
+              setIsOpening(true);
+              void window.electron.shell
+                .openPath(preview.filePath)
+                .then(result => {
+                  if (!result.success) throw new Error('Unable to open file');
+                })
+                .catch(() =>
+                  window.dispatchEvent(
+                    new CustomEvent('app:showToast', {
+                      detail: i18nService.t('coworkUnsupportedFileOpenFailed'),
+                    }),
+                  ),
+                )
+                .finally(() => setIsOpening(false));
+            }}
+          >
+            <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="rounded p-2 text-secondary hover:bg-surface-raised"
+            disabled={isShowingInFolder}
+            aria-label={i18nService.t('coworkFilePreviewShowInFolder')}
+            title={i18nService.t('coworkFilePreviewShowInFolder')}
+            onClick={() => {
+              setIsShowingInFolder(true);
+              void window.electron.shell
+                .showItemInFolder(preview.filePath)
+                .then(result => {
+                  if (!result.success) throw new Error('Unable to show file');
+                })
+                .catch(() => {
+                  window.dispatchEvent(
+                    new CustomEvent('app:showToast', {
+                      detail: i18nService.t('coworkFilePreviewShowInFolderFailed'),
+                    }),
+                  );
+                })
+                .finally(() => setIsShowingInFolder(false));
+            }}
+          >
+            <FolderOpenIcon className="h-4 w-4" />
+          </button>
+        </>
+      )}
       {!toolbarTarget && (
         <button
           type="button"
@@ -121,6 +127,7 @@ export default function BrowserFilePreviewPanel({
           url={preview.url}
           kind={preview.kind}
           isVisible={!isObscured}
+          resourcePreview={Boolean(preview.resourcePreviewId)}
         />
       )}
     </section>

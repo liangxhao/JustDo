@@ -12,6 +12,7 @@ import {
 } from '../../../shared/agents/agentRuntimeSettings';
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser/browser';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
+import { type NativeMcpDataBinding,nativeMcpDataDirectory, prepareNativeMcpData } from '../../plugins/data/nativeMcpData';
 import {
   clearActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
@@ -95,6 +96,7 @@ const createConfigurationFixture = (
   configured: boolean,
   executionMode: 'local' | 'auto' | 'sandbox' = 'local',
   existing?: Record<string, unknown>,
+  bindings: NativeMcpDataBinding[] = [],
 ) => {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'native-config-contract-'));
   temporaryDirectories.push(stateDir);
@@ -125,9 +127,33 @@ const createConfigurationFixture = (
     }),
     getBrowserMode: () => BrowserMode.User,
     getAgents: () => [],
+    getNativeMcpDataBindings: () => bindings,
   } as never);
   return { configPath, stateDir, sync, read: () => JSON.parse(fs.readFileSync(configPath, 'utf8')) };
 };
+
+test.each([true, false])('projects SDK data consistently through configured=%s startup, auth and withdrawal', async configured => {
+  const bindings: NativeMcpDataBinding[] = [{ pluginId: 'data-fixture',
+    servers: { data: { command: 'node', args: ['synthetic.cjs'], env: { PLUGIN_DATA: '${PLUGIN_DATA}' } } } }];
+  const f = createConfigurationFixture(configured, 'local', {
+    plugins: { allow: ['data-fixture'], entries: { 'data-fixture': { enabled: true } } },
+  }, bindings);
+  const extension = path.join(f.stateDir, 'extensions', 'data-fixture');
+  fs.mkdirSync(extension, { recursive: true });
+  fs.writeFileSync(path.join(extension, 'openclaw.plugin.json'), JSON.stringify({ id: 'data-fixture' }));
+  await prepareNativeMcpData(f.stateDir, ['data-fixture']);
+  const directory = nativeMcpDataDirectory(f.stateDir, 'data-fixture');
+  for (const reason of ['startup', BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout]) {
+    expect(f.sync.sync(reason).ok).toBe(true);
+    const value = f.read();
+    expect(value.plugins.entries['data-fixture'].config.dataDirectory).toBe(directory);
+    expect(value.mcp.servers.data.env.PLUGIN_DATA).toBe(directory);
+  }
+  bindings.length = 0;
+  expect(f.sync.sync('extension-disable').ok).toBe(true);
+  expect(f.read().mcp.servers.data).toBeUndefined();
+  expect(f.read().plugins.entries['data-fixture'].config.dataDirectory).toBeUndefined();
+});
 
 describe('native configuration execution policy contracts', () => {
   test.each(

@@ -42,6 +42,8 @@ export const McpAppIpc = {
   UploadQuestion: 'mcp-apps:questions:upload',
   QuestionsChanged: 'mcp-apps:questions:changed',
   DownloadFile: 'mcp-apps:file:download',
+  StageResourcePreview: 'mcp-apps:resource-preview:stage',
+  ReleaseResourcePreview: 'mcp-apps:resource-preview:release',
 } as const;
 
 export interface NativeAppQuestion {
@@ -97,6 +99,10 @@ export interface McpAppWorkspaceBinding {
   agentId: string;
 }
 export interface McpAppHostApi {
+  stageResourcePreview: (
+    input: import('./mcpAppResourcePreview').McpAppResourcePreviewStageInput,
+  ) => Promise<McpAppIpcResult<import('./mcpAppResourcePreview').McpAppStagedResourcePreview>>;
+  releaseResourcePreview: (id: string) => Promise<McpAppIpcResult<null>>;
   downloadFile: (
     input: import('./mcpAppDownload').McpAppDownloadInput,
   ) => Promise<McpAppIpcResult<{ canceled: boolean }>>;

@@ -20,7 +20,15 @@ import {
 
 vi.mock('./NativeAppQuestions', () => ({ NativeAppQuestions: () => null }));
 vi.mock('@/libs/openclaw-chat/pipeline/native-mcp-app', () => ({
-  decodeMcpAppLaunch: (value: unknown) => (value === 'launched' ? { viewId: 'view' } : undefined),
+  decodeMcpAppLaunch: (value: unknown) => value === 'launched' ? {
+    viewId: 'view',
+    descriptor: {
+      serverName: 'sheets',
+      uiResourceUri: 'ui://sheets/editor',
+      originSessionKey: 'agent:main:session',
+    },
+  } : value,
+  readNativeMcpAppIdentity: (value?: { descriptor?: unknown }) => value?.descriptor,
 }));
 vi.mock('./workspaceApps', () => ({
   openWorkspaceApp: vi.fn(),
@@ -613,13 +621,18 @@ test.each([false, true])(
             serverName: 'sheets',
             label: 'Sheets',
             entrypoints: [
-              { toolName: 'preview_file', entrypoint: { type: 'file', extensions: ['.xlsx'] } },
+              {
+                toolName: 'preview_file',
+                title: 'Sheets',
+                resourceUri: 'ui://sheets/editor',
+                entrypoint: { type: 'file', extensions: ['.xlsx'] },
+              },
             ],
           },
         ],
       }),
     };
-    const context = { apps, isCurrent: () => true } as unknown as McpAppViewContext;
+    const context = { apps, isCurrent: () => true, sessionKey: 'agent:main:session' } as unknown as McpAppViewContext;
     context.resume = vi.fn(() => ({ ...context }));
     const prepare = vi.fn().mockResolvedValue(context);
     render(
@@ -685,9 +698,18 @@ test.each([false, true])(
       expect(launch).toHaveBeenCalledTimes(3);
       expect((await resumed!.reopen!()).preview.viewId).toBe('view');
       expect(launch).toHaveBeenCalledTimes(4);
+      launch.mockResolvedValueOnce({
+        viewId: 'view',
+        descriptor: {
+          serverName: 'sheets',
+          uiResourceUri: 'ui://sheets/replaced',
+          originSessionKey: context.sessionKey,
+        },
+      });
+      await expect(resumed!.reopen!()).rejects.toThrow('superseded');
       canInteract = false;
       await expect(resumed!.reopen!()).rejects.toThrow('no longer available');
-      expect(launch).toHaveBeenCalledTimes(4);
+      expect(launch).toHaveBeenCalledTimes(5);
     }
   },
 );

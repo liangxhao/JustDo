@@ -78,7 +78,7 @@ if (!process.versions.electron) {
       entryPoints: [path.join(__dirname, 'home-navigation-host.tsx')],
       outfile: path.join(output, 'host.js'),
       alias: { '@shared': path.join(root, 'src/shared'), '@': path.join(root, 'src/renderer') },
-      loader: { '.png': 'dataurl' },
+      loader: { '.md': 'text', '.png': 'dataurl' },
       plugins,
     });
     const editor = esbuild.buildSync({

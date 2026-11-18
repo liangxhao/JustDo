@@ -64,7 +64,18 @@ const resolveDefinition = (name) => {
     override.enabled === false && Object.keys(override).length === 1;
   return !disableOnly && override ? override : bundle.config.mcpServers[name];
 };
-if (mode === 'list') {
+if (mode === 'data') {
+  const bindings = manifestRegistry.plugins.flatMap(plugin => {
+    if (plugin.format === 'bundle' || !plugin.mcpServers) return [];
+    const names = Object.entries(plugin.mcpServers).filter(([name, server]) =>
+      bundle.pluginIdsByServer[name] === plugin.id && server && typeof server.command === 'string' &&
+      server.env?.PLUGIN_DATA === '\${PLUGIN_DATA}').map(([name]) => name);
+    if (!names.length) return [];
+    return [{ pluginId: plugin.id,
+      servers: Object.fromEntries(names.map(name => [name, bundle.config.mcpServers[name]])) }];
+  });
+  process.stdout.write('${OUTPUT_PREFIX}' + JSON.stringify(bindings));
+} else if (mode === 'list') {
   const inventory = inspected.flatMap(({ plugin, support }) => {
     const stdio = new Set(support.stdioServerNames);
     return [{ plugin: { id: plugin.id, name: plugin.name, description: plugin.description,
@@ -175,7 +186,7 @@ const runCommand: ExtensionMcpCommandRunner = async (executable, args, options) 
 
 export const runExtensionMcpOperation = async <T>(
   manager: OpenClawEngineManager,
-  mode: 'list' | 'probe' | 'read' | 'settings',
+  mode: 'list' | 'probe' | 'read' | 'settings' | 'data',
   id = '',
   uri = '',
   runner: ExtensionMcpCommandRunner = runCommand,

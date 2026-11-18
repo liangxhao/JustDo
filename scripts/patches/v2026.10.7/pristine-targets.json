@@ -359,6 +359,15 @@
       "targets": [
         "dist/spawn-thread-binding-CKE2AseF.mjs"
       ]
+    },
+    {
+      "file": "039-mcp-app-model-continuity.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/mcp-app-extensions-abaft4XG.mjs",
+        "dist/mcp-app-host-files-CYEqGNXR.mjs"
+      ]
     }
   ],
   "targets": [
@@ -497,6 +506,10 @@
     {
       "file": "dist/mcp-app-extensions-abaft4XG.mjs",
       "sha256": "a89da5dc63edfadd2f50e3391cbc0a9ab10b2c76084811967e17917e1b43d75c"
+    },
+    {
+      "file": "dist/mcp-app-host-files-CYEqGNXR.mjs",
+      "sha256": "29bb9a03b3c559dacf52b7807c0ad2963abe5ff1b53e1812252e86bf2ea377d6"
     },
     {
       "file": "dist/missing-configured-plugin-install-DvHA_e--.mjs",

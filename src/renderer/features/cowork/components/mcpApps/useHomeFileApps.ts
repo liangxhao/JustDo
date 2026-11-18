@@ -10,7 +10,8 @@ import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app
 import { i18nService } from '@/services/i18n';
 
 import { HOME_DISPLAY_SESSION_KEY } from '../display/tabs/useSessionDisplayState';
-import { findFileApp, type OpenMcpAppFile } from './fileApps';
+import { openResourceFilePreview } from '../preview/filePreviewNavigation';
+import { decodeFileAppLaunch, findFileApp, type OpenMcpAppFile } from './fileApps';
 import { McpAppIcon } from './McpAppIcon';
 import type { McpAppComposerMenu } from './McpAppsControls';
 import { openWorkspaceAppFile, openWorkspaceAppLaunch } from './workspaceApps';
@@ -156,6 +157,11 @@ export function useHomeFileApps(options: Options): {
             interactive() ? latest.current.addDraft(text) : Promise.resolve(false),
           openFile: async file => {
             if (!interactive()) return false;
+            if (file.preview) return openResourceFilePreview({
+              preview: file.preview,
+              sessionId: created.targetSessionId ?? null,
+              isCurrent: () => interactive() && file.isCurrent(),
+            });
             window.dispatchEvent(
               new CustomEvent('cowork:preview-file', {
                 detail: {
@@ -334,8 +340,11 @@ export function useHomeFileApps(options: Options): {
         return false;
       }
       if (!current() || !request.isCurrent() || !context.isCurrent()) return false;
-      const input = findFileApp(catalog, request.filePath);
-      if (!input) return false;
+      const handler = findFileApp(catalog, request.filePath, request.handlerId);
+      if (!handler) return false;
+      const { id: handlerId, input, icons } = handler;
+      if (request.focusExisting?.(handlerId)) return true;
+      const fileName = request.filePath.split(/[\\/]/).pop() || request.filePath;
       const load = async (signal?: AbortSignal, ownEpoch = navigation.current) => {
         const currentLoad = () =>
           active.current &&
@@ -345,16 +354,15 @@ export function useHomeFileApps(options: Options): {
         if (!currentLoad() || signal?.aborted) throw new Error('App workspace changed');
         const fresh = await session.prepare();
         const discovery = await session.apps.discover(signal);
-        const handler = findFileApp(discovery, request.filePath);
+        const selected = findFileApp(discovery, request.filePath, handlerId);
         if (
           !currentLoad() ||
           !fresh.isCurrent() ||
           signal?.aborted ||
-          handler?.serverName !== input.serverName ||
-          handler.toolName !== input.toolName
+          !selected
         )
           throw new Error('File App is no longer available');
-        const preview = decodeMcpAppLaunch(await session.apps.launch(input, signal));
+        const preview = decodeFileAppLaunch(await session.apps.launch(input, signal), selected, fresh.sessionKey);
         if (!preview || !currentLoad() || !fresh.isCurrent() || signal?.aborted)
           throw new Error('File App open was superseded');
         const fileContext = (base: McpAppViewContext): McpAppViewContext => ({
@@ -368,11 +376,12 @@ export function useHomeFileApps(options: Options): {
         return { preview, context: fileContext(fresh) };
       };
       openWorkspaceAppFile({
-        id: `mcp-app-file:${HOME_DISPLAY_SESSION_KEY}:${scope.requestId}:${request.filePath}`,
+        id: `mcp-app-file:${JSON.stringify([HOME_DISPLAY_SESSION_KEY, scope.requestId, request.filePath, handlerId])}`,
         sessionId: HOME_DISPLAY_SESSION_KEY,
         filePath: request.filePath,
-        label: request.filePath.split(/[\\/]/).pop() || request.filePath,
-        icons: resolveMcpAppIcons(catalog, input),
+        fileHandlerId: handlerId,
+        label: request.handlerId ? `${fileName} · ${handler.label}` : fileName,
+        icons,
         load: signal => load(signal, epoch),
       });
       return true;

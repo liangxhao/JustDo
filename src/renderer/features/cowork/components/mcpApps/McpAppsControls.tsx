@@ -28,7 +28,7 @@ import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app
 import { i18nService } from '@/services/i18n';
 
 import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
-import { findFileApp, type OpenMcpAppFile } from './fileApps';
+import { decodeFileAppLaunch, findFileApp, type OpenMcpAppFile } from './fileApps';
 import { McpAppIcon } from './McpAppIcon';
 import { type AppSettings, appSettingsSchema, McpAppSettings } from './McpAppSettings';
 import { APP_BUTTON, APP_ICON_BUTTON, APP_INPUT } from './mcpAppStyles';
@@ -280,13 +280,14 @@ export function McpAppsControls({
       fileCatalog: canDraft() ? catalog : undefined,
       openFile: async request => {
         if (!available() || !request.isCurrent()) return false;
-        const input = findFileApp(fileActions.current.catalog, request.filePath);
-        if (!input) return false;
+        const handler = findFileApp(fileActions.current.catalog, request.filePath, request.handlerId);
+        if (!handler) return false;
+        const { id: handlerId, input, icons } = handler;
+        if (request.focusExisting?.(handlerId)) return true;
+        const fileName = request.filePath.split(/[\\/]/).pop() || request.filePath;
         const epoch = lifecycle.fileEpoch;
-        const sameHandler = () => {
-          const handler = findFileApp(fileActions.current.catalog, request.filePath);
-          return handler?.serverName === input.serverName && handler.toolName === input.toolName;
-        };
+        const sameHandler = () =>
+          Boolean(findFileApp(fileActions.current.catalog, request.filePath, handlerId));
         const load = async (signal?: AbortSignal) => {
           // Each explicit retry may use a reconnected binding; an in-flight
           // attempt must still reject a binding change during preparation.
@@ -300,7 +301,7 @@ export function McpAppsControls({
           const context = await fileActions.current.prepare();
           if (!current() || !sameHandler() || signal?.aborted || !context.isCurrent())
             throw new Error('File App session changed');
-          const preview = decodeMcpAppLaunch(await apps.launch(input, signal));
+          const preview = decodeFileAppLaunch(await apps.launch(input, signal), handler, context.sessionKey);
           if (!preview || !current() || !sameHandler() || signal?.aborted || !context.isCurrent())
             throw new Error('File App open was superseded');
           const fileContext = (base: McpAppViewContext): McpAppViewContext => ({
@@ -310,31 +311,28 @@ export function McpAppsControls({
               return resumed ? fileContext(resumed) : undefined;
             },
             reopen: async () => {
-              const currentInput = findFileApp(fileActions.current.catalog, request.filePath);
-              if (
-                !fileActions.current.canDraft() ||
-                currentInput?.serverName !== input.serverName ||
-                currentInput.toolName !== input.toolName
-              )
+              if (!fileActions.current.canDraft() || !sameHandler())
                 throw new Error('File App is no longer available');
               const fresh = base.refresh
                 ? await base.refresh()
                 : await fileActions.current.prepare();
-              if (!fresh.isCurrent() || fresh.sessionKey !== context.sessionKey)
+              if (!fresh.isCurrent() || !sameHandler() || fresh.sessionKey !== context.sessionKey)
                 throw new Error('File App session changed');
-              const next = decodeMcpAppLaunch(await apps.launch(input));
-              if (!next || !fresh.isCurrent()) throw new Error('File App reopen was superseded');
+              const next = decodeFileAppLaunch(await apps.launch(input), handler, fresh.sessionKey);
+              if (!next || !fresh.isCurrent() || !sameHandler())
+                throw new Error('File App reopen was superseded');
               return { preview: next, context: fileContext(fresh) };
             },
           });
           return { preview, context: fileContext(context) };
         };
         openWorkspaceAppFile({
-          id: `mcp-app-file:${sessionId}:${request.filePath}`,
+        id: `mcp-app-file:${JSON.stringify([sessionId, request.filePath, handlerId])}`,
           sessionId,
           filePath: request.filePath,
-          label: request.filePath.split(/[\\/]/).pop() || request.filePath,
-          icons: resolveMcpAppIcons(fileActions.current.catalog, input),
+        fileHandlerId: handlerId,
+          label: request.handlerId ? `${fileName} · ${handler.label}` : fileName,
+          icons,
           load,
         });
         return true;

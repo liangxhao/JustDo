@@ -63,7 +63,7 @@ test('home and conversation layouts retain the same App DOM even when the next s
       } as unknown as Parameters<typeof renderCoworkHomeWorkspace>[0]);
     return (
       <div>
-        <div>
+        <div key="cowork-display-host">
           <main />
           {tabs.hasRetainedPanels && (
             <CoworkDisplayPanel
@@ -89,6 +89,27 @@ test('home and conversation layouts retain the same App DOM even when the next s
   fixture.rerender(<Fixture home />);
   await act(async () => {});
   expect(document.querySelector('test-mcp-app-view')).toBe(view);
+});
+
+test('the explicitly selected handler focuses its own tab for the same file path', () => {
+  const select = vi.fn();
+  const { result } = renderHook(() => useMcpAppTabs('session', select, vi.fn()));
+  const filePath = 'E:/results.csv';
+  const entry = {
+    sessionId: 'session',
+    filePath,
+    preview: { title: 'CSV', viewId: 'csv' },
+    context: { isCurrent: () => true },
+  } as McpAppWorkspaceEntry;
+  act(() => {
+    openWorkspaceApp({ ...entry, id: 'univer-file', fileHandlerId: 'univer' });
+    openWorkspaceApp({ ...entry, id: 'analysis-file', fileHandlerId: 'analysis' });
+  });
+  expect(result.current.focusFile(filePath, 'univer')).toBe(true);
+  expect(select).toHaveBeenLastCalledWith('univer-file');
+  expect(result.current.focusFile(filePath, 'analysis')).toBe(true);
+  expect(select).toHaveBeenLastCalledWith('analysis-file');
+  expect(result.current.focusFile(filePath, 'removed')).toBe(false);
 });
 
 test('file tabs keep the filename, focus the current view and replace invalidated views', () => {

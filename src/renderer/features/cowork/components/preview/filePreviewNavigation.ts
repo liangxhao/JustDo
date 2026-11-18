@@ -1,3 +1,39 @@
+import type { McpAppStagedResourcePreview } from '@shared/plugins/mcpAppResourcePreview';
+
+const resourcePreviewEvent = 'cowork:preview-resource';
+
+export interface ResourceFilePreviewRequest {
+  preview: McpAppStagedResourcePreview;
+  sessionId: string | null;
+  isCurrent: () => boolean;
+}
+
+export function openResourceFilePreview(request: ResourceFilePreviewRequest): Promise<boolean> {
+  let result: Promise<boolean> | undefined;
+  window.dispatchEvent(new CustomEvent(resourcePreviewEvent, {
+    detail: { ...request, respond: (response: Promise<boolean>) => { result = response; } },
+    cancelable: true,
+  }));
+  return result ?? Promise.resolve(false);
+}
+
+export function listenForResourceFilePreviews(
+  open: (request: ResourceFilePreviewRequest) => Promise<boolean> | undefined,
+): () => void {
+  const listener = (event: Event) => {
+    const { detail } = event as CustomEvent<ResourceFilePreviewRequest & {
+      respond: (response: Promise<boolean>) => void;
+    }>;
+    if (event.defaultPrevented || !detail?.preview?.resourcePreview || typeof detail.respond !== 'function') return;
+    const response = open(detail);
+    if (!response) return;
+    event.preventDefault();
+    detail.respond(response);
+  };
+  window.addEventListener(resourcePreviewEvent, listener);
+  return () => window.removeEventListener(resourcePreviewEvent, listener);
+}
+
 export interface FilePreviewNavigationOptions {
   preserveTabs?: boolean;
   canCommit?(): boolean;

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 
-const receipts = { calls: {}, cancellations: 0 };
+const receipts = { pid: process.pid, calls: {}, cancellations: 0 };
 const save = () => fs.writeFileSync(process.env.MCP_FIXTURE_RECEIPTS, JSON.stringify(receipts));
 const send = message => process.stdout.write(JSON.stringify(message) + '\n');
 const result = (id, value) => send({ jsonrpc: '2.0', id, result: value });

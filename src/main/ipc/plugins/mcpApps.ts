@@ -13,10 +13,12 @@ import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { saveMcpAppDownload } from '../../plugins/mcp/mcpAppDownload';
+import { McpAppResourcePreviews } from '../../plugins/mcp/mcpAppResourcePreview';
 import { readQuestionUploadFiles } from '../../plugins/mcp/questionUpload';
 import { WorkspaceAppSessions } from '../../plugins/mcp/workspaceAppSession';
 
 interface Dependencies {
+  isAllowedWorkspaceSender?: (event: IpcMainInvokeEvent) => boolean;
   getCoworkStore: () => CoworkStore;
   getCoworkEngineRouter: () => CoworkEngineRouter;
   requestGateway?: <T>(method: string, params?: unknown) => Promise<T>;
@@ -25,8 +27,11 @@ interface Dependencies {
 const text = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= 2048;
 
-export function registerMcpAppHandlers(deps: Dependencies): void {
+export function registerMcpAppHandlers(deps: Dependencies): () => Promise<void> {
   const created = new Map<string, { signature: string; sessionId: string }>();
+  const resourcePreviews = new McpAppResourcePreviews(
+    event => deps.isAllowedWorkspaceSender?.(event) === true,
+  );
   const session = (id: unknown) => {
     if (!text(id)) throw new Error('Invalid application session');
     const current = deps.getCoworkStore().getSession(id);
@@ -92,6 +97,8 @@ export function registerMcpAppHandlers(deps: Dependencies): void {
     });
   };
   handle(McpAppIpc.DownloadFile, saveMcpAppDownload);
+  handle(McpAppIpc.StageResourcePreview, (event, input) => resourcePreviews.stage(event, input));
+  handle(McpAppIpc.ReleaseResourcePreview, (event, input) => resourcePreviews.release(event, input));
   handle(McpAppIpc.PrepareWorkspace, (event, input) => workspaces.prepare(event.sender, input));
   handle(McpAppIpc.ReleaseWorkspace, (event, input) => workspaces.release(event.sender, input));
   handle(McpAppIpc.CreateSession, async (_event, raw) => {
@@ -238,4 +245,5 @@ export function registerMcpAppHandlers(deps: Dependencies): void {
     await pending(input?.sessionId, input?.id);
     return request(McpAppMethod.FormResource, { ...params, action: 'upload', files });
   });
+  return () => resourcePreviews.dispose();
 }

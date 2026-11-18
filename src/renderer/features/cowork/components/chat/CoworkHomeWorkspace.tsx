@@ -153,7 +153,7 @@ export function renderCoworkHomeWorkspace({
           {...worktreeInitialCommitDialog}
         />
       )}
-      <div className="cowork-display-host relative flex min-h-0 flex-1">
+      <div key="cowork-display-host" className="cowork-display-host relative flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           {homeConversationHeader}
           {chatController}
@@ -263,11 +263,12 @@ export function renderCoworkHomeWorkspace({
                   activeFilePath={activeFilePreview?.filePath ?? activeUnsupportedFilePath}
                   sessionId={HOME_WORKSPACE_SESSION_ID}
                   onBeforeMutation={prepareWorkspaceFileMutation}
-                  onOpenFile={filePath => {
+                  onOpenFile={(filePath, appHandlerId) => {
                     window.dispatchEvent(
                       new CustomEvent('cowork:preview-file', {
                         detail: {
                           filePath,
+                          appHandlerId,
                           keepWorkspaceFilesOpen: true,
                           workingDirectory: homeWorkspaceFolderPath,
                         },

@@ -2,9 +2,21 @@ import { useEffect, useRef, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
-export const localMediaPreviewUrl = (fileUrl: string): string | null => {
+export const localMediaPreviewUrl = (fileUrl: string, resourcePreview = false): string | null => {
   try {
     const url = new URL(fileUrl);
+    if (
+      resourcePreview &&
+      url.protocol === 'http:' &&
+      url.hostname === '127.0.0.1' &&
+      url.port &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      /^\/[a-f0-9]{64}\/[^/]+$/u.test(url.pathname)
+    )
+      return url.href;
     if (url.protocol !== 'file:') return null;
     return `localmedia://local${url.hostname ? `//${url.hostname}` : ''}${url.pathname}${url.search}${url.hash}`;
   } catch {
@@ -16,15 +28,17 @@ export default function MediaFilePreview({
   url,
   kind,
   isVisible,
+  resourcePreview = false,
 }: {
   url: string;
   kind: 'audio' | 'video';
   isVisible: boolean;
+  resourcePreview?: boolean;
 }) {
   const mediaRef = useRef<HTMLMediaElement | null>(null);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
-  const source = localMediaPreviewUrl(url);
+  const source = localMediaPreviewUrl(url, resourcePreview);
   useEffect(() => {
     if (!isVisible) mediaRef.current?.pause();
   }, [isVisible, retry, failed]);

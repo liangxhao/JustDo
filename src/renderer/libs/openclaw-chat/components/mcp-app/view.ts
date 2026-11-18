@@ -6,6 +6,7 @@ import type {
   McpAppContentIdentity,
   McpAppContentReference,
 } from '@shared/plugins/mcpAppReferences';
+import type { McpAppStagedResourcePreview } from '@shared/plugins/mcpAppResourcePreview';
 import {
   MCP_APP_SHARED_HEADER,
   McpAppEvent,
@@ -32,6 +33,11 @@ import { resolveMcpAppIcons } from './icons';
 import { connectAppContent, restrictRecoveredAppPayload } from './plugin-content';
 import { McpAppFrameTransport } from './transport';
 
+export type McpAppOpenedFile = {
+  path: string;
+  name: string;
+} & ({ preview?: undefined } | { preview: McpAppStagedResourcePreview; isCurrent: () => boolean });
+
 export interface McpAppViewContext {
   apps: McpAppSession;
   sessionKey: string;
@@ -40,7 +46,7 @@ export interface McpAppViewContext {
   /** Live host directory used only to suggest a native Save dialog location. */
   getWorkingDirectory?: () => string | undefined;
   addDraft: (text: string) => Promise<boolean>;
-  openFile?: (file: { path: string; name: string }) => Promise<boolean>;
+  openFile?: (file: McpAppOpenedFile) => Promise<boolean>;
   addNewDraft?: (text: string, content: unknown[]) => Promise<boolean>;
   refresh?: () => Promise<McpAppViewContext>;
   /** Product display scope only; never used for native authorization. */
@@ -518,6 +524,27 @@ export class McpAppView extends LitElement {
         confirmDraft: (content, target) => this.draft(content, target),
         confirmFile: path => this.confirm(path, 'file'),
         openFile: file => this.context?.openFile?.(file) ?? Promise.resolve(false),
+        ...(context.openFile ? {
+          previewResource: async (input, isCurrent) => {
+            const staged = await window.electron.mcpApps.stageResourcePreview(input);
+            if (!staged.success) return false;
+            const preview = staged.value;
+            let adopted = false;
+            try {
+              if (isCurrent()) {
+                adopted = (await this.context?.openFile?.({
+                  path: preview.filePath, name: input.name, preview, isCurrent,
+                })) ?? false;
+              }
+              return adopted;
+            } finally {
+              if (!adopted) {
+                await window.electron.mcpApps.releaseResourcePreview(staged.value.resourcePreview.id)
+                  .catch(() => undefined);
+              }
+            }
+          },
+        } : {}),
         contextChanged: state => {
           this.selection = state;
           context.apps.reportContext(preview.viewId, preview.title, state);

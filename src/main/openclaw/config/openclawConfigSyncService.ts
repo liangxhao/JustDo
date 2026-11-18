@@ -17,6 +17,7 @@ import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
 } from '../../openclaw/runtime/openclawEngineManager';
+import { type NativeMcpDataBinding,nativeMcpDataDirectory, ownedNativeMcpDataServerNames, prepareNativeMcpData } from '../../plugins/data/nativeMcpData';
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import { discoverOpenClawManagedMcpServers } from '../../plugins/mcp';
@@ -55,6 +56,7 @@ type OpenClawConfigSyncServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getMcpStore: () => McpStore;
   getExtensionMcpServerNames?: () => Promise<ReadonlySet<string>>;
+  getNativeMcpDataBindings?: () => Promise<readonly NativeMcpDataBinding[]>;
   getHookStore: () => OpenClawHookStore;
   disconnectGatewayClient: () => void;
   connectGatewayClient: () => Promise<void>;
@@ -271,6 +273,7 @@ export const resolveDeferredGatewayRestartAction = (options: {
     : 'discard';
 
 export class OpenClawConfigSyncService {
+  private nativeMcpDataBindings: readonly NativeMcpDataBinding[] = [];
   private readonly deps: OpenClawConfigSyncServiceDeps;
   private readonly computerHostPreparation = new ComputerHostPreparation();
   private configSync: OpenClawConfigSync | null = null;
@@ -637,12 +640,24 @@ export class OpenClawConfigSyncService {
       );
     }
     if (!authLogoutIsCurrent()) return supersededLogout();
+    try {
+      const bindings = await this.deps.getNativeMcpDataBindings?.() ?? [];
+      const missing = bindings.filter(binding => {
+        try { nativeMcpDataDirectory(engineManager.getStateDir(), binding.pluginId); return false; }
+        catch { return true; }
+      }).map(binding => binding.pluginId);
+      if (missing.length) await prepareNativeMcpData(engineManager.getStateDir(), missing);
+      this.nativeMcpDataBindings = bindings;
+    } catch (error) {
+      return { success: false, changed: false, configSynced: false,
+        error: error instanceof Error ? error.message : 'Plugin data is unavailable.' };
+    }
     if (options.discoverExternalMcpServers !== false) {
       try {
         const discovered = discoverOpenClawManagedMcpServers(
           engineManager.getConfigPath(),
           this.deps.getMcpStore(),
-          extensionMcpNames,
+          new Set([...extensionMcpNames, ...ownedNativeMcpDataServerNames(engineManager.getConfigPath(), engineManager.getStateDir())]),
         );
         if (discovered > 0) {
           console.log(`[OpenClawMcp] discovered ${discovered} externally installed server(s)`);
@@ -1840,6 +1855,7 @@ export class OpenClawConfigSyncService {
         getExternalAgentSettings: () =>
           this.deps.getCoworkStore().getExternalAgentSettings(),
         getMcpServers: () => this.deps.getMcpStore().listServers(),
+        getNativeMcpDataBindings: () => this.nativeMcpDataBindings,
         getHooks: () => this.deps.getHookStore().listHooks(),
         getAgents: () => this.deps.getCoworkStore().listAgents(),
         getAppPluginEntries: this.deps.getAppPluginEntries,

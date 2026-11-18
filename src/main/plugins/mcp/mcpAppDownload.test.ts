@@ -87,6 +87,17 @@ describe('native MCP App file save', () => {
       expect(() => decodeMcpAppDownload({ ...input, fileName, mimeType: 'image/png' })).toThrow();
     },
   );
+  it('saves a generated HTML report only after the native path selection', async () => {
+    const html = '<!doctype html><table><tr><th>Amount</th></tr></table>';
+    mocks.choose.mockResolvedValue({ canceled: false, filePath: 'D:/chosen/report.html' });
+    await expect(saveMcpAppDownload({ sender: {} } as IpcMainInvokeEvent, {
+      fileName: 'report.html', mimeType: 'text/html', dataBase64: Buffer.from(html).toString('base64'),
+    })).resolves.toEqual({ canceled: false });
+    expect(mocks.choose).toHaveBeenCalledWith(mocks.owner, expect.objectContaining({
+      filters: [{ name: 'HTML', extensions: ['html'] }],
+    }));
+    expect(mocks.write).toHaveBeenCalledWith('D:/chosen/report.html', Buffer.from(html));
+  });
   it('rejects malformed and oversized bytes before opening any dialog', () => {
     expect(() => decodeMcpAppDownload({ ...input, dataBase64: 'invalid!' })).toThrow();
     expect(() =>
