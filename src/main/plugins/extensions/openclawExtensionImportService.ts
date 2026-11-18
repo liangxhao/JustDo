@@ -93,6 +93,8 @@ const PLUGIN_ARCHIVE_ROOT_MARKERS = [
   'plugin.json',
 ];
 const GATEWAY_PACKAGE_MUTATION_TIMEOUT_MS = 600_000;
+// Native lifecycle application can spend up to 60 seconds draining admitted work.
+const GATEWAY_PLUGIN_TOGGLE_TIMEOUT_MS = 90_000;
 const REMOVAL_CONFIRMATION_TIMEOUT_MS = 30_000;
 const REMOVAL_CONFIRMATION_READ_TIMEOUT_MS = 5_000;
 const REMOVAL_BACKGROUND_CONFIRMATION_TIMEOUT_MS = 60_000;
@@ -2343,7 +2345,7 @@ export class OpenClawExtensionImportService {
             enabled,
             ...(reviewToken ? { acknowledgeCapabilities: { reviewToken } } : {}),
           },
-          undefined,
+          { timeoutMs: GATEWAY_PLUGIN_TOGGLE_TIMEOUT_MS },
           {
             onAdmissionWait: () => onProgress?.(PluginOperationStage.QUEUED),
             onAdmissionResume: () =>

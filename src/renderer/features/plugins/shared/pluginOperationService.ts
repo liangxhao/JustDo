@@ -128,7 +128,9 @@ export const isPluginOperationCompletedRefreshFailure = (
 
 export const isPluginOperationNotice = (operation: PluginOperationFailure) =>
   (operation.kind === PluginKind.EXTENSION &&
-    operation.action === PluginOperationAction.REMOVE &&
+    (operation.action === PluginOperationAction.REMOVE ||
+      operation.action === PluginOperationAction.ENABLE ||
+      operation.action === PluginOperationAction.DISABLE) &&
     (operation.state === PluginOperationFailureState.UNCONFIRMED ||
       operation.operationUnconfirmed === true ||
       operation.installSourceInUse === true)) ||

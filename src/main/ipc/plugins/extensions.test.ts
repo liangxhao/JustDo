@@ -218,7 +218,7 @@ test.each(['before-toggle', 'after-plugin-write'] as const)(
     expect(f.connectedRequest.mock.calls).toEqual(
       connectionLoss === 'before-toggle'
         ? []
-        : [['plugins.setEnabled', { pluginId: 'agent-team', enabled: true }]],
+        : [['plugins.setEnabled', { pluginId: 'agent-team', enabled: true }, { timeoutMs: 90_000 }]],
     );
     expect(f.ordinaryRequest).not.toHaveBeenCalled();
     expect(f.manager.startGateway).not.toHaveBeenCalled();

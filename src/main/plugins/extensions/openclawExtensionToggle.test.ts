@@ -54,7 +54,7 @@ it.each([
       warnings: undefined,
     });
     expect(f.requestGateway.mock.calls).toEqual([
-      ['plugins.setEnabled', { pluginId: id, enabled }],
+      ['plugins.setEnabled', { pluginId: id, enabled }, { timeoutMs: 90_000 }],
       ...(id === 'agent-team'
         ? [
             ['skills.update', { skillKey: id, enabled }],
@@ -119,7 +119,7 @@ it.each([true, false])('hot-applies an App policy change on enable=%s through it
 
   expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
     pluginId: 'swarm-workflow', enabled,
-  });
+  }, { timeoutMs: 90_000 });
   expect(canReuseGatewayNetworkEnvironment).toHaveBeenCalledOnce();
   expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
   expect(f.runCommand).not.toHaveBeenCalled();

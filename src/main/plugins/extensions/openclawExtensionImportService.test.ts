@@ -201,7 +201,7 @@ describe('OpenClawExtensionImportService', () => {
       expect(requestGateway).toHaveBeenCalledWith('plugins.setEnabled', {
         pluginId: 'market-extension',
         enabled: true,
-      });
+      }, { timeoutMs: 90_000 });
     if (requiredConfigurationMissing)
       expect(result).toMatchObject({
         installationCommitted: true,
@@ -289,7 +289,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(requestGateway).toHaveBeenCalledWith('plugins.setEnabled', {
       pluginId: 'market-extension',
       enabled: true,
-    });
+    }, { timeoutMs: 90_000 });
     expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
   });
 
@@ -1089,7 +1089,7 @@ describe('OpenClawExtensionImportService', () => {
       });
       await expect(service.setEnabled('agent-team', enabled)).resolves.toEqual({ success: true });
       expect(requestGateway.mock.calls).toEqual([
-        ['plugins.setEnabled', { pluginId: 'agent-team', enabled }],
+        ['plugins.setEnabled', { pluginId: 'agent-team', enabled }, { timeoutMs: 90_000 }],
         ['skills.update', { skillKey: 'agent-team', enabled }],
       ]);
       if (restartRequired) {
@@ -1129,7 +1129,7 @@ describe('OpenClawExtensionImportService', () => {
       expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
         pluginId: 'swarm-workflow',
         enabled,
-      });
+      }, { timeoutMs: 90_000 });
       if (restartRequired) {
         expect(restartGatewayAfterMutation).toHaveBeenCalledExactlyOnceWith(
           'extension-status-change',
@@ -1281,7 +1281,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(requestGateway).toHaveBeenNthCalledWith(1, 'plugins.setEnabled', {
       pluginId: 'agent-team',
       enabled: true,
-    });
+    }, { timeoutMs: 90_000 });
     expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.refresh', {});
     expect(restartGatewayAfterMutation).not.toHaveBeenCalled();
     expect(runCommand.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1395,7 +1395,7 @@ describe('OpenClawExtensionImportService', () => {
     expect(requestGateway).toHaveBeenNthCalledWith(1, 'plugins.setEnabled', {
       pluginId: 'sample-extension',
       enabled: true,
-    });
+    }, { timeoutMs: 90_000 });
     expect(requestGateway).toHaveBeenNthCalledWith(2, 'plugins.uninstall', {
       pluginId: 'sample-extension',
     }, { timeoutMs: 600_000 });
@@ -1802,7 +1802,7 @@ describe('OpenClawExtensionImportService', () => {
       pluginId: 'sample-extension',
       enabled: true,
       acknowledgeCapabilities: { reviewToken },
-    });
+    }, { timeoutMs: 90_000 });
   });
 
   it.each([true, false])(
@@ -1866,7 +1866,7 @@ describe('OpenClawExtensionImportService', () => {
       expect(requestGateway).toHaveBeenLastCalledWith('plugins.setEnabled', {
         pluginId: 'network-extension',
         enabled,
-      });
+      }, { timeoutMs: 90_000 });
       expect(reconcile).toHaveBeenCalledTimes(2);
       expect(restartGatewayAfterMutation).toHaveBeenCalledWith('extension-network-policy-change');
     },
@@ -1952,7 +1952,7 @@ describe('OpenClawExtensionImportService', () => {
       expect(requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', {
         pluginId: 'network-extension',
         enabled,
-      });
+      }, { timeoutMs: 90_000 });
       expect(runCommand).toHaveBeenCalledExactlyOnceWith(
         process.execPath,
         [
@@ -2358,7 +2358,7 @@ describe('OpenClawExtensionImportService', () => {
                 enabled: true,
                 acknowledgeCapabilities: { reviewToken: 'same-reviewed-surface' },
               },
-              { timeoutMs: 29_000, assertBeforeSend: expect.any(Function) },
+              { timeoutMs: 89_000, assertBeforeSend: expect.any(Function) },
             ]);
           }
           expect(runCommand).not.toHaveBeenCalled();

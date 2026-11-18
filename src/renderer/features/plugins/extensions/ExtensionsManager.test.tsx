@@ -446,36 +446,47 @@ describe('ExtensionsManager extension toggle', () => {
     expect(setEnabled).toHaveBeenCalledOnce();
   });
 
-  test('keeps a toggle outcome unknown despite a matching inventory and another follow-up error', async () => {
+  test.each([true, false])('shows an unconfirmed toggle in a card despite a matching inventory (enabled: %s)', async enabled => {
     let called = false;
+    const failedStage = enabled ? PluginOperationStage.ENABLING : PluginOperationStage.DISABLING;
+    const error = 'gateway request timeout for plugins.setEnabled';
     const setEnabled = vi.fn(async () => {
       called = true;
       return {
         success: false,
         operationUnconfirmed: true,
         refreshWarning: true,
-        failedStage: PluginOperationStage.ENABLING,
-        error: 'Native toggle response lost. Companion confirmation also failed.',
+        failedStage,
+        error,
       };
     });
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
         extensions: {
-          list: vi.fn(async () => ({ success: true, extensions: [{ ...extension, enabled: called }] })),
+          list: vi.fn(async () => ({ success: true, extensions: [{ ...extension, enabled: called ? enabled : !enabled }] })),
           setEnabled,
           onChanged: () => () => undefined,
         },
       },
     });
     render(<><ExtensionsManager /><PluginOperationFeedback /></>);
-    fireEvent.click(await screen.findByRole('switch', { name: 'extensionEnable' }));
-    await screen.findByRole('alertdialog', { name: 'pluginOperationFailureTitle.unconfirmed' });
-    expect(screen.getByText(/pluginOperationStageLabel.enabling/)).toBeTruthy();
+    fireEvent.click(await screen.findByRole('switch', { name: enabled ? 'extensionEnable' : 'extensionDisable' }));
+    const notice = (await screen.findByText('pluginOperationFailureTitle.unconfirmed')).closest('[role="status"]');
+    expect(notice?.closest('.fixed')?.className).toContain('bottom-4 right-4');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    const summary = screen.getByText('pluginOperationFailureDetails');
+    fireEvent.click(summary);
+    expect(summary.closest('details')?.open).toBe(true);
+    expect(screen.getByText(`pluginOperationStageLabel.${failedStage}`)).toBeTruthy();
+    expect(screen.getByText(error)).toBeTruthy();
+    expect(screen.getByRole('switch', { name: enabled ? 'extensionDisable' : 'extensionEnable' }).getAttribute('aria-checked')).toBe(String(enabled));
     expect(getPluginOperationOwner().failureSnapshot()).toEqual([
-      expect.objectContaining({ state: 'unconfirmed', message: 'Native toggle response lost. Companion confirmation also failed.' }),
+      expect.objectContaining({ state: 'unconfirmed', message: error }),
     ]);
     expect(setEnabled).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'pluginOperationNoticeDismiss' }));
+    expect(screen.queryByText('pluginOperationFailureTitle.unconfirmed')).toBeNull();
   });
 
   test('keeps capability review available without hiding a toggle follow-up error', async () => {
