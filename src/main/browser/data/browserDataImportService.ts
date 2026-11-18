@@ -610,25 +610,46 @@ export const saveBrowserCredential = (origin: string, credential: BrowserImporte
   }
 };
 
-export const recordBrowserHistory = (url: string, title: string, faviconUrl?: string): void => {
+export type BrowserHistoryVisit = { visitedAt: number; visitCount: number };
+
+export const recordBrowserHistory = (
+  url: string,
+  title: string,
+  faviconUrl?: string,
+): BrowserHistoryVisit | undefined => {
   const safeUrl = sanitizeBrowserVisitUrl(url);
   if (!safeUrl) return;
+  const visitedAt = Date.now();
   const db = openImportedDataDb();
   try {
-    db.prepare(
+    const row = db.prepare(
       `INSERT INTO imported_history(url, title, last_visit_at, visit_count, favicon_url)
        VALUES (?, ?, ?, 1, ?)
        ON CONFLICT(url) DO UPDATE SET title = excluded.title,
          last_visit_at = excluded.last_visit_at,
          visit_count = imported_history.visit_count + 1,
          favicon_url = CASE WHEN excluded.favicon_url <> '' THEN excluded.favicon_url
-           ELSE imported_history.favicon_url END`,
-    ).run(
+           ELSE imported_history.favicon_url END
+       RETURNING visit_count AS visitCount`,
+    ).get(
       safeUrl,
       title.slice(0, 512),
-      Date.now(),
+      visitedAt,
       faviconUrl ? (sanitizeBrowserHistoryUrl(faviconUrl) ?? '') : '',
-    );
+    ) as { visitCount: number };
+    return { visitedAt, visitCount: row.visitCount };
+  } finally {
+    db.close();
+  }
+};
+
+export const updateBrowserHistoryTitle = (url: string, title: string, visit: BrowserHistoryVisit): void => {
+  const safeUrl = sanitizeBrowserVisitUrl(url);
+  if (!safeUrl) return;
+  const db = openImportedDataDb();
+  try {
+    db.prepare('UPDATE imported_history SET title = ? WHERE url = ? AND last_visit_at = ? AND visit_count = ?')
+      .run(title.slice(0, 512), safeUrl, visit.visitedAt, visit.visitCount);
   } finally {
     db.close();
   }

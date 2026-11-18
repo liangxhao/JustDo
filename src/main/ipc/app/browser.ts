@@ -53,6 +53,7 @@ import {
   resolveChromeExecutable,
   resolveChromeUserDataDir,
 } from '../../chrome/chromeSettings';
+import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { GatewayClientLike } from '../../engine/gateway/types';
 
 const execFileAsync = promisify(execFile);
@@ -284,38 +285,45 @@ export const testBrowserConnection = async (
   }
 };
 
-export const applyBrowserModeChange = async (
+export const applyBrowserModeChange = (
   mode: BrowserModeValue,
   dependencies: BrowserModeChangeDependencies,
-): Promise<BrowserModeUpdateResult> => {
-  const previousConfig = dependencies.readAppConfig();
-  const previousMode = normalizeBrowserMode(previousConfig.browserMode);
-  if (mode === previousMode) return { success: true, mode };
-  if (dependencies.hasActiveSessions?.()) {
-    return { success: false, mode: previousMode, errorCode: 'active-session' };
-  }
+): Promise<BrowserModeUpdateResult> =>
+  enqueueAppConfigUpdate(async () => {
+    const previousConfig = dependencies.readAppConfig();
+    const previousMode = normalizeBrowserMode(previousConfig.browserMode);
+    if (mode === previousMode) return { success: true, mode };
+    if (dependencies.hasActiveSessions?.()) {
+      return { success: false, mode: previousMode, errorCode: 'active-session' };
+    }
 
-  dependencies.writeAppConfig({ ...previousConfig, browserMode: mode });
-  const syncResult = await dependencies.syncConfig('browser-mode-change').catch(error => ({
-    success: false,
-    error: error instanceof Error ? error.message : String(error),
-  }));
-  if (syncResult.success) return { success: true, mode };
+    dependencies.writeAppConfig({ ...previousConfig, browserMode: mode });
+    const syncResult = await dependencies.syncConfig('browser-mode-change').catch(error => ({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    if (syncResult.success) return { success: true, mode };
 
-  dependencies.logError?.('Failed to apply browser mode; rolling back.', syncResult.error);
-  dependencies.writeAppConfig(previousConfig);
-  const rollbackResult = await dependencies.syncConfig('browser-mode-rollback').catch(error => ({
-    success: false,
-    error: error instanceof Error ? error.message : String(error),
-  }));
-  if (!rollbackResult.success) {
-    dependencies.logError?.('Failed to roll back browser mode.', rollbackResult.error);
-  }
-  return {
-    success: false,
-    errorCode: 'config-sync-failed',
-  };
-};
+    dependencies.logError?.('Failed to apply browser mode; rolling back.', syncResult.error);
+    const rollbackConfig = { ...dependencies.readAppConfig() };
+    if (Object.hasOwn(previousConfig, 'browserMode')) {
+      rollbackConfig.browserMode = previousConfig.browserMode;
+    } else {
+      delete rollbackConfig.browserMode;
+    }
+    dependencies.writeAppConfig(rollbackConfig);
+    const rollbackResult = await dependencies.syncConfig('browser-mode-rollback').catch(error => ({
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    if (!rollbackResult.success) {
+      dependencies.logError?.('Failed to roll back browser mode.', rollbackResult.error);
+    }
+    return {
+      success: false,
+      errorCode: 'config-sync-failed',
+    };
+  });
 
 export const getBrowserModeSwitchAvailability = (
   hasActiveSessions: () => boolean,

@@ -128,13 +128,16 @@ describe('applyBrowserModeChange', () => {
     expect(syncConfig).not.toHaveBeenCalled();
   });
 
-  test('restores app config and OpenClaw config when synchronization fails', async () => {
+  test('restores the previous mode without reverting other settings when synchronization fails', async () => {
     const originalConfig = { theme: 'dark', browserMode: BrowserMode.Isolated };
     let config: Record<string, unknown> = originalConfig;
-    const syncConfig = vi
-      .fn()
-      .mockResolvedValueOnce({ success: false, error: 'apply failed' })
-      .mockResolvedValueOnce({ success: true });
+    const syncConfig = vi.fn(async (reason: string) => {
+      if (reason === 'browser-mode-change') {
+        config = { ...config, browserAskDownloadLocation: false };
+        return { success: false, error: 'apply failed' };
+      }
+      return { success: true };
+    });
 
     const result = await applyBrowserModeChange(BrowserMode.User, {
       readAppConfig: () => config,
@@ -145,13 +148,13 @@ describe('applyBrowserModeChange', () => {
     });
 
     expect(result).toEqual({ success: false, errorCode: 'config-sync-failed' });
-    expect(config).toBe(originalConfig);
+    expect(config).toEqual({ ...originalConfig, browserAskDownloadLocation: false });
     expect(syncConfig).toHaveBeenNthCalledWith(1, 'browser-mode-change');
     expect(syncConfig).toHaveBeenNthCalledWith(2, 'browser-mode-rollback');
   });
 
-  test('rolls back when synchronization rejects', async () => {
-    const originalConfig = { browserMode: BrowserMode.Isolated };
+  test('restores an unset mode when synchronization rejects', async () => {
+    const originalConfig = { theme: 'light' };
     let config: Record<string, unknown> = originalConfig;
     const syncConfig = vi
       .fn()
@@ -167,7 +170,7 @@ describe('applyBrowserModeChange', () => {
     });
 
     expect(result).toEqual({ success: false, errorCode: 'config-sync-failed' });
-    expect(config).toBe(originalConfig);
+    expect(config).toEqual(originalConfig);
     expect(syncConfig).toHaveBeenNthCalledWith(2, 'browser-mode-rollback');
   });
 });

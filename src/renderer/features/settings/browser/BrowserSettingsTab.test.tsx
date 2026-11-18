@@ -498,6 +498,25 @@ describe('BrowserSettingsTab extension connection checks', () => {
     expect(browser.setMode).toHaveBeenNthCalledWith(2, BrowserMode.Extension);
   });
 
+  test('waits for extension mode to apply before testing the connection', async () => {
+    mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
+    const modeChange = deferred<{ success: true; mode: typeof BrowserMode.Extension }>();
+    const browser = installElectronBrowserMock({
+      setMode: vi.fn(() => modeChange.promise),
+    });
+
+    render(<BrowserSettingsTab />);
+    fireEvent.click(screen.getByRole('radio', { name: /browserModeExtensionTitle/ }));
+
+    await waitFor(() => expect(browser.setMode).toHaveBeenCalledWith(BrowserMode.Extension));
+    expect(screen.getByText('chromeExtensionStepPairTitle')).toBeTruthy();
+    expect(browser.testExtensionConnection).not.toHaveBeenCalled();
+
+    await act(async () => modeChange.resolve({ success: true, mode: BrowserMode.Extension }));
+    expect(browser.testExtensionConnection).toHaveBeenCalledOnce();
+    expect(screen.getByText('browserConnectionVerified')).toBeTruthy();
+  });
+
   test('renders the selected mode immediately and reports Gateway restart with a compact spinner', async () => {
     mocks.getConfig.mockReturnValue({ browserMode: BrowserMode.Isolated });
     const modeChange = deferred<{ success: true; mode: typeof BrowserMode.User }>();

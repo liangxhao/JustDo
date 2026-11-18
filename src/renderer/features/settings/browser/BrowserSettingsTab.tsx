@@ -582,7 +582,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
   }, []);
 
   useEffect(() => {
-    if (browserMode !== BrowserMode.Extension) {
+    if (browserMode !== BrowserMode.Extension || savingMode) {
       extensionTestRequestIdRef.current += 1;
       setExtensionTestKind(null);
       setExtensionProbeInFlight(false);
@@ -592,7 +592,7 @@ const BrowserSettingsTab: React.FC<BrowserSettingsTabProps> = ({
     return () => {
       extensionTestRequestIdRef.current += 1;
     };
-  }, [browserMode, testExtensionConnection]);
+  }, [browserMode, savingMode, testExtensionConnection]);
 
   const chromeMode = browserMode === BrowserMode.Embedded ? lastChromeModeRef.current : browserMode;
 

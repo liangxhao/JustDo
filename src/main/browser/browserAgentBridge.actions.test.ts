@@ -469,18 +469,24 @@ test('expires an armed dialog response according to timeoutMs', async () => {
   expect(sendCommand).not.toHaveBeenCalledWith('Page.handleJavaScriptDialog', expect.anything());
 });
 
-test('stops a batch before the next action when a dialog opens asynchronously', async () => {
+test.each([
+  { kind: 'batch', result: 'dialog' },
+  { kind: 'click', result: 'dialog' },
+  { kind: 'click', result: 'closed' },
+])('$kind reports a delayed $result without further input', async ({ kind, result }) => {
+  vi.useFakeTimers();
   const listeners = new Map<string, (...args: unknown[]) => void>();
   let clickReleased = false;
+  let destroyed = false;
   const sendInputEvent = vi.fn((event: { type?: string; keyCode?: string }) => {
     if (event.type === 'mouseUp' && !clickReleased) {
       clickReleased = true;
       setTimeout(() => {
-        listeners.get('message')?.({}, 'Page.javascriptDialogOpening', {
-          type: 'alert',
-          message: 'Delayed dialog',
+        if (result === 'closed') destroyed = true;
+        else listeners.get('message')?.({}, 'Page.javascriptDialogOpening', {
+          type: 'alert', message: 'Delayed dialog',
         });
-      }, 10);
+      }, kind === 'batch' ? 10 : 450);
     }
   });
   bridge = new BrowserAgentBridge(vi.fn(), () => true);
@@ -488,10 +494,13 @@ test('stops a batch before the next action when a dialog opens asynchronously', 
   electron.guests.set(7, {
     id: 7,
     getType: () => 'webview',
-    isDestroyed: () => false,
+    isDestroyed: () => destroyed,
     session: electron.partition,
     hostWebContents: { id: 10 },
-    getURL: () => 'https://example.com/',
+    getURL: () => {
+      if (destroyed) throw new Error('The page has closed.');
+      return 'https://example.com/';
+    },
     sendInputEvent,
     executeJavaScriptInIsolatedWorld: vi.fn().mockResolvedValue({
       x: 10,
@@ -512,25 +521,28 @@ test('stops a batch before the next action when a dialog opens asynchronously', 
   });
   registerGuest(7);
 
-  await expect(
+  const click = { kind: 'click', selector: '#open-dialog' };
+  const observed = expect(
     bridge.executeCommand('justdo:session-1', {
       action: 'act',
-      request: {
+      request: kind === 'batch' ? {
         kind: 'batch',
         actions: [
-          { kind: 'click', selector: '#open-dialog' },
+          click,
           { kind: 'type', selector: '#should-not-run', text: 'no' },
         ],
-      },
+      } : click,
     }),
   ).resolves.toMatchObject({
-    details: {
+    details: result === 'closed' ? { closed: true } : {
       blockedByDialog: true,
       browserState: {
         dialogs: { pending: [expect.objectContaining({ message: 'Delayed dialog' })] },
       },
     },
   });
+  await vi.advanceTimersByTimeAsync(1_000);
+  await observed;
   const scripts = (
     electron.guests.get(7)!.executeJavaScriptInIsolatedWorld as ReturnType<typeof vi.fn>
   ).mock.calls;

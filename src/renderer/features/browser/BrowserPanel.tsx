@@ -100,7 +100,7 @@ type GuestEvent = Event & {
   errorCode?: number;
   errorDescription?: string;
   isMainFrame?: boolean;
-  result?: { activeMatchOrdinal?: number; matches?: number };
+  result?: { requestId?: number; activeMatchOrdinal?: number; matches?: number };
   title?: string;
   url?: string;
 };
@@ -116,7 +116,7 @@ type LiveWebview = HTMLElement & {
   getURL: () => string;
   getWebContentsId?: () => number;
   findInPage?: (text: string, options?: { forward?: boolean; findNext?: boolean }) => number;
-  stopFind?: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
+  stopFindInPage?: (action: 'clearSelection' | 'keepSelection' | 'activateSelection') => void;
   print?: (options?: Record<string, unknown>) => Promise<void>;
   getZoomFactor?: () => number;
   setZoomFactor?: (factor: number) => void;
@@ -141,6 +141,11 @@ type LiveWebview = HTMLElement & {
 const readGuestUrl = (guest: LiveWebview | undefined, fallback: string): string => {
   try { return guest?.getURL() || fallback; }
   catch { return fallback; }
+};
+
+const clearPageFind = (guest: LiveWebview | null): void => {
+  try { guest?.stopFindInPage?.('clearSelection'); }
+  catch { /* The guest may not be ready or may have detached. */ }
 };
 
 const BROWSER_PANEL_MIN_WIDTH = 320;
@@ -279,10 +284,11 @@ const isLocalFileAddress = (raw: string): boolean =>
 
 export const getBrowserTabDisplayTitle = (tab: BrowserPanelTab): string => {
   if (tab.customTitle) return tab.customTitle;
-  if (tab.url === 'about:blank' || tab.title === 'about:blank') {
+  if (tab.url === 'about:blank') {
     return i18nService.t('browserPanelNewTab');
   }
-  return tab.title || tab.url || i18nService.t('browserPanelNewTab');
+  const title = tab.title === 'about:blank' ? '' : tab.title;
+  return title || tab.url || i18nService.t('browserPanelNewTab');
 };
 
 const loadImage = (dataUrl: string): Promise<HTMLImageElement> =>
@@ -453,6 +459,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const [findVisible, setFindVisible] = useState(false);
   const [findQuery, setFindQuery] = useState('');
   const [findResult, setFindResult] = useState<{ active: number; matches: number } | null>(null);
+  const [findDocumentVersion, setFindDocumentVersion] = useState(0);
+  const findRequestRef = useRef<{ webview: LiveWebview; requestId: number } | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isClearDataModalOpen, setIsClearDataModalOpen] = useState(false);
   const [httpAuthRequests, setHttpAuthRequests] = useState<BrowserPanelHttpAuthRequest[]>([]);
@@ -506,6 +514,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const inspectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const addressSubmissionSequenceRef = useRef(0);
+  const addressLoadsRef = useRef(new WeakMap<LiveWebview, number>());
 
   useLayoutEffect(() => {
     // Select after React has replaced the compact domain with the full address.
@@ -705,8 +714,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     return () => canvas.removeEventListener('wheel', onWheel);
   }, [mode, activeWebview, isCapturing, activeTab?.url, invalidateAnnotationGeometry]);
 
+  const commitTabs = useCallback((nextTabs: BrowserPanelTab[]) => {
+    tabsRef.current = nextTabs;
+    setRetainedBrowserPanelTabs(currentDraftKeyRef.current, nextTabs);
+    setTabs(nextTabs);
+    // Publish the tab list in the same batch as selection so the workspace
+    // cannot reject a new target against an older list and select another tab.
+    onTabsChangeRef.current?.(nextTabs);
+  }, []);
+
   useEffect(() => {
-    tabsRef.current = tabs;
+    if (tabsRef.current !== tabs) return;
     setRetainedBrowserPanelTabs(draftKey, tabs);
     onTabsChangeRef.current?.(tabs);
   }, [draftKey, tabs]);
@@ -947,11 +965,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       const nextTabs = tabsRef.current.map(tab =>
         tab.targetId === targetId ? { ...tab, ...values } : tab,
       );
-      tabsRef.current = nextTabs;
-      setRetainedBrowserPanelTabs(draftKey, nextTabs);
-      setTabs(nextTabs);
+      commitTabs(nextTabs);
     },
-    [draftKey],
+    [commitTabs],
   );
 
   const openTab = useCallback(
@@ -977,8 +993,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         : tabsRef.current.length;
       const nextTabs = [...tabsRef.current];
       nextTabs.splice(insertionIndex > 0 ? insertionIndex : nextTabs.length, 0, tab);
-      tabsRef.current = nextTabs;
-      setTabs(nextTabs);
+      commitTabs(nextTabs);
       if (options?.preserveSelection) return true;
       activeTargetRef.current = tab.targetId;
       onActiveTargetChange(tab.targetId);
@@ -992,7 +1007,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       return true;
     },
-    [capacityFeedbackEnabled, clearAnnotations, draftKey, onActiveTargetChange, queuePageFocus],
+    [capacityFeedbackEnabled, clearAnnotations, commitTabs, draftKey, onActiveTargetChange, queuePageFocus],
   );
 
   useEffect(
@@ -1135,8 +1150,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         initialUrlsRef.current.delete(targetId);
         guestElementRefs.current.delete(targetId);
         const nextTabs = currentTabs.filter(tab => tab.targetId !== targetId);
-        tabsRef.current = nextTabs;
-        setTabs(nextTabs);
+        commitTabs(nextTabs);
         setReadyTargets(current => {
           const next = new Set(current);
           next.delete(targetId);
@@ -1173,7 +1187,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         void recorderRef.current.drain().then(performClose);
       else performClose();
     },
-    [clearAnnotations, queuePageFocus],
+    [clearAnnotations, commitTabs, queuePageFocus],
   );
 
   const openTabContextMenu = useCallback(
@@ -1293,8 +1307,12 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           : undefined,
       });
       if (activeTargetRef.current === targetId) {
-        if (authoritative) setCredentialOffer(null);
-        if (authoritative) addressDirtyRef.current = false;
+        if (authoritative) {
+          setCredentialOffer(null);
+          addressDirtyRef.current = false;
+          findRequestRef.current = null;
+          setFindResult(null);
+        }
         if (authoritative || !addressDirtyRef.current) {
           const nextTab = retainedTab ? { ...retainedTab, url: nextUrl } : undefined;
           setUrlDraft(getBrowserTabAddress(nextTab));
@@ -1303,6 +1321,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         setNavigationVersion(value => value + 1);
       }
       if (authoritative) {
+        addressLoadsRef.current.delete(webview);
         setLoadErrors(current => {
           const next = new Map(current);
           next.delete(targetId);
@@ -1358,6 +1377,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             const sessionId =
               tabsRef.current.find(tab => tab.targetId === targetId)?.resourceSessionId ??
               currentDraftKeyRef.current;
+            const firstRegistration = registeredResourceSessionsRef.current.get(targetId) !== sessionId;
             registeredResourceSessionsRef.current.set(targetId, sessionId);
             window.electron.browser.registerAgentTab({
               sessionId,
@@ -1367,7 +1387,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
                 tabsRef.current.find(candidate => candidate.targetId === targetId)?.profile ??
                 'embedded',
             });
-            if (activeTargetRef.current === targetId) {
+            if (firstRegistration && panelVisibleRef.current && activeTargetRef.current === targetId) {
               window.electron.browser.setAgentActiveTab({ sessionId, targetId });
             }
           }
@@ -1422,6 +1442,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         }
         setReadyTargets(current => new Set(current).add(targetId));
         guestHandlersRef.current.handleNavigation(targetId, webview);
+        if (activeTargetRef.current === targetId) setFindDocumentVersion(value => value + 1);
       });
       onGuest('ipc-message', event => {
         const details = event as GuestEvent;
@@ -1487,6 +1508,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           );
           recorderRef.current.onNavigation(targetId, details.url ?? readGuestUrl(webview, 'about:blank'));
           guestHandlersRef.current.handleNavigation(targetId, webview, details.url, undefined, true);
+          if (eventName === 'did-navigate-in-page' && activeTargetRef.current === targetId) {
+            setFindDocumentVersion(value => value + 1);
+          }
         });
       }
       onGuest('page-title-updated', event => {
@@ -1494,11 +1518,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         if (title !== undefined) guestHandlersRef.current.updateTab(targetId, { title });
       });
       onGuest('found-in-page', event => {
-        if (activeTargetRef.current !== targetId) return;
         const result = (event as GuestEvent).result;
+        const request = findRequestRef.current;
+        if (!result || request?.webview !== webview || request.requestId !== result.requestId ||
+          activeTargetRef.current !== targetId) return;
         setFindResult({
-          active: Math.max(0, result?.activeMatchOrdinal ?? 0),
-          matches: Math.max(0, result?.matches ?? 0),
+          active: Math.max(0, result.activeMatchOrdinal ?? 0),
+          matches: Math.max(0, result.matches ?? 0),
         });
       });
       onGuest('close', () => guestHandlersRef.current.closeTab(targetId, { preserveFocus: true }));
@@ -1873,21 +1899,30 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     updateTab(targetId, { url, ...source });
     if (activeTargetRef.current === targetId)
       setUrlDraft(source?.sourceFilePath ?? getBrowserLocalFilePath(url) ?? url);
+    const addressLoads = addressLoadsRef.current;
+    addressLoads.set(webview, submissionSequence);
     try {
       await webview.loadURL(url);
     } catch (loadError) {
-      if (webviewsRef.current.get(targetId) !== webview || !webview.isConnected) return;
+      if (addressLoads.get(webview) !== submissionSequence ||
+        webviewsRef.current.get(targetId) !== webview || !webview.isConnected) return;
       setLoadingTargets(current => {
         const next = new Set(current);
         next.delete(targetId);
         return next;
       });
+      // Electron rejects a superseded or stopped load with ERR_ABORTED.
+      if (typeof loadError === 'object' && loadError !== null &&
+        (('code' in loadError && loadError.code === 'ERR_ABORTED') ||
+          ('errno' in loadError && loadError.errno === -3))) return;
       setLoadErrors(current =>
         new Map(current).set(
           targetId,
           loadError instanceof Error ? loadError.message : i18nService.t('browserPanelLoadFailed'),
         ),
       );
+    } finally {
+      if (addressLoads.get(webview) === submissionSequence) addressLoads.delete(webview);
     }
   };
 
@@ -2122,18 +2157,26 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const runFind = useCallback(
     (forward = true, findNext = false) => {
       const query = findQuery.trim();
+      findRequestRef.current = null;
+      if (!findNext) setFindResult(null);
       if (!query || !activeWebview?.findInPage) {
-        activeWebview?.stopFind?.('clearSelection');
-        setFindResult(null);
+        clearPageFind(activeWebview);
         return;
       }
-      activeWebview.findInPage(query, { forward, findNext });
+      try {
+        const requestId = activeWebview.findInPage(query, { forward, findNext });
+        findRequestRef.current = { webview: activeWebview, requestId };
+      } catch {
+        // A newly attached guest may still be loading. Retry at dom-ready.
+        setFindResult(null);
+      }
     },
     [activeWebview, findQuery],
   );
 
   const closeFind = useCallback(() => {
-    activeWebview?.stopFind?.('clearSelection');
+    findRequestRef.current = null;
+    clearPageFind(activeWebview);
     setFindVisible(false);
     setFindQuery('');
     setFindResult(null);
@@ -2222,9 +2265,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   };
 
   useEffect(() => {
-    if (!findVisible) return;
+    if (!isOpen || !findVisible) return;
     runFind(true, false);
-  }, [findVisible, runFind]);
+  }, [findDocumentVersion, findVisible, isOpen, runFind]);
 
   useEffect(() => {
     if (!activeWebview || !readyGuestsRef.current.has(activeWebview)) {

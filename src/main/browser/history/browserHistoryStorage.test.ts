@@ -20,6 +20,7 @@ import {
   recordBrowserHistory,
   updateBrowserHistoryFavicon,
   updateBrowserHistoryFaviconData,
+  updateBrowserHistoryTitle,
 } from '../data/browserDataImportService';
 import { getBrowserFaviconCacheSignal } from './browserFaviconCache';
 
@@ -41,6 +42,23 @@ afterEach(() => {
 });
 
 describe('browser history favicon storage', () => {
+  test('corrects a recorded title without counting or restoring a visit', () => {
+    const url = 'https://example.com/docs';
+    vi.spyOn(Date, 'now').mockReturnValue(100);
+    const first = recordBrowserHistory(url, 'Previous title')!;
+    updateBrowserHistoryTitle(url, 'Documentation', first);
+    expect(listBrowserHistory('')).toEqual([
+      { url, title: 'Documentation', lastVisitAt: 100, visitCount: 1 },
+    ]);
+
+    const second = recordBrowserHistory(url, 'Most recent title')!;
+    updateBrowserHistoryTitle(url, 'Outdated title', first);
+    expect(listBrowserHistory('')[0].title).toBe('Most recent title');
+    deleteBrowserHistory([url]);
+    updateBrowserHistoryTitle(url, 'Deleted title', second);
+    expect(listBrowserHistory('')).toEqual([]);
+  });
+
   test('persists, searches and deletes native file visits with their actual file URL', () => {
     const url = 'file:///C:/reports/%E5%9C%B0%E7%90%83%20%23100%25.html?mode=3d#camera';
     recordBrowserHistory(url, '3D globe');

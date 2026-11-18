@@ -312,4 +312,18 @@ describe('dialog cancellation admission', () => {
     fixture.cancel();
     expect(() => armed.assertActive!()).toThrow('cancelled');
   });
+
+  test('does not apply an expired dialog response to the next dialog', async () => {
+    const fixture = createActions();
+
+    await expect(fixture.execute({
+      sessionKey: 'native-fixture',
+      action: 'dialog',
+      dialogId: pendingDialog.id,
+      accept: true,
+    })).rejects.toThrow('stale');
+
+    expect(fixture.context.armedDialogs.size).toBe(0);
+    expect(fixture.sendCommand).not.toHaveBeenCalled();
+  });
 });

@@ -6,12 +6,14 @@ vi.mock('../data/browserDataImportService', () => ({
   recordBrowserHistory: vi.fn(),
   updateBrowserHistoryFavicon: vi.fn(),
   updateBrowserHistoryFaviconData: vi.fn(),
+  updateBrowserHistoryTitle: vi.fn(),
 }));
 
 import {
   recordBrowserHistory,
   updateBrowserHistoryFavicon,
   updateBrowserHistoryFaviconData,
+  updateBrowserHistoryTitle,
 } from '../data/browserDataImportService';
 import { trackBrowserFavicon } from './browserFavicon';
 import { getBrowserFaviconCacheSignal, invalidateBrowserFaviconCache } from './browserFaviconCache';
@@ -32,6 +34,21 @@ function createGuest(shouldRecord = () => true) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('browser history tracking', () => {
+  test('updates a late page title only for the recorded visit on that guest', () => {
+    const guest = createGuest();
+    const visit = { visitedAt: 123, visitCount: 1 };
+    vi.mocked(recordBrowserHistory).mockReturnValueOnce(visit);
+    guest.emit('did-stop-loading');
+    guest.emit('page-title-updated', {}, 'Project documentation');
+    guest.getURL.mockReturnValue('https://example.com/next');
+    guest.emit('page-title-updated', {}, 'Next page');
+
+    expect(recordBrowserHistory).toHaveBeenCalledOnce();
+    expect(updateBrowserHistoryTitle).toHaveBeenCalledExactlyOnceWith(
+      'https://example.com/docs', 'Project documentation', visit,
+    );
+  });
+
   test.each(['favicon', 'visit'])(
     'still publishes tab images when %s metadata cannot be saved',
     async kind => {

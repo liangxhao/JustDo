@@ -88,6 +88,9 @@ const guest = (background: boolean) => {
     loadURL: vi.fn(async (value: string) => {
       url = value;
     }),
+    executeJavaScriptInIsolatedWorld: vi.fn(async () => ({
+      title: 'Synthetic page', url, text: '', elements: [],
+    })),
     debugger: Object.assign(debuggerEvents, {
       isAttached: () => attached,
       attach: () => {
@@ -150,6 +153,45 @@ test('ordinary omission and false use the existing sidebar creation path', async
     2,
   );
   expect(state.host.create).not.toHaveBeenCalled();
+});
+
+test('keeps generated tab references from being reused as custom labels', async () => {
+  const opened = await execute({ action: 'open', url: 'https://example.com', headless: true });
+  const page = opened as PageResult & { suggestedTargetId: string };
+
+  for (const label of [page.suggestedTargetId, page.targetId]) {
+    await expect(execute({
+      action: 'open', url: 'https://example.com/second', label,
+    })).rejects.toThrow('label is reserved');
+  }
+
+  await expect(execute({ action: 'focus', targetId: page.suggestedTargetId }))
+    .resolves.toMatchObject({ targetId: page.targetId });
+  await expect(execute({ action: 'tabs' })).resolves.toMatchObject({ tabCount: 1 });
+});
+
+test('only creates one page when the same label is requested concurrently', async () => {
+  let finishCreation!: () => void;
+  const waiting = new Promise<void>(resolve => { finishCreation = resolve; });
+  state.host.create.mockImplementationOnce(async () => {
+    await waiting;
+    return guest(true);
+  });
+  const command = { action: 'open', url: 'https://example.com', label: 'details', headless: true };
+  const first = execute(command);
+  try {
+    await vi.waitFor(() => expect(state.host.create).toHaveBeenCalledOnce());
+    await expect(execute(command)).rejects.toThrow('label already exists');
+  } finally {
+    finishCreation();
+  }
+
+  const page = await first as PageResult;
+  await expect(execute({ action: 'tabs' })).resolves.toMatchObject({ tabCount: 1 });
+  await expect(execute({ action: 'focus', targetId: command.label }))
+    .resolves.toMatchObject({ targetId: page.targetId });
+  await execute({ action: 'close', targetId: page.targetId });
+  await expect(execute(command)).resolves.toMatchObject({ suggestedTargetId: command.label });
 });
 
 test('opens existing local HTML in sidebar and background pages', async () => {
@@ -342,6 +384,45 @@ test('a new native turn defaults new pages to sidebar, while explicit old backgr
   ).resolves.toMatchObject({ headless: true });
   expect(send).not.toHaveBeenCalled();
 });
+
+test('keeps the focused background target through sidebar-mode queries', async () => {
+  const background = (await execute({
+    action: 'open', url: 'https://example.com/background', headless: true,
+  })) as PageResult;
+  const sidebar = (await execute(
+    { action: 'open', url: 'https://example.com/sidebar' }, 'run-2',
+  )) as PageResult;
+  await execute({ action: 'focus', targetId: background.targetId }, 'run-2');
+
+  await expect(execute({ action: 'tabs', headless: false }, 'run-2'))
+    .resolves.toMatchObject({ tabCount: 2 });
+  await expect(execute({ action: 'importprofile' }, 'run-2'))
+    .rejects.toThrow('The selected browser profile is unavailable.');
+  await expect(execute({ action: 'navigate', url: 'https://example.com/details' }, 'run-2'))
+    .resolves.toMatchObject({ details: { targetId: background.targetId } });
+  await expect(execute({ action: 'navigate', url: 'https://example.com/explicit', headless: false }, 'run-2'))
+    .resolves.toMatchObject({ details: { targetId: sidebar.targetId } });
+});
+
+test.each([false, true])(
+  'honors an explicit background start with an existing sidebar page (focused=%s)',
+  async focus => {
+    const sidebar = (await execute({
+      action: 'open', url: 'https://example.com/sidebar',
+    })) as PageResult;
+    if (focus) await execute({ action: 'focus', targetId: sidebar.targetId });
+
+    await execute({ action: 'start', headless: true });
+    await execute({ action: 'navigate', url: 'https://example.com/background' });
+
+    await expect(execute({ action: 'tabs' })).resolves.toMatchObject({
+      tabs: [
+        { targetId: sidebar.targetId, headless: false, url: 'https://example.com/sidebar' },
+        { headless: true, url: 'https://example.com/background' },
+      ],
+    });
+  },
+);
 
 test('cron omission is forced into the background and false is rejected', async () => {
   await expect(

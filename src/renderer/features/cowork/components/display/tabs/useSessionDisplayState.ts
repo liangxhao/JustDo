@@ -394,10 +394,10 @@ export function useSessionDisplayState(
       setStates(current => {
         const currentState =
           current[targetSessionKey] ?? createSessionDisplayState(browserPanelWidth);
-        if (
-          currentState.browserTabs.some(candidate => candidate.targetId === tab.targetId) ||
-          currentState.browserTabs.length >= maximumTabs
-        ) {
+        const alreadyPublished = currentState.browserTabs.some(
+          candidate => candidate.targetId === tab.targetId,
+        );
+        if (!alreadyPublished && currentState.browserTabs.length >= maximumTabs) {
           return current;
         }
         const tabId = `${BROWSER_TAB_PREFIX}${tab.targetId}`;
@@ -405,7 +405,8 @@ export function useSessionDisplayState(
           currentState,
           {
             ...currentState,
-            browserTabs: [...currentState.browserTabs, tab],
+            // A mounted panel may publish its live tab before this reveal request.
+            browserTabs: alreadyPublished ? currentState.browserTabs : [...currentState.browserTabs, tab],
             browserPanelTargetId: tab.targetId,
             preferredDisplayTabId: tabId,
             isDisplayPanelOpen: true,

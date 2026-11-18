@@ -1292,6 +1292,9 @@ export async function executeOnGuest(
   if (command.action === 'dialog') {
     if (typeof command.accept !== 'boolean') throw new Error('accept is required.');
     const pending = this.dialogs.get(tab.webContentsId);
+    if (command.dialogId !== undefined && command.dialogId !== pending?.id) {
+      throw new Error('The browser dialog is stale.');
+    }
     if (!pending) {
       assertActive();
       this.clearArmedDialog(tab.webContentsId);
@@ -1325,9 +1328,6 @@ export async function executeOnGuest(
         throw error;
       }
       return { ok: true, targetId: tab.targetId, armed: true };
-    }
-    if (command.dialogId && command.dialogId !== pending.id) {
-      throw new Error('The browser dialog is stale.');
     }
     const guestDebugger = await this.enableDebuggerDomains(tab, guest);
     assertActive();
@@ -1418,6 +1418,14 @@ export async function executeOnGuest(
         } : {}),
       }, null, 2)),
     }] : [];
+    const kind = typeof request.kind === 'string' ? request.kind : '';
+    const navigation =
+      !closedByAct && !guest.isDestroyed() && !this.dialogs.has(tab.webContentsId) &&
+      ['click', 'clickCoords', 'type', 'press', 'batch'].includes(kind)
+        ? await this.waitForPossibleNavigation(guest, beforeGeneration, beforeUrl, assertActive)
+        : null;
+    signal?.throwIfAborted();
+    assertActive();
     const dialogResult = this.blockedDialogResult(tab.webContentsId);
     if (dialogResult) {
       return {
@@ -1436,7 +1444,8 @@ export async function executeOnGuest(
         },
       };
     }
-    if (closedByAct) {
+    if (closedByAct || navigation === 'closed' || guest.isDestroyed()) {
+      if (!closedByAct) details = { ...details, closed: true };
       return {
         ...(failedDownloads ? { isError: true } : {}),
         content: [
@@ -1453,10 +1462,6 @@ export async function executeOnGuest(
         },
       };
     }
-    const kind = typeof request.kind === 'string' ? request.kind : '';
-    const navigation = new Set(['click', 'clickCoords', 'type', 'press', 'batch']).has(kind)
-      ? await this.waitForPossibleNavigation(guest, beforeGeneration, beforeUrl, assertActive)
-      : null;
     const navigated =
       navigation === 'navigation' || asRecord(details.aborted)?.reason === 'navigation';
     if (navigated && !guest.isDestroyed()) {

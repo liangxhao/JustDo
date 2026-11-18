@@ -9,6 +9,38 @@ export const buildManagedOpenClawSurfaces = (
   ...contributions,
 });
 
+/** Keep native profiles across settings sync, while the app selects the active driver. */
+export const mergeManagedOpenClawBrowserConfig = (
+  existing: unknown,
+  managed: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (!isRecord(existing) || !isRecord(existing.profiles)) return managed;
+  const profiles = { ...existing.profiles };
+  if (isRecord(managed.profiles)) {
+    for (const [name, managedProfile] of Object.entries(managed.profiles)) {
+      const previous = profiles[name];
+      // A different driver may carry incompatible native fields, such as a CDP
+      // endpoint for the extension relay. Only merge settings for the same driver.
+      if (
+        !isRecord(previous) ||
+        !isRecord(managedProfile) ||
+        previous.driver !== managedProfile.driver
+      ) {
+        profiles[name] = managedProfile;
+        continue;
+      }
+      profiles[name] = {
+        ...previous,
+        ...managedProfile,
+        ...(typeof previous.mcpCommand === 'string' && previous.mcpCommand.trim()
+          ? { mcpCommand: previous.mcpCommand }
+          : {}),
+      };
+    }
+  }
+  return { ...managed, profiles };
+};
+
 /** Bind native Windows browser profiles to the bundled session launcher. */
 export const projectManagedOpenClawBrowserConfig = (
   config: Record<string, unknown>,

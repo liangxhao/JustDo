@@ -12,7 +12,13 @@ import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import CoworkDisplayPanel from '@/features/cowork/components/display/CoworkDisplayPanel';
+import {
+  BROWSER_DISPLAY_TAB_PREFIX,
+  browserDisplayTabId,
+} from '@/features/cowork/components/display/tabs/displayTabIds';
+import { getBrowserPanelTargetId } from '@/features/cowork/components/display/tabs/displayTabSelection';
 import NewDisplayTabButton from '@/features/cowork/components/display/tabs/NewDisplayTabButton';
+import { useDisplayTabSelection } from '@/features/cowork/components/display/tabs/useDisplayTabSelection';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 
@@ -247,7 +253,115 @@ const sessionRuntimePanelChildren = productionRuntimePanelChildren(
   '../cowork/components/CoworkView.tsx',
 );
 
+function BrowserWorkspaceHarness({ withTool = false }: { withTool?: boolean }) {
+  const panel = useRef<BrowserPanelHandle>(null);
+  const [tabs, setTabs] = useState<BrowserPanelTab[]>([
+    { ...pageTab, title: 'First page' },
+    ...(withTool ? [{ id: 'start', targetId: 'start', title: '', url: 'about:blank' }] : []),
+  ]);
+  const [targetId, setTargetId] = useState<string | null>(pageTab.targetId);
+  const [toolOpen, setToolOpen] = useState(withTool);
+  const [preferredTabId, setPreferredTabId] = useState<string | null>(
+    withTool ? 'tool' : browserDisplayTabId(pageTab.targetId),
+  );
+  const activeTabId = useDisplayTabSelection(
+    'browser-workspace',
+    [...tabs.map(tab => browserDisplayTabId(tab.targetId)), ...(toolOpen ? ['tool'] : [])],
+    preferredTabId,
+    setPreferredTabId,
+  );
+  const selectTarget = (next: string | null) => {
+    setTargetId(next);
+    setPreferredTabId(next ? browserDisplayTabId(next) : null);
+  };
+  return (
+    <CoworkDisplayPanel
+      activeTabId={activeTabId ?? ''}
+      isOpen
+      onClose={vi.fn()}
+      tabs={[
+        ...tabs.map(tab => ({
+          id: browserDisplayTabId(tab.targetId),
+          label: getBrowserTabDisplayTitle(tab),
+          icon: <span />,
+          onSelect: () => selectTarget(tab.targetId),
+        })),
+        ...(toolOpen ? [{
+          id: 'tool', label: 'Tool', icon: <span />,
+          onSelect: () => setPreferredTabId('tool'),
+        }] : []),
+      ]}
+      actions={<NewDisplayTabButton onCreateTab={() => panel.current?.openTab()} />}
+    >
+      {toolOpen && <button onClick={() => setToolOpen(false)}>Close tool</button>}
+      <BrowserPanel
+        ref={panel}
+        draftKey={`browser-workspace-${withTool}`}
+        embedded
+        isOpen={Boolean(activeTabId?.startsWith(BROWSER_DISPLAY_TAB_PREFIX))}
+        width={520}
+        initialTabs={tabs}
+        retainedTargetIds={tabs.map(tab => tab.targetId)}
+        activeTargetId={getBrowserPanelTargetId(activeTabId, targetId)}
+        onClose={vi.fn()}
+        onWidthChange={vi.fn()}
+        onTabsChange={setTabs}
+        onActiveTargetChange={selectTarget}
+        onAddAnnotation={() => true}
+        renderStartPage={navigate => (
+          <button onClick={() => navigate('https://recent.example/docs')}>Recent page</button>
+        )}
+      />
+    </CoworkDisplayPanel>
+  );
+}
+
 describe('BrowserPanel embedded webview', () => {
+  it('keeps a newly created workspace tab selected while opening a recent visit', async () => {
+    const { container } = render(<BrowserWorkspaceHarness />);
+    const firstGuest = container.querySelector('webview');
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    expect(screen.getByRole('tab', { name: 'New tab' }).getAttribute('aria-selected')).toBe('true');
+    const guests = [...container.querySelectorAll<HTMLElement>('webview')];
+    expect(guests).toHaveLength(2);
+    expect(guests[1].style.opacity).toBe('1');
+    fireEvent.click(screen.getByRole('button', { name: 'Recent page' }));
+    await waitFor(() => expect(loadUrl).toHaveBeenCalledWith('https://recent.example/docs'));
+    expect(loadUrl.mock.instances.at(-1)).toBe(guests[1]);
+    expect(guests[0]).toBe(firstGuest);
+    expect(screen.getByRole('tab', { name: 'https://recent.example/docs' })
+      .getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'First page' }).getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('navigates the displayed fallback tab after another workspace tool closes', async () => {
+    const { container } = render(<BrowserWorkspaceHarness withTool />);
+    const guests = [...container.querySelectorAll<HTMLElement>('webview')];
+    fireEvent.click(screen.getByRole('button', { name: 'Close tool' }));
+    expect(screen.getByRole('tab', { name: 'New tab' }).getAttribute('aria-selected')).toBe('true');
+    expect(guests[0].style.opacity).toBe('0');
+    expect(guests[1].style.opacity).toBe('1');
+    fireEvent.click(screen.getByRole('button', { name: 'Recent page' }));
+    await waitFor(() => expect(loadUrl.mock.instances.at(-1)).toBe(guests[1]));
+    Object.defineProperties(guests[1], {
+      getURL: { value: () => 'https://recent.example/article' },
+      getTitle: { value: () => 'Recent article' },
+    });
+    fireEvent(guests[1], Object.assign(new Event('did-navigate'), {
+      url: 'https://recent.example/article', isMainFrame: true,
+    }));
+    fireEvent(guests[1], Object.assign(new Event('page-title-updated'), { title: 'Recent article' }));
+    fireEvent(guests[1], new Event('did-stop-loading'));
+    expect(screen.getByRole('tab', { name: 'Recent article' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'First page' }).getAttribute('aria-selected')).toBe('false');
+    expect(screen.getByRole('textbox', { name: 'Browser address' }).getAttribute('title'))
+      .toBe('https://recent.example/article');
+  });
+
+  it('uses the destination URL while a navigated page still has its bootstrap title', () => {
+    expect(getBrowserTabDisplayTitle({ ...pageTab, title: 'about:blank' })).toBe(pageTab.url);
+  });
+
   it('does not select another browser tab when replacing the active start page with a tool', async () => {
     let panel: BrowserPanelHandle | null = null;
     const onActiveTargetChange = vi.fn();
@@ -505,7 +619,7 @@ describe('BrowserPanel embedded webview', () => {
     defineWebviewMethod('isAudioMuted', () => false);
     defineWebviewMethod('setAudioMuted', setAudioMuted);
     defineWebviewMethod('findInPage', findInPage);
-    defineWebviewMethod('stopFind', stopFind);
+    defineWebviewMethod('stopFindInPage', stopFind);
     defineWebviewMethod('print', printPage);
     defineWebviewMethod('getZoomFactor', () => 1);
     defineWebviewMethod('setZoomFactor', setZoomFactor);
@@ -587,6 +701,19 @@ describe('BrowserPanel embedded webview', () => {
 
     expect(registerAgentTab).toHaveBeenCalledTimes(1);
     expect(unregisterAgentTab).toHaveBeenCalledTimes(unregisterCount);
+  });
+
+  it('does not reselect the visible tab for the Agent on subsequent page loads', () => {
+    const { container } = render(<BrowserPanelHarness draftKey="agent-target-page-load" initialTabs={[pageTab]} />);
+    const guest = container.querySelector('webview')!;
+    expect(setAgentActiveTab).toHaveBeenCalledWith(expect.objectContaining({ targetId: pageTab.targetId }));
+    setAgentActiveTab.mockClear();
+
+    for (const name of ['did-start-loading', 'dom-ready', 'did-stop-loading']) {
+      fireEvent(guest, new Event(name));
+    }
+
+    expect(setAgentActiveTab).not.toHaveBeenCalled();
   });
 
   it('keeps browser event subscriptions while hidden and releases them on unmount', () => {
@@ -1136,7 +1263,7 @@ describe('BrowserPanel embedded webview', () => {
       'isAudioMuted',
       'setAudioMuted',
       'findInPage',
-      'stopFind',
+      'stopFindInPage',
       'print',
       'getZoomFactor',
       'setZoomFactor',
@@ -1821,6 +1948,25 @@ describe('BrowserPanel embedded webview', () => {
 
     expect(loadUrl).not.toHaveBeenCalledWith('http://127.0.0.1:43128/first/first.html');
     expect((address as HTMLInputElement).value).toBe('C:\\reports\\second.html');
+  });
+
+  it('ignores a superseded address load failure on the same tab', async () => {
+    let rejectFirstLoad!: (reason: Error) => void;
+    loadUrl.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      rejectFirstLoad = reject;
+    }));
+    render(<BrowserPanelHarness draftKey="superseded-address-load" initialTabs={[pageTab]} />);
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+    for (const url of ['https://first.example/path', 'https://second.example/path']) {
+      fireEvent.change(address, { target: { value: url } });
+      fireEvent.submit(address.closest('form')!);
+    }
+    expect(loadUrl).toHaveBeenLastCalledWith('https://second.example/path');
+
+    await act(async () => rejectFirstLoad(new Error('First page failed')));
+
+    expect(address).toHaveProperty('title', 'https://second.example/path');
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('retains the current URL when the panel is hidden and mounted again', async () => {
@@ -3245,6 +3391,30 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.click(screen.getByLabelText('More browser options'));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Browser settings' }));
     expect(onRequestBrowserSettings).toHaveBeenLastCalledWith();
+  });
+
+  it('refreshes an open find bar and ignores results from the previous document', () => {
+    const { container } = render(<BrowserPanelHarness draftKey="find-after-navigation" initialTabs={[pageTab]} />);
+    const guest = container.querySelector('webview')!;
+    findInPage.mockReturnValueOnce(10).mockReturnValueOnce(11);
+    fireEvent.click(screen.getByLabelText('More browser options'));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Find in page' }));
+    fireEvent.change(screen.getByLabelText('Find in page'), { target: { value: 'docs' } });
+    const reportMatches = (requestId: number, matches: number) =>
+      fireEvent(guest, Object.assign(new Event('found-in-page'), {
+        result: { requestId, activeMatchOrdinal: 1, matches },
+      }));
+    reportMatches(10, 3);
+    expect(screen.getByText('1/3')).toBeTruthy();
+
+    fireEvent(guest, Object.assign(new Event('did-navigate'), {
+      url: 'https://example.com/next', isMainFrame: true,
+    }));
+    reportMatches(10, 3);
+    expect(screen.queryByText('1/3')).toBeNull();
+    fireEvent(guest, new Event('dom-ready'));
+    reportMatches(11, 2);
+    expect(screen.getByText('1/2')).toBeTruthy();
   });
 
   it('prints the current page through the asynchronous webview API', async () => {

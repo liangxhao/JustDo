@@ -106,7 +106,10 @@ import DisplayPanelLauncher from '@/features/cowork/components/display/DisplayPa
 import SessionSummaryPanel from '@/features/cowork/components/display/summary/SessionSummaryPanel';
 import SessionSummaryResourceList from '@/features/cowork/components/display/summary/SessionSummaryResourceList';
 import { useSessionSummaryVisibility } from '@/features/cowork/components/display/summary/useSessionSummaryVisibility';
-import { getAdjacentDisplayTabId } from '@/features/cowork/components/display/tabs/displayTabSelection';
+import {
+  getAdjacentDisplayTabId,
+  getBrowserPanelTargetId,
+} from '@/features/cowork/components/display/tabs/displayTabSelection';
 import NewDisplayTabButton from '@/features/cowork/components/display/tabs/NewDisplayTabButton';
 import { useDisplayTabOrder } from '@/features/cowork/components/display/tabs/useDisplayTabOrder';
 import { useDisplayTabSelection } from '@/features/cowork/components/display/tabs/useDisplayTabSelection';
@@ -2435,7 +2438,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 isOpen={isWorkspaceVisible && browserVisible && !sessionKey.startsWith('temp-')}
                 keepVisible={isWorkspaceVisible && browserVisible && sessionKey.startsWith('temp-')}
                 width={displayState.browserPanelWidth}
-                activeTargetId={displayState.browserPanelTargetId}
+                activeTargetId={getBrowserPanelTargetId(
+                  runtimeActiveTabId, displayState.browserPanelTargetId,
+                )}
                 onClose={() => {
                   if (isActiveSession) closeBrowserPanel();
                 }}

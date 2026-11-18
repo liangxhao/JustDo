@@ -1015,6 +1015,50 @@ test.each([
   },
 );
 
+test('reopens the sidebar for a message link already published by the mounted browser', () => {
+  vi.spyOn(configService, 'getConfig').mockReturnValue({ ...defaultConfig, browserTabLimit: 2 });
+  const { options, openTab } = createMessageLinkOptions(true, true);
+  const { result } = renderHook(() => {
+    const display = useSessionDisplayState('session', 520);
+    useCoworkBrowserPanels({
+      ...options,
+      ...display.setters,
+      browserTabs: display.state.browserTabs,
+      displayStates: display.states,
+      isDisplayPanelOpen: display.state.isDisplayPanelOpen,
+      hasDisplayTabs: display.state.browserTabs.length > 0,
+      setSessionField: display.setSessionField,
+      openBrowserTab: display.openBrowserTab,
+    });
+    return display;
+  });
+  const firstTab = { id: 'first', targetId: 'first', title: 'First', url: 'https://example.com/' };
+  act(() => result.current.openBrowserTab('session', firstTab, 2));
+  act(() => result.current.setters.setIsDisplayPanelOpen(false));
+  expect(result.current.state.isDisplayPanelOpen).toBe(false);
+
+  openTab.mockImplementation((url: string, { targetId }: { targetId: string }) => {
+    const { setBrowserTabs, setBrowserPanelTargetId, setPreferredDisplayTabId } = result.current.setters;
+    setBrowserTabs(tabs => [...tabs, { id: targetId, targetId, url, title: 'Mounted page' }]);
+    setBrowserPanelTargetId(targetId);
+    setPreferredDisplayTabId(`browser:${targetId}`);
+    return true;
+  });
+  act(() => {
+    window.dispatchEvent(new CustomEvent(MessageBrowserEvent.OpenWebUrl, {
+      detail: { url: 'https://example.com/report' },
+    }));
+  });
+
+  expect(result.current.state.isDisplayPanelOpen).toBe(true);
+  expect(result.current.state.isBrowserPanelOpen).toBe(true);
+  expect(result.current.state.preferredDisplayTabId).toBe('browser:user-tab');
+  expect(result.current.state.browserTabs).toEqual([
+    firstTab,
+    { id: 'user-tab', targetId: 'user-tab', url: 'https://example.com/report', title: 'Mounted page' },
+  ]);
+});
+
 test.each([
   { mounted: true, accepted: true },
   { mounted: false, accepted: true },

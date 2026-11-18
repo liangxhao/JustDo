@@ -2345,6 +2345,24 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
+  test('minimal startup preserves a browser profile from config without a model or Gateway', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-profile-startup-'));
+    temporaryDirectories.push(directory);
+    const configPath = path.join(directory, 'openclaw.json');
+    const profile = { cdpPort: 19001 };
+    fs.writeFileSync(configPath, JSON.stringify({
+      browser: { profiles: { work: profile, chrome: { cdpUrl: 'http://127.0.0.1:19002' } } },
+    }));
+
+    expect(writeMinimalConfig(configPath, 'startup', 'ask', BrowserMode.Extension).ok).toBe(true);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.browser).toMatchObject({
+      defaultProfile: 'chrome',
+      profiles: { work: profile },
+    });
+    expect(config.browser.profiles.chrome).toEqual({ driver: 'extension' });
+  });
+
   test.each(
     (['full', 'minimal'] as const).flatMap(configMode =>
       [BrowserMode.Isolated, BrowserMode.User, BrowserMode.Extension].map(nativeMode => ({
@@ -2402,6 +2420,18 @@ describe('OpenClaw auth logout config sync', () => {
       });
     }
 
+    const customProfiles = {
+      work: { cdpPort: 19001 },
+      user: {
+        driver: 'existing-session',
+        attachOnly: true,
+        mcpCommand: 'company-browser-launcher',
+        mcpArgs: ['--autoConnect'],
+      },
+    };
+    nativeConfig.browser.profiles = { ...nativeConfig.browser.profiles, ...customProfiles };
+    fs.writeFileSync(configPath, JSON.stringify(nativeConfig));
+
     browserMode = BrowserMode.Embedded;
     expect(sync.sync('browser-mode-change')).toMatchObject({
       ok: true,
@@ -2409,7 +2439,13 @@ describe('OpenClaw auth logout config sync', () => {
       requiresGatewayRestart: false,
     });
     const config = readConfig();
-    expect(config.browser.enabled).toBe(true);
+    expect(config.browser).toMatchObject({
+      enabled: true,
+      defaultProfile: 'openclaw',
+      extensionRelay: { allowLegacyAuth: false },
+      ssrfPolicy: { dangerouslyAllowPrivateNetwork: true },
+      profiles: customProfiles,
+    });
     expect(config.plugins.entries.browser).toEqual({ enabled: false });
     expect(config.plugins.entries['embedded-browser']).toEqual({ enabled: true });
 

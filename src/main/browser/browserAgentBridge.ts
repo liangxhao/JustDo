@@ -80,6 +80,8 @@ import {
 import { sanitizeBrowserUrl as sanitizeUrlForModel } from './data/browserDataSanitizers';
 import { cancelBrowserAgentDownloadsForWebContents } from './downloads/browserAgentDownloadCoordinator';
 
+const AUTOMATIC_TAB_REFERENCE = /^(?:t[1-9]\d*|embedded-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
+
 export class BrowserAgentBridge {
   private readonly executionScopes = new Map<string, BrowserExecutionScope>();
   private readonly runDisplayModes = new Map<string, { runId: string; headless: boolean }>();
@@ -87,8 +89,9 @@ export class BrowserAgentBridge {
   private readonly intervention = new BrowserIntervention();
   private readonly interventionOwners = new Map<string, number>();
   private readonly tabsBySession = new Map<string, Map<string, RegisteredTab>>();
-  private readonly activeTargets = new Map<string, string>();
+  private readonly activeTargets = new Map<string, { targetId: string; explicitlyFocused?: true }>();
   private readonly labelsBySession = new Map<string, Map<string, string>>();
+  private readonly pendingTabLabels = new Map<string, Set<string>>();
   private readonly tabHandlesBySession = new Map<string, Map<string, string>>();
   private readonly nextTabHandleBySession = new Map<string, number>();
   private readonly startedSessions = new Set<string>();
@@ -270,7 +273,7 @@ export class BrowserAgentBridge {
         `[BrowserAgentBridge] Registered embedded browser tab (session=${registration.sessionId}, target=${registration.targetId}, guest=${registration.webContentsId})`,
       );
       if (!this.activeTargets.has(scopeId)) {
-        this.activeTargets.set(scopeId, registration.targetId);
+        this.activeTargets.set(scopeId, { targetId: registration.targetId });
       }
       this.installGuestRuntime(tab);
       this.startedSessions.add(scopeId);
@@ -307,8 +310,11 @@ export class BrowserAgentBridge {
       const scopeId = reference ? this.resolveReferenceScope(reference, event.sender.id) : null;
       const tab =
         reference && scopeId ? this.tabsBySession.get(scopeId)?.get(reference.targetId) : null;
-      if (tab?.ownerId === event.sender.id) {
-        this.activeTargets.set(scopeId!, reference!.targetId);
+      if (
+        scopeId && tab?.ownerId === event.sender.id &&
+        this.activeTargets.get(scopeId)?.targetId !== tab.targetId
+      ) {
+        this.activeTargets.set(scopeId, { targetId: tab.targetId });
       }
     });
     ipcMain.handle(BrowserRecordingChannel.Lease, (event, value: unknown) => {
@@ -436,6 +442,7 @@ export class BrowserAgentBridge {
     this.tabsBySession.clear();
     this.activeTargets.clear();
     this.labelsBySession.clear();
+    this.pendingTabLabels.clear();
     this.tabHandlesBySession.clear();
     this.nextTabHandleBySession.clear();
     this.startedSessions.clear();
@@ -848,7 +855,7 @@ export class BrowserAgentBridge {
 
   private removeRegisteredTab(sessionId: string, targetId: string): string | null {
     const tabs = this.tabsBySession.get(sessionId);
-    if (!tabs?.has(targetId)) return this.activeTargets.get(sessionId) ?? null;
+    if (!tabs?.has(targetId)) return this.activeTargets.get(sessionId)?.targetId ?? null;
     const orderedTargets = [...tabs.keys()];
     const closingIndex = orderedTargets.indexOf(targetId);
     tabs.delete(targetId);
@@ -865,14 +872,14 @@ export class BrowserAgentBridge {
       this.activeTargets.delete(sessionId);
       return null;
     }
-    const currentTarget = this.activeTargets.get(sessionId);
+    const currentTarget = this.activeTargets.get(sessionId)?.targetId;
     if (currentTarget !== targetId && currentTarget && tabs.has(currentTarget)) {
       return currentTarget;
     }
     const remainingTargets = orderedTargets.filter(candidate => candidate !== targetId);
     const nextTarget =
       remainingTargets[Math.min(closingIndex, remainingTargets.length - 1)] ?? null;
-    if (nextTarget) this.activeTargets.set(sessionId, nextTarget);
+    if (nextTarget) this.activeTargets.set(sessionId, { targetId: nextTarget });
     else this.activeTargets.delete(sessionId);
     return nextTarget;
   }
@@ -956,28 +963,57 @@ export class BrowserAgentBridge {
     sessionId: string,
     targetReference?: string,
     headless?: boolean,
+    allowFocusedMode = false,
   ): RegisteredTab | null {
-    const tabs = this.listLiveTabs(sessionId).filter(
-      tab => targetReference || headless === undefined || (tab.headless === true) === headless,
-    );
+    const tabs = this.listLiveTabs(sessionId);
     if (!tabs.length) return null;
     const reference = targetReference?.trim();
     if (reference) {
+      const exact = tabs.find(tab => tab.targetId === reference);
+      if (exact) return exact;
       const labelTarget = this.labelsBySession.get(sessionId)?.get(reference);
       if (labelTarget) return tabs.find(tab => tab.targetId === labelTarget) ?? null;
       const handleTarget = [...(this.tabHandlesBySession.get(sessionId)?.entries() ?? [])].find(
         ([, handle]) => handle === reference,
       )?.[0];
       if (handleTarget) return tabs.find(tab => tab.targetId === handleTarget) ?? null;
-      const exact = tabs.find(tab => tab.targetId === reference);
-      if (exact) return exact;
       const prefixMatches = tabs.filter(tab => tab.targetId.startsWith(reference));
       return prefixMatches.length === 1 ? prefixMatches[0]! : null;
     }
-    const active = this.activeTargets.get(sessionId);
-    const resolved = (active ? tabs.find(tab => tab.targetId === active) : null) ?? tabs[0]!;
-    this.activeTargets.set(sessionId, resolved.targetId);
-    return resolved;
+    const matchesMode = (tab: RegisteredTab) =>
+      headless === undefined || (tab.headless === true) === headless;
+    const selection = this.activeTargets.get(sessionId);
+    const active = tabs.find(tab => tab.targetId === selection?.targetId);
+    if (active && (matchesMode(active) || (allowFocusedMode && selection?.explicitlyFocused))) {
+      return active;
+    }
+    return tabs.find(matchesMode) ?? null;
+  }
+
+  private async withOpenTabLabel<T>(
+    scopeId: string,
+    label: string | undefined,
+    open: () => Promise<T>,
+  ): Promise<T> {
+    if (!label) return open();
+    const tabs = this.listLiveTabs(scopeId);
+    if (AUTOMATIC_TAB_REFERENCE.test(label) || tabs.some(tab => tab.targetId === label)) {
+      throw new Error(`Browser tab label is reserved for a tab identifier: ${label}`);
+    }
+    const pending = this.pendingTabLabels.get(scopeId) ?? new Set<string>();
+    if (pending.has(label) || this.labelsBySession.get(scopeId)?.has(label)) {
+      throw new Error(`Browser tab label already exists: ${label}`);
+    }
+    pending.add(label);
+    this.pendingTabLabels.set(scopeId, pending);
+    try {
+      return await open();
+    } finally {
+      pending.delete(label);
+      if (!pending.size && this.pendingTabLabels.get(scopeId) === pending) {
+        this.pendingTabLabels.delete(scopeId);
+      }
+    }
   }
 
   private async getActiveTab(
@@ -1061,7 +1097,7 @@ export class BrowserAgentBridge {
         tabs.set(tab.targetId, tab);
         this.tabsBySession.set(scopeId, tabs);
         this.startedSessions.add(scopeId);
-        this.activeTargets.set(scopeId, tab.targetId);
+        this.activeTargets.set(scopeId, { targetId: tab.targetId });
         const handles = this.tabHandlesBySession.get(scopeId) ?? new Map<string, string>();
         const next = this.nextTabHandleBySession.get(scopeId) ?? 1;
         handles.set(tab.targetId, `t${next}`);
@@ -1230,7 +1266,7 @@ export class BrowserAgentBridge {
       const profile = (command.profile?.trim() || EMBEDDED_PROFILE) as BrowserAgentProfile;
       if (!this.profiles.has(profile)) throw new Error(`Browser profile not found: ${profile}`);
       const scopeId = browserScopeId(sessionId, profile);
-      const selectedTargetId =
+      const targetId =
         command.targetId?.trim() ||
         (command.action === 'act' && typeof nestedRequest?.targetId === 'string'
           ? nestedRequest.targetId.trim()
@@ -1242,10 +1278,14 @@ export class BrowserAgentBridge {
           (executionScope && currentMode?.runId === executionScope.runId
             ? currentMode.headless
             : false));
+      const allowFocusedMode =
+        command.headless === undefined &&
+        !executionScope?.headlessOnly &&
+        !['doctor', 'status', 'start', 'stop', 'profiles', 'importprofile', 'tabs'].includes(command.action);
       const selectedTab =
         command.action === 'open'
           ? null
-          : this.resolveTab(scopeId, selectedTargetId, defaultHeadless);
+          : this.resolveTab(scopeId, targetId, defaultHeadless, allowFocusedMode);
       if (
         command.headless !== undefined &&
         selectedTab &&
@@ -1402,6 +1442,10 @@ export class BrowserAgentBridge {
         };
       }
       if (command.action === 'start') {
+        const active = this.activeTargets.get(scopeId);
+        if (command.headless !== undefined && active?.explicitlyFocused) {
+          this.activeTargets.set(scopeId, { targetId: active.targetId });
+        }
         this.startedSessions.add(scopeId);
         return {
           ok: true,
@@ -1528,10 +1572,7 @@ export class BrowserAgentBridge {
       if (command.action === 'open') {
         const url = await normalizeNavigationUrl(command.targetUrl ?? command.url);
         const label = command.label?.trim();
-        if (label && this.labelsBySession.get(scopeId)?.has(label)) {
-          throw new Error(`Browser tab label already exists: ${label}`);
-        }
-        return withPanelLease(async () => {
+        const open = () => withPanelLease(async () => {
           const tab = await this.getActiveTab(
             scopeId,
             sessionId,
@@ -1566,26 +1607,22 @@ export class BrowserAgentBridge {
             if (guest.getURL() !== url) await guest.loadURL(url);
             assertActive();
             this.requireCurrentRegisteredGuest(tab, guest);
-            this.activeTargets.set(scopeId, tab.targetId);
+            this.activeTargets.set(scopeId, { targetId: tab.targetId });
             return { ok: true, ...describeTab(tab) };
           });
         });
+        return this.withOpenTabLabel(scopeId, label, open);
       }
 
-      const targetId =
-        command.targetId?.trim() ||
-        (command.action === 'act' && typeof nestedRequest?.targetId === 'string'
-          ? nestedRequest.targetId.trim()
-          : undefined);
+      const tab = selectedTab;
       if (command.action === 'focus' || command.action === 'close') {
-        const tab = this.resolveTab(scopeId, targetId, headless);
         if (!tab)
           throw new Error(targetId ? `Browser tab not found: ${targetId}` : 'No browser tab.');
         if (command.action === 'focus') {
           return withPanelLease(() => {
             // Tool focus chooses this execution's default target. Presentation
             // stays with the user even when several executions share a sidebar.
-            this.activeTargets.set(scopeId, tab.targetId);
+            this.activeTargets.set(scopeId, { targetId: tab.targetId, explicitlyFocused: true });
             return { ok: true, ...describeTab(tab) };
           });
         }
@@ -1598,7 +1635,6 @@ export class BrowserAgentBridge {
         });
       }
 
-      let tab = this.resolveTab(scopeId, targetId, headless);
       if (!tab && targetId) throw new Error(`Browser tab not found: ${targetId}`);
       if (!tab && command.action === 'navigate') {
         return withPanelLease(async () => {

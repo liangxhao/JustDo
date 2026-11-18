@@ -59,6 +59,7 @@ import {
   listInstalledOpenClawExtensionIds,
   listKnownOpenClawWorkspaceDirs,
   ManagedMemorySearchConfig,
+  mergeManagedOpenClawBrowserConfig,
   mergeManagedOpenClawCodeModeConfig,
   mergeManagedOpenClawSubagentConfig,
   mergeManagedOpenClawSwarmConfig,
@@ -758,7 +759,7 @@ export class OpenClawConfigSync {
           enabled: true,
         },
       },
-      browser: connectivityConfig.browser,
+      browser: mergeManagedOpenClawBrowserConfig(existingConfig?.browser, connectivityConfig.browser),
       // skills.update writes user choices such as entries.<id>.enabled here.
       // Preserve those Gateway-owned settings across JustDo startup syncs.
       skills: mergeOpenClawSkillConfig(existingSkills, {
@@ -1168,6 +1169,10 @@ export class OpenClawConfigSync {
       // Only malformed JSON follows the minimal-config recovery path.
     }
     if (isRecord(previousConfig)) {
+      minimalConfig.browser = mergeManagedOpenClawBrowserConfig(
+        previousConfig.browser,
+        connectivityConfig.browser,
+      );
       const previousGateway = isRecord(previousConfig.gateway) ? previousConfig.gateway : {};
       const minimalGateway = isRecord(minimalConfig.gateway) ? minimalConfig.gateway : {};
       minimalConfig.gateway = {
@@ -1381,7 +1386,7 @@ export class OpenClawConfigSync {
                   ),
                   update: connectivityConfig.update,
                   transcripts: connectivityConfig.transcripts,
-                  browser: connectivityConfig.browser,
+                  browser: minimalConfig.browser,
                   hooks: {
                     ...existingHooks,
                     ...(isRecord(hookConfig.hooks) ? hookConfig.hooks : {}),
