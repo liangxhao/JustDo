@@ -477,6 +477,8 @@ Electron fixtures, including a temporary service bound to local port 18080.
 It checks readiness of both helpers before the first navigation, both alias names
 and a direct control, top-level and cross-origin iframe authentication, native
 CORS preflight, same-profile cookies, and rejection of unrelated local processes.
+It also mounts real message-embed webviews, checks redirect and iframe authentication,
+and verifies that releasing one embed preserves the other embed's login and access.
 
 ### Plugin host and management
 

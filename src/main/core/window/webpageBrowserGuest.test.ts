@@ -34,6 +34,7 @@ vi.mock('../network/systemProxyPreference', () => ({
   getBrowserProxySessionState: mocks.state,
 }));
 
+import { installBrowserTransportRequestGuard } from '../../browser/authentication/browserTransportRequests';
 import { createBrowserSessionWebpageGuests } from './webpageBrowserGuest';
 
 let nextId = 1;
@@ -140,11 +141,11 @@ function fixture(initialStatus: WebpageEmbedProxyState['status'] = 'ready') {
   };
   const attach = (guest: Contents, host: Contents = owner) =>
     controller.attach(guest as never, host as never);
-  const inspect = (guest: Contents, url: string, resourceType = 'xhr') =>
+  const inspect = (guest: Contents, url: string, resourceType = 'xhr', method = 'GET') =>
     new Promise<Record<string, unknown>>(resolve => {
       const call = mocks.policy.mock.calls.find(([page]) => page === guest)!;
       void call[1].beforeRequest(
-        { url, resourceType, webContents: guest, webContentsId: guest.id },
+        { url, resourceType, method, webContents: guest, webContentsId: guest.id },
         resolve,
       );
     });
@@ -274,6 +275,57 @@ test('two same-URL mounts claim exact startup identities and releasing one prese
   expect(f.shared.clearStorageData).not.toHaveBeenCalled();
   expect(f.shared.closeAllConnections).not.toHaveBeenCalled();
   expect(f.owner.listenerCount('did-start-navigation')).toBe(1);
+});
+
+test('admits only active authentication requests for ready mounts and revokes each mount independently', async () => {
+  const rollback = installBrowserTransportRequestGuard(51_234);
+  const f = fixture('pending');
+  const left = f.register();
+  const right = f.register('5d42d305-4ee3-4ef9-b89c-2dc74b859b7d');
+  f.prepare(left);
+  f.prepare(right);
+  const leftGuest = f.create(left);
+  const rightGuest = f.create(right);
+  f.attach(leftGuest);
+  f.attach(rightGuest);
+  const policy = (guest: Contents) => mocks.policy.mock.calls.find(([page]) => page === guest)![1];
+  const endpoint = 'https://localhost:18080/getSpesInfo';
+
+  try {
+    expect(policy(leftGuest).canAuthenticate()).toBe(false);
+    expect(await f.inspect(leftGuest, endpoint, 'xhr', 'POST')).toEqual({ cancel: true });
+    f.setState('ready');
+    expect(policy(leftGuest).canAuthenticate()).toBe(true);
+    for (const method of ['POST', 'OPTIONS']) {
+      expect(await f.inspect(leftGuest, endpoint, 'xhr', method)).toEqual({});
+    }
+    for (const [url, resourceType, method] of [
+      ['https://localhost:18080/unrelated', 'xhr', 'POST'],
+      ['https://localhost:18081/getSpesInfo', 'xhr', 'POST'],
+      [endpoint, 'mainFrame', 'POST'],
+      [endpoint, 'subFrame', 'POST'],
+      [endpoint, 'xhr', 'GET'],
+    ] as const) {
+      expect(await f.inspect(leftGuest, url, resourceType, method)).toEqual({ cancel: true });
+    }
+    expect(f.shared.resolveHost).not.toHaveBeenCalled();
+
+    f.setState('failed');
+    expect(policy(leftGuest).canAuthenticate()).toBe(false);
+    expect(await f.inspect(leftGuest, endpoint, 'xhr', 'POST')).toEqual({ cancel: true });
+    f.setState('ready');
+    f.controller.release(f.owner as never, 'edff0385-cba8-4bbc-9521-913cc8182247');
+    expect(policy(leftGuest).canAuthenticate()).toBe(false);
+    expect(await f.inspect(leftGuest, endpoint, 'xhr', 'POST')).toEqual({ cancel: true });
+    expect(policy(rightGuest).canAuthenticate()).toBe(true);
+    expect(await f.inspect(rightGuest, endpoint, 'xhr', 'POST')).toEqual({});
+    expect(rightGuest.close).not.toHaveBeenCalled();
+
+    rollback();
+    expect(await f.inspect(rightGuest, endpoint, 'xhr', 'POST')).toEqual({ cancel: true });
+  } finally {
+    rollback();
+  }
 });
 
 test.each(['unprepared', 'owner', 'session', 'retired', 'replay'])(

@@ -393,6 +393,10 @@ Main 在正常启动取得单实例锁后绑定一个进程私有回环端口，
 
 映射安装后，Main 在后台并行启动 TCP 归属查询和别名转发进程。窗口可以照常打开，首个认证连接复用已经开始的准备工作，并在转发前完成归属校验。
 
+消息中的普通 URL 内嵌网页复用该通道。其精确 guest/mount 登记在代理就绪时允许认证，
+并按同一完整地址、POST/预检和 HTTPS 来源约束发送请求。托管 ref 使用独立会话。
+普通网页的存储共享和释放规则见[独立网页](../chat/webpage-embeds.md#普通-url-与共享登录)。
+
 别名进程只接收 SNI 为 `localhost` 且声明支持 `h2` 的初始 TLS 握手，以区分当前 Chromium 的普通 HTTPS 与新建 WebSocket 连接。TLS 协议最终仍由浏览器和 SPES 协商。Chromium 的服务工作线程和共享工作线程的 WebSocket 可绕过 Electron 请求钩子。如果 SPES 以后支持在已有 HTTP/2 会话上建立 WebSocket，或浏览器政策关闭 HTTP/2 协议声明，需要重新验证该认证通道。
 
 Windows 原生回归测试使用打包 Electron 和合成站点，核对整页与跨源 iframe 的预检、HTTPS POST、Cookie 和实际连接进程。真实内网验收从原始业务地址开始，分别验证 HTTP 整页与 iframe 浮层。

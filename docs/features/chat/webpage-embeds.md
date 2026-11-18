@@ -100,6 +100,12 @@ localStorage/IndexedDB 与站点 worker；首个顶层请求按正常 SameSite S
 sessionStorage 和页面内存仍按页面隔离；仅在这些位置保存的登录状态不保证跨页可用。
 导入、命名 profile 和用户 Chrome 不自动参与共享。
 
+启用 Windows 企业自动登录后，普通 URL 网页复用侧栏的认证通道和
+`src/config/browserAuthentication.ts` 配置。整页跳转或网页内的 HTTPS 登录 frame
+可以向配置的完整本机认证接口发出 POST 与对应预检，无需登记业务域名。
+Main 在实际发送前核验当前网页归属和代理就绪状态，页面释放后撤销该准入。
+本机地址的页面导航和其他本机接口继续遵循原有网络边界。
+
 ### 托管 ref 与隔离存储
 
 托管 ref 继续为每 mount 创建独立内存 partition，只允许固定不可变

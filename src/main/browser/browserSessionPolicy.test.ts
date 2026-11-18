@@ -3,6 +3,10 @@ import { EventEmitter } from 'node:events';
 import { describe, expect, test, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ claim: vi.fn(), proxyReady: vi.fn(async () => {}) }));
+vi.mock('electron', () => ({
+  app: { on: vi.fn(), removeListener: vi.fn() },
+  webContents: { fromId: vi.fn() },
+}));
 vi.mock('../core/network/systemProxyPreference', () => ({
   registerBrowserProxySession: mocks.proxyReady,
 }));
@@ -10,6 +14,10 @@ vi.mock('./downloads/browserAgentDownloadCoordinator', () => ({
   claimBrowserAgentDownload: mocks.claim,
 }));
 
+import {
+  installBrowserTransportRequestGuard,
+  isBrowserTransportRequestBlocked,
+} from './authentication/browserTransportRequests';
 import { registerBackgroundBrowserGuest } from './backgroundBrowserGuestRegistry';
 import {
   type BrowserSessionUiPolicy,
@@ -345,6 +353,80 @@ describe('shared browser session policy ownership', () => {
 });
 
 describe('shared browser page network policies', () => {
+  test('admits authentication only for current opted-in guests while reusing the shared profile', () => {
+    const rollback = installBrowserTransportRequestGuard(51_234);
+    const f = fixture();
+    const first = f.guest();
+    const second = f.guest();
+    const restricted = f.guest();
+    let current = true;
+    let ready = true;
+    const releaseFirst = registerBrowserSessionGuestPolicy(first, {
+      isCurrent: () => current,
+      canAuthenticate: () => ready,
+      beforeRequest: (_details, reply) => reply({}),
+    });
+    const releaseSecond = registerBrowserSessionGuestPolicy(second, {
+      isCurrent: () => true,
+      canAuthenticate: () => true,
+      beforeRequest: (_details, reply) => reply({}),
+    });
+    const releaseRestricted = registerBrowserSessionGuestPolicy(restricted, {
+      isCurrent: () => true,
+      beforeRequest: (_details, reply) => reply({}),
+    });
+    const endpoint = 'https://localhost:18080/getSpesInfo';
+    const blocked = (guest: Electron.WebContents, browserSession = f.nativeSession) =>
+      isBrowserTransportRequestBlocked(browserSession, {
+        url: endpoint,
+        method: 'POST',
+        resourceType: 'xhr',
+        requestHeaders: { Origin: 'https://provider.example' },
+        frame: { origin: 'https://provider.example' } as Electron.WebFrameMain,
+        webContents: guest,
+        webContentsId: guest.id,
+      } as Electron.OnBeforeSendHeadersListenerDetails);
+
+    try {
+      expect(blocked(first)).toBe(false);
+      expect(blocked(second)).toBe(false);
+      expect(blocked(restricted)).toBe(true);
+      expect(f.inspect(endpoint, first)).toHaveBeenCalledExactlyOnceWith({});
+      // The proxy can become unavailable between the request and header hooks.
+      ready = false;
+      expect(blocked(first)).toBe(true);
+      expect(blocked(second)).toBe(false);
+      ready = true;
+      current = false;
+      expect(blocked(first)).toBe(true);
+      current = true;
+
+      const equivalent = { storagePath: f.session.storagePath } as Electron.Session;
+      Object.assign(first, { session: equivalent });
+      expect(blocked(first, equivalent)).toBe(false);
+      Object.assign(first, { session: { storagePath: '/browser/different-profile' } });
+      expect(blocked(first)).toBe(true);
+      Object.assign(first, { session: f.nativeSession });
+      const impostor = Object.assign(new EventEmitter(), {
+        id: first.id,
+        session: f.nativeSession,
+        isDestroyed: () => false,
+      }) as Electron.WebContents;
+      expect(blocked(impostor)).toBe(true);
+
+      releaseFirst();
+      expect(blocked(first)).toBe(true);
+      expect(blocked(second)).toBe(false);
+      expect(f.session.webRequest.onBeforeRequest).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseFirst();
+      releaseSecond();
+      releaseRestricted();
+      f.owner.release();
+      rollback();
+    }
+  });
+
   test('dispatches two pages independently while sidebar, background and worker requests keep their baseline', async () => {
     const f = fixture();
     const first = f.guest();

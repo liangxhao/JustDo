@@ -36,6 +36,7 @@ export type BrowserSessionUiPolicy = {
 
 export type BrowserSessionGuestPolicy = {
   isCurrent: () => boolean;
+  canAuthenticate?: () => boolean;
   beforeRequest: (
     details: Electron.OnBeforeRequestListenerDetails,
     callback: (response: Electron.CallbackResponse) => void,
@@ -102,6 +103,9 @@ export const ensureBrowserSessionPolicy = (browserSession: Electron.Session): vo
         !isSameBrowserSession(guest.session, browserSession)) return false;
     const background = captureBackgroundBrowserRequest(browserSession, details);
     if (background) return background();
+    const entry = state.guests.get(guestId);
+    if (entry) return entry.guest === guest && entry.handlers.isCurrent() &&
+      entry.handlers.canAuthenticate?.() === true;
     if (isPolicyGuest(state, guest, guestId)) return false;
     return state.ui?.handlers.ownsGuest?.(guest, guestId) === true;
   });

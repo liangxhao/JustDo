@@ -59,6 +59,9 @@ const {
 } = require('../../../src/main/browser/authentication/browserAuthenticationTransport');
 const { configureBrowserSessionUi } = require('../../../src/main/browser/browserSessionPolicy');
 const { applyBrowserProxyPreference } = require('../../../src/main/core/network/systemProxyPreference');
+const { BROWSER_PANEL_PARTITION } = require('../../../src/shared/browser/browser');
+const { createWebpageEmbedGuests } = require('../../../src/main/core/window/webpageEmbedGuest');
+const { randomUUID } = require('node:crypto');
 
 app.setPath('userData', profile);
 app.setPath('sessionData', profile);
@@ -124,6 +127,68 @@ const launch = async () => {
     untrusted.on('error', () => {});
     await new Promise(resolve => untrusted.once('close', resolve));
   }
+  const host = new BrowserWindow({
+    show: false, webPreferences: { webviewTag: true, sandbox: true, contextIsolation: true },
+  });
+  await host.loadURL('http://127.0.0.1:' + businessPort + '/host');
+  const browserSession = session.fromPartition(BROWSER_PANEL_PARTITION);
+  await configureSession(browserSession);
+  const resolveHost = browserSession.resolveHost.bind(browserSession);
+  // Sites use local fixture servers. Publish their logical remote DNS addresses
+  // to the embed policy while Chromium's resolver maps their sockets to loopback.
+  browserSession.resolveHost = (hostname, options) =>
+    ['business.example', 'provider.example'].includes(hostname)
+      ? Promise.resolve({ endpoints: [{ address: '192.0.2.1', family: 'ipv4' }] })
+      : resolveHost(hostname, options);
+  const embeds = createWebpageEmbedGuests({
+    preloadPath: '',
+    ownsHost: (owner, actual) => owner === host.webContents && actual === owner,
+  });
+  host.webContents.on('will-attach-webview', (event, preferences, params) =>
+    assert.equal(embeds.prepare(event, preferences, params, host.webContents), true));
+  host.webContents.on('did-attach-webview', (_event, guest) =>
+    assert.equal(embeds.attach(guest, host.webContents), true));
+  const openEmbed = async targetUrl => {
+    const mountId = randomUUID();
+    const mount = embeds.registerMount({
+      mountId, owner: host.webContents, targetUrl,
+      shellUrl: new URL('/embed-viewer.html?mount=' + mountId, host.webContents.getURL()).href,
+      isCurrent: () => true, shareBrowserSession: true,
+    });
+    const attached = once(host.webContents, 'did-attach-webview');
+    await host.webContents.executeJavaScript(
+      '(() => { const view = document.createElement("webview");' +
+      'view.partition = ' + JSON.stringify(mount.partition) + ';' +
+      'view.src = ' + JSON.stringify(mount.viewerUrl) + ';' +
+      'document.body.append(view); })()');
+    const [, guest] = await attached;
+    // The inert startup also completes a load. Wait for the real target.
+    while (guest.getURL().startsWith('data:') || guest.isLoading())
+      await once(guest, 'did-stop-loading');
+    assert.equal(guest.session.storagePath, browserSession.storagePath);
+    assert.equal(await guest.executeJavaScript('typeof window.electron'), 'undefined');
+    return { mountId, guest };
+  };
+  const first = await openEmbed(business + '/redirect');
+  assert.equal(new URL(first.guest.getURL()).origin, provider);
+  if (aliasName) assert.equal(await first.guest.executeJavaScript(request), 'fixture-ok');
+  else await assert.rejects(first.guest.executeJavaScript(request));
+  const second = await openEmbed(business + '/overlay');
+  const embeddedFrame = second.guest.mainFrame.frames.find(candidate => candidate.origin === provider);
+  assert.ok(embeddedFrame);
+  assert.equal(await embeddedFrame.executeJavaScript('document.cookie'), 'existing=fixture');
+  if (aliasName) assert.equal(await embeddedFrame.executeJavaScript(request), 'fixture-ok');
+  else await assert.rejects(embeddedFrame.executeJavaScript(request));
+  await assert.rejects(embeddedFrame.executeJavaScript(
+    'fetch(' + JSON.stringify(new URL('/unrelated', localEndpoint).href) + ',{method:"POST"})'));
+  const closed = once(first.guest, 'destroyed');
+  embeds.release(host.webContents, first.mountId);
+  await closed;
+  if (aliasName) assert.equal(await embeddedFrame.executeJavaScript(request), 'fixture-ok');
+  assert.equal(await embeddedFrame.executeJavaScript('document.cookie'), 'existing=fixture');
+  embeds.dispose();
+  browserSession.resolveHost = resolveHost;
+  host.destroy();
   window.destroy();
   await stopBrowserAuthenticationTransport();
   app.quit();
@@ -234,7 +299,7 @@ async function runFixture(root, executablePath, settings) {
     env: { ...process.env, AUTH_TRANSPORT_FIXTURE: JSON.stringify({ profile, ...settings }) },
     stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true,
   });
-  const timeout = setTimeout(() => child.kill(), 45_000);
+  const timeout = setTimeout(() => child.kill(), 90_000);
   try {
     const [code] = await once(child, 'exit');
     assert.equal(code, 0);
@@ -266,7 +331,9 @@ async function main() {
     const origin = `https://provider.example:${loginPort}`;
     const business = await listen(null, async (request, response) => {
       siteOwners.push(await getOwner(request.socket));
-      if (request.url === '/redirect') {
+      if (request.url === '/host') {
+        response.writeHead(200, { 'content-type': 'text/html' }).end('<body></body>');
+      } else if (request.url === '/redirect') {
         response.writeHead(302, { location: origin }).end();
       } else {
         response.writeHead(200, { 'content-type': 'text/html' })
@@ -279,6 +346,7 @@ async function main() {
         'access-control-allow-origin': origin,
         'access-control-allow-methods': 'POST',
         'access-control-allow-headers': 'content-type',
+        'access-control-max-age': '0',
       };
       let payload = '';
       for await (const part of request) payload += part;
@@ -308,7 +376,9 @@ async function main() {
       });
       assert.ok(siteOwners.length >= 4);
       assert.ok(siteOwners.every(owner => owner === branded));
-      assert.deepEqual(authRequests.map(request => request.method), ['OPTIONS', 'POST', 'OPTIONS', 'POST']);
+      const pairs = aliasName ? 5 : 2;
+      assert.deepEqual(authRequests.map(request => request.method),
+        Array.from({ length: pairs }, () => ['OPTIONS', 'POST']).flat());
       for (const request of authRequests) {
         assert.deepEqual(request, {
           owner: aliasName ?? branded, url: localEndpoint.pathname, method: request.method,
@@ -316,7 +386,7 @@ async function main() {
           payload: request.method === 'POST' ? body : '',
         });
       }
-      console.log(`${aliasName ?? 'Baseline'}: ${aliasName ? 'startup readiness, ' : ''}native redirects, iframe, TLS POST and socket ownership verified.`);
+      console.log(`${aliasName ?? 'Baseline'}: ${aliasName ? 'startup readiness, ' : ''}native redirects, iframe, message embeds, TLS POST and socket ownership verified.`);
     }
   } finally {
     for (const server of servers) {

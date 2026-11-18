@@ -9,6 +9,7 @@ import {
   WebpageEmbedIpc,
   type WebpageEmbedStateEvent,
 } from '../../../shared/browser/webpageEmbed';
+import { isBrowserAuthenticationRequest } from '../../browser/authentication/browserTransportRequests';
 import { isSameBrowserSession } from '../../browser/browserSessionIdentity';
 import {
   ensureBrowserSessionPolicy,
@@ -283,6 +284,7 @@ export function createBrowserSessionWebpageGuests(options: Options) {
       mount.attached = true;
       mount.releasePolicy = registerBrowserSessionGuestPolicy(guest, {
         isCurrent: () => current(mount),
+        canAuthenticate: () => ready(mount),
         beforeRequest: async (details, callback) => {
           if (details.url === mount.startupUrl && details.resourceType === 'mainFrame') {
             callback({});
@@ -290,6 +292,10 @@ export function createBrowserSessionWebpageGuests(options: Options) {
           }
           if (!ready(mount)) {
             callback({ cancel: true });
+            return;
+          }
+          if (isBrowserAuthenticationRequest(details)) {
+            callback({});
             return;
           }
           let url: URL;

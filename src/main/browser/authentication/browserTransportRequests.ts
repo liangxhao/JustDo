@@ -34,11 +34,17 @@ function isSecureRemoteOrigin(origin: string | undefined): origin is string {
     (Number.parseInt(mapped[1], 16) !== 0 || Number.parseInt(mapped[2], 16) !== 0));
 }
 
+/** Active transport scope. Its header guard also checks HTTPS Origin and POST preflight. */
+export function isBrowserAuthenticationRequest(
+  details: Pick<Electron.OnBeforeRequestListenerDetails, 'url' | 'method' | 'resourceType'>,
+): boolean {
+  return relayPort !== undefined && details.url === AUTHENTICATION_URL.href &&
+    details.resourceType !== 'mainFrame' && details.resourceType !== 'subFrame' &&
+    (details.method === 'POST' || details.method === 'OPTIONS');
+}
+
 function permitsAuthentication(browserSession: Electron.Session, details: Details): boolean {
-  if (
-    details.resourceType === 'mainFrame' || details.resourceType === 'subFrame' ||
-    (details.method !== 'POST' && details.method !== 'OPTIONS')
-  ) return false;
+  if (!isBrowserAuthenticationRequest(details)) return false;
   const origin = header(details.requestHeaders, 'origin');
   if (!isSecureRemoteOrigin(origin) || (details.frame && details.frame.origin !== origin))
     return false;
