@@ -370,6 +370,14 @@
       ]
     },
     {
+      "file": "040-plugin-recovery-missing-source.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/server-plugin-reload-kLZrvRgz.mjs"
+      ]
+    },
+    {
       "file": "041-mcp-app-view-keepalive.cjs",
       "pristineRejected": true,
       "sourceVerified": true,
@@ -578,6 +586,10 @@
     {
       "file": "dist/server-plugin-in-process-dispatch-CQ6TnlII.mjs",
       "sha256": "a3ef0ea1a9000ce18ce643c3802ce3f870355522ed420db7bc3fca5ed84b678b"
+    },
+    {
+      "file": "dist/server-plugin-reload-kLZrvRgz.mjs",
+      "sha256": "f17288b403547c0594f215ea5d4809b5810834e815de6e67ff618859e9feef8f"
     },
     {
       "file": "dist/server-plugin-runtime-client-CvsL0x_P.mjs",

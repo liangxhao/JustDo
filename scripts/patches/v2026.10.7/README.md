@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038), MCP App continuity after a model change (039) and live MCP App view renewal (041). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 38 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 83 exact pristine patch target hashes bound to the locked npm archive.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038), MCP App continuity after a model change (039), online plugin removal, disable or update without a target rollback copy (040) and live MCP App view renewal (041). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 39 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 84 exact pristine patch target hashes bound to the locked npm archive.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -70,6 +70,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [037-project-skill-precedence.cjs](037-project-skill-precedence.cjs) | — | select the admitted execution project's file skill when it shares a name with an assistant skill. | native skill resolution supports execution project precedence while preserving separate assistant and execution roots. |
 | [038-subagent-model-inventory.cjs](038-subagent-model-inventory.cjs) | — | verify the target model of a new subagent outside the parent turn's plugin generation. | native subagent model preflight succeeds after retirement of the parent inventory while preserving exact caller and model checks. |
 | [039-mcp-app-model-continuity.cjs](039-mcp-app-model-continuity.cjs) | — | retain the live MCP App view on compatible model changes within the same native MCP runtime. | remove at the next OpenClaw version upgrade and use native session model selection. |
+| [040-plugin-recovery-missing-source.cjs](040-plugin-recovery-missing-source.cjs) | — | skip exact uninstall/disable/update targets' extra old-runtime rollback copies while retaining native online replacement. | native online uninstall, disable and update can omit target rollback capture while preserving cleanup and explicit failure outcomes. |
 | [041-mcp-app-view-keepalive.cjs](041-mcp-app-view-keepalive.cjs) | — | renew the exact live MCP App view while its page remains open, without replaying tools. | native authenticated view retention or renewal supports equivalent lifetime and authorization checks. |
 
 ## Locked target source owners
@@ -115,6 +116,7 @@ The following paths were returned by a clean application on the pristine target.
 | 037 | `dist/workspace-skill-loader-sfXVTUiF.mjs` |
 | 038 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
 | 039 | `dist/mcp-app-extensions-abaft4XG.mjs`<br>`dist/mcp-app-host-files-CYEqGNXR.mjs` |
+| 040 | `dist/server-plugin-reload-kLZrvRgz.mjs` |
 | 041 | `dist/mcp-app-DRRDUDxP.mjs` |
 
 ## Test ownership
@@ -162,6 +164,7 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 037 | `project-skill-precedence.test.ts`, `tests/openclaw/runtime/project-skill-precedence-contract.test.ts` |
 | 038 | `subagent-model-inventory.test.ts` |
 | 039 | `mcp-app-model-continuity.test.ts`, `tests/mcp-apps/gateway-smoke.cjs --model-selection` |
+| 040 | `plugin-recovery-missing-source.test.ts`, `plugin-reload-recovery.fixture.js`, `plugin-reload-recovery-caller-prefix.fixture.js`, `plugin-runtime-generation.fixture.js` |
 | 041 | `mcp-app-view-keepalive.test.ts`, `mcp-app-view-keepalive.fixture.js`, Renderer `mcp-app-session.keepalive.test.ts` |
 
 ### 033: plugin directory publication and retained installed files
@@ -390,6 +393,118 @@ default-model changes as an explicit setting. Update the native smoke test for b
 paths and remove the 039 entries and patch-specific assertions from the target version's
 inventory and tests. Follow the [MCP Apps upgrade checklist](../../../docs/upgrade-checklist/checklist.md#21-mcp-apps-原生生命周期)
 for product acceptance. Keep 030 until its independent workspace reproduction passes upstream.
+
+### 040: online uninstall, disable and update without target rollback capture
+
+The reported uninstall failed during native preparation while reading a DLL from
+`state/tmp/plugin-captures/.../native/admission-.../content/skills/...`. The installed
+plugin contained the DLL, but the temporary directory was gone after cancellation.
+Those observations do not establish whether the temporary file existed at the failing
+read or which actor removed it. The native source manifest retains separate original
+and captured paths; recovery reads the latter. The complete published recovery owner
+reproduces rejection of a wrapped `ENOENT` from the actual Windows file reader.
+
+The locked uninstall handler saves disabled configuration, applies the runtime change,
+then removes the installation directory and commits its record removal. During runtime
+preparation, `createPluginReloadRecovery.capture` ordinarily makes an extra old-module
+copy for rollback, before drain. Main and Runtime Services cannot replace this private
+callback, and the public request has no option to skip recovery capture. Offline CLI
+removal requires stopping Gateway. Host file deletion bypasses native configuration,
+installation records and resource teardown. Root and independent agents cross-reviewed
+these alternatives and the target-only change before implementation.
+
+A failed preparation can leave durable disabled configuration while the old applied
+runtime remains active. The application network-policy merger reads that saved state,
+but the management page reads the native applied catalog; this can withdraw the plugin's
+outbound-header contribution while the page still shows enabled. An explicit disable
+also commits its disabled policy before runtime apply, even when already saved disabled,
+and then hits the same capture blocker. Its native `disable` reason and exact policy
+plugin ID therefore use the same teardown policy. A configuration-only success or a
+host-side no-op would leave the old runtime running and cannot repair that condition.
+
+040 passes the native lifecycle's exact plugin IDs to the recovery owner only when its
+reason is `uninstall`, `disable` or `install`. The owner snapshots those IDs and skips their extra rollback
+captures, regardless of whether a copy would have succeeded. It still records their
+stop-hook IDs. Other changed plugins retain their normal captures; enablement, ordinary
+reloads and callers without the optional argument keep their original behavior.
+The running source snapshot is not disposed early. Native resource reservation, task
+drain, hooks, cancellation, retirement and directory removal remain unchanged, with no
+whole-Gateway stop and no added file-error classifier or uninstall preflight.
+
+Skipped targets use the native unavailable-owner set. A failure before old instances
+stop preserves those instances; after stopping begins, rollback cannot reload the
+selected target from disk. Healthy siblings retain their normal recovery copies and
+the existing dependent-owner guard remains intact. Stop or removal failures still return
+their real native error and retain the native retryable state. Skipping a backup does
+not establish successful deletion. This deliberately gives up automatic target
+reactivation after teardown, rather than making an optional rollback copy a prerequisite
+for these operations. Existing native typed missing-source handling is unchanged.
+
+Native install and update both use reason `install` with the newly installed package's
+exact owned plugin IDs. A new installation has no previous target instance to copy.
+Replacement commits its new payload, index and configuration before runtime apply;
+activation failure already retains that committed installation through
+`PluginInstallPersistedError` instead of rolling the package back. Skipping the old
+runtime copy therefore keeps the committed new installation and reports activation
+failure without recreating its old target instance. It does not change the separate
+payload publication transaction before commit. Removed or renamed old child IDs absent
+from the native request retain normal capture, as do deferred CLI batches applied as
+ordinary `reload`; the patch does not guess additional owners or change generic reload.
+
+The published source owner has SHA-256
+`f17288b403547c0594f215ea5d4809b5810834e815de6e67ff618859e9feef8f`;
+the complete extracted factory fixture has SHA-256
+`cb053ab675c7b5f193f0128214405d4fba4f5531f13339d93ce7212a3a598886`.
+The caller-prefix fixture contains the published `reloadGatewayPlugins` prefix through
+recovery allocation and a synthetic closing brace. Its canonical hash is
+`66aa4dd70da0cc1e90ebd3a9d10b5e8272335ec963164c08b33a641c0192d604`.
+Verification binds the complete pristine and current recovery bodies and the restored
+authoritative caller prefix, including compressed Gateway forms. Historical error-
+tolerance candidates, partial shapes, altered native guards and mixed source/bundle
+states require a pristine rebuild; the patch does not repair them in place.
+
+On 2026-11-18 the current focused suite passed 32 cases, and existing Main import,
+toggle, removal, IPC, engine and Windows recovery regressions passed 337 cases. The
+native generation fixture is the complete published `createGatewayPluginRuntimeGeneration`
+owner, with normalized SHA-256
+`6a7ac7d9b7b16340b4ccafbc90b7881b7a975965b9477c5ba840f9422041d94e`.
+These cases cover exact native intent, no capture attempt for selected targets,
+unaffected sibling errors/recovery, hooks, early live-instance retention and late failed
+status without target recreation. The final patch passed first application, verification,
+syntax and zero-write reapplication on the actual complete Gateway bundle and its
+compressed form. Earlier 040 shapes and historical marker-only states are rejected.
+The locked raw-source audit matched all 84 targets and retained gaps for all 39 patches.
+Final three-reason composition applies 040 to its exact pristine owner while preserving
+the other 38 patch scripts and all 83 other validated output bytes; all 39 source
+validators pass and a second 040 application makes zero writes. The independent final
+construction matrix rejects 28 unsafe mutations, accepts consistent caller renaming
+and verifies the actual compressed caller with 16 merged declarations. These receipts
+bind final script SHA-256
+`e615fedc822dacb67ca6ba9e68db36cb66c031e30b62cbe0b18d41971501cad3`.
+The separate pristine-contract test file passed 20 cases; its inventory case reaches an
+existing unrelated failure because unchanged 029 has 821 lines against its 800-line
+budget. This is not a passing full test-suite claim.
+
+Final Windows Gateway acceptance used a positively loaded v1 fixture service and a
+controlled old-capture fault invoking the real native DLL reader. Ordinary reload failed
+in preparation and left v1 running. With the same fault armed, native update activated
+v2, stopped v1 and started v2; disable stopped v2 while retaining files, and a later
+uninstall removed both its directory and inventory entry. The same Gateway PID remained
+throughout and every successful mutation reported no restart requirement. Only the
+negative reload attempted target recovery capture. Existing 033 was applied to a private
+fs-safe copy for the already-supported Windows publication path; shared/current dependency
+hashes remained unchanged. This establishes controlled failure-path acceptance, not a
+natural reproduction of the disappearing temporary DLL or live late-activation failure.
+
+Source, native-function, bundle and live evidence is kept under
+`build/plugin-uninstall-recovery-proof/`, including `patched-controlled-update033/result.json`.
+Earlier cause-classifier candidates are historical and do not validate this policy.
+No new frozen release manifest or installer has been generated, and the active user
+runtime has not been modified.
+
+Remove 040 when native online uninstall, disable and update can omit the target's extra rollback capture
+while preserving teardown, failure reporting and prevention of target reactivation.
+Keep 024 until its separate Windows junction-copy condition is satisfied.
 
 ### 041: retain opened MCP App views
 

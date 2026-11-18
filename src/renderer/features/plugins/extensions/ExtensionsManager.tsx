@@ -628,7 +628,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
       const latestExtensions = await loadExtensions({ reportFailure: false });
       if (mutationResult?.success) {
-        const { operationUnconfirmed, warnings } = mutationResult;
+        const { operationUnconfirmed } = mutationResult;
         const inventoryNeedsRefresh = !latestExtensions && inventoryUnavailable.current;
         if (inventoryNeedsRefresh && inventoryMounted.current && !operationUnconfirmed) {
           // A confirmed removal invalidates the stale entry until the next catalog read.
@@ -640,11 +640,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           setActionOutcome({
             type: 'success',
             title: i18nService.t('extensionDelete'),
-            ...(warnings?.length ? { persistent: true as const } : {}),
-            message: [
-              i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
-              ...(warnings ?? []),
-            ].join('\n'),
+            message: i18nService.t('extensionDeleteSuccess').replace('{name}', extension.name),
           });
         }
       }

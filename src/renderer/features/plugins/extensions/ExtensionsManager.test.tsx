@@ -861,12 +861,16 @@ describe('ExtensionsManager extension toggle', () => {
     { refreshWarning: false, inventoryAvailable: true },
     { refreshWarning: true, inventoryAvailable: true },
     { refreshWarning: true, inventoryAvailable: false },
-  ])('confirms deletion (earlier warning: $refreshWarning, latest list available: $inventoryAvailable)', async ({ refreshWarning, inventoryAvailable }) => {
+  ])('confirms deletion without raw cleanup diagnostics (earlier refresh warning: $refreshWarning, list available: $inventoryAvailable)', async ({ refreshWarning, inventoryAvailable }) => {
     let installed = true;
     const dataInfo = vi.fn(async () => ({ success: true, exists: false, bytes: 0, canDelete: true }));
     const deleteExtension = vi.fn(async () => {
       installed = false;
-      return { success: true, ...(refreshWarning ? { refreshWarning: true } : {}) };
+      return {
+        success: true,
+        warnings: ['Plugin sample-extension cleanup failed (instance): resource cleanup remains pending.'],
+        ...(refreshWarning ? { refreshWarning: true } : {}),
+      };
     });
     Object.defineProperty(window, 'electron', {
       configurable: true,
@@ -890,19 +894,29 @@ describe('ExtensionsManager extension toggle', () => {
     await waitFor(() => expect(dataInfo).toHaveBeenCalledExactlyOnceWith({ extensionId: extension.id }));
     expect(screen.queryByRole('checkbox', { name: 'extensionDeleteData' })).toBeNull();
     expect(screen.queryByText('extensionDataPreserved')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'delete' }));
+    vi.useFakeTimers();
+    try {
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'delete' })));
 
-    const title = inventoryAvailable ? 'Extension "Sample Extension" deleted' : 'pluginOperationCompletedRefreshWarning';
-    expect((await screen.findByText(title)).closest('[role="status"]')).toBeTruthy();
-    expect(screen.queryByRole('alertdialog')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'subtaskShowInfo: Sample Extension' })).toBeNull();
-    expect(screen.queryByText('extensionDeleteFailed')).toBeNull();
-    expect(screen.queryByText(/unavailable/i)).toBeNull();
-    expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(inventoryAvailable ? 0 : 1);
-    expect(deleteExtension).toHaveBeenCalledWith(
-      { extensionId: extension.id },
-      { requestId: expect.any(String) },
-    );
+      const title = inventoryAvailable ? 'Extension "Sample Extension" deleted' : 'pluginOperationCompletedRefreshWarning';
+      expect(screen.getByText(title).closest('[role="status"]')).toBeTruthy();
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'subtaskShowInfo: Sample Extension' })).toBeNull();
+      expect(screen.queryByText('extensionDeleteFailed')).toBeNull();
+      expect(screen.queryByText(/unavailable/i)).toBeNull();
+      expect(screen.queryByText(/cleanup failed \(instance\)/i)).toBeNull();
+      expect(getPluginOperationOwner().failureSnapshot()).toHaveLength(inventoryAvailable ? 0 : 1);
+      expect(deleteExtension).toHaveBeenCalledWith(
+        { extensionId: extension.id },
+        { requestId: expect.any(String) },
+      );
+      if (inventoryAvailable) {
+        act(() => vi.advanceTimersByTime(3000));
+        expect(screen.queryByText(title)).toBeNull();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test('sends explicit plugin data cleanup only after the user selects it', async () => {
