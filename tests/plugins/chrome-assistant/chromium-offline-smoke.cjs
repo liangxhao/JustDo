@@ -408,7 +408,24 @@ async function main() {
         throw error;
       });
     await page.selectOption('#session', 'one');
-    await page.getByText('Existing offline question', { exact: true }).waitFor();
+    const question = page.locator('.message.user p').getByText('Existing offline question', { exact: true });
+    await question.waitFor();
+    const bubbleLayout = await question.evaluate(paragraph => {
+      const bubble = paragraph.closest('.message.user');
+      const padding = getComputedStyle(bubble);
+      const bubbleRect = bubble.getBoundingClientRect();
+      const textRect = paragraph.getBoundingClientRect();
+      return {
+        extraHeight: bubbleRect.height - textRect.height - parseFloat(padding.paddingTop) -
+          parseFloat(padding.paddingBottom),
+        width: bubbleRect.width,
+        rowWidth: bubble.parentElement.getBoundingClientRect().width,
+        decoration: getComputedStyle(paragraph).textDecorationLine,
+      };
+    });
+    assert.ok(Math.abs(bubbleLayout.extraHeight) < 1, 'User bubble preserves extra paragraph spacing');
+    assert.ok(bubbleLayout.width < bubbleLayout.rowWidth / 2, 'Short user bubble fills the message row');
+    assert.equal(bubbleLayout.decoration, 'none');
     await page.getByText('Retained cancelled input', { exact: true }).waitFor();
     assert.match(await page.locator('.pending-input-status').innerText(), /cancelled|取消/i);
     const processDetails = page.locator('#processDetails');
@@ -443,7 +460,9 @@ async function main() {
     );
     assert.doesNotMatch(await archivedHistory.locator(':scope > summary').innerText(), /×/);
     assert.equal(await archivedHistory.locator('.process-summary-group').count(), 0);
-    await page.getByText('Archived final answer', { exact: true }).waitFor();
+    const archivedAnswer = page.getByText('Archived final answer', { exact: true });
+    await archivedAnswer.waitFor();
+    assert.equal(await archivedAnswer.evaluate(element => getComputedStyle(element).textDecorationLine), 'none');
     assert.equal(await page.locator('.process-tool').count(), 0);
     await processDetails.focus();
     await page.keyboard.press('Enter');

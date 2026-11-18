@@ -252,20 +252,6 @@ main {
 .markdown-content ol,
 .markdown-content blockquote,
 .markdown-content pre,
-.chrome-message-file-link {
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
-}
-.chrome-message-file-link code {
-  color: inherit;
-}
-.chrome-message-file-link__status {
-  color: var(--chat-error);
-  margin-inline-start: 0.4em;
-}
-.chrome-message-file-link__status:empty {
-  display: none;
-}
 .markdown-content table {
   margin: 0 0 0.8em;
 }
@@ -322,6 +308,21 @@ main {
 }
 .markdown-content a {
   color: var(--chat-link);
+  font-weight: 600;
+  text-decoration: none;
+}
+.markdown-content a:hover {
+  background-color: var(--chat-hover);
+}
+.chrome-message-file-link code {
+  color: inherit;
+}
+.chrome-message-file-link__status {
+  color: var(--chat-error);
+  margin-inline-start: 0.4em;
+}
+.chrome-message-file-link__status:empty {
+  display: none;
 }
 .markdown-content table {
   display: block;
@@ -430,7 +431,9 @@ main {
 }
 .assistant-content { font-size: 15px; line-height: 1.65; }
 .assistant-content > div + div { margin-top: 12px; }
+.message.user > div > :first-child,
 .assistant-content > div > :first-child { margin-top: 0; }
+.message.user > div > :last-child,
 .assistant-content > div > :last-child { margin-bottom: 0; }
 .message-actions { display: flex; align-items: center; gap: 6px; min-height: 28px; margin-top: 14px; }
 .message-actions[hidden] { display: none; }
