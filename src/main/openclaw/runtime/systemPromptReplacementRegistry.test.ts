@@ -167,12 +167,14 @@ describe('registered system prompt replacements', () => {
     ].join('\n'));
   });
 
-  it('brands every literal runtime temp path while preserving other paths', () => {
+  it('uses the lowercase product name in every literal runtime temp path', () => {
+    const lowercaseProductName = PRODUCT_NAME.toLowerCase();
+
     expect(applyRegisteredRules([
       'Save to ~/.openclaw/tmp/report.txt or .openclaw/tmp/chart.png.',
       'Keep xopenclaw/tmp/, .openclaw/tmp2/, and .openclaw/tmp unchanged.',
     ].join('\n'))).toBe([
-      `Save to ~/.${PRODUCT_NAME}/tmp/report.txt or .${PRODUCT_NAME}/tmp/chart.png.`,
+      `Save to ~/.${lowercaseProductName}/tmp/report.txt or .${lowercaseProductName}/tmp/chart.png.`,
       'Keep xopenclaw/tmp/, .openclaw/tmp2/, and .openclaw/tmp unchanged.',
     ].join('\n'));
   });

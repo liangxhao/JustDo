@@ -1,4 +1,4 @@
-import { PRODUCT_NAME } from '../../../shared/productMetadata';
+import { PRODUCT_NAME, PRODUCT_NAME_LOWERCASE } from '../../../shared/productMetadata';
 import {
   normalizeSystemPromptReplacementRules,
   SYSTEM_PROMPT_REPLACEMENT_MAX_RULES,
@@ -78,7 +78,7 @@ export const REGISTERED_SYSTEM_PROMPT_REPLACEMENT_RULES =
       id: 'brand-runtime-temp-path',
       pattern: '\\.openclaw/tmp/',
       flags: 'g',
-      replacement: `.${PRODUCT_NAME}/tmp/`,
+      replacement: `.${PRODUCT_NAME_LOWERCASE}/tmp/`,
     },
     {
       id: 'remove-reasoning-stream-guidance',
