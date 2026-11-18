@@ -20,6 +20,7 @@ if (!process.versions.electron) {
     target: 'chrome140',
     minify: true,
     logLevel: 'silent',
+    loader: { '.md': 'text' },
   };
   esbuild.buildSync({
     ...options,

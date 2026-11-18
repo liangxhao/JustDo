@@ -368,6 +368,14 @@
         "dist/mcp-app-extensions-abaft4XG.mjs",
         "dist/mcp-app-host-files-CYEqGNXR.mjs"
       ]
+    },
+    {
+      "file": "041-mcp-app-view-keepalive.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/mcp-app-DRRDUDxP.mjs"
+      ]
     }
   ],
   "targets": [
@@ -698,6 +706,10 @@
     {
       "file": "node_modules/@openclaw/fs-safe/dist/move-path.js",
       "sha256": "3fd1aacc3780465f4e92fda654297111fd35815a1220ec5db0199467948cf0e0"
+    },
+    {
+      "file": "dist/mcp-app-DRRDUDxP.mjs",
+      "sha256": "fa254a637d0e13bbbf7f5d19130249253dd8abf9eeebc3afb91deb8c7dd275c5"
     }
   ]
 }

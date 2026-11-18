@@ -43,6 +43,8 @@ type Method = (typeof McpAppMethod)[keyof typeof McpAppMethod];
 const methods = new Set<string>(Object.values(McpAppMethod));
 const scopedFields = ['sessionKey', 'sessionId', 'agentId', 'viewId', 'requesterId', 'requestId'];
 const canvasSessions = new Set<McpAppSession>();
+const VIEW_KEEPALIVE_INTERVAL_MS = 60_000;
+const VIEW_KEEPALIVE_MAX_FAILURES = 3;
 type RetainCanvasRun = (runId: string) => (() => void) | void;
 type CanvasPreparation = PreparedDiagramCanvas & {
   priority: number;
@@ -419,6 +421,76 @@ export class McpAppSessionView {
   private diagramRevision = 0;
   private readonly diagramRuns = new Set<string>();
   private stopDiagramRuns?: () => void;
+  private keepAliveTimer?: ReturnType<typeof setTimeout>;
+  private keepAliveRequest?: AbortController;
+  private keepAliveFailures = 0;
+
+  private canKeepAlive(): boolean {
+    return Boolean(
+      this.loaded &&
+      !this.disposed &&
+      this.nativeViewId &&
+      this.binding.client.generation === this.binding.generation &&
+      (this.isCurrent() || (this.preservePresentation && this.binding.isOwnerCurrent?.())),
+    );
+  }
+
+  private scheduleKeepAlive(): void {
+    if (
+      this.keepAliveTimer !== undefined || this.keepAliveRequest ||
+      this.keepAliveFailures >= VIEW_KEEPALIVE_MAX_FAILURES || !this.canKeepAlive()
+    ) return;
+    this.keepAliveTimer = setTimeout(() => {
+      this.keepAliveTimer = undefined;
+      void this.keepAlive();
+    }, VIEW_KEEPALIVE_INTERVAL_MS);
+  }
+
+  private async keepAlive(): Promise<void> {
+    if (!this.canKeepAlive()) return;
+    const binding = this.binding;
+    const viewId = this.nativeViewId!;
+    const controller = new AbortController();
+    this.keepAliveRequest = controller;
+    try {
+      // Presence alone retains the original lease. No App tool, context update,
+      // launch or HTML reload is allowed here, including while a tab is paused.
+      const lease = await binding.client.request<{ viewId: string; expiresAtMs: number }>(
+        McpAppMethod.View,
+        {
+          sessionKey: binding.sessionKey,
+          sessionId: binding.sessionId,
+          agentId: binding.agentId,
+          viewId,
+          keepAlive: true,
+        },
+        { signal: controller.signal, timeoutMs: 10_000 },
+      );
+      if (this.binding !== binding || this.nativeViewId !== viewId || controller.signal.aborted)
+        return;
+      // An older/unmatched runtime must not cause repeated full HTML reads.
+      this.keepAliveFailures = lease?.viewId === viewId && Number.isFinite(lease.expiresAtMs)
+        ? 0 : VIEW_KEEPALIVE_MAX_FAILURES;
+    } catch (error) {
+      if (this.binding !== binding || controller.signal.aborted) return;
+      const failure = error as { gatewayCode?: string; details?: { code?: string } };
+      this.keepAliveFailures = failure?.details?.code === 'MCP_APP_VIEW_EXPIRED' ||
+        failure?.gatewayCode === 'FORBIDDEN' || failure?.gatewayCode === 'INVALID_REQUEST'
+        ? VIEW_KEEPALIVE_MAX_FAILURES : this.keepAliveFailures + 1;
+    } finally {
+      if (this.keepAliveRequest === controller) {
+        this.keepAliveRequest = undefined;
+        this.scheduleKeepAlive();
+      }
+    }
+  }
+
+  private stopKeepAlive(): void {
+    clearTimeout(this.keepAliveTimer);
+    this.keepAliveTimer = undefined;
+    this.keepAliveRequest?.abort();
+    this.keepAliveRequest = undefined;
+  }
 
   get hasPendingDiagramRun(): boolean {
     return this.diagramRuns.size > 0;
@@ -634,6 +706,8 @@ export class McpAppSessionView {
     this.suspended = false;
     this.revision++;
     this.present(this);
+    this.keepAliveFailures = 0;
+    this.scheduleKeepAlive();
     return true;
   }
 
@@ -833,6 +907,8 @@ export class McpAppSessionView {
     this.loaded = true;
     this.retain(this);
     this.present(this);
+    this.keepAliveFailures = 0;
+    this.scheduleKeepAlive();
     if (
       descriptor?.serverName === DRAWIO_SERVER &&
       descriptor.uiResourceUri === DRAWIO_RESOURCE &&
@@ -961,6 +1037,7 @@ export class McpAppSessionView {
     if (this.closing) return this.closing;
     this.disposed = true;
     this.suspended = false;
+    this.stopKeepAlive();
     this.revision++;
     this.diagramRevision++;
     this.stopDiagramRuns?.();
@@ -987,6 +1064,7 @@ export class McpAppSessionView {
     for (const operation of this.diagramOperations) operation.abort();
     this.disposed = true;
     this.suspended = false;
+    this.stopKeepAlive();
     this.revision++;
     this.diagramRevision++;
     this.stopDiagramRuns?.();

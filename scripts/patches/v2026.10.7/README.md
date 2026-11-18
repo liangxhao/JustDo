@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038) and MCP App continuity after a model change (039). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 37 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 82 exact pristine patch target hashes bound to the locked npm archive.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038), MCP App continuity after a model change (039) and live MCP App view renewal (041). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 38 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 83 exact pristine patch target hashes bound to the locked npm archive.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -70,6 +70,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [037-project-skill-precedence.cjs](037-project-skill-precedence.cjs) | — | select the admitted execution project's file skill when it shares a name with an assistant skill. | native skill resolution supports execution project precedence while preserving separate assistant and execution roots. |
 | [038-subagent-model-inventory.cjs](038-subagent-model-inventory.cjs) | — | verify the target model of a new subagent outside the parent turn's plugin generation. | native subagent model preflight succeeds after retirement of the parent inventory while preserving exact caller and model checks. |
 | [039-mcp-app-model-continuity.cjs](039-mcp-app-model-continuity.cjs) | — | retain the live MCP App view on compatible model changes within the same native MCP runtime. | remove at the next OpenClaw version upgrade and use native session model selection. |
+| [041-mcp-app-view-keepalive.cjs](041-mcp-app-view-keepalive.cjs) | — | renew the exact live MCP App view while its page remains open, without replaying tools. | native authenticated view retention or renewal supports equivalent lifetime and authorization checks. |
 
 ## Locked target source owners
 
@@ -114,6 +115,7 @@ The following paths were returned by a clean application on the pristine target.
 | 037 | `dist/workspace-skill-loader-sfXVTUiF.mjs` |
 | 038 | `dist/spawn-thread-binding-CKE2AseF.mjs` |
 | 039 | `dist/mcp-app-extensions-abaft4XG.mjs`<br>`dist/mcp-app-host-files-CYEqGNXR.mjs` |
+| 041 | `dist/mcp-app-DRRDUDxP.mjs` |
 
 ## Test ownership
 
@@ -160,6 +162,7 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 037 | `project-skill-precedence.test.ts`, `tests/openclaw/runtime/project-skill-precedence-contract.test.ts` |
 | 038 | `subagent-model-inventory.test.ts` |
 | 039 | `mcp-app-model-continuity.test.ts`, `tests/mcp-apps/gateway-smoke.cjs --model-selection` |
+| 041 | `mcp-app-view-keepalive.test.ts`, `mcp-app-view-keepalive.fixture.js`, Renderer `mcp-app-session.keepalive.test.ts` |
 
 ### 033: plugin directory publication and retained installed files
 
@@ -387,6 +390,47 @@ default-model changes as an explicit setting. Update the native smoke test for b
 paths and remove the 039 entries and patch-specific assertions from the target version's
 inventory and tests. Follow the [MCP Apps upgrade checklist](../../../docs/upgrade-checklist/checklist.md#21-mcp-apps-原生生命周期)
 for product acceptance. Keep 030 until its independent workspace reproduction passes upstream.
+
+### 041: retain opened MCP App views
+
+Pristine `mcp-ui-resource-BKPhtC8P.mjs` sets a fixed ten-minute deadline and
+deletion timer when a view is created. Reading a view or using its tools does not
+renew it. A manually opened sidebar App therefore loses interaction while its
+page is still displayed. Public SDK/configuration has no renewal API. Repeated
+`mcp.app.view` reads do not help; `mcp.app.launch` executes the entry tool again;
+`prepareHarnessNativeMcpAppPreview` creates a new view without retaining the old
+approval and host-file authority. These are not substitutes for renewal.
+
+041 adds one opt-in `keepAlive: true` branch to the existing `mcp.app.view`
+handler. It disables transcript restoration, rechecks the original request,
+requester, read authority, interaction grant and native owner, then verifies the
+same still-live view before synchronously refreshing its existing timer and
+deadline. Read-only views remain read-only. The response contains only view ID
+and expiry; no new RPC/tool, HTML read, subscription or launch is introduced.
+The host renews loaded pages once a minute, including retained paused tabs,
+using the original connection generation and native owner. Closing or detaching
+stops renewal; native expiry still cleans up abandoned pages. Existing capacity,
+permission, runtime-retirement and session-incarnation checks remain in force.
+
+Native fake-clock regressions execute verbatim locked lease and handler owners
+to cover the fixed-expiry counterexample, renewal beyond ten minutes, later
+cleanup, read-only views, authorization revocation and expired-view rejection.
+Renderer regressions cover paused tabs, single pending reads, old replies,
+connection replacement, close cleanup and bounded read failures. Long process
+freezes or system sleep can still outlast the lease; no expired authorization is
+recreated on wake. Source/bundle checks do not replace real desktop integration.
+
+On 2026-11-18, the six focused suites passed 111 tests; type checks, lint,
+production build and the isolated Chromium App smoke passed. The exact raw
+target and a complete Gateway bundle passed syntax, application, verification
+and unchanged second application. The broader pristine-contract inventory test
+still fails its pre-existing 029 line budget (821 lines versus an 800-line cap);
+029 is byte-identical to the starting commit and was not changed for this fix.
+
+At the next OpenClaw upgrade, test native renewal/retention first. When it
+provides the same behavior, switch the host to that supported interface and
+delete 041, its inventory/hash entries and patch-specific tests. Do not carry
+the version-locked branch forward by changing only its anchors.
 
 ## Validation boundary
 
