@@ -159,7 +159,9 @@ import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels'
 import { t } from '../../core/i18n';
 import type { Agent, CoworkConfig } from '../../data/coworkStore';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
-import { type NativeMcpDataBinding,projectNativeMcpData, publishNativeMcpDataReceipt } from '../../plugins/data/nativeMcpData';
+import {
+  type NativeMcpDataBinding, projectNativeMcpData, publishNativeMcpDataReceipt, suspendNativeMcpDataServers,
+} from '../../plugins/data/nativeMcpData';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
 import { getActiveBuiltinModelCredential } from '../../providers/builtinModelCredential';
@@ -189,6 +191,10 @@ type NativeMcpDataConfigPublication = {
   isCurrent: () => boolean;
   matchesRuntimeConfig: (config: unknown) => boolean;
 };
+
+export type NativeMcpDataConfigChange =
+  | { bindings: readonly NativeMcpDataBinding[]; restoreSuspendedOwners?: ReadonlySet<string> }
+  | { suspendOwners: ReadonlySet<string> };
 
 const configRecord = (value: unknown): Record<string, unknown> => isRecord(value) ? value : {};
 const ownsConfigInclude = (value: unknown): boolean =>
@@ -398,15 +404,21 @@ export class OpenClawConfigSync {
   planNativeMcpDataPublication(
     configPath: string,
     original: string,
-    bindings: readonly NativeMcpDataBinding[],
+    change: NativeMcpDataConfigChange,
   ): NativeMcpDataConfigPublication | undefined {
     let config: unknown;
     try { config = JSON.parse(original); }
     catch { throw new Error('The existing native configuration is unavailable.'); }
     if (!isRecord(config)) throw new Error('The existing native configuration is unavailable.');
     const next = structuredClone(config);
-    const receipt = projectNativeMcpData(next, bindings, this.engineManager.getStateDir(), configPath,
-      new Set(this.getMcpServers?.().map(server => server.name)));
+    const stateDirectory = this.engineManager.getStateDir();
+    const userNames = new Set(this.getMcpServers?.().map(server => server.name));
+    const suspension = 'suspendOwners' in change
+      ? suspendNativeMcpDataServers(next, change.suspendOwners, stateDirectory, configPath, userNames)
+      : undefined;
+    const receipt = 'bindings' in change
+      ? projectNativeMcpData(next, change.bindings, stateDirectory, configPath, userNames, change.restoreSuspendedOwners)
+      : suspension?.receipt;
     if (receipt === undefined) return;
 
     const changed = hasOpenClawConfigChanged(original, next);
@@ -416,7 +428,7 @@ export class OpenClawConfigSync {
     const nextServers = mcpDataServers(next);
     const changedDirectories = [...new Set([...Object.keys(oldEntries), ...Object.keys(nextEntries)])]
       .filter(id => mcpDataDirectory(oldEntries[id]) !== mcpDataDirectory(nextEntries[id]));
-    const changedServers = [...new Set([...Object.keys(oldServers), ...Object.keys(nextServers)])]
+    const changedServers = suspension?.names ?? [...new Set([...Object.keys(oldServers), ...Object.keys(nextServers)])]
       .filter(name => !isDeepStrictEqual(oldServers[name], nextServers[name]));
     // A root file cannot claim values supplied by an operator's included file.
     const directoryScopes = changedDirectories.flatMap(id => [oldEntries[id], configRecord(oldEntries[id]).config]);

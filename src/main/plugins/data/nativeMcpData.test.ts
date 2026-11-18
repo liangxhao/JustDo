@@ -5,7 +5,10 @@ import path from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
 
 import type { NativeMcpDataBinding } from './nativeMcpData';
-import { nativeMcpDataDirectory, ownedNativeMcpDataServerNames, prepareNativeMcpData, projectNativeMcpData, publishNativeMcpDataReceipt } from './nativeMcpData';
+import {
+  nativeMcpDataDirectory, ownedNativeMcpDataServerNames, prepareNativeMcpData, projectNativeMcpData,
+  publishNativeMcpDataReceipt, suspendNativeMcpDataServers,
+} from './nativeMcpData';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -95,6 +98,27 @@ test('operator-managed names win even if their values equal a previous generated
   const expected = structuredClone(f.config.mcp.servers.sample);
   f.project(f.config, [], new Set(['sample']));
   expect(f.config.mcp.servers.sample).toEqual(expected);
+});
+
+test('keeps a suspension associated with the currently selected owner of a shared server name', async () => {
+  const f = await fixture();
+  const replacement = {
+    pluginId: 'replacement',
+    servers: { sample: { ...f.binding.servers.sample, args: ['replacement.cjs'] } },
+  };
+  await prepareNativeMcpData(f.state, [replacement.pluginId]);
+  const suspend = (owner: string) => {
+    const suspension = suspendNativeMcpDataServers(f.config, new Set([owner]), f.state, f.file, new Set())!;
+    publishNativeMcpDataReceipt(f.file, suspension.receipt, () => fs.writeFileSync(f.file, JSON.stringify(f.config)));
+  };
+  f.save();
+  suspend(f.binding.pluginId);
+  f.save(f.config, [replacement]);
+  expect(f.config.mcp.servers.sample).toMatchObject({ args: ['replacement.cjs'] });
+
+  suspend(replacement.pluginId);
+  f.save(f.config, [replacement]);
+  expect(f.config.mcp.servers.sample).toEqual({ enabled: false });
 });
 
 test('retains observed old hashes across a crash between receipt and config publication', async () => {

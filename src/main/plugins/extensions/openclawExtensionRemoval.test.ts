@@ -9,6 +9,7 @@ import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/mana
 import { t } from '../../core/i18n';
 import { getOutboundHeaderPolicyConfig } from '../../core/network/outboundHeaderPolicyConfig';
 import { OutboundHeaderPolicyService } from '../../core/network/outboundHeaderPolicyService';
+import type { OpenClawConfigMutationContext } from '../../openclaw/config/openclawConfigSyncService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import type { PluginDataRemovalSnapshot } from '../data/pluginDataService';
 import { removeExtensionPackage } from './extensionMutation';
@@ -17,6 +18,10 @@ import {
   ExtensionPackageLifecycleMode,
 } from './extensionPackageLifecycle';
 import { OpenClawExtensionImportService } from './openclawExtensionImportService';
+
+type ManagedMcpPreparation = Pick<
+  OpenClawConfigMutationContext, 'suspendNativeMcpData' | 'restoreNativeMcpData'
+>;
 
 vi.mock('../../core/filesystem/windowsFileLockDiagnostics', () => ({
   findWindowsLockingProcesses: vi.fn(async () => ({ available: true, processes: [] })),
@@ -56,6 +61,7 @@ describe('extension removal receipts and package lifecycle', () => {
       nativePluginId?: string;
       packagePluginIds?: string[];
       pluginData?: ConstructorParameters<typeof OpenClawExtensionImportService>[0]['pluginData'];
+      managedMcp?: ManagedMcpPreparation;
     } = {},
   ) {
     const stateDir = path.join(fixtureRoot, 'state');
@@ -115,9 +121,9 @@ describe('extension removal receipts and package lifecycle', () => {
     });
     const recoveringGateway = vi.fn(async (method: string) => requestGateway(method));
     const client = { request: requestGateway as <T>(method: string) => Promise<T> };
-    const runConfigMutationExclusive = vi.fn(async <T>(operation: () => Promise<T>): Promise<T> => {
+    const runConfigMutationExclusive = vi.fn(async <T>(operation: (config?: ManagedMcpPreparation) => Promise<T>): Promise<T> => {
       state.configMutation = true;
-      try { return await operation(); }
+      try { return await operation(options.managedMcp); }
       finally { state.configMutation = false; }
     });
     const restartGatewayAfterMutation = vi.fn(async () => ({ phase: 'running' }));
@@ -487,7 +493,11 @@ describe('extension removal receipts and package lifecycle', () => {
   });
 
   it('does not recover or replay an unknown removal through a replacement connection', async () => {
-    const f = fixture({ connectedOnly: true });
+    const managedMcp = {
+      suspendNativeMcpData: vi.fn(async () => true),
+      restoreNativeMcpData: vi.fn(async () => true),
+    };
+    const f = fixture({ connectedOnly: true, managedMcp });
     f.requestGateway.mockImplementationOnce(async () => {
       f.state.connected = false;
       throw Object.assign(new Error('Gateway reply was lost'), { code: 'CLIENT_TIMEOUT', requestSent: true });
@@ -500,10 +510,41 @@ describe('extension removal receipts and package lifecycle', () => {
     });
 
     expect(f.requestGateway).toHaveBeenCalledOnce();
+    expect(managedMcp.restoreNativeMcpData).not.toHaveBeenCalled();
     expect(f.recoveringGateway).not.toHaveBeenCalled();
     expect(f.runCommand).not.toHaveBeenCalled();
     expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
     expect(fs.existsSync(f.installedDir)).toBe(true);
+  });
+
+  it('waits for the target package background services before dispatch and reconciles a native refusal', async () => {
+    const suspended = Promise.withResolvers<boolean>();
+    const started = Promise.withResolvers<void>();
+    const managedMcp = {
+      suspendNativeMcpData: vi.fn((owners: readonly string[]) => {
+        expect(owners).toEqual(['network-child', 'network-plugin', 'other-child']);
+        started.resolve();
+        return suspended.promise;
+      }),
+      restoreNativeMcpData: vi.fn(async () => true),
+    };
+    const f = fixture({ connectedOnly: true, managedMcp, packagePluginIds: ['network-child', 'other-child'] });
+    const failure = new Error('The native owner refused uninstall');
+    f.requestGateway.mockRejectedValueOnce(failure);
+    const apply: ApplyExtensionPackageMutation = (_target, operation) =>
+      operation(ExtensionPackageLifecycleMode.HOT);
+
+    const result = f.service.delete('network-child', undefined, apply);
+    await started.promise;
+    expect(f.state.configMutation).toBe(true);
+    expect(f.requestGateway).not.toHaveBeenCalled();
+    suspended.resolve(true);
+
+    await expect(result).resolves.toMatchObject({ success: false, error: failure.message });
+    expect(f.requestGateway).toHaveBeenCalledOnce();
+    expect(managedMcp.restoreNativeMcpData).toHaveBeenCalledOnce();
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
   });
 
   it('waits for a slow native uninstall receipt without restarting the running Gateway', async () => {

@@ -19,7 +19,7 @@ import type {
   OpenClawEngineManager,
   OpenClawEngineStatus,
 } from '../../openclaw/runtime/openclawEngineManager';
-import { type NativeMcpDataBinding,nativeMcpDataDirectory, ownedNativeMcpDataServerNames, prepareNativeMcpData } from '../../plugins/data/nativeMcpData';
+import { type NativeMcpDataBinding, nativeMcpDataDirectory, ownedNativeMcpDataServerNames, prepareNativeMcpData } from '../../plugins/data/nativeMcpData';
 import type { OpenClawHookStore } from '../../plugins/hooks';
 import type { McpStore } from '../../plugins/mcp';
 import { discoverOpenClawManagedMcpServers } from '../../plugins/mcp';
@@ -131,6 +131,8 @@ type ExecutionAdmissionOptions = {
 
 export type OpenClawConfigMutationContext = {
   syncConfig: (options: SyncOpenClawConfigOptions) => Promise<SyncOpenClawConfigResult>;
+  suspendNativeMcpData: (pluginIds: readonly string[], isCurrent: () => boolean) => Promise<boolean>;
+  restoreNativeMcpData: (pluginIds: readonly string[], isCurrent: () => boolean) => Promise<boolean>;
 };
 
 type ExecApprovalsFile = {
@@ -311,70 +313,92 @@ export class OpenClawConfigSyncService {
 
   /** Reconcile managed data after native mutation. False means no file delta, not a runtime ACK. */
   syncNativeMcpDataAfterMutation(isMutationCurrent = () => true): Promise<boolean> {
-    return this.enqueueSyncOperation(async () => {
-      const discover = this.deps.getNativeMcpDataBindings;
-      if (!discover) return false;
-      const manager = this.deps.getOpenClawEngineManager();
-      const configPath = manager.getConfigPath();
-      const stateDirectory = manager.getStateDir();
-      const phase = manager.getStatus().phase;
-      const pid = manager.getGatewayProcessId();
-      const processGeneration = manager.getGatewayProcessGeneration();
-      const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
-      const client = this.deps.getGatewayClient();
-      const unconfirmed = () => new Error('Plugin data configuration could not be confirmed.');
-      const assertOwner = () => {
-        if (!isMutationCurrent() || this.deps.getOpenClawEngineManager() !== manager ||
-            manager.getConfigPath() !== configPath || manager.getStateDir() !== stateDirectory ||
-            manager.getStatus().phase !== phase || manager.getGatewayProcessId() !== pid ||
-            manager.getGatewayProcessGeneration() !== processGeneration ||
-            manager.getGatewayLifecycleGeneration() !== lifecycleGeneration ||
-            this.deps.getGatewayClient() !== client) throw unconfirmed();
-      };
+    return this.enqueueSyncOperation(() =>
+      this.syncNativeMcpDataExclusive(isMutationCurrent, {}));
+  }
+
+  private async syncNativeMcpDataExclusive(
+    isMutationCurrent: () => boolean,
+    operation: { suspend: readonly string[] } | { restore?: readonly string[] },
+  ): Promise<boolean> {
+    const suspending = 'suspend' in operation;
+    const discover = this.deps.getNativeMcpDataBindings;
+    if (!suspending && !discover) return false;
+    const manager = this.deps.getOpenClawEngineManager();
+    const configPath = manager.getConfigPath();
+    const stateDirectory = manager.getStateDir();
+    const phase = manager.getStatus().phase;
+    const pid = manager.getGatewayProcessId();
+    const processGeneration = manager.getGatewayProcessGeneration();
+    const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
+    const client = this.deps.getGatewayClient();
+    const unconfirmed = () => new Error('Plugin data configuration could not be confirmed.');
+    const assertOwner = () => {
+      if (!isMutationCurrent() || this.deps.getOpenClawEngineManager() !== manager ||
+          manager.getConfigPath() !== configPath || manager.getStateDir() !== stateDirectory ||
+          manager.getStatus().phase !== phase || manager.getGatewayProcessId() !== pid ||
+          manager.getGatewayProcessGeneration() !== processGeneration ||
+          manager.getGatewayLifecycleGeneration() !== lifecycleGeneration ||
+          this.deps.getGatewayClient() !== client) throw unconfirmed();
+    };
+    assertOwner();
+    const original = fs.readFileSync(configPath, 'utf8');
+    const assertSource = () => {
       assertOwner();
-      const original = fs.readFileSync(configPath, 'utf8');
-      const assertSource = () => {
-        assertOwner();
-        if (fs.readFileSync(configPath, 'utf8') !== original) throw unconfirmed();
-      };
-      const bindings = await discover();
-      assertSource();
-      const online = phase === EnginePhase.Running && pid !== null && pid > 0 ? client : null;
-      const offline = phase !== EnginePhase.Starting && phase !== EnginePhase.Running &&
-        pid === null && client === null;
-      const missing = bindings.filter(binding => {
-        try { nativeMcpDataDirectory(stateDirectory, binding.pluginId); return false; }
-        catch { return true; }
-      }).map(binding => binding.pluginId);
-      if (missing.length) {
-        if (!online && !offline) throw unconfirmed();
-        await prepareNativeMcpData(stateDirectory, missing);
-        assertSource();
-      }
-      const publication = this.getConfigSync().planNativeMcpDataPublication(configPath, original, bindings);
-      if (!publication) return false;
+      if (fs.readFileSync(configPath, 'utf8') !== original) throw unconfirmed();
+    };
+    const bindings = !suspending && discover ? await discover() : [];
+    assertSource();
+    const online = phase === EnginePhase.Running && pid !== null && pid > 0 ? client : null;
+    const offline = phase !== EnginePhase.Starting && phase !== EnginePhase.Running &&
+      pid === null && client === null;
+    const missing = bindings.filter(binding => {
+      try { nativeMcpDataDirectory(stateDirectory, binding.pluginId); return false; }
+      catch { return true; }
+    }).map(binding => binding.pluginId);
+    if (missing.length) {
       if (!online && !offline) throw unconfirmed();
-      if (!publication.changed || !online) {
-        publication.publish(assertOwner);
-        return publication.changed;
-      }
-      const before = await online.request<NativeMcpDataConfigSnapshot>('config.get', {}, { timeoutMs: 5_000 });
+      await prepareNativeMcpData(stateDirectory, missing);
       assertSource();
-      if (before.valid !== true || typeof before.configRevisionHash !== 'string' || !before.configRevisionHash)
-        throw unconfirmed();
-      const reloadGeneration = manager.getGatewayConfigReloadGeneration();
+    }
+    let publication;
+    try {
+      publication = this.getConfigSync().planNativeMcpDataPublication(configPath, original,
+        suspending ? { suspendOwners: new Set(operation.suspend) } :
+          { bindings, restoreSuspendedOwners: new Set(operation.restore) });
+    } catch (error) {
+      if (!suspending) throw error;
+      // Without a usable projection, let the native uninstall handle the package.
+      console.warn('[OpenClaw] Managed MCP uninstall preparation could not read the owned projection');
+      return false;
+    }
+    if (!publication) return false;
+    if (!online && !offline) throw unconfirmed();
+    if (!online || (!suspending && !publication.changed)) {
       publication.publish(assertOwner);
-      const reloaded = await manager.waitForGatewayConfigReload(reloadGeneration, NATIVE_MCP_DATA_HOT_RELOAD_TIMEOUT_MS);
-      assertOwner();
-      if (!reloaded || !publication.isCurrent()) throw unconfirmed();
-      const applied = await online.request<NativeMcpDataConfigSnapshot>('config.get', {}, { timeoutMs: 5_000 });
-      assertOwner();
-      if (!publication.isCurrent() || applied.valid !== true || !applied.configRevisionHash ||
-          applied.configRevisionHash === before.configRevisionHash ||
-          applied.appliedConfigHash !== applied.configRevisionHash ||
-          !publication.matchesRuntimeConfig(applied.sourceConfig ?? applied.config)) throw unconfirmed();
-      return true;
-    });
+      return publication.changed;
+    }
+    const observedGeneration = manager.getGatewayConfigReloadGeneration();
+    const before = await online.request<NativeMcpDataConfigSnapshot>('config.get', {}, { timeoutMs: 5_000 });
+    assertSource();
+    if (before.valid !== true || typeof before.configRevisionHash !== 'string' || !before.configRevisionHash)
+      throw unconfirmed();
+    if (suspending && !publication.changed && before.appliedConfigHash === before.configRevisionHash &&
+        publication.matchesRuntimeConfig(before.sourceConfig ?? before.config)) return true;
+    // A retry can encounter the same revision while its reload is already in progress.
+    const reloadGeneration = publication.changed ? manager.getGatewayConfigReloadGeneration() :
+      Math.max(0, observedGeneration - 1);
+    publication.publish(assertOwner);
+    const reloaded = await manager.waitForGatewayConfigReload(reloadGeneration, NATIVE_MCP_DATA_HOT_RELOAD_TIMEOUT_MS);
+    assertOwner();
+    if (!reloaded || !publication.isCurrent()) throw unconfirmed();
+    const applied = await online.request<NativeMcpDataConfigSnapshot>('config.get', {}, { timeoutMs: 5_000 });
+    assertOwner();
+    if (!publication.isCurrent() || applied.valid !== true || !applied.configRevisionHash ||
+        (publication.changed && applied.configRevisionHash === before.configRevisionHash) ||
+        applied.appliedConfigHash !== applied.configRevisionHash ||
+        !publication.matchesRuntimeConfig(applied.sourceConfig ?? applied.config)) throw unconfirmed();
+    return true;
   }
 
   runConfigMutationExclusive<T>(
@@ -383,6 +407,10 @@ export class OpenClawConfigSyncService {
     return this.enqueueSyncOperation(() =>
       operation({
         syncConfig: options => this.syncConfigExclusive(options),
+        suspendNativeMcpData: (pluginIds, isCurrent) =>
+          this.syncNativeMcpDataExclusive(isCurrent, { suspend: pluginIds }),
+        restoreNativeMcpData: (pluginIds, isCurrent) =>
+          this.syncNativeMcpDataExclusive(isCurrent, { restore: pluginIds }),
       }),
     );
   }

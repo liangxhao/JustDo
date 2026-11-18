@@ -86,6 +86,53 @@ function fixture({ offline = false, unavailable = false } = {}) {
   };
 }
 
+it('suspends only the package-owned launch and keeps it suspended across ordinary sync', async () => {
+  const f = fixture();
+  await f.service.syncNativeMcpDataAfterMutation();
+  const original = f.read();
+  f.request.mockClear();
+  f.discover.mockClear();
+
+  await f.service.runConfigMutationExclusive(async ({ suspendNativeMcpData }) => {
+    await expect(suspendNativeMcpData(['unrelated-app'], () => true)).resolves.toBe(false);
+    expect(f.request).not.toHaveBeenCalled();
+    await expect(suspendNativeMcpData([binding.pluginId], () => true)).resolves.toBe(true);
+  });
+  expect(f.discover).not.toHaveBeenCalled();
+  expect(f.read()).toEqual({
+    ...original,
+    mcp: { ...original.mcp, servers: { ...original.mcp.servers, documents: { enabled: false } } },
+  });
+
+  await expect(f.service.syncNativeMcpDataAfterMutation()).resolves.toBe(false);
+  expect(f.read().mcp.servers.documents).toEqual({ enabled: false });
+  await expect(f.service.runConfigMutationExclusive(({ restoreNativeMcpData }) =>
+    restoreNativeMcpData([binding.pluginId], () => true))).resolves.toBe(true);
+  expect(f.read()).toEqual(original);
+  f.expectNoRuntimeMutation();
+});
+
+it('preserves an edited connection and withdraws an owned suspension when its plugin is absent', async () => {
+  const f = fixture();
+  await f.service.syncNativeMcpDataAfterMutation();
+  const original = f.read();
+  const edited = structuredClone(original);
+  edited.mcp.servers.documents.command = 'operator-command';
+  f.write(edited);
+
+  const suspend = () => f.service.runConfigMutationExclusive(({ suspendNativeMcpData }) =>
+    suspendNativeMcpData([binding.pluginId], () => true));
+  await expect(suspend()).resolves.toBe(false);
+  expect(f.read()).toEqual(edited);
+
+  f.write(original);
+  await expect(suspend()).resolves.toBe(true);
+  f.discover.mockResolvedValue([]);
+  await expect(f.service.syncNativeMcpDataAfterMutation()).resolves.toBe(true);
+  expect(f.read().mcp.servers).toEqual(f.original.mcp.servers);
+  f.expectNoRuntimeMutation();
+});
+
 it('applies the owned data directory online and withdraws the same projection after disable', async () => {
   const f = fixture();
   await expect(f.service.syncNativeMcpDataAfterMutation()).resolves.toBe(true);

@@ -19,6 +19,8 @@ const receiptPath = (configPath: string) => `${configPath}.plugin-data.json`;
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) : record(value)
   ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonical(value[key])])) : value;
 const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(canonical(value)) ?? 'undefined').digest('hex');
+const suspendedServer = { enabled: false } as const;
+const suspendedServerHash = digest(suspendedServer);
 
 export function nativeMcpDataDirectory(stateDirectory: string, pluginId: string): string {
   return resolvePluginDataDirectory(stateDirectory, pluginId, { retention: 'retain' });
@@ -88,10 +90,37 @@ export function ownedNativeMcpDataServerNames(configPath: string, stateDirectory
     Object.hasOwn(servers, entry.name) && digest(servers[entry.name]) === entry.hash).map(entry => entry.name));
 }
 
+/** Replace only this package's matching launch definitions, including content from earlier installations. */
+export function suspendNativeMcpDataServers(
+  config: Record<string, unknown>, pluginIds: ReadonlySet<string>, stateDirectory: string,
+  configPath: string, userServerNames: ReadonlySet<string>,
+): { receipt: string; names: string[] } | undefined {
+  const previous = readReceipt(configPath, stateDirectory);
+  if (!previous) return;
+  const mcp = record(config.mcp) ? config.mcp : {};
+  const servers = record(mcp.servers) ? mcp.servers : {};
+  const owned = new Map<string, Entry>();
+  for (const entry of previous.entries) {
+    if (entry.kind !== 'server' || !pluginIds.has(entry.owner) || userServerNames.has(entry.name) ||
+        !Object.hasOwn(servers, entry.name) || digest(servers[entry.name]) !== entry.hash) continue;
+    if (!owned.has(entry.name)) owned.set(entry.name, entry);
+  }
+  if (!owned.size) return;
+  const entries = previous.entries.filter(entry => entry.kind !== 'server' || !owned.has(entry.name));
+  for (const entry of owned.values()) {
+    servers[entry.name] = { ...suspendedServer };
+    entries.push(entry);
+    if (entry.hash !== suspendedServerHash) entries.push({ ...entry, hash: suspendedServerHash });
+  }
+  if (entries.length > 4096) throw new Error('Managed MCP data receipt exceeds its limit');
+  return { receipt: JSON.stringify({ ...previous, entries }) + '\n', names: [...owned.keys()] };
+}
+
 /** Only a matching content digest withdraws our previous defaults; it grants no plugin authority. */
 export function projectNativeMcpData(
   config: Record<string, unknown>, bindings: readonly NativeMcpDataBinding[], stateDirectory: string,
   configPath: string, userServerNames: ReadonlySet<string> = new Set(),
+  restoreSuspendedOwners: ReadonlySet<string> = new Set(),
 ): string | undefined {
   const previous = readReceipt(configPath, stateDirectory);
   if (!bindings.length && !previous) return;
@@ -100,10 +129,12 @@ export function projectNativeMcpData(
   const mcp = record(config.mcp) ? config.mcp : {};
   const servers: Record<string, unknown> = Object.assign(Object.create(null), record(mcp.servers) ? mcp.servers : {});
   const retained: Entry[] = [];
+  const suspended = new Map<string, Entry>();
   for (const entry of previous?.entries ?? []) {
     if (entry.kind === 'server') {
       if (!userServerNames.has(entry.name) && Object.hasOwn(servers, entry.name) && digest(servers[entry.name]) === entry.hash) {
         retained.push(entry);
+        if (entry.hash === suspendedServerHash) suspended.set(entry.name, entry);
         delete servers[entry.name];
       }
     } else {
@@ -130,6 +161,13 @@ export function projectNativeMcpData(
     entries[binding.pluginId] = { ...plugin, config: settings };
     for (const [name, definition] of Object.entries(binding.servers)) {
       if (userServerNames.has(name) || Object.hasOwn(servers, name)) continue;
+      const suspension = suspended.get(name);
+      if (suspension?.owner === binding.pluginId && suspension.dataId === dataId &&
+          !restoreSuspendedOwners.has(binding.pluginId)) {
+        servers[name] = { ...suspendedServer };
+        next.entries.push(suspension);
+        continue;
+      }
       const server = { ...definition, env: { ...(record(definition.env) ? definition.env : {}), PLUGIN_DATA: directory } };
       servers[name] = server;
       next.entries.push({ kind: 'server', owner: binding.pluginId, name, dataId, hash: digest(server) });

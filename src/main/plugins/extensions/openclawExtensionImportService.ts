@@ -35,6 +35,7 @@ import type { EffectiveOutboundHeaderPolicySnapshot } from '../../core/network/o
 import type { GatewayClientLike } from '../../engine/gateway/types';
 import type { GatewayRequestOptions } from '../../engine/types';
 import { restrictCredentialFile } from '../../openclaw/config/models/providerSecretFile';
+import type { OpenClawConfigMutationContext } from '../../openclaw/config/openclawConfigSyncService';
 import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
@@ -161,6 +162,9 @@ export type { InstalledOpenClawExtension };
 
 type OperationProgress = (stage: PluginOperationStage) => void;
 type ExtensionCatalogProjection = () => InstalledOpenClawExtension[];
+type ExtensionConfigMutationContext = Pick<
+  OpenClawConfigMutationContext, 'suspendNativeMcpData' | 'restoreNativeMcpData'
+>;
 
 type OpenClawExtensionImportServiceDeps = {
   getOpenClawEngineManager: () => OpenClawEngineManager;
@@ -173,7 +177,7 @@ type OpenClawExtensionImportServiceDeps = {
     params?: unknown,
     options?: GatewayRequestOptions,
   ) => Promise<T>;
-  runConfigMutationExclusive?: <T>(operation: () => Promise<T>) => Promise<T>;
+  runConfigMutationExclusive?: <T>(operation: (config?: ExtensionConfigMutationContext) => Promise<T>) => Promise<T>;
   restartGatewayAfterMutation?: (reason: string, options?: { networkPolicyChanged?: true }) => Promise<{
     phase: string;
     message?: string;
@@ -933,7 +937,7 @@ export class OpenClawExtensionImportService {
     );
   }
 
-  private runConfigMutationExclusive<T>(operation: () => Promise<T>): Promise<T> {
+  private runConfigMutationExclusive<T>(operation: (config?: ExtensionConfigMutationContext) => Promise<T>): Promise<T> {
     return this.deps.runConfigMutationExclusive
       ? this.deps.runConfigMutationExclusive(operation)
       : operation();
@@ -1840,7 +1844,7 @@ export class OpenClawExtensionImportService {
         return { success: false, error: t('extensionDataRemovalUnavailable') };
       let mode: ExtensionPackageLifecycleMode = ExtensionPackageLifecycleMode.HOT;
       return removeExtensionPackage(
-        () => this.runConfigMutationExclusive(async () => {
+        () => this.runConfigMutationExclusive(async config => {
           if (options.deleteData && mode !== ExtensionPackageLifecycleMode.STOPPED)
             return { success: false, error: t('extensionDataRemovalUnavailable') };
           // Freeze all package-owned paths only after Main drained and Native stopped.
@@ -1850,10 +1854,21 @@ export class OpenClawExtensionImportService {
                 this.deps.getOpenClawEngineManager().getStateDir(), dataPluginIds,
               )
             : undefined;
+          let restoreMcp: (() => Promise<boolean>) | undefined;
           const result = await this.deleteExclusive(
             extensionId, onProgress, installed, mode, !!applyPackageMutation,
             options.onRemovalUnconfirmed,
+            config && (async isCurrent => {
+              restoreMcp = () => config.restoreNativeMcpData(nativePluginIds, isCurrent);
+              if (!await config.suspendNativeMcpData(nativePluginIds, isCurrent)) restoreMcp = undefined;
+            }),
           );
+          if (restoreMcp && !result.success && !result.operationUnconfirmed) {
+            // Native discovery decides which owners are still enabled. A failed
+            // directory removal can already have durably disabled the plugin.
+            try { await restoreMcp(); }
+            catch { console.warn('[OpenClawExtensionImportService] Managed MCP configuration reconciliation failed'); }
+          }
           if (!removal || !result.success || result.operationUnconfirmed) return result;
           onProgress?.(PluginOperationStage.CLEANING_PLUGIN_DATA);
           try {
@@ -1894,6 +1909,7 @@ export class OpenClawExtensionImportService {
     mode: ExtensionPackageLifecycleMode = ExtensionPackageLifecycleMode.HOT,
     routed = false,
     onRemovalUnconfirmed?: RemovalUnconfirmedHandler,
+    suspendManagedMcp?: (isCurrent: () => boolean) => Promise<void>,
   ): Promise<ExtensionDeleteResult> {
     let currentStage: PluginOperationStage = PluginOperationStage.VALIDATING;
     const onProgress: OperationProgress = stage => {
@@ -2045,6 +2061,15 @@ export class OpenClawExtensionImportService {
     // No request has been sent, so use the native offline CLI once; the package
     // mutation owner alone restores the Gateway after releasing the lease.
     if (requestGateway && !manager.isGatewayMutationInProgress?.()) {
+      try {
+        await suspendManagedMcp?.(ownsGateway);
+      } catch {
+        return {
+          success: false,
+          failedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+          error: t('extensionNativeMcpRemovalPreparationFailed'),
+        };
+      }
       try {
         onProgress?.(PluginOperationStage.UNINSTALLING);
         const result = await this.requestPluginMutation<{
