@@ -2,6 +2,7 @@
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 import { BROWSER_AGENT_PANEL_TARGET_ID, BROWSER_GUEST_COMMAND_CHANNEL, BROWSER_GUEST_ZOOM_CHANNEL, type BrowserAgentInteractionState, type BrowserLocalHtmlPreviewResult, type BrowserPanelFaviconUpdatedEvent, type BrowserPanelOpenTabEvent, type BrowserPanelTab,BrowserTabPresentation } from '@shared/browser/browser';
 import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
@@ -2184,10 +2185,139 @@ describe('BrowserPanel embedded webview', () => {
     webview.dispatchEvent(failed);
     webview.dispatchEvent(new Event('did-stop-loading'));
 
-    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Name not resolved');
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Website not found. Check that the address is correct.');
+    expect(screen.getByText('ERR_NAME_NOT_RESOLVED')).not.toBeNull();
 
     webview.dispatchEvent(new Event('did-start-loading'));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  });
+
+  it.each([
+    {
+      url: 'file:///C:/reports/missing.pdf', errorCode: -6,
+      expected: '找不到本地文件，文件可能已被移动或删除',
+    },
+    {
+      url: 'file:///C:/reports/report.pdf', errorCode: -2,
+      expected: '无法打开本地文件，请检查文件是否存在且可访问',
+    },
+    {
+      url: 'https://huawei.coms/', errorCode: -105,
+      expected: '找不到此网站，请检查网址是否正确',
+    },
+    {
+      url: 'https://example.com/', errorCode: -2,
+      expected: '网页加载失败，请检查网址或稍后重试',
+    },
+  ])('explains a native load failure for $url (error $errorCode)', async ({ url, errorCode, expected }) => {
+    i18nService.setLanguage('zh', { persist: false });
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} />);
+    // The failed destination can differ from the guest's still-current document.
+    fireEvent(container.querySelector('webview')!, Object.assign(new Event('did-fail-load'), {
+      errorCode, validatedURL: url, isMainFrame: true,
+    }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain(expected);
+    expect(screen.getByRole('heading', {
+      name: url.startsWith('file:') ? '无法打开此文件' : '无法访问此网页',
+    })).not.toBeNull();
+  });
+
+  it.each([
+    { code: 'ERR_NAME_NOT_RESOLVED', errno: -105 },
+    runInNewContext('new Error("ERR_NAME_NOT_RESOLVED (-105) loading https://huawei.coms/")'),
+    { message: "Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: ERR_NAME_NOT_RESOLVED" },
+  ])('explains address load failures passed across Electron boundaries (%#)', async rejection => {
+    loadUrl.mockRejectedValueOnce(rejection);
+    render(<BrowserPanelHarness initialTabs={[pageTab]} />);
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+    fireEvent.change(address, { target: { value: 'huawei.coms' } });
+    fireEvent.submit(address.closest('form')!);
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Website not found. Check that the address is correct.');
+    expect(screen.getByText('ERR_NAME_NOT_RESOLVED')).not.toBeNull();
+  });
+
+  it('keeps the native file failure when the address load later rejects without details', async () => {
+    let rejectLoad!: () => void;
+    loadUrl.mockImplementationOnce(() => new Promise<void>((_resolve, reject) => {
+      rejectLoad = () => reject({});
+    }));
+    const url = 'file:///C:/reports/missing.pdf';
+    const { container } = render(<BrowserPanelHarness initialTabs={[{ ...pageTab, url }]} />);
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+    fireEvent.submit(address.closest('form')!);
+    fireEvent(container.querySelector('webview')!, Object.assign(new Event('did-fail-load'), {
+      errorCode: -6, errorDescription: 'ERR_FILE_NOT_FOUND', validatedURL: url, isMainFrame: true,
+    }));
+    await act(async () => rejectLoad());
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Local file not found. It may have been moved or deleted.');
+    expect(screen.getByText('ERR_FILE_NOT_FOUND')).not.toBeNull();
+  });
+
+  it.each([true, false])('retries the failed destination in the same guest (address bar: %s)', async navigationBarVisible => {
+    const url = 'file:///C:/reports/missing.pdf';
+    const { container } = render(<BrowserPanelHarness initialTabs={[pageTab]} navigationBarVisible={navigationBarVisible} />);
+    const guest = container.querySelector('webview')!;
+    fireEvent(guest, Object.assign(new Event('did-fail-load'), {
+      errorCode: -6, validatedURL: url, isMainFrame: true,
+    }));
+    const errorPage = await screen.findByRole('alert');
+    expect(guest.parentElement?.contains(errorPage)).toBe(true);
+    expect(guest.style.opacity).toBe('0');
+    expect(guest.style.pointerEvents).toBe('none');
+    expect(guest.getAttribute('aria-hidden')).toBe('true');
+    expect(guest.tabIndex).toBe(-1);
+    expect(guest.hasAttribute('inert')).toBe(true);
+    guest.focus();
+    expect(document.activeElement).not.toBe(guest);
+
+    // This failed first load never reached dom-ready; retry must still work.
+    fireEvent.click(screen.getByRole('button', { name: 'Reload', exact: true }));
+
+    await waitFor(() => expect(loadUrl).toHaveBeenCalledWith(url));
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+    expect(container.querySelector('webview')).toBe(guest);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(guest.style.opacity).toBe('1');
+    expect(guest.hasAttribute('inert')).toBe(false);
+    expect(guest.tabIndex).toBe(0);
+  });
+
+  it('retries a failed destination from a local preview without opening a new tab', async () => {
+    const tab: BrowserPanelTab = {
+      ...pageTab, url: 'file:///C:/reports/report.html',
+      sourceFilePath: 'C:\\reports\\report.html',
+      sourcePreviewUrl: 'file:///C:/reports/report.html',
+    };
+    const { container } = render(<BrowserPanelHarness initialTabs={[tab]} />);
+    const guest = container.querySelector('webview')!;
+    const url = 'https://missing.example/';
+    fireEvent(guest, Object.assign(new Event('did-fail-load'), {
+      errorCode: -105, validatedURL: url, isMainFrame: true,
+    }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Reload', exact: true }));
+
+    await waitFor(() => expect(loadUrl).toHaveBeenCalledWith(url));
+    expect(container.querySelectorAll('webview')).toHaveLength(1);
+    expect(container.querySelector('webview')).toBe(guest);
+  });
+
+  it('ignores aborted address loads wrapped by Electron IPC', async () => {
+    loadUrl.mockRejectedValueOnce({
+      message: "Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: ERR_ABORTED (-3)",
+    });
+    render(<BrowserPanelHarness initialTabs={[pageTab]} />);
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+    fireEvent.change(address, { target: { value: 'https://stopped.example/' } });
+    await act(async () => fireEvent.submit(address.closest('form')!));
+
+    expect(loadUrl).toHaveBeenCalledWith('https://stopped.example/');
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('enables popup events and routes target=_blank into a managed panel tab', async () => {

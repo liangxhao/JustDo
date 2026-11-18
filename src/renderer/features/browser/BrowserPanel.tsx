@@ -73,6 +73,8 @@ import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
+import { type BrowserLoadError, formatBrowserLoadError } from './browserLoadError';
+import { BrowserLoadErrorPage } from './BrowserLoadErrorPage';
 import { type BrowserPanelFocusBinding, retainBrowserPanelFocus } from './browserPanelFocus';
 import { canPresentBrowserPage, shouldPresentBrowserPopup } from './browserPanelPresentation';
 import { BrowserNoticeTone, BrowserPanelToast } from './BrowserPanelToast';
@@ -103,6 +105,7 @@ type GuestEvent = Event & {
   result?: { requestId?: number; activeMatchOrdinal?: number; matches?: number };
   title?: string;
   url?: string;
+  validatedURL?: string;
 };
 type GuestImage = {
   getSize: () => { width: number; height: number };
@@ -421,7 +424,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     >(),
   );
   const acknowledgedExternalInteractionsRef = useRef(new Set<string>());
-  const [loadErrors, setLoadErrors] = useState<Map<string, string>>(() => new Map());
+  const [loadErrors, setLoadErrors] = useState<Map<string, BrowserLoadError>>(() => new Map());
+  const loadErrorsRef = useRef(loadErrors);
+  loadErrorsRef.current = loadErrors;
   const [notice, setNotice] = useState<BrowserPanelNotice | null>(null);
   const [mode, setMode] = useState<BrowserPanelMode>('interact');
   const [annotationTool, setAnnotationTool] = useState<BrowserAnnotationTool>('inspect');
@@ -576,7 +581,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const registerGuestFocus = useCallback((targetId: string, guest: LiveWebview) => {
     focusBindingRef.current?.registerGuest(
       guest,
-      () => canPresentPage(targetId),
+      () => canPresentPage(targetId) && !loadErrorsRef.current.has(targetId),
     );
   }, [canPresentPage]);
   useLayoutEffect(() => {
@@ -822,9 +827,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   browserOperationRunningRef.current = browserOperationRunning;
   const agentInteractionLocked = !userInteractionLocked && browserOperationRunning;
   useLayoutEffect(() => {
-    // Revoke an already focused guest before acknowledging Agent control.
+    // Revoke an already focused guest when covered by an error page or Agent control.
     focusBindingRef.current?.refresh();
-  }, [ownerDocument, isOpen, activeTabTargetId, browserOperationRunning]);
+  }, [ownerDocument, isOpen, activeTabTargetId, browserOperationRunning, loadErrors]);
   useLayoutEffect(() => {
     const externalOperationIds = new Set(
       panelInteractions.flatMap(state => (state.operationId ? [state.operationId] : [])),
@@ -1530,18 +1535,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       onGuest('close', () => guestHandlersRef.current.closeTab(targetId, { preserveFocus: true }));
       onGuest('did-fail-load', event => {
         const details = event as GuestEvent;
-        if (details.errorCode === -3 || details.isMainFrame === false) return;
+        if (details.isMainFrame === false) return;
+        const url = details.validatedURL ||
+          tabsRef.current.find(tab => tab.targetId === targetId)?.url || '';
+        const message = formatBrowserLoadError(details, url);
+        if (!message) return;
         setLoadingTargets(current => {
           const next = new Set(current);
           next.delete(targetId);
           return next;
         });
-        setLoadErrors(current =>
-          new Map(current).set(
-            targetId,
-            details.errorDescription || i18nService.t('browserPanelLoadFailed'),
-          ),
-        );
+        setLoadErrors(current => new Map(current).set(targetId, message));
       });
     },
     [
@@ -1819,7 +1823,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
   };
 
-  const submitUrl = async (rawAddress = urlDraft, useNativeFileUrl = false) => {
+  const submitUrl = async (
+    rawAddress = urlDraft,
+    { useNativeFileUrl = false, reuseCurrentTab = false } = {},
+  ) => {
     const submissionSequence = ++addressSubmissionSequenceRef.current;
     const view = browserViewRef.current;
     const lifetime = browserLifetimeRef.current;
@@ -1877,7 +1884,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       showError(i18nService.t('browserPanelInvalidUrl'));
       return;
     }
-    if (activeTab && isAtSourcePreview(activeTab) && url !== activeTab.url) {
+    if (!reuseCurrentTab && activeTab && isAtSourcePreview(activeTab) && url !== activeTab.url) {
       openTab(url, {
         ...source,
         profile: activeTab.profile,
@@ -1912,15 +1919,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         return next;
       });
       // Electron rejects a superseded or stopped load with ERR_ABORTED.
-      if (typeof loadError === 'object' && loadError !== null &&
-        (('code' in loadError && loadError.code === 'ERR_ABORTED') ||
-          ('errno' in loadError && loadError.errno === -3))) return;
-      setLoadErrors(current =>
-        new Map(current).set(
-          targetId,
-          loadError instanceof Error ? loadError.message : i18nService.t('browserPanelLoadFailed'),
-        ),
-      );
+      const message = formatBrowserLoadError(loadError, url);
+      if (!message) return;
+      // did-fail-load may already have supplied a more specific native reason.
+      setLoadErrors(current => current.has(targetId)
+        ? current : new Map(current).set(targetId, message));
     } finally {
       if (addressLoads.get(webview) === submissionSequence) addressLoads.delete(webview);
     }
@@ -2110,7 +2113,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       const result = localFilePath
         ? await window.electron.shell.openLocalHtmlExternal(url)
         : await window.electron.shell.openExternal(url);
-      if (!result.success) showError(result.error || i18nService.t('browserPanelLoadFailed'));
+      if (!result.success) showError(result.error || i18nService.t('browserPanelOpenExternalFailed'));
       return;
     }
     if (action === 'rename') {
@@ -2286,6 +2289,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const showPageTools =
     navigationBarVisible &&
     pageToolsVisible &&
+    !loadError &&
     Boolean(activeTab && activeTab.url !== 'about:blank');
   const annotationElement = inspected ?? regions[regions.length - 1]?.elements?.[0] ?? null;
   const stageWidth = stageRef.current?.clientWidth || 520;
@@ -2807,15 +2811,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         </form>
       )}
 
-      {loadError && (
-        <div
-          role="alert"
-          className="border-b border-border bg-red-500/5 px-3 py-2 text-xs text-red-600 dark:text-red-400"
-        >
-          {loadError}
-        </div>
-      )}
-      {credentialOffer && canPresentPage(credentialOffer.targetId) && (
+      {!loadError && credentialOffer && canPresentPage(credentialOffer.targetId) && (
         <div className="flex items-center gap-2 border-b border-border bg-surface-raised px-3 py-2 text-xs">
           <span className="min-w-0 flex-1 text-secondary">
             {i18nService.t('browserCredentialOffer')}
@@ -2839,7 +2835,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       )}
 
       <div className="relative min-h-0 flex-1 overflow-hidden bg-neutral-950/5 p-2">
-        {findVisible && (
+        {!loadError && findVisible && (
           <form
             className="absolute right-2 top-2 z-[120] flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1.5 shadow-lg"
             onSubmit={event => {
@@ -2901,31 +2897,44 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             ref={setInterventionDetailsHost}
             className="pointer-events-none absolute inset-0 z-[110]"
           />
-          {tabs.map(tab => (
-            <webview
-              key={`${tab.targetId}:${BROWSER_WEBVIEW_CAPABILITY_VERSION}`}
-              ref={getGuestElementRef(tab.targetId)}
-              src={initialUrlsRef.current.get(tab.targetId) || 'about:blank'}
-              partition={browserPartitionForProfile(tab.profile ?? 'embedded')}
-              // React 18 drops a bare boolean for unknown/custom-element attributes.
-              // Electron types this as boolean, but the DOM must receive the literal attribute.
-              allowpopups={'true' as unknown as boolean}
-              plugins={'true' as unknown as boolean}
-              className="absolute inset-0 h-full w-full"
-              style={{
-                opacity: isVisible && tab.targetId === activeTab?.targetId ? 1 : 0,
-                pointerEvents: isOpen && tab.targetId === activeTab?.targetId ? undefined : 'none',
-              }}
-              aria-hidden={!isOpen || tab.targetId !== activeTab?.targetId}
-              tabIndex={isOpen && tab.targetId === activeTab?.targetId ? 0 : -1}
-              {...(!isOpen || tab.targetId !== activeTab?.targetId ? { inert: '' } : {})}
+          {tabs.map(tab => {
+            const pageVisible = tab.targetId === activeTab?.targetId && !loadErrors.has(tab.targetId);
+            const pageInteractive = isOpen && pageVisible;
+            return (
+              <webview
+                key={`${tab.targetId}:${BROWSER_WEBVIEW_CAPABILITY_VERSION}`}
+                ref={getGuestElementRef(tab.targetId)}
+                src={initialUrlsRef.current.get(tab.targetId) || 'about:blank'}
+                partition={browserPartitionForProfile(tab.profile ?? 'embedded')}
+                // React 18 drops a bare boolean for unknown/custom-element attributes.
+                // Electron types this as boolean, but the DOM must receive the literal attribute.
+                allowpopups={'true' as unknown as boolean}
+                plugins={'true' as unknown as boolean}
+                className="absolute inset-0 h-full w-full"
+                style={{
+                  opacity: isVisible && pageVisible ? 1 : 0,
+                  pointerEvents: pageInteractive ? undefined : 'none',
+                }}
+                aria-hidden={!pageInteractive}
+                tabIndex={pageInteractive ? 0 : -1}
+                {...(!pageInteractive ? { inert: '' } : {})}
+              />
+            );
+          })}
+          {loadError && (
+            <BrowserLoadErrorPage
+              error={loadError}
+              disabled={!isOpen || browserOperationRunning || interventionBlocked}
+              onRetry={() => void submitUrl(loadError.url, {
+                useNativeFileUrl: true, reuseCurrentTab: true,
+              })}
             />
-          ))}
-          {activeTab?.url === 'about:blank' &&
+          )}
+          {!loadError && activeTab?.url === 'about:blank' &&
             (renderStartPage ? (
               isVisible && (
                 <div className="absolute inset-0 z-[5] bg-background">
-                  {renderStartPage(url => void submitUrl(url, true))}
+                  {renderStartPage(url => void submitUrl(url, { useNativeFileUrl: true }))}
                 </div>
               )
             ) : (
