@@ -56,7 +56,7 @@ vi.mock('../../browser/browserNetworkDiagnostics', () => ({
 }));
 vi.mock('./appWindowFailure', () => ({ registerAppWindowDiagnostics: () => vi.fn() }));
 vi.mock('./renderer/packagedRendererLoader', () => ({
-  loadPackagedRenderer: vi.fn().mockResolvedValue(undefined),
+  loadPackagedRenderer: vi.fn().mockResolvedValue(true),
 }));
 vi.mock('./windowAppearance', () => ({ registerWindowAppearance: vi.fn() }));
 vi.mock('./widgetViewerGuest', () => ({

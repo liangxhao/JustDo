@@ -2,14 +2,20 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
 import { initializationWindowArguments } from '../../../shared/app/initialization';
+import { StartupFailureSource } from '../../../shared/app/startupFailure';
 import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
 import { registerAppWindowDiagnostics } from './appWindowFailure';
 import { isAllowedMainWindowNavigation } from './browserPanelSecurity';
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
 import { registerStartupEntryClock } from './startupEntryClock';
+import { registerStartupWindowPresentation } from './startupWindowPresentation';
 
-export type InitializationWindow = { window: BrowserWindow; loaded: Promise<void> };
+export type InitializationWindow = {
+  window: BrowserWindow;
+  loaded: Promise<boolean>;
+  reportWindowFailure: ReturnType<typeof registerAppWindowDiagnostics>;
+};
 
 /** An in-memory shell can report a bad userData directory before opening profiles. */
 export function createInitializationWindow(options: {
@@ -51,8 +57,13 @@ export function createInitializationWindow(options: {
     { isDev: options.isDev, devServerPort: options.devServerPort },
     window.webContents.session,
   );
-  const reportWindowFailure = registerAppWindowDiagnostics(window.webContents, 'AppInitialization');
-  window.once('ready-to-show', () => options.onReady(window));
+  let pageLoaded = false;
+  let preloadFailed = false;
+  const reportWindowFailure = registerAppWindowDiagnostics(window.webContents, 'AppInitialization', source => {
+    if (!pageLoaded && source === StartupFailureSource.Preload) preloadFailed = true;
+    return pageLoaded;
+  });
+  const markLoaded = registerStartupWindowPresentation(window, options.onReady);
   const navigation = {
     isDev: options.isDev,
     devServerUrl: options.devServerUrl,
@@ -70,15 +81,21 @@ export function createInitializationWindow(options: {
     if (!isAllowedMainWindowNavigation(event.url, navigation)) event.preventDefault();
   });
   const loading = options.isDev
-    ? window.loadURL(options.devServerUrl)
+    ? window.loadURL(options.devServerUrl).then(() => true)
     : loadPackagedRenderer(window, app, path.join(__dirname, '../dist'), url => {
         navigation.applicationUrl = url;
       });
   return {
     window,
-    loaded: loading.catch(error => {
+    reportWindowFailure,
+    loaded: loading.then(success => {
+      if (!success || preloadFailed) return false;
+      pageLoaded = true;
+      markLoaded();
+      return true;
+    }).catch(error => {
       console.error('[AppInitialization] Window load failed:', error);
-      reportWindowFailure(error);
+      return false;
     }),
   };
 }

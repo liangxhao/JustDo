@@ -46,6 +46,8 @@ const composition = ts.transpileModule(`
   let initialization;
   let startupEnginePreparationController;
   let mainWindow = null;
+  let initializationWindow;
+  let mainWindowCreationReady = false;
   ${['initStore', 'getStore', 'getOpenClawEngineManager', 'prepareStartup']
     .map(name => `const ${declarations.get(name)!.getText(source)};`).join('\n')}
   const opening = (async () => {
@@ -63,7 +65,7 @@ function fixture() {
   const data = new Promise<object>((resolve, reject) => { resolveStore = resolve; rejectStore = reject; });
   const createStore = vi.fn(() => { calls.push('store'); return data; });
   const database = {};
-  const productStore = { getDatabase: () => database };
+  const productStore = { getDatabase: () => database, get: () => undefined };
   let readStore!: () => object;
   let readManager!: () => unknown;
   const engine = { getStatus: () => ({ phase: EnginePhase.Ready, version: 'test', canRetry: false }),
@@ -101,6 +103,8 @@ function fixture() {
     prepareOpenClawExecution: vi.fn(), prepareOutboundHeaderNetworkGeneration: vi.fn(),
     getLogFilePath: () => 'unused-startup-log', getCoworkStore: vi.fn(),
     registerLocalFileScheme: vi.fn(), registerContentSecurityPolicy: vi.fn(),
+    bindOpenClawGatewayPortProxyBypass: vi.fn(),
+    applySystemProxyPreference: async () => { calls.push('proxy'); },
     createStartupBootstrapWindow: () => ({ window: {} }),
     startupWindowHandoff: { setBootstrap: vi.fn(), showBootstrap: vi.fn() },
     createStartupWindow: () => { calls.push('failure-window'); return { loaded: Promise.resolve() }; },
@@ -136,7 +140,7 @@ test.each([false, true])('startup state is readable before Store opens and engin
   } else {
     expect(f.owner.preparation()).toBeInstanceOf(StartupEnginePreparation);
     expect(f.calls).toEqual(['admission', 'user-data', 'store', 'plugins', 'engine',
-      'plugin-schema', 'main-window']);
+      'plugin-schema', 'proxy', 'main-window']);
   }
 });
 

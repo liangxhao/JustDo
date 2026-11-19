@@ -66,3 +66,19 @@ test('reports renderer host preparation errors before any navigation event exist
   expect(mocks.dialog.mock.calls[0][0].detail).toContain('ENOENT');
   expect(mocks.dialog.mock.calls[0][0].detail).toContain('rendererHost');
 });
+
+test('keeps a failed first navigation in the logs until the load owner reports a terminal failure', async () => {
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+  mocks.dialog.mockResolvedValue({ response: 2 });
+  const contents = Object.assign(new EventEmitter(), { isDestroyed: () => false });
+  const report = registerAppWindowDiagnostics(contents as unknown as WebContents, 'MainWindow', () => false);
+  const dismiss = vi.fn();
+
+  contents.emit('did-fail-load', {}, -101, 'ERR_CONNECTION_RESET', 'http://127.0.0.1:45001/index.html', true);
+
+  expect(log).toHaveBeenCalledOnce();
+  expect(mocks.dialog).not.toHaveBeenCalled();
+  report(new Error('Local application page did not recover'), dismiss);
+  await vi.waitFor(() => expect(dismiss).toHaveBeenCalledOnce());
+  expect(mocks.dialog).toHaveBeenCalledOnce();
+});

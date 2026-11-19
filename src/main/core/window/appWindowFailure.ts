@@ -15,9 +15,10 @@ import { registerWindowDiagnostics } from './windowDiagnostics';
 export function registerAppWindowDiagnostics(
   contents: WebContents,
   label: string,
-): (error: unknown) => void {
+  canReportFailure?: (source: StartupFailure['source']) => boolean,
+): (error: unknown, onDismiss?: () => void) => void {
   let showing = false;
-  const showFailure = async (failure: StartupFailure) => {
+  const showFailure = async (failure: StartupFailure, onDismiss?: () => void) => {
     if (showing || contents.isDestroyed()) return;
     showing = true;
     const detail = startupFailureText({
@@ -36,13 +37,17 @@ export function registerAppWindowDiagnostics(
         noLink: true,
       };
       const owner = BrowserWindow.fromWebContents(contents);
-      const { response } = await (owner
+      const { response } = await (owner?.isVisible()
         ? dialog.showMessageBox(owner, options)
         : dialog.showMessageBox(options));
       if (response === 0) clipboard.writeText(detail);
-      if (response === 1 && !contents.isDestroyed()) {
-        app.relaunch();
-        app.quit();
+      if (response === 1) {
+        if (!contents.isDestroyed()) {
+          app.relaunch();
+          app.quit();
+        }
+      } else {
+        onDismiss?.();
       }
     } catch (error) {
       console.error('[AppWindowFailure] Failed to display native diagnostics:', error);
@@ -51,11 +56,13 @@ export function registerAppWindowDiagnostics(
     }
   };
   registerWindowDiagnostics(contents, label, failure => {
+    if (canReportFailure?.(failure.source) === false) return;
     void showFailure(failure);
   });
-  return error => {
+  return (error, onDismiss) => {
     void showFailure(
       captureStartupFailure(StartupFailureSource.Page, error, { activity: 'rendererHost' }),
+      onDismiss,
     );
   };
 }

@@ -167,6 +167,7 @@ import {
   registerLocalFileScheme,
 } from './core/window/localFileProtocol';
 import { createMainWindow } from './core/window/mainWindowFactory';
+import { isLoadingPackagedRenderer } from './core/window/renderer/packagedRendererLoader';
 import { createStartupBootstrapWindow } from './core/window/startupBootstrapWindow';
 import { StartupWindowHandoff } from './core/window/startupWindowHandoff';
 import {
@@ -1609,7 +1610,7 @@ const showSystemMenu = (position?: { x?: number; y?: number }, targetWindow = ma
 
 const scheduleReload = (reason: string, webContents?: WebContents) => {
   const target = webContents ?? mainWindow?.webContents;
-  if (!target || target.isDestroyed()) {
+  if (!target || target.isDestroyed() || isLoadingPackagedRenderer(target)) {
     return;
   }
   const now = Date.now();
@@ -2225,18 +2226,24 @@ if (agentBridgeArgv) {
     isQuitting: () => appShutdown.isQuitting(),
     onCancelled: () => app.quit(),
   });
+  let mainWindowCreationReady = false;
+  const getTrayWindow = () => {
+    if (appShutdown.isQuitting() || !mainWindow || startupWindowHandoff.requestShow(mainWindow)) return null;
+    return mainWindow;
+  };
 
   // 创建主窗口
   const createWindow = () => {
     if (appShutdown.isQuitting()) return;
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (startupWindowHandoff.requestShow(mainWindow)) return;
       if (mainWindow.isMinimized()) mainWindow.restore();
       if (!mainWindow.isVisible()) mainWindow.show();
       if (!mainWindow.isFocused()) mainWindow.focus();
       return;
     }
-    if (!store) {
-      startupWindowHandoff.showCurrent();
+    if (!mainWindowCreationReady) {
+      startupWindowHandoff.requestShow();
       return;
     }
 
@@ -2310,7 +2317,7 @@ if (agentBridgeArgv) {
         startupWindowHandoff.present(window);
         const initLang = getStore().get<{ language?: string }>('app_config')?.language;
         setLanguage(initLang === 'en' ? 'en' : 'zh');
-        createTray(() => mainWindow);
+        createTray(getTrayWindow);
         try {
           getCronJobService().startPolling();
         } catch {
@@ -2647,6 +2654,7 @@ if (agentBridgeArgv) {
     });
   };
 
+  let initializationWindow: InitializationWindow | undefined;
   const createStartupWindow = (): InitializationWindow => {
     const startup = createInitializationWindow({
       appName: APP_NAME,
@@ -2665,15 +2673,16 @@ if (agentBridgeArgv) {
         startupWindowHandoff.present(window);
       },
     });
-    const initializationWindow = startup.window;
-    startupWindowHandoff.prepare(initializationWindow, false);
-    mainWindow = initializationWindow;
-    initializationWindow.on('closed', () => {
+    initializationWindow = startup;
+    startupWindowHandoff.prepare(startup.window, false);
+    mainWindow = startup.window;
+    startup.window.on('closed', () => {
       if (startupCoordinator.getDowngradeConfirmation()) {
         startupCoordinator.stop();
         app.quit();
       }
-      if (mainWindow === initializationWindow) mainWindow = null;
+      if (mainWindow === startup.window) mainWindow = null;
+      if (initializationWindow === startup) initializationWindow = undefined;
     });
     return startup;
   };
@@ -2728,9 +2737,9 @@ if (agentBridgeArgv) {
     if (appShutdown.isQuitting()) return;
 
     const startup = initialization.getState().firstLaunch ? createStartupWindow() : null;
-    // The packaged HTTP host starts asynchronously; wait for its actual navigation.
-    // Load failures are logged by the window and do not block real data preparation.
-    if (startup) await startup.loaded;
+    if (startup && startupCoordinator.getDowngradeConfirmation() && !(await startup.loaded)) {
+      throw new Error(t('startupWindowFailed'));
+    }
     if (appShutdown.isQuitting()) return;
     if (startupPreparationError) throw startupPreparationError;
     initialization.setTaskStatus(
@@ -2765,11 +2774,19 @@ if (agentBridgeArgv) {
         path.join(app.getAppPath(), 'build/app-plugins/development-assets.json'),
       );
     if (appShutdown.isQuitting()) return;
+    // Applying the proxy closes the default session's existing connections.
+    // Finish before the main window starts reading its local document and scripts.
+    bindOpenClawGatewayPortProxyBypass();
+    const appConfig = getStore().get<AppConfigSettings>('app_config');
+    initialization.reportActivity(AppInitializationActivity.Network);
+    await applySystemProxyPreference(appConfig);
+    if (appShutdown.isQuitting()) return;
     mainWindow = null;
     registerContentSecurityPolicy({
       isDev,
       devServerPort: Number(process.env.JUSTDO_DEV_SERVER_PORT || packageJson.devServer.port),
     });
+    mainWindowCreationReady = true;
     createWindow();
     if (startupCoordinator.route !== StartupRoute.Normal) {
       initialization.advance(AppInitializationStep.Runtime, 1);
@@ -2919,13 +2936,7 @@ if (agentBridgeArgv) {
     // Inject store getter into providerApiConfig
     setStoreGetter(() => store);
 
-    // Restore proxy routing before refreshing the built-in provider. Its model
-    // endpoint may require the saved system/custom proxy to be reachable.
-    bindOpenClawGatewayPortProxyBypass();
-    const appConfig = getStore().get<AppConfigSettings>('app_config');
     initialization.reportActivity(AppInitializationActivity.Network);
-    await applySystemProxyPreference(appConfig);
-    if (appShutdown.isQuitting()) return;
     await applyBrowserProxyPreference(appConfig);
     if (appShutdown.isQuitting()) return;
 
@@ -3195,7 +3206,7 @@ if (agentBridgeArgv) {
       );
     }
 
-    createTray(() => mainWindow);
+    createTray(getTrayWindow);
     autoUpdateService.scheduleAutomaticChecks({ skipMissedCheck: true });
 
     // Reconnect OpenClaw gateway WS after system wake from sleep/suspend
@@ -3244,7 +3255,7 @@ if (agentBridgeArgv) {
       if (currentLanguage !== lastLanguage) {
         lastLanguage = currentLanguage;
         setLanguage(currentLanguage === 'en' ? 'en' : 'zh');
-        updateTrayMenu(() => mainWindow);
+        updateTrayMenu(getTrayWindow);
       }
 
       const previousProxyPreference = oldConfig
@@ -3285,13 +3296,10 @@ if (agentBridgeArgv) {
     // 在 macOS 上，当点击 dock 图标时显示已有窗口或重新创建
     app.on('activate', () => {
       if (appShutdown.isQuitting()) return;
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        if (!mainWindow.isVisible()) mainWindow.show();
-        if (!mainWindow.isFocused()) mainWindow.focus();
-        return;
-      }
-      if (BrowserWindow.getAllWindows().length === 0) {
+      if ((mainWindow && !mainWindow.isDestroyed()) || BrowserWindow.getAllWindows().length === 0) {
         createWindow();
+      } else {
+        startupWindowHandoff.requestShow();
       }
     });
   };
@@ -3322,7 +3330,12 @@ if (agentBridgeArgv) {
         return;
       }
       initialization.fail(error);
-      if (!mainWindow && app.isReady()) createStartupWindow();
+      const failureWindow = !mainWindow && app.isReady() ? createStartupWindow() : initializationWindow;
+      if (failureWindow?.window === mainWindow) {
+        void failureWindow.loaded.then(loaded => {
+          if (!loaded && !appShutdown.isQuitting()) failureWindow.reportWindowFailure(error, () => app.quit());
+        });
+      }
     });
 
   // 当所有窗口关闭时退出应用

@@ -11,6 +11,8 @@ export class StartupWindowHandoff {
   private readonly managed = new Map<BrowserWindow, { final: boolean; closed: () => void }>();
   private readonly retired = new WeakSet<BrowserWindow>();
   private stopped = false;
+  private sourceReady = false;
+  private showRequested = false;
   private visualStartedAt?: number;
 
   constructor(private readonly options: {
@@ -44,12 +46,16 @@ export class StartupWindowHandoff {
   setBootstrap(window: BrowserWindow): void {
     if (this.stopped || this.options.isQuitting()) return;
     this.source = window;
+    this.sourceReady = false;
     this.watch(window, false);
   }
 
   showBootstrap(window: BrowserWindow): void {
     if (this.source === window && !this.stopped && !this.retired.has(window) &&
-        !window.isDestroyed() && !this.options.isQuitting() && this.options.canShow()) window.show();
+        !window.isDestroyed() && !this.options.isQuitting()) {
+      this.sourceReady = true;
+      if (this.showRequested || this.options.canShow()) window.show();
+    }
   }
 
   prepare(window: BrowserWindow, final = true): void {
@@ -62,10 +68,19 @@ export class StartupWindowHandoff {
     if (platform === 'win32' || platform === 'darwin') this.opacity(window, 0);
   }
 
-  showCurrent(): void {
-    const window = this.pending ?? this.source;
-    if (window && window !== this.pending && !this.stopped && !window.isDestroyed() &&
-        !this.options.isQuitting()) window.show();
+  requestShow(window?: BrowserWindow): boolean {
+    if (window && (!this.managed.has(window) || (window === this.source && this.sourceReady))) {
+      return false;
+    }
+    if (this.stopped || this.options.isQuitting()) return true;
+    this.showRequested = true;
+    const source = this.source;
+    if (source && this.sourceReady && !source.isDestroyed()) {
+      if (source.isMinimized()) source.restore();
+      if (!source.isVisible()) source.show();
+      if (!source.isFocused()) source.focus();
+    }
+    return true;
   }
 
   present(window: BrowserWindow): void {
@@ -75,6 +90,7 @@ export class StartupWindowHandoff {
     const previous = this.source;
     this.pending = undefined;
     this.source = window;
+    this.sourceReady = true;
     const finish = () => {
       clearTimeout(this.timer);
       this.timer = undefined;
@@ -86,10 +102,11 @@ export class StartupWindowHandoff {
         window.removeListener('closed', record.closed);
         this.managed.delete(window);
         if (this.source === window) this.source = undefined;
+        this.showRequested = false;
       }
     };
     const targetWasVisible = window.isVisible();
-    const explicitlyOpened = targetWasVisible ||
+    const explicitlyOpened = this.showRequested || targetWasVisible ||
       Boolean(previous && !previous.isDestroyed() && previous.isVisible());
     if (!targetWasVisible && previous && !previous.isDestroyed() && previous.isMinimized()) {
       window.setBounds(previous.getNormalBounds());

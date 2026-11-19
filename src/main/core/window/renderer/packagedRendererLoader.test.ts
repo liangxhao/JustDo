@@ -7,19 +7,26 @@ import { loadPackagedRenderer } from './packagedRendererLoader';
 
 vi.mock('./applicationRendererHost', () => ({ startApplicationRendererHost: vi.fn() }));
 
-const setup = () => ({
-  window: Object.assign(new EventEmitter(), {
-    isDestroyed: vi.fn(() => false),
-    loadURL: vi.fn(() => Promise.resolve()),
-  }),
-  application: new EventEmitter(),
-  host: {
-    origin: 'http://127.0.0.1:45001',
-    url: 'http://127.0.0.1:45001/index.html',
-    close: vi.fn(() => Promise.resolve()),
-  },
-  onUrl: vi.fn(),
-});
+const rendererUrl = 'http://127.0.0.1:45001/index.html';
+const setup = () => {
+  const webContents = Object.assign(new EventEmitter(), { stop: vi.fn() });
+  return {
+    window: Object.assign(new EventEmitter(), {
+      isDestroyed: vi.fn(() => false),
+      webContents,
+      loadURL: vi.fn(async (_url: string) => {
+        webContents.emit('did-navigate', {}, rendererUrl, 200);
+      }),
+    }),
+    application: new EventEmitter(),
+    host: {
+      origin: 'http://127.0.0.1:45001',
+      url: rendererUrl,
+      close: vi.fn(() => Promise.resolve()),
+    },
+    onUrl: vi.fn(),
+  };
+};
 
 describe('packaged renderer lifetime', () => {
   afterEach(() => vi.clearAllMocks());
@@ -87,5 +94,59 @@ describe('packaged renderer lifetime', () => {
     ).rejects.toThrow('Navigation failed');
     expect(second.host.close).toHaveBeenCalledOnce();
     expect(second.onUrl).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('recovers a temporary reset on the same validated origin', async () => {
+    const state = setup();
+    vi.mocked(startApplicationRendererHost).mockResolvedValue(state.host);
+    state.window.loadURL.mockRejectedValueOnce(Object.assign(new Error('connection reset'), {
+      code: 'ERR_CONNECTION_RESET',
+    }));
+
+    await expect(loadPackagedRenderer(state.window, state.application, '/packaged/dist', state.onUrl))
+      .resolves.toBe(true);
+
+    expect(startApplicationRendererHost).toHaveBeenCalledOnce();
+    expect(state.window.loadURL.mock.calls).toHaveLength(2);
+    expect(state.window.loadURL).toHaveBeenNthCalledWith(1, rendererUrl);
+    expect(state.window.loadURL).toHaveBeenNthCalledWith(2, rendererUrl);
+    expect(state.onUrl).toHaveBeenCalledExactlyOnceWith(rendererUrl);
+    expect(state.host.close).not.toHaveBeenCalled();
+    state.window.emit('closed');
+  });
+
+  it('rejects a non-200 main document even when Electron resolves the navigation', async () => {
+    const state = setup();
+    vi.mocked(startApplicationRendererHost).mockResolvedValue(state.host);
+    state.window.loadURL.mockImplementation(async () => {
+      state.window.webContents.emit('did-navigate', {}, rendererUrl, 404);
+    });
+
+    await expect(loadPackagedRenderer(state.window, state.application, '/packaged/dist', state.onUrl))
+      .rejects.toThrow('returned 404');
+
+    expect(state.window.loadURL).toHaveBeenCalledOnce();
+    expect(state.host.close).toHaveBeenCalledOnce();
+  });
+
+  it('ends retry backoff promptly on quit without another navigation', async () => {
+    const state = setup();
+    vi.mocked(startApplicationRendererHost).mockResolvedValue(state.host);
+    state.window.loadURL.mockRejectedValue(Object.assign(new Error('connection reset'), {
+      code: 'ERR_CONNECTION_RESET',
+    }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const loading = loadPackagedRenderer(state.window, state.application, '/packaged/dist', state.onUrl);
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledOnce());
+      state.application.emit('before-quit');
+
+      await expect(loading).resolves.toBe(false);
+      expect(state.window.loadURL).toHaveBeenCalledOnce();
+      expect(state.host.close).toHaveBeenCalledOnce();
+      expect(state.window.webContents.listenerCount('did-navigate')).toBe(0);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

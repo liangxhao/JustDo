@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -6,8 +7,12 @@ import {
   FIRST_LAUNCH_WINDOW_ARGUMENT,
   INITIALIZATION_WINDOW_ARGUMENT,
 } from '../../../shared/app/initialization';
+import { StartupFailureSource } from '../../../shared/app/startupFailure';
 
-const electronMocks = vi.hoisted(() => ({ app: {}, createWindow: vi.fn(), reportFailure: vi.fn() }));
+const electronMocks = vi.hoisted(() => ({
+  app: { getAppPath: () => '/packaged' }, createWindow: vi.fn(), reportFailure: vi.fn(),
+  registerDiagnostics: vi.fn(),
+}));
 vi.mock('electron', () => ({
   app: electronMocks.app,
   BrowserWindow: class {
@@ -17,11 +22,13 @@ vi.mock('electron', () => ({
   },
 }));
 vi.mock('./contentSecurityPolicy', () => ({ registerContentSecurityPolicy: vi.fn() }));
-vi.mock('./appWindowFailure', () => ({ registerAppWindowDiagnostics: () => electronMocks.reportFailure }));
+vi.mock('./appWindowFailure', () => ({ registerAppWindowDiagnostics: electronMocks.registerDiagnostics }));
 vi.mock('./renderer/packagedRendererLoader', () => ({ loadPackagedRenderer: vi.fn() }));
+vi.mock('./renderer/applicationRendererHost', () => ({ readPackagedStartupDocument: vi.fn() }));
 
 import { registerContentSecurityPolicy } from './contentSecurityPolicy';
 import { createInitializationWindow } from './initializationWindow';
+import { readPackagedStartupDocument } from './renderer/applicationRendererHost';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
 import { createStartupBootstrapWindow } from './startupBootstrapWindow';
 
@@ -38,7 +45,7 @@ const options = {
 const makeWindow = () =>
   Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
-    loadURL: vi.fn(() => Promise.resolve()),
+    loadURL: vi.fn((_url: string) => Promise.resolve()),
     loadFile: vi.fn(),
     webContents: Object.assign(new EventEmitter(), {
       session: {},
@@ -50,7 +57,8 @@ let window: ReturnType<typeof makeWindow>;
 beforeEach(() => {
   window = makeWindow();
   electronMocks.createWindow.mockReturnValue(window);
-  vi.mocked(loadPackagedRenderer).mockResolvedValue(undefined);
+  electronMocks.registerDiagnostics.mockReturnValue(electronMocks.reportFailure);
+  vi.mocked(loadPackagedRenderer).mockResolvedValue(true);
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -58,7 +66,7 @@ afterEach(() => {
 });
 
 test('loads the packaged HTTP renderer in memory and waits for its real load completion', async () => {
-  let finish!: () => void;
+  let finish!: (success: boolean) => void;
   vi.mocked(loadPackagedRenderer).mockReturnValue(new Promise(resolve => (finish = resolve)));
 
   const startup = createInitializationWindow(options);
@@ -84,20 +92,38 @@ test('loads the packaged HTTP renderer in memory and waits for its real load com
     webSecurity: true,
   });
   expect(loaded).not.toHaveBeenCalled();
-  finish();
+  window.emit('ready-to-show');
+  expect(options.onReady).not.toHaveBeenCalled();
+  finish(true);
   await startup.loaded;
   expect(loaded).toHaveBeenCalledOnce();
+  expect(options.onReady).toHaveBeenCalledExactlyOnceWith(window);
 });
 
-test('shows a neutral bootstrap without preload or profile access and denies navigation', async () => {
+test('directly presents the standalone bootstrap with a restrictive policy and no HTTP host', async () => {
+  const script = '\n  document.documentElement.lang = "zh";\n';
+  vi.mocked(readPackagedStartupDocument).mockResolvedValue(
+    `<html><head></head><body><script>${script.replaceAll('\n', '\r\n')}</script></body></html>`,
+  );
+
   const bootstrap = createStartupBootstrapWindow(options);
   await bootstrap.loaded;
   const preferences = electronMocks.createWindow.mock.calls[0][0].webPreferences;
   expect(preferences).toMatchObject({ partition: 'startup-bootstrap', sandbox: true, nodeIntegration: false });
   expect(preferences.preload).toBeUndefined();
   expect(preferences.additionalArguments).toBeUndefined();
-  expect(loadPackagedRenderer).toHaveBeenCalledWith(window, electronMocks.app,
-    expect.stringMatching(/[/\\]dist$/u), expect.any(Function), { bootstrapOnly: true });
+  expect(loadPackagedRenderer).not.toHaveBeenCalled();
+  expect(readPackagedStartupDocument).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/[/\\]dist$/u));
+  const prefix = 'data:text/html;charset=utf-8;base64,';
+  const url = window.loadURL.mock.calls[0][0];
+  expect(url).toMatch(/^data:text\/html;charset=utf-8;base64,/u);
+  const html = Buffer.from(url.slice(prefix.length), 'base64').toString('utf8');
+  const hash = createHash('sha256').update(script).digest('base64');
+  expect(html).toContain(`default-src 'none'; script-src 'sha256-${hash}'`);
+  expect(html).toContain('img-src data:');
+  expect(options.onReady).not.toHaveBeenCalled();
+  window.emit('ready-to-show');
+  expect(options.onReady).toHaveBeenCalledExactlyOnceWith(window);
   for (const event of ['will-navigate', 'will-frame-navigate', 'will-redirect']) {
     const preventDefault = vi.fn();
     window.webContents.emit(event, { preventDefault });
@@ -105,15 +131,30 @@ test('shows a neutral bootstrap without preload or profile access and denies nav
   }
 });
 
-test('logs the actual host failure without blocking user-data preparation', async () => {
+test('leaves a failed optional initialization page hidden without showing a dialog', async () => {
   const error = new Error('Renderer assets unavailable');
   const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   vi.mocked(loadPackagedRenderer).mockRejectedValue(error);
 
-  await expect(createInitializationWindow(options).loaded).resolves.toBeUndefined();
+  const startup = createInitializationWindow(options);
+  window.emit('ready-to-show');
+  await expect(startup.loaded).resolves.toBe(false);
 
   expect(log).toHaveBeenCalledWith('[AppInitialization] Window load failed:', error);
-  expect(electronMocks.reportFailure).toHaveBeenCalledWith(error);
+  expect(electronMocks.reportFailure).not.toHaveBeenCalled();
+  expect(options.onReady).not.toHaveBeenCalled();
+});
+
+test('keeps setup unavailable if preload failed despite a successful document load', async () => {
+  const startup = createInitializationWindow(options);
+  const canReport = electronMocks.registerDiagnostics.mock.calls[0][2];
+
+  expect(canReport(StartupFailureSource.Preload)).toBe(false);
+  window.emit('ready-to-show');
+
+  await expect(startup.loaded).resolves.toBe(false);
+  expect(options.onReady).not.toHaveBeenCalled();
+  expect(electronMocks.reportFailure).not.toHaveBeenCalled();
 });
 
 test('keeps an ordinary startup failure in ordinary mode even in a transient window', async () => {

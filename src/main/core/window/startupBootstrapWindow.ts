@@ -3,8 +3,33 @@ import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 
 import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
-import type { InitializationWindow } from './initializationWindow';
-import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
+import { inlineApplicationScriptHashes } from './renderer/applicationContentSecurityPolicy';
+import { readPackagedStartupDocument } from './renderer/applicationRendererHost';
+import { registerStartupWindowPresentation } from './startupWindowPresentation';
+
+async function loadPackagedBootstrap(window: BrowserWindow): Promise<void> {
+  const html = await readPackagedStartupDocument(path.join(app.getAppPath(), 'dist'));
+  const hashes = inlineApplicationScriptHashes(html).map(hash => `'${hash}'`);
+  const policy = [
+    "default-src 'none'",
+    `script-src ${hashes.length ? hashes.join(' ') : "'none'"}`,
+    "style-src 'unsafe-inline'",
+    'img-src data:',
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; ');
+  const secured = html.replace(/<head\s*>/iu,
+    head => `${head}<meta http-equiv="Content-Security-Policy" content="${policy}">`);
+  if (secured === html) throw new Error('Packaged startup document is missing its head.');
+  if (window.isDestroyed()) return;
+  try {
+    await window.loadURL(`data:text/html;charset=utf-8;base64,${Buffer.from(secured).toString('base64')}`);
+  } catch (error) {
+    // Electron's error message includes the full encoded document URL.
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    throw new Error(`Could not load the packaged startup document${code ? ` (${code})` : ''}.`);
+  }
+}
 
 /** Route-neutral first paint: no preload, profile, preferences, or execution capabilities. */
 export function createStartupBootstrapWindow(options: {
@@ -13,7 +38,7 @@ export function createStartupBootstrapWindow(options: {
   isWindows?: boolean;
   devServerUrl: string;
   onReady: (window: BrowserWindow) => void;
-}): InitializationWindow {
+}): { window: BrowserWindow; loaded: Promise<void> } {
   const window = new BrowserWindow({
     ...DEFAULT_MAIN_WINDOW_SIZE,
     minWidth: 800,
@@ -34,7 +59,7 @@ export function createStartupBootstrapWindow(options: {
       spellcheck: false,
     },
   });
-  window.once('ready-to-show', () => options.onReady(window));
+  const markLoaded = registerStartupWindowPresentation(window, options.onReady);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   // All navigation after the initial Main-owned load is unnecessary.
   window.webContents.on('will-navigate', event => event.preventDefault());
@@ -42,10 +67,9 @@ export function createStartupBootstrapWindow(options: {
   window.webContents.on('will-redirect', event => event.preventDefault());
   const loading = options.isDev
     ? window.loadURL(new URL('/startup-bootstrap.html', options.devServerUrl).href)
-    : loadPackagedRenderer(window, app, path.join(__dirname, '../dist'), () => {},
-        { bootstrapOnly: true });
+    : loadPackagedBootstrap(window);
   return {
     window,
-    loaded: loading.catch(error => console.error('[StartupBootstrap] First paint failed:', error)),
+    loaded: loading.then(markLoaded).catch(error => console.error('[StartupBootstrap] First paint failed:', error)),
   };
 }

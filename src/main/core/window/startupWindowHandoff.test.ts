@@ -15,6 +15,7 @@ class WindowFixture extends EventEmitter {
   normalBounds?: { x: number; y: number; width: number; height: number };
   isDestroyed = () => this.destroyed;
   isVisible = () => this.visible;
+  isFocused = () => false;
   isMinimized = () => this.minimized;
   isMaximized = () => this.maximized;
   getBounds = () => ({ ...this.bounds });
@@ -22,6 +23,8 @@ class WindowFixture extends EventEmitter {
   setBounds = vi.fn((bounds: typeof this.bounds) => { this.bounds = { ...bounds }; });
   setOpacity = vi.fn((opacity: number) => { this.opacity = opacity; });
   show = vi.fn(() => { this.visible = true; });
+  focus = vi.fn();
+  restore = vi.fn(() => { this.minimized = false; });
   minimize = vi.fn(() => { this.minimized = true; });
   maximize = vi.fn(() => { this.maximized = true; this.visible = true; });
   close = vi.fn(() => { this.visible = false; this.destroyed = true; this.emit('closed'); });
@@ -93,7 +96,9 @@ test('preserves hidden automatic startup without starting a native fade or showi
 test('continues an explicit opening during automatic startup instead of hiding its successor again', () => {
   const f = fixture();
   f.hideLaunch();
-  f.owner.showCurrent();
+  f.owner.requestShow();
+  expect(f.source.show).not.toHaveBeenCalled();
+  f.owner.showBootstrap(f.source.native());
   expect(f.source.visible).toBe(true);
   f.owner.prepare(f.target.native());
   f.owner.present(f.target.native());
@@ -150,7 +155,8 @@ test('inherits native maximization before fading without treating maximization a
 test('preserves a newer explicit target opening over the source minimized state and geometry', () => {
   const f = fixture();
   f.hideLaunch();
-  f.owner.showCurrent();
+  f.owner.requestShow();
+  f.owner.showBootstrap(f.source.native());
   f.source.minimize();
   f.owner.prepare(f.target.native());
   f.target.show();
@@ -161,6 +167,22 @@ test('preserves a newer explicit target opening over the source minimized state 
   expect(f.target.bounds.x).toBe(400);
   expect(f.target.opacity).toBe(1);
   expect(f.source.close).toHaveBeenCalledOnce();
+});
+
+test('queues an opening for a pending main window while displaying only the ready bootstrap', () => {
+  const f = fixture();
+  f.hideLaunch();
+  f.owner.showBootstrap(f.source.native());
+  f.owner.prepare(f.target.native());
+
+  expect(f.owner.requestShow(f.target.native())).toBe(true);
+
+  expect(f.source.visible).toBe(true);
+  expect(f.target.show).not.toHaveBeenCalled();
+  f.owner.present(f.target.native());
+  vi.advanceTimersByTime(STARTUP_WINDOW_FADE_MS);
+  expect(f.target.visible).toBe(true);
+  expect(f.owner.requestShow(f.target.native())).toBe(false);
 });
 
 test('does not implicitly show a hidden automatic startup by inheriting maximization', () => {

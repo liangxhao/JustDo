@@ -16,6 +16,7 @@ import path from 'path';
 
 import { initializationWindowArguments } from '../../../shared/app/initialization';
 import { MediaCaptureIpc, MediaCaptureSurface } from '../../../shared/app/mediaCapture';
+import { StartupFailureSource } from '../../../shared/app/startupFailure';
 import { DEFAULT_MAIN_WINDOW_SIZE } from '../../../shared/app/windowGeometry';
 import {
   BROWSER_GUEST_COMMAND_CHANNEL,
@@ -80,6 +81,7 @@ import {
 } from './mediaPermission';
 import { loadPackagedRenderer } from './renderer/packagedRendererLoader';
 import { registerStartupEntryClock } from './startupEntryClock';
+import { registerStartupWindowPresentation } from './startupWindowPresentation';
 import { createWebpageEmbedGuests } from './webpageEmbedGuest';
 import { createWidgetViewerGuests } from './widgetViewerGuest';
 import { registerWindowAppearance } from './windowAppearance';
@@ -129,7 +131,6 @@ type MainWindowFactoryOptions = {
 
 const DEV_LOAD_MAX_RETRIES = 3;
 const LOAD_RETRY_DELAY_MS = 3_000;
-const LOAD_TIMEOUT_MS = 30_000;
 const CHAT_TIMELINE_TRACE_PREFIX = '[ChatTimelineTrace] ';
 const CHAT_TIMELINE_TRACE_MAX_BYTES = 64 * 1024;
 const SYSTEM_AUDIO_CAPTURE_AUTHORIZATION_TTL_MS = 5_000;
@@ -185,7 +186,12 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   registerWindowAppearance(mainWindow.webContents, options.getRendererPreferenceStore);
   if (options.getEntryStartedAt)
     registerStartupEntryClock(mainWindow.webContents, options.getEntryStartedAt);
-  const reportWindowFailure = registerAppWindowDiagnostics(mainWindow.webContents, 'MainWindow');
+  let initialRendererLoaded = options.isDev;
+  const reportWindowFailure = registerAppWindowDiagnostics(
+    mainWindow.webContents,
+    'MainWindow',
+    source => initialRendererLoaded || source !== StartupFailureSource.Page,
+  );
   if (options.isMac && options.isDev) {
     const iconPath = path.join(__dirname, '../resources/icons/png/512x512.png');
     if (fs.existsSync(iconPath)) {
@@ -1053,24 +1059,9 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   };
   if (options.isDev) prepareWorkspaceWindow(options.devServerUrl);
 
-  const loadTimeout = options.isDev
-    ? undefined
-    : setTimeout(() => {
-        if (!mainWindow.isDestroyed() && mainWindow.webContents.isLoadingMainFrame()) {
-          console.log('[MainWindow] Load timed out, attempting to reload.');
-          options.scheduleReload('load-timeout');
-        }
-      }, LOAD_TIMEOUT_MS);
-
-  mainWindow.webContents.once('did-finish-load', () => {
-    if (loadTimeout) {
-      clearTimeout(loadTimeout);
-    }
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (initialRendererLoaded) options.onDidFinishLoad(mainWindow);
   });
-  mainWindow.once('closed', () => {
-    if (loadTimeout) clearTimeout(loadTimeout);
-  });
-  mainWindow.webContents.on('did-finish-load', () => options.onDidFinishLoad(mainWindow));
 
   mainWindow.on('close', event => {
     if (!options.isQuitting() && !options.isDev) {
@@ -1081,6 +1072,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   });
 
   if (options.isDev) {
+    mainWindow.once('ready-to-show', () => options.onReadyToShow(mainWindow));
     let retryCount = 0;
     const tryLoadUrl = (): void => {
       void mainWindow.loadURL(options.devServerUrl).catch(error => {
@@ -1110,6 +1102,7 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
       }
     });
   } else {
+    const markLoaded = registerStartupWindowPresentation(mainWindow, options.onReadyToShow);
     void loadPackagedRenderer(
       mainWindow,
       app,
@@ -1118,9 +1111,14 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
         mainNavigationOptions.applicationUrl = url;
         if (url) prepareWorkspaceWindow(url);
       },
-    ).catch(error => {
+    ).then(loaded => {
+      if (!loaded || mainWindow.isDestroyed() || options.isQuitting()) return;
+      initialRendererLoaded = true;
+      options.onDidFinishLoad(mainWindow);
+      markLoaded();
+    }).catch(error => {
       console.error('[MainWindow] Failed to load packaged renderer:', error);
-      reportWindowFailure(error);
+      if (!options.isQuitting()) reportWindowFailure(error, () => app.quit());
     });
   }
 
@@ -1141,7 +1139,6 @@ export const createMainWindow = (options: MainWindowFactoryOptions): BrowserWind
   mainWindow.on('focus', forwardWindowState);
   mainWindow.on('blur', forwardWindowState);
 
-  mainWindow.once('ready-to-show', () => options.onReadyToShow(mainWindow));
   configureBrowserHost(mainWindow.webContents);
   return mainWindow;
 };

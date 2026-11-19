@@ -76,7 +76,7 @@ test('starts the proxy when a failed policy change rolls back to the previous di
   expect(proxy.start).toHaveBeenCalledTimes(2);
 });
 
-test('history isolation finishes before the persistent main window can open its profile stores', async () => {
+test('history isolation can start while the in-memory guide is loading, before opening the persistent window', async () => {
   const isolation = statements.findIndex(node => node.getText(source).startsWith('await startupCoordinator.prepareBeforeStore('));
   expect(isolation).toBeGreaterThan(0);
   const calls: string[] = [];
@@ -90,9 +90,13 @@ test('history isolation finishes before the persistent main window can open its 
     startupWindowHandoff: { setBootstrap: vi.fn(), showBootstrap: vi.fn() },
     prepareStartup: async () => {},
     initialization: { getState: () => ({ firstLaunch: true }), setTaskStatus: vi.fn() },
-    createStartupWindow: () => { calls.push('memory-initialization'); return { loaded: Promise.resolve() }; },
+    createStartupWindow: () => {
+      calls.push('memory-initialization');
+      return { loaded: new Promise<boolean>(() => {}) };
+    },
     startupPreparationError: undefined,
-    startupCoordinator: { prepareBeforeStore: async () => { calls.push('isolate'); } },
+    startupCoordinator: { getDowngradeConfirmation: () => undefined,
+      prepareBeforeStore: async () => { calls.push('isolate'); } },
     createWindow: () => { throw new Error('persistent window opened before isolation'); },
   };
   const prefix = ts.transpileModule(statements.slice(0, isolation + 1).map(node => node.getText(source)).join('\n'), {

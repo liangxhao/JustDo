@@ -1,3 +1,13 @@
+import { createHash } from 'node:crypto';
+
+export const inlineApplicationScriptHashes = (html: string): string[] =>
+  [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/giu)]
+    .filter(match => !/\bsrc\s*=/iu.test(match[1]))
+    // HTML parsing normalizes CRLF/CR before CSP hashes the script text.
+    .map(match =>
+      `sha256-${createHash('sha256').update(match[2].replace(/\r\n?/gu, '\n')).digest('base64')}`,
+    );
+
 type ApplicationContentSecurityPolicyOptions = {
   isDev: boolean;
   devServerPort?: number | string;

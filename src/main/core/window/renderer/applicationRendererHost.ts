@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import path from 'node:path';
 
 import { readAppAsset } from '../../../plugins/app/assets';
-import { buildApplicationContentSecurityPolicy } from './applicationContentSecurityPolicy';
+import { buildApplicationContentSecurityPolicy, inlineApplicationScriptHashes } from './applicationContentSecurityPolicy';
 
 const LOOPBACK_HOST = '127.0.0.1';
 const MAX_ASSET_BYTES = 64 * 1024 * 1024;
@@ -75,7 +75,7 @@ const allowedPackagedAsset = (relative: string): boolean => {
   )
     return false;
   if (
-    ['index.html', 'startup-bootstrap.html', 'storage-maintenance.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html', 'embed-viewer.html'].includes(relative)
+    ['index.html', 'storage-maintenance.html', 'image-preview.html', 'workspace.html', 'widget-viewer.html', 'embed-viewer.html'].includes(relative)
   )
     return true;
   const extension = path.extname(relative).toLowerCase();
@@ -154,16 +154,30 @@ const readPackagedAsset = async (
   return bytes;
 };
 
-const collectPackagedAssets = async (
-  directory: string,
-  bootstrapOnly: boolean,
-  entry: string,
-): Promise<{ root: string; assets: Map<string, PackagedAsset> }> => {
+const resolvePackagedRendererRoot = async (directory: string): Promise<string> => {
   const absolute = path.resolve(directory);
   const rootStats = await lstat(absolute);
   if (!rootStats.isDirectory() || rootStats.isSymbolicLink())
     throw new Error('Invalid packaged renderer directory');
-  const root = await realpath(absolute);
+  return realpath(absolute);
+};
+
+/** The neutral bootstrap is a single local document and does not need an HTTP host. */
+export async function readPackagedStartupDocument(directory: string): Promise<string> {
+  const root = await resolvePackagedRendererRoot(directory);
+  const absolutePath = path.join(root, 'startup-bootstrap.html');
+  const stats = await lstat(absolutePath);
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_ASSET_BYTES)
+    throw new Error('Invalid packaged startup document');
+  const bytes = await readPackagedAsset(root, { absolutePath, size: stats.size, modifiedAt: stats.mtimeMs });
+  return bytes.toString('utf8');
+}
+
+const collectPackagedAssets = async (
+  directory: string,
+  entry: string,
+): Promise<{ root: string; assets: Map<string, PackagedAsset> }> => {
+  const root = await resolvePackagedRendererRoot(directory);
   const assets = new Map<string, PackagedAsset>();
   const visit = async (relative: string): Promise<void> => {
     const candidate = path.join(root, relative);
@@ -175,12 +189,10 @@ const collectPackagedAssets = async (
     )
       return;
     if (stats.isDirectory()) {
-      if (bootstrapOnly && relative) return;
       if (relative && !/^assets(?:[/\\]|$)/u.test(relative)) return;
       if (relative.split(path.sep).length > 16)
         throw new Error('Packaged renderer asset tree too deep');
       for (const child of await readdir(candidate)) {
-        if (bootstrapOnly && child !== 'startup-bootstrap.html') continue;
         if (!child.startsWith('.')) await visit(path.join(relative, child));
       }
       return;
@@ -201,20 +213,12 @@ const collectPackagedAssets = async (
 /** A read-only artifact server: no workspace roots, routes, credentials or IPC endpoints. */
 export const startApplicationRendererHost = async (
   directory: string,
-  options: { bootstrapOnly?: boolean; entry?: 'storage-maintenance.html' } = {},
+  options: { entry?: 'storage-maintenance.html' } = {},
 ): Promise<ApplicationRendererHost> => {
-  const entry = options.entry ?? (options.bootstrapOnly ? 'startup-bootstrap.html' : 'index.html');
-  const { root, assets } = await collectPackagedAssets(directory, options.bootstrapOnly === true, entry);
+  const entry = options.entry ?? 'index.html';
+  const { root, assets } = await collectPackagedAssets(directory, entry);
   const index = await readPackagedAsset(root, assets.get(entry)!);
-  const inlineScriptHashes = [
-    ...index.toString('utf8').matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/giu),
-  ]
-    .filter(match => !/\bsrc\s*=/iu.test(match[1]))
-    // HTML parsing normalizes CRLF/CR before CSP hashes the script text.
-    .map(
-      match =>
-        `sha256-${createHash('sha256').update(match[2].replace(/\r\n?/gu, '\n')).digest('base64')}`,
-    );
+  const inlineScriptHashes = inlineApplicationScriptHashes(index.toString('utf8'));
   const policy = buildApplicationContentSecurityPolicy({ isDev: false, inlineScriptHashes });
   let origin = '';
   let closed = false;
