@@ -40,6 +40,7 @@ export function createWebLaunchBackground({
   const documents = new Map();
   const panels = new Map();
   const slots = new Map();
+  const checkingSlots = new Map();
   const restoredRequests = new Set();
   const cancelled = new Set();
   const preparing = new Set();
@@ -60,7 +61,7 @@ export function createWebLaunchBackground({
     new AppServerClient(
       (method, params) => {
         if (method === 'chrome/webLaunch/sites/changed' && params?.sites) applySites(params);
-        if (method === 'chrome/webLaunch/changed') {
+        if (method === 'chrome/webLaunch/changed' || method === 'connection/reconnected') {
           void readSites().catch(() => {});
           void refreshObservations().catch(() => {});
         }
@@ -144,6 +145,7 @@ export function createWebLaunchBackground({
     for (const key of Object.keys(state.channels))
       if (!liveChannels.has(key)) delete state.channels[key];
     for (const key of Object.keys(state.cancelled)) {
+      if (preparing.has(key)) continue;
       const requestId = key.split('/').at(-1);
       const record = state.requests[requestId];
       if (record && !terminal(record.response?.receipt)) continue;
@@ -674,7 +676,7 @@ export function createWebLaunchBackground({
     registerScripts,
     hasCachedWebsiteGrant,
     store: action => transaction(() => action((state.connections ??= {}))),
-    windowBusy: windowId => slots.has(windowId),
+    windowBusy: windowId => slots.has(windowId) || checkingSlots.has(windowId),
     notify: (source, connectionPending) => panelEvent(source, { connectionPending }),
   });
   function panelTab(message, sender) {
@@ -890,66 +892,65 @@ export function createWebLaunchBackground({
       envelope: envelope(saved),
     };
   }
-  function findReopenedRequest(requestId, message, sender) {
-    if (requestId !== message.reopenRequestId) return undefined;
-    const record = state?.requests[requestId];
-    if (
-      !record?.response?.receipt ||
-      terminal(record.response.receipt) ||
-      record.documentNonce !== message.documentNonce ||
-      record.source.windowId !== sender.tab.windowId ||
-      record.source.tabId !== sender.tab.id ||
-      record.source.documentId !== sender.documentId ||
-      record.source.origin !== sender.origin
-    )
-      return undefined;
-    return record;
+  function matchesReopen(record, message, sender) {
+    return (
+      record?.response?.receipt &&
+      record.requestId === message.reopenRequestId &&
+      record.documentNonce === message.documentNonce &&
+      record.source.windowId === sender.tab.windowId &&
+      record.source.tabId === sender.tab.id &&
+      record.source.documentId === sender.documentId &&
+      record.source.origin === sender.origin
+    );
   }
-  async function restoreOrPrepare(message, sender, opened) {
-    if (!message.reopenRequestId) return prepare(message, sender, opened);
-    // Consume a fast Chrome rejection while storage is loading the original owner.
+  async function restoreOrPrepare(message, sender, opened, existing) {
+    const previousId = existing?.requestId ?? message.reopenRequestId;
+    if (!previousId) return prepare(message, sender, opened);
     const didOpen = opened.then(
       () => true,
       () => false,
     );
     const { windowId } = sender.tab;
-    const previous = await transaction(() =>
-      findReopenedRequest(message.reopenRequestId, message, sender),
-    );
-    if (slots.get(windowId) !== message.requestId) throw { code: 'EXPIRED' };
-    if (previous) {
-      const record = findReopenedRequest(previous.requestId, message, sender);
-      if (!record || requestCancelled(record) || !requestSourceAvailable(record))
-        throw { code: 'EXPIRED' };
+    const original = existing ?? (await transaction(() => state.requests[previousId]));
+    const wasReopening =
+      matchesReopen(original, message, sender) && !terminal(original.response.receipt);
+    if (!(await didOpen)) throw { code: 'PANEL_OPEN_FAILED' };
+    if (existing || wasReopening) {
+      // A notification or poll may have started before the prior run settled.
+      await observing?.catch(() => {});
+      const needsRefresh = existing
+        ? slots.get(windowId) === previousId
+        : !terminal(state.requests[previousId]?.response?.receipt);
+      if (needsRefresh) await refreshObservations().catch(() => {});
+    }
+    const owner = slots.get(windowId);
+    if (existing ? checkingSlots.get(windowId) !== message.requestId : owner !== message.requestId)
+      throw { code: 'EXPIRED' };
+    if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
+    if (existing && owner && owner !== previousId) throw { code: 'WINDOW_BUSY' };
+
+    const record = state.requests[previousId];
+    const sameLaunch =
+      matchesReopen(record, message, sender) && record.launchId === original?.launchId;
+    if (sameLaunch && !terminal(record.response.receipt) && (!existing || owner === previousId)) {
+      const available = !requestCancelled(record) && requestSourceAvailable(record);
+      if (!existing && !available) throw { code: 'EXPIRED' };
       slots.set(windowId, record.requestId);
       restoredRequests.add(record.requestId);
-      return reopenExisting(
-        record,
-        didOpen.then(ok => {
-          if (!ok) throw { code: 'PANEL_OPEN_FAILED' };
-        }),
-      );
+      if (available) notifyPanel(record, { resume: true });
+      return { ok: true, reopened: true };
     }
-    if (!(await didOpen)) throw { code: 'PANEL_OPEN_FAILED' };
-    return prepare(message, sender, Promise.resolve());
-  }
-  async function reopenExisting(record, opened) {
-    try {
-      await opened;
-    } catch {
-      throw { code: 'PANEL_OPEN_FAILED' };
-    }
-    const current = state.requests[record.requestId];
+    if (existing && owner === previousId) throw { code: 'WINDOW_BUSY' };
+    // Cancellation or retirement during a reopen must not turn it into another send.
     if (
-      current?.launchId === record.launchId &&
-      current.documentKey === record.documentKey &&
-      slots.get(record.source.windowId) === record.requestId &&
-      !terminal(current.response?.receipt) &&
-      !requestCancelled(current) &&
-      requestSourceAvailable(current)
-    )
-      notifyPanel(current, { resume: true });
-    return { ok: true, reopened: true };
+      wasReopening &&
+      (!sameLaunch || record.response.receipt.execution.executionSettled !== true)
+    ) {
+      releaseSlot(windowId, message.requestId);
+      return { ok: true, reopened: true };
+    }
+    slots.set(windowId, message.requestId);
+    return prepare(message, sender, Promise.resolve());
   }
   function handleMessage(message, sender, reply) {
     if (typeof message?.type !== 'string' || !message.type.startsWith('web-launch:')) return false;
@@ -1035,18 +1036,31 @@ export function createWebLaunchBackground({
         reply({ ok: false, code: 'INVALID_REQUEST' });
         return false;
       }
-      const existing = slots.get(sender.tab.windowId);
-      if (existing) {
-        const record = !continuation && findReopenedRequest(existing, message, sender);
-        if (!record || requestCancelled(record) || !requestSourceAvailable(record)) {
-          reply({ ok: false, code: 'WINDOW_BUSY' });
-          return false;
-        }
-        // Install the restored envelope before Chrome can create the replacement side panel.
-        restoredRequests.add(existing);
-        return done(reopenExisting(record, openTabSidePanel(chromeApi, sender.tab.id)));
+      const { windowId } = sender.tab;
+      const existingId = slots.get(windowId);
+      const existing = existingId ? state?.requests[existingId] : undefined;
+      const matchesSource = matchesReopen(existing, message, sender);
+      const reopening = matchesSource && !terminal(existing.response.receipt);
+      const invalidReopen =
+        existingId === message.reopenRequestId &&
+        (!matchesSource ||
+          (reopening && (requestCancelled(existing) || !requestSourceAvailable(existing))));
+      if (
+        checkingSlots.has(windowId) ||
+        (existingId &&
+          (continuation ||
+            existingId === message.requestId ||
+            !existing?.launchId ||
+            invalidReopen))
+      ) {
+        reply({ ok: false, code: 'WINDOW_BUSY' });
+        return false;
       }
-      slots.set(sender.tab.windowId, message.requestId);
+      if (existing) {
+        checkingSlots.set(windowId, message.requestId);
+        // The replacement panel can register before Chrome resolves open().
+        if (reopening) restoredRequests.add(existingId);
+      } else slots.set(windowId, message.requestId);
       const pendingKey = cancelKey(message, sender);
       preparing.add(pendingKey);
       if (continuation)
@@ -1065,17 +1079,21 @@ export function createWebLaunchBackground({
         opened = openTabSidePanel(chromeApi, sender.tab.id);
       } catch (error) {
         releaseSlot(sender.tab.windowId, message.requestId);
+        checkingSlots.delete(windowId);
         preparing.delete(pendingKey);
         reply({ ok: false, code: 'FORBIDDEN' });
         return false;
       }
       return done(
-        restoreOrPrepare(message, sender, opened)
+        restoreOrPrepare(message, sender, opened, existing)
           .catch(error => {
             if (!error.prepareUncertain) releaseSlot(sender.tab.windowId, message.requestId);
             throw error;
           })
-          .finally(() => preparing.delete(pendingKey)),
+          .finally(() => {
+            if (checkingSlots.get(windowId) === message.requestId) checkingSlots.delete(windowId);
+            preparing.delete(pendingKey);
+          }),
       );
     }
     if (message.type === `${WEB_RUNTIME}cancel` && validIdentifier(message.requestId)) {
@@ -1148,6 +1166,7 @@ export function createWebLaunchBackground({
     for (const panel of panels.values())
       if (panel.windowId === windowId) panels.delete(panel.tabId);
     releaseSlot(windowId, slots.get(windowId));
+    checkingSlots.delete(windowId);
     void transaction(() => {
       delete state.windows[String(windowId)];
       for (const [key, panel] of Object.entries(state.panels))
