@@ -209,7 +209,9 @@ export const registerExtensionHandlers = ({
         : await installExtensionPackage(async () => approveInstalled(
           await importPackage(),
         ), mutateAppPackage);
-      const result = await applyNativeMcpData(installed, stage => request.onProgress?.({ stage, percent: 0 }));
+      const result = installed.nativeMcpDataSyncAttempted
+        ? installed
+        : await applyNativeMcpData(installed, stage => request.onProgress?.({ stage, percent: 0 }));
       if (
         (result.success || result.installationCommitted) &&
         result.extensionId &&

@@ -8,6 +8,7 @@ import type { OpenClawPluginCapabilityReview } from '../../../shared/plugins/ext
 import { PluginOperationStage } from '../../../shared/plugins/pluginOperation';
 import { ManagedDirectoryOperationCoordinator } from '../../core/filesystem/managedDirectoryOperations';
 import { t } from '../../core/i18n';
+import type { OpenClawConfigMutationContext } from '../../openclaw/config/openclawConfigSyncService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import {
   type ApplyExtensionPackageMutation,
@@ -347,7 +348,9 @@ function routedFixture(options: {
   activationRestartRequired?: boolean;
   policyChangedOnActivation?: boolean;
   activationUnknown?: boolean;
+  reusableNetwork?: boolean;
   directoryOperations?: ManagedDirectoryOperationCoordinator;
+  managedMcp?: Pick<OpenClawConfigMutationContext, 'suspendNativeMcpData' | 'restoreNativeMcpData'>;
 } = {}) {
   const source = path.join(fixtureRoot, 'managed-source');
   const state = path.join(fixtureRoot, 'managed-state');
@@ -388,6 +391,7 @@ function routedFixture(options: {
     getConfigPath: () => configPath,
     getGatewayProcessId: () => stopped ? null : 123,
     getGatewayProcessGeneration: () => 1,
+    canReuseGatewayNetworkEnvironment: () => options.reusableNetwork === true,
     buildCliEnvironment: async () => ({
       env: { JUSTDO_ELECTRON_PATH: process.execPath, OPENCLAW_STATE_DIR: state },
       runtimeRoot: fixtureRoot,
@@ -453,7 +457,7 @@ function routedFixture(options: {
     runConfigMutationExclusive: async operation => {
       expect(configMutation).toBe(false);
       configMutation = true;
-      try { return await operation(); }
+      try { return await operation(options.managedMcp); }
       finally { configMutation = false; }
     },
     outboundHeaderPolicy: {
@@ -749,8 +753,13 @@ test('keeps a lost update reply unknown when its transport message includes file
   const findLockingProcesses = vi.fn(async () => ({
     available: true, processes: [{ name: 'explorer', pid: 12996 }],
   }));
+  const restoreNativeMcpData = vi.fn(async () => true);
   const f = routedFixture({
     marketplaceDisabled: true,
+    managedMcp: {
+      suspendNativeMcpData: vi.fn(async () => true),
+      restoreNativeMcpData,
+    },
     directoryOperations: new ManagedDirectoryOperationCoordinator({ findLockingProcesses }),
   });
   fs.mkdirSync(f.installed, { recursive: true });
@@ -773,6 +782,7 @@ test('keeps a lost update reply unknown when its transport message includes file
   });
   expect(result.installationCommitted).not.toBe(true);
   expect(findLockingProcesses).not.toHaveBeenCalled();
+  expect(restoreNativeMcpData).not.toHaveBeenCalled();
   expect(f.connectedRequest).toHaveBeenCalledOnce();
   expect(f.runCommand).not.toHaveBeenCalled();
   expect(f.requestGateway).not.toHaveBeenCalled();
@@ -783,6 +793,133 @@ test('keeps a lost update reply unknown when its transport message includes file
   const retained = fs.realpathSync(path.dirname(installSource));
   expect(path.basename(retained).startsWith('extension-install-source-')).toBe(true);
   fs.rmSync(retained, { recursive: true, force: true });
+});
+
+test.each([false, true])('retires the old managed launch during a live replacement (marketplace: %s)', async marketplace => {
+  const order: string[] = [];
+  const managedMcp = {
+    suspendNativeMcpData: vi.fn(async (ids: readonly string[], isCurrent: () => boolean) => {
+      expect(ids).toEqual(['package-plugin']);
+      expect(isCurrent()).toBe(true);
+      expect(f.inConfigMutation()).toBe(true);
+      expect(JSON.parse(fs.readFileSync(manifest, 'utf8')).version).toBe('1.0.0');
+      order.push('suspend');
+      return true;
+    }),
+    restoreNativeMcpData: vi.fn(async (_ids: readonly string[], isCurrent: () => boolean) => {
+      expect(isCurrent()).toBe(true);
+      expect(f.inConfigMutation()).toBe(true);
+      expect(JSON.parse(fs.readFileSync(manifest, 'utf8')).version).toBe('2.0.0');
+      order.push('restore');
+      return true;
+    }),
+  };
+  const f = routedFixture({ managedMcp, policyChanged: true, reusableNetwork: true });
+  const manifest = path.join(f.installed, 'openclaw.plugin.json');
+  fs.mkdirSync(f.installed, { recursive: true });
+  fs.writeFileSync(manifest, '{"id":"package-plugin","version":"1.0.0"}');
+  fs.writeFileSync(path.join(f.source, 'openclaw.plugin.json'), '{"id":"package-plugin","version":"2.0.0"}');
+  fs.writeFileSync(f.configPath, '{"plugins":{"entries":{"package-plugin":{"enabled":true}}}}');
+  const native = f.connectedRequest.getMockImplementation()!;
+  f.connectedRequest.mockImplementationOnce(async (...args) => {
+    expect(order).toEqual(['suspend']);
+    order.push('replace');
+    return native(...args);
+  });
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, trustMarketplaceSource: marketplace, preserveActivation: marketplace,
+    applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({ success: true, nativeMcpDataSyncAttempted: true });
+  expect(order).toEqual(['suspend', 'replace', 'restore']);
+  expect(f.connectedRequest).toHaveBeenCalledExactlyOnceWith('plugins.install', {
+    source: 'local', path: f.sources[0], mode: 'update', enable: false,
+  }, { timeoutMs: 600_000 });
+  expect(JSON.parse(fs.readFileSync(f.configPath, 'utf8')).plugins.entries['package-plugin'].enabled).toBe(true);
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test.each([false, true])('restores the old service after an unsent update (restore failure: %s)', async restoreFailed => {
+  const managedMcp = {
+    suspendNativeMcpData: vi.fn(async () => true),
+    restoreNativeMcpData: vi.fn(async () => {
+      if (restoreFailed) throw new Error('Could not apply MCP configuration');
+      return true;
+    }),
+  };
+  const f = routedFixture({ managedMcp, outcome: 'not-sent' });
+  fs.mkdirSync(f.installed, { recursive: true });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), '{"id":"package-plugin","version":"1.0.0"}');
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result.success).toBe(false);
+  if (restoreFailed) {
+    expect(result).toMatchObject({ refreshWarning: true });
+    expect(result.operationFailedStage ?? result.failedStage).toBe('installing');
+    expect(result.error).toEqual([
+      'Connection retired', t('extensionNativeMcpServiceRestoreFailed'), 'Could not apply MCP configuration',
+    ].join('\n'));
+  } else {
+    expect(result.error).toBe('Connection retired');
+  }
+  expect(managedMcp.restoreNativeMcpData).toHaveBeenCalledOnce();
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.runCommand).not.toHaveBeenCalled();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test('preserves the disabled state and reports a native restart requirement without restarting', async () => {
+  const managedMcp = {
+    suspendNativeMcpData: vi.fn(async () => false),
+    restoreNativeMcpData: vi.fn(async () => true),
+  };
+  const f = routedFixture({ managedMcp, marketplaceDisabled: true, restartRequired: true });
+  fs.mkdirSync(f.installed, { recursive: true });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), '{"id":"package-plugin"}');
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation,
+  });
+
+  expect(result).toMatchObject({
+    success: false, installationCommitted: true, error: t('extensionOnlineUpdateRequiresRestart'),
+  });
+  expect(JSON.parse(fs.readFileSync(f.configPath, 'utf8')).plugins.entries['package-plugin'].enabled).toBe(false);
+  expect(managedMcp.restoreNativeMcpData).not.toHaveBeenCalled();
+  expect(f.connectedRequest).toHaveBeenCalledOnce();
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+});
+
+test('keeps the confirmed replacement and approval when background service restoration fails', async () => {
+  const managedMcp = {
+    suspendNativeMcpData: vi.fn(async () => true),
+    restoreNativeMcpData: vi.fn(async () => { throw new Error('MCP reload did not finish'); }),
+  };
+  const f = routedFixture({ managedMcp });
+  fs.mkdirSync(f.installed, { recursive: true });
+  fs.writeFileSync(path.join(f.installed, 'openclaw.plugin.json'), '{"id":"package-plugin"}');
+  const onInstalled = vi.fn(async (result: Awaited<ReturnType<typeof f.service.importPath>>) => {
+    expect(result).toEqual({ success: true, extensionId: 'package-plugin', installPath: f.installed });
+    return result;
+  });
+
+  const result = await f.service.importPath(f.source, undefined, undefined, {
+    autoAcceptCapabilities: true, applyPackageMutation: f.applyPackageMutation, onInstalled,
+  });
+
+  expect(onInstalled).toHaveBeenCalledOnce();
+  expect(result).toMatchObject({
+    success: true, refreshWarning: true,
+    operationFailedStage: PluginOperationStage.APPLYING_CONFIGURATION,
+    error: `${t('extensionNativeMcpServiceRestoreFailed')}\nMCP reload did not finish`,
+  });
+  expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
 });
 
 test.each([

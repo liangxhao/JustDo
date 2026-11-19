@@ -143,6 +143,7 @@ type CommittedExtensionImportResult = ExtensionImportResult & {
   installationCommitted?: true;
   installSourceInUse?: true;
   installPath?: string;
+  nativeMcpDataSyncAttempted?: true;
   operationFailedStage?: PluginOperationStage;
 };
 
@@ -1056,31 +1057,32 @@ export class OpenClawExtensionImportService {
     }
   }
 
-  private captureConnectedGatewayRequest(): OpenClawExtensionImportServiceDeps['requestGateway'] {
+  private captureConnectedGateway(): {
+    request: NonNullable<OpenClawExtensionImportServiceDeps['requestGateway']>;
+    isCurrent: () => boolean;
+  } | undefined {
     const client = this.deps.getConnectedGatewayClient?.();
     const manager = this.deps.getOpenClawEngineManager();
     const pid = manager.getGatewayProcessId();
     if (!client || !pid || manager.getStatus().phase !== 'running') return undefined;
     const generation = manager.getGatewayProcessGeneration();
-    return <T>(method: string, params?: unknown, options?: GatewayRequestOptions): Promise<T> => {
-      if (manager !== this.deps.getOpenClawEngineManager() ||
-          client !== this.deps.getConnectedGatewayClient?.() ||
-          pid !== manager.getGatewayProcessId() || generation !== manager.getGatewayProcessGeneration() ||
-          manager.getStatus().phase !== 'running')
-        return Promise.reject(Object.assign(new Error('OpenClaw gateway client is unavailable.'), {
-          code: 'CLIENT_CLOSED', requestSent: false,
-        }));
+    const isCurrent = () =>
+      manager === this.deps.getOpenClawEngineManager() &&
+      client === this.deps.getConnectedGatewayClient?.() &&
+      pid === manager.getGatewayProcessId() && generation === manager.getGatewayProcessGeneration() &&
+      manager.getStatus().phase === 'running';
+    const unavailable = () => Object.assign(new Error('OpenClaw gateway client is unavailable.'), {
+      code: 'CLIENT_CLOSED', requestSent: false,
+    });
+    const request = <T>(method: string, params?: unknown, options?: GatewayRequestOptions): Promise<T> => {
+      if (!isCurrent()) return Promise.reject(unavailable());
       options?.assertBeforeSend?.();
-      if (client !== this.deps.getConnectedGatewayClient?.() ||
-          pid !== manager.getGatewayProcessId() || generation !== manager.getGatewayProcessGeneration() ||
-          manager.getStatus().phase !== 'running')
-        return Promise.reject(Object.assign(new Error('OpenClaw gateway client is unavailable.'), {
-          code: 'CLIENT_CLOSED', requestSent: false,
-        }));
+      if (!isCurrent()) return Promise.reject(unavailable());
       return options
         ? client.request<T>(method, params, { timeoutMs: options.timeoutMs })
         : client.request<T>(method, params);
     };
+    return { request, isCurrent };
   }
 
   private async waitForHotSkillApplication(
@@ -1357,7 +1359,7 @@ export class OpenClawExtensionImportService {
     // after a hot toggle. Never recover a disconnected Gateway from this path.
     const connectedOnly = this.deps.getConnectedGatewayClient !== undefined;
     const requestGateway = connectedOnly
-      ? this.captureConnectedGatewayRequest()
+      ? this.captureConnectedGateway()?.request
       : this.deps.requestGateway;
     if (!requestGateway) {
       if (connectedOnly) throw new Error(t('extensionCatalogUnavailable'));
@@ -1926,7 +1928,7 @@ export class OpenClawExtensionImportService {
     const requestGateway = mode === ExtensionPackageLifecycleMode.STOPPED
       ? undefined
       : this.deps.getConnectedGatewayClient
-        ? this.captureConnectedGatewayRequest()
+        ? this.captureConnectedGateway()?.request
         : routed ? undefined : this.deps.requestGateway;
     if (routed && mode === ExtensionPackageLifecycleMode.HOT && !requestGateway)
       return { success: false, error: t('extensionHotToggleUnavailable') };
@@ -2314,7 +2316,7 @@ export class OpenClawExtensionImportService {
     // this stopped lease. Public app-companion toggles remain hot-only.
     const hotToggle = !stoppedPackageInstall && this.deps.requiresHotToggle?.(extensionId) === true;
     const requestGateway = hotToggle
-      ? this.captureConnectedGatewayRequest()
+      ? this.captureConnectedGateway()?.request
       : stoppedPackageInstall ? undefined
         : options?.connectedGatewayRequest ?? this.deps.requestGateway;
     if (hotToggle && !requestGateway)
@@ -2791,13 +2793,18 @@ export class OpenClawExtensionImportService {
         typeof manager.getConfigPath === 'function'
           ? manager.getConfigPath()
           : path.join(stateDir, 'openclaw.json');
+      let restoreManagedMcp: (() => Promise<boolean>) | undefined;
+      let gatewayAppliedRuntime = false;
       const performInstall = async (
         mode: ExtensionPackageLifecycleMode,
+        config?: ExtensionConfigMutationContext,
+        previousPluginIds: readonly string[] = [],
       ): Promise<CommittedExtensionImportResult> => {
         try {
           const stopped = manager.isGatewayMutationInProgress?.() === true;
-          const hotRequest = options?.applyPackageMutation && mode === ExtensionPackageLifecycleMode.HOT
-            ? this.captureConnectedGatewayRequest() : undefined;
+          const hotGateway = options?.applyPackageMutation && mode === ExtensionPackageLifecycleMode.HOT
+            ? this.captureConnectedGateway() : undefined;
+          const hotRequest = hotGateway?.request;
           if (options?.autoAcceptCapabilities && !stopped && !hotRequest)
             throw new Error(t('extensionInstallMutationUnavailable'));
           if (options?.applyPackageMutation &&
@@ -2808,9 +2815,21 @@ export class OpenClawExtensionImportService {
             ? hotRequest
             : !stopped && !options?.trustMarketplaceSource && reviewToken && !options?.autoAcceptCapabilities
               ? this.deps.requestGateway : undefined;
+          const onlineReplacement = !!hotGateway && previousPluginIds.length > 0;
           const initialPhase = manager.getStatus().phase;
           const wasRuntimeActive = initialPhase === 'running' || initialPhase === 'starting';
           const networkPolicyDigestBeforeInstall = this.deps.outboundHeaderPolicy?.reconcile().digest;
+          const finishOnlineReplacement = (runtimeNeedsRestart: boolean, networkPolicyChanged: boolean): boolean => {
+            if (!onlineReplacement) return false;
+            const policyNeedsRestart = networkPolicyChanged && !manager.canReuseGatewayNetworkEnvironment();
+            if (!runtimeNeedsRestart && !policyNeedsRestart) return true;
+            reportOperationProgress(PluginOperationStage.APPLYING_CONFIGURATION);
+            if (policyNeedsRestart && restoreManagedMcp) {
+              restoreManagedMcp = undefined;
+              throw new Error(t('extensionOnlineUpdatePolicyPending'));
+            }
+            throw new Error(t('extensionOnlineUpdateRequiresRestart'));
+          };
           const convergeNetworkPolicyFailClosed = async (): Promise<void> => {
             if (!this.deps.outboundHeaderPolicy) return;
             const snapshot = this.deps.outboundHeaderPolicy.reconcile();
@@ -2819,6 +2838,7 @@ export class OpenClawExtensionImportService {
               (wasRuntimeActive || phase === 'running' || phase === 'starting') &&
               snapshot.digest !== networkPolicyDigestBeforeInstall
             ) {
+              if (finishOnlineReplacement(false, true)) return;
               reportOperationProgress(PluginOperationStage.RESTARTING_GATEWAY);
               const status = await this.restartGatewayAfterMutation('extension-network-policy-change');
               if (status.phase !== 'running' && !status.deferred) {
@@ -2838,7 +2858,6 @@ export class OpenClawExtensionImportService {
             );
           }
           let allowlistError = '';
-          let gatewayAppliedRuntime = false;
           let gatewayRestartRequired = false;
           const confirmInstalledIdentity = async (): Promise<void> => {
             reportOperationProgress(PluginOperationStage.CONFIRMING);
@@ -2866,6 +2885,15 @@ export class OpenClawExtensionImportService {
           reportProgress('installing', 45);
           if (hasRuntimeDependencies(pluginDirectory)) {
             reportProgress('installing_dependencies', 55);
+          }
+          if (config && hotGateway && onlineReplacement) {
+            const { isCurrent } = hotGateway;
+            restoreManagedMcp = () => config.restoreNativeMcpData(previousPluginIds, isCurrent);
+            try {
+              if (!await config.suspendNativeMcpData(previousPluginIds, isCurrent)) restoreManagedMcp = undefined;
+            } catch {
+              throw new Error(t('extensionNativeMcpUpdatePreparationFailed'));
+            }
           }
           installationAttempted = true;
           const command = await this.runDirectoryCommand(targetPath, async () => {
@@ -3050,7 +3078,8 @@ export class OpenClawExtensionImportService {
                 reportOperationProgress(PluginOperationStage.APPLYING_CONFIGURATION);
                 reloaded = await this.reloadPluginAfterCliMutation('plugins.reload', extensionId);
               }
-              if (reloaded) return;
+              if (reloaded || finishOnlineReplacement(gatewayRestartRequired || !cliAppliedRuntime, networkPolicyChanged))
+                return;
               reportProgress('restarting_gateway', 90);
               const reason = gatewayRestartRequired ? 'extension-import'
                 : networkPolicyChanged ? 'extension-network-policy-change' : 'extension-import';
@@ -3185,17 +3214,48 @@ export class OpenClawExtensionImportService {
         ...(installOwnerId ? [installOwnerId] : []),
         ...(existingPackage?.pluginIds ?? []),
       ])];
+      const previousPluginIds = installedPath && installOwnerId
+        ? [...new Set([installOwnerId, ...(existingPackage?.pluginIds ?? [])])] : [];
       let mode: ExtensionPackageLifecycleMode = ExtensionPackageLifecycleMode.HOT;
+      let config: ExtensionConfigMutationContext | undefined;
       return await installExtensionPackage(async () => {
-        const result = await performInstall(mode);
-        return options.onInstalled ? options.onInstalled(result, mode) : result;
+        const result = await performInstall(mode, config, previousPluginIds);
+        const restore = !installSourceInFlight && (!installationCommitted || gatewayAppliedRuntime)
+          ? restoreManagedMcp : undefined;
+        let restoreError: string | undefined;
+        // A definitive refusal can resume the old service. A successful runtime
+        // receipt can project the new definition, including native enablement.
+        if (restore) {
+          reportOperationProgress(PluginOperationStage.APPLYING_CONFIGURATION);
+          try { await restore(); }
+          catch (error) {
+            const detail = sanitizeInstallationFailureReason(
+              error instanceof Error ? error.message : undefined, [], { preserveLocalPaths: true },
+            );
+            restoreError = [t('extensionNativeMcpServiceRestoreFailed'), detail].filter(Boolean).join('\n');
+          }
+        }
+        const installed = options.onInstalled ? await options.onInstalled(result, mode) : result;
+        if (!restore) return installed;
+        return {
+          ...installed,
+          nativeMcpDataSyncAttempted: true,
+          ...(restoreError ? {
+            refreshWarning: true,
+            ...(installed.success ? { operationFailedStage: PluginOperationStage.APPLYING_CONFIGURATION } : {}),
+            error: [installed.error, restoreError].filter(Boolean).join('\n'),
+          } : {}),
+        };
       }, operation => options.applyPackageMutation!({
         nativePluginIds,
         ...(targetPath !== extensionsRoot ? { installPath: targetPath } : {}),
         sourceDirectory: pluginDirectory,
       }, selectedMode => {
-        mode = selectedMode;
-        return this.runConfigMutationExclusive(operation);
+        return this.runConfigMutationExclusive(context => {
+          mode = selectedMode;
+          config = context;
+          return operation();
+        });
       }));
     } catch (error) {
       return failedImport(error);
