@@ -26,6 +26,7 @@ import { startSubagentGatewayConnection } from '../shared/subagentGatewayConnect
 import { reconcileSubagentLabel } from './subagentLabel';
 import { ACTIVE_SUBAGENT_POLL_INTERVAL_MS, isActiveSubagentStatus } from './subagentPolling';
 import SubagentTokenUsage from './SubagentTokenUsage';
+import SubtaskControls from './SubtaskControls';
 import { useSubagentConversation } from './useSubagentConversation';
 import { useSubagentTaskEntry } from './useSubagentTaskEntry';
 
@@ -447,6 +448,35 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
 
   if (!displaySubagent) return null;
 
+  const matchesSelectedSubagent =
+    subagent?.id === displaySubagent.id &&
+    subagent.sessionKey === displaySubagent.sessionKey &&
+    (!subagent.sessionId || subagent.sessionId === displaySubagent.sessionId);
+
+  const refreshAfterStop = (latest?: Subagent) => {
+    if (!latest) return;
+    const lifecycleRequestSequence = ++lifecycleRequestSequenceRef.current;
+    setDisplaySubagent(current => {
+      if (
+        !current ||
+        current.id !== latest.id ||
+        current.sessionKey !== latest.sessionKey ||
+        (current.sessionId && current.sessionId !== latest.sessionId)
+      ) {
+        return current;
+      }
+      return mergeSubtaskSnapshots(
+        current,
+        {
+          ...latest,
+          lifecycleRequestSequence,
+          ...reconcileSubagentLabel(current, latest),
+        },
+        { preserveCurrentTask: true },
+      );
+    });
+  };
+
   const formatDateTime = (value?: number): string =>
     value ? new Date(value).toLocaleString() : i18nService.t('subtaskInfoUnavailable');
 
@@ -584,6 +614,14 @@ const SubagentMessageDrawer: React.FC<SubagentMessageDrawerProps> = ({
               >
                 <TrashIcon className="h-4 w-4" />
               </button>
+            )}
+            {matchesSelectedSubagent && (
+              <SubtaskControls
+                sessionId={parentSessionId}
+                task={displaySubagent}
+                onRefresh={refreshAfterStop}
+                variant="toolbar"
+              />
             )}
             <button
               type="button"

@@ -383,6 +383,35 @@ describe('subagent transcript initialization', () => {
   );
 });
 
+it('stops the selected subagent from the toolbar button next to View details', async () => {
+  const child = { ...task, sessionId: 'native-child' };
+  const controlSubTask = vi.fn().mockResolvedValue({ success: true });
+  const getSubTaskDetails = vi.fn<(typeof window.electron.cowork)['getSubTaskDetails']>();
+  let confirmStatus!: (result: Awaited<ReturnType<typeof getSubTaskDetails>>) => void;
+  getSubTaskDetails.mockReturnValueOnce(
+    new Promise(resolve => {
+      confirmStatus = resolve;
+    }),
+  );
+  Object.assign(window.electron.cowork, { controlSubTask, getSubTaskDetails });
+  render(<SubagentMessageDrawer parentSessionId="parent" subagent={child} onClose={vi.fn()} />);
+
+  const stop = screen.getByRole('button', { name: 'Stop subagent' }) as HTMLButtonElement;
+  const details = screen.getByRole('button', { name: 'View details' });
+  const toolbarButtons = within(details.parentElement!).getAllByRole('button');
+  expect(toolbarButtons[toolbarButtons.indexOf(details) - 1]).toBe(stop);
+  expect([...stop.classList]).toEqual(expect.arrayContaining(['h-7', 'w-7']));
+  fireEvent.click(stop);
+  await waitFor(() => expect(getSubTaskDetails).toHaveBeenCalledWith(child.sessionKey, child.id));
+  expect(stop.disabled).toBe(true);
+  expect(screen.getByText('Running')).toBeTruthy();
+  expect(controlSubTask).toHaveBeenCalledExactlyOnceWith('parent', child.id, 'cancel');
+
+  await act(async () => confirmStatus({ success: true, subagent: { ...child, status: 'killed' } }));
+  expect(screen.getByText('Cancelled')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Stop subagent' })).toBeNull();
+});
+
 describe('subagent conversation actions', () => {
   const visibleTask = { ...task, sessionKey: 'agent:main:dashboard:child', status: 'done' } as const;
   const target = {
