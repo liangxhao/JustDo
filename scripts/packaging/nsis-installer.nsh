@@ -1639,9 +1639,8 @@ FunctionEnd
 !macroend
 
 !macro customUnInstall
-  !insertmacro InstallerLockPayloadUpgrade
-  ReadRegStr $3 SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" DisplayVersion
-  !insertmacro InstallerCheckPendingPayloadUpgrade "$INSTDIR" "$3"
+  !insertmacro InstallerLockPayloadUpgrade "1"
+  !insertmacro InstallerCheckPendingPayloadUpgrade "$INSTDIR" "locked"
 !macroend
 
 !macro InstallerCheckUninstallProcesses

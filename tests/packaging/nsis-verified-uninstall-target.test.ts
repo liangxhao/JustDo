@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -146,6 +146,7 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
         expect(existsSync(path.join(actualDirectory, 'Uninstall Wedax.exe'))).toBe(true);
 
         const composed = createWindowsInstallerScript(templates);
+        const payloadUpgrade = readFileSync(path.join(repositoryRoot, 'scripts/packaging/nsis-payload-upgrade.nsh'), 'utf8');
         const lookup = isolateRegistry(readFileSync(path.join(repositoryRoot, 'scripts/packaging/nsis-existing-installation.nsh'), 'utf8'));
         const previousUninstaller = readFileSync(path.join(repositoryRoot, 'scripts/packaging/nsis-previous-uninstaller.nsh'), 'utf8')
           .replace('${IfNot} ${Silent}', '${If} $ProbeCase != "uninstaller-nonzero"')
@@ -208,6 +209,11 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           `!addplugindir "${nsisLiteral(plugins!)}"`,
           '!include "LogicLib.nsh"', '!include "FileFunc.nsh"', '!include "StdUtils.nsh"',
           '!define APP_EXECUTABLE_FILENAME "Wedax.exe"', '!define UNINSTALL_FILENAME "Uninstall Wedax.exe"',
+          '!define PRODUCT_FILENAME "Wedax"', '!define BROWSER_AUTHENTICATION_EXECUTABLE ""',
+          '!define AGENT_CLI_EXECUTABLE "wedax-cli.exe"',
+          '!define APP_GUID "installer-uninstall-target-fixture"',
+          "!define UAC_IsAdmin '0 == 1'",
+          `!define PROJECT_DIR "${nsisLiteral(repositoryRoot)}"`,
           `!define INSTALL_REGISTRY_KEY "${registryKey}\\product"`,
           `!define UNINSTALL_REGISTRY_KEY "${registryKey}\\arp"`,
           '!define isDeleteAppData \'$ProbeDeleteAppData == "1"\'',
@@ -215,6 +221,13 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
             'ProbeShellScope', 'ProbeLookupScope', 'ProbeCorrections', 'ProbeCopies', 'ProbeWaitSeconds', 'ProbeSawChildIo']
             .map(name => `Var ${name}`),
           '!macro JustDoLogInstallEvent TEXT', '  DetailPrint "${TEXT}"', '  ClearErrors', '!macroend',
+          ...payloadUpgrade.match(/^!define INSTALLER_UPGRADE(?:_NEXT)?_FOLDER .*$/gm)!,
+          'Var InstallerPayloadLock', 'Var InstallerPayloadSlot',
+          '!include "StrFunc.nsh"', '${StrRep}',
+          ...['InstallerClearStagingBeforeWrite', 'InstallerRunPayloadHelper', 'InstallerCheckPendingPayloadUpgrade', 'InstallerCheckPayloadSlot',
+            'InstallerLockPayloadUpgrade', 'InstallerUnlockPayloadUpgrade',
+            'InstallerReportPayloadHelper', 'InstallerCheckLegacyPayloadRemoval'].map(name => sourceMacro(payloadUpgrade, name)),
+          '!macro JustDoAddInstallActivity ZH EN', '  DetailPrint "${EN}"', '!macroend',
           '!macro InstallerShowPreviousWait SECONDS', '  StrCpy $ProbeWaitSeconds "${SECONDS}"',
           '  ${If} $InstallerOldIoRecentlyActive == "1"', '    StrCpy $ProbeSawChildIo "1"', '  ${EndIf}', '!macroend',
           '!macro InstallerShowCorePhase ZH EN', '!macroend',
@@ -244,6 +257,8 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
 
         for (const scenario of scenarios) {
           rmSync(observedFile, { force: true });
+          const original = path.join(actualDirectory, 'Uninstall Wedax.exe.original');
+          if (existsSync(original)) unlinkSync(original);
           if (scenario.id === 'slow-uninstaller') writeFileSync(slowChild, '');
           else rmSync(slowChild, { force: true });
           const childExit = ['uninstaller-nonzero', 'copied-uninstaller-cannot-start', 'no-embedded-retry-for-secondary-scope']
@@ -300,6 +315,35 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           }
           expect(existsSync(path.join(actualDirectory, 'Uninstall Wedax.exe'))).toBe(true);
         }
+
+        rmSync(observedFile, { force: true });
+        const pending = path.join(actualDirectory, '.upgrade');
+        mkdirSync(pending);
+        const recovered = spawnSync(probe, ['/case=repair-without-product-executable'], {
+          windowsHide: true, encoding: 'utf8', timeout: 15_000,
+        });
+        expect(recovered.status).toBe(0);
+        expect(existsSync(pending)).toBe(false);
+        expect(existsSync(observedFile)).toBe(true);
+        rmSync(observedFile);
+        mkdirSync(pending);
+        writeFileSync(path.join(pending, 'ready'), 'must not be removed');
+        const blocked = spawnSync(probe, ['/case=repair-without-product-executable'], {
+          windowsHide: true, encoding: 'utf8', timeout: 15_000,
+        });
+        expect(blocked.status).toBe(2);
+        expect(existsSync(observedFile)).toBe(false);
+        expect(readFileSync(path.join(pending, 'ready'), 'utf8')).toBe('must not be removed');
+        unlinkSync(path.join(pending, 'ready'));
+        rmdirSync(pending);
+        const unrelated = path.join(actualDirectory, 'notes.txt');
+        writeFileSync(unrelated, 'user file');
+        const unsafe = spawnSync(probe, ['/case=repair-without-product-executable'], {
+          windowsHide: true, encoding: 'utf8', timeout: 15_000,
+        });
+        expect(unsafe.status).toBe(2);
+        expect(existsSync(observedFile)).toBe(false);
+        expect(readFileSync(unrelated, 'utf8')).toBe('user file');
       } finally {
         spawnSync('reg.exe', ['delete', `HKCU\\${registryKey}`, '/f', '/reg:64'], {
           windowsHide: true, timeout: 5_000, stdio: 'ignore',

@@ -8,12 +8,15 @@ using Microsoft.Win32.SafeHandles;
 public static class InstallerPayloadFiles
 {
     private const uint ReadAttributes = 0x80;
+    private const uint DeleteAccess = 0x10000;
     private const uint ShareReadWrite = 3;
     private const uint ShareDelete = 4;
     private const uint OpenExisting = 3;
     private const uint OpenDirectoryWithoutFollowingLinks = 0x02200000;
     private const uint DirectoryAttribute = 0x10;
     private const uint ReparseAttribute = 0x400;
+    private const int FileDispositionInfoEx = 21;
+    private const uint DeleteIgnoringReadOnly = 0x13;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FileInformation
@@ -30,16 +33,19 @@ public static class InstallerPayloadFiles
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle file, out FileInformation information);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, ref uint flags, uint size);
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern bool MoveFileExW(string source, string destination, uint flags);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     private static extern bool RemoveDirectoryW(string path);
 
-    private static SafeFileHandle OpenEntry(string path, uint share)
+    private static SafeFileHandle OpenEntry(string path, uint share, uint access = ReadAttributes)
     {
         var handle = CreateFileW(
-            path, ReadAttributes, share, IntPtr.Zero, OpenExisting,
+            path, access, share, IntPtr.Zero, OpenExisting,
             OpenDirectoryWithoutFollowingLinks, IntPtr.Zero);
         if (handle.IsInvalid)
         {
@@ -106,8 +112,11 @@ public static class InstallerPayloadFiles
                 // file needs no separate attribute lookup.
                 foreach (var entry in new DirectoryInfo(path).EnumerateFileSystemInfos())
                 {
-                    if ((entry.Attributes & FileAttributes.Directory) != 0)
+                    var attributes = entry.Attributes;
+                    if ((attributes & FileAttributes.Directory) != 0)
                         DeleteTree(entry.FullName);
+                    else if ((attributes & FileAttributes.ReadOnly) != 0)
+                        DeleteReadOnlyFile(entry.FullName);
                     else
                         File.Delete(entry.FullName);
                 }
@@ -115,5 +124,15 @@ public static class InstallerPayloadFiles
         }
         if (!RemoveDirectoryW(path))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not remove " + path);
+    }
+
+    private static void DeleteReadOnlyFile(string path)
+    {
+        using (var handle = OpenEntry(path, ShareReadWrite | ShareDelete, DeleteAccess))
+        {
+            uint flags = DeleteIgnoringReadOnly;
+            if (!SetFileInformationByHandle(handle, FileDispositionInfoEx, ref flags, sizeof(uint)))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not remove read-only backup file " + path);
+        }
     }
 }

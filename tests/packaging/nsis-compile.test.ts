@@ -92,11 +92,12 @@ describe('Windows NSIS template compilation', () => {
         ].join('\n');
         NsisTarget.prototype.computeFinalScript = async (source: string) => source;
         require('../../scripts/packaging/windows-installer-script.cjs').configureWindowsInstallerScript(repoRoot);
-        const target = { packager: { projectDir: repoRoot }, isPortable: false };
+        const target = { packager: { projectDir: repoRoot, appInfo: { productName: 'Wedax' } }, isPortable: false };
         // Both real builder passes prepend sharedHeader before finalScript.
         // Animation definitions must precede the custom include in the header.
         const sharedHeader = (await NsisTarget.prototype.computeCommonInstallerScriptHeader.call(target))
           .replace(/^!define BROWSER_AUTHENTICATION_EXECUTABLE "[^"]*"/m, '!define BROWSER_AUTHENTICATION_EXECUTABLE "electron.exe"');
+        expect(sharedHeader).toContain('!define AGENT_CLI_EXECUTABLE "wedax-cli.exe"');
         const definitions: Record<string, string> = {
           APP_ID: 'com.justdo.compile.test',
           APP_DESCRIPTION: 'Compile smoke fixture',

@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const shutdownPolicy = require('../../src/shared/app/shutdownPolicy.json');
+const { getAgentCliCommandName } = require('../../src/shared/integrations/agentCli.ts');
 const {
   BROWSER_AUTHENTICATION_EXECUTABLE,
   verifyPackagedBrowserAuthentication,
@@ -172,6 +173,21 @@ function createWindowsInstallerScript(templatesDir) {
   section = section.replace(previousScopeStart, [
     '!insertmacro InstallerPreparePayloadUpgrade',
     '\x24{if} $InstallerPayloadRoot == ""',
+    '!insertmacro InstallerClearStagingBeforeWrite "$INSTDIR"',
+    '\x24{if} $installMode == "all"',
+    '  StrCpy $InstallerLookupMode "CurrentUser"',
+    '  Call InstallerResolveRegisteredDirectory',
+    '  \x24{if} $InstallerLookupUninstallDirectory != ""',
+    '    !insertmacro InstallerClearStagingBeforeWrite "$InstallerLookupUninstallDirectory"',
+    '    !insertmacro InstallerCheckLegacyPayloadRemoval "$InstallerLookupUninstallDirectory"',
+    '  \x24{elseif} $InstallerLookupState == "unknown"',
+    '  \x24{orif} $InstallerLookupState == "conflict"',
+    '    !insertmacro JustDoLogInstallEvent "phase=previous-installation-target-unconfirmed root=HKEY_CURRENT_USER result=$InstallerLookupState"',
+    '    !insertmacro JustDoAddInstallActivity "无法确认当前用户旧版的安装位置，尚未卸载旧版。" "Could not confirm the previous current-user installation. No uninstaller was started."',
+    '    SetErrorLevel 2',
+    '    Abort "The previous current-user installation could not be confirmed."',
+    '  \x24{endif}',
+    '\x24{endif}',
     previousScopeStart,
   ].join('\n')).replace(previousScopeEnd, [previousScopeEnd, '\x24{endif}'].join('\n'));
   const installFiles = '\n!insertmacro installApplicationFiles';
@@ -302,6 +318,7 @@ function createWindowsInstallerScript(templatesDir) {
     '  ${endif}',
     '  ; Never execute an unpaired path from the earlier registry read.',
     '  StrCpy $uninstallerFileName "$installationDir\\${UNINSTALL_FILENAME}"',
+    '  !insertmacro InstallerClearStagingBeforeWrite "$installationDir"',
     '  ; Released uninstallers run initMultiUser and read InstallLocation again.',
     '  ; Keep that same scope registration consistent before starting old code.',
     '  ClearErrors',
@@ -379,6 +396,7 @@ function createWindowsInstallerScript(templatesDir) {
     '  ${elseif} $InstallerOldIdentity != $InstallerOldFileIdentity',
     '    Goto InstallerPreviousUninstallTargetChanged',
     '  ${endif}',
+    '  !insertmacro InstallerCheckLegacyPayloadRemoval "$installationDir"',
     '  StrCpy $InstallerOldArguments "/S /KEEP_APP_DATA $0 _?=$installationDir"',
     '  !insertmacro InstallerShowCorePhase "正在准备并启动旧版卸载程序…" "Preparing and starting the previous uninstaller…"',
     '  StrCpy $uninstallerFileNameTemp "$PLUGINSDIR\\old-$InstallerLookupMode-$InstallerOldAttempt.exe"',
@@ -487,6 +505,7 @@ function configureWindowsInstallerScript(projectDir) {
       : '';
     const definitions = this.isPortable ? '' : prepareInstallerAnimationScript(projectDir)
       + installerShutdownDefinitions()
+      + `!define AGENT_CLI_EXECUTABLE "${getAgentCliCommandName(this.packager.appInfo.productName)}.exe"\n`
       + `!define BROWSER_AUTHENTICATION_EXECUTABLE "${BROWSER_AUTHENTICATION_EXECUTABLE}"\n`
       + `!define BROWSER_AUTHENTICATION_PROCESS_ARGUMENT '${authenticationArgument}'\n`
       + `!define INSTALLER_CLOCK_LIBRARY "${prepareInstallerClockAssets(projectDir).path.replaceAll('$', () => '$$')}"\n`;

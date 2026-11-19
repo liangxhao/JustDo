@@ -185,34 +185,61 @@ is available cannot show an installation page.
 
 ### Same-volume upgrade
 
-For a confirmed local current-user installation with compatible installer
-metadata and program layout, setup prepares the complete new payload in
+For a confirmed local current-user installation with paired product and
+uninstaller registration, setup prepares the complete new payload in
 `<install>\.upgrade\new`. The previous version stays in its installed
 location during archive extraction and verification. The selected installation
 disk needs room for the new extracted payload and its temporary archives while
-the old version is still present.
+the old version is still present. Eligibility does not depend on the old
+version number or on an installed marker. The marker for the new payload is
+still checked at commit.
 
-After validation, setup checks that the old app is closed, moves its known
-top-level program entries into `.upgrade\old`, and promotes the staged new
-entries to the same installation root. `resources` and `locales` move as
-directories. The Windows move uses no copy, replace or reboot flags. The
-original root, its permissions, existing shortcuts and the `logs` directory
-stay in place. Setup checks application registration before marking the
-transaction committed, then deletes the staged tree without traversing
-junctions or directory links. Cleanup reuses attributes from directory
+After validation, setup checks that the old app is closed and moves its known
+top-level program entries and any other ordinary entries with names matching
+the staged payload into `.upgrade\old`. It then promotes the staged entries to
+the original installation root. Directories such as `resources` and `locales`
+move as units. The Windows move uses no copy, replace or reboot flags. The
+original root, its permissions, existing shortcuts and unrelated entries with
+no matching name stay in place. Setup checks
+application registration before marking the transaction committed, then
+deletes the staged tree without traversing junctions or directory links.
+Read-only backups are removed by handle without changing the file's attributes
+on any other hard link. Cleanup reuses attributes from directory
 enumeration to avoid a second metadata query for each file. Each file still
 has to be removed, and cleanup may remain pending when files are locked.
 
-Before the first move the helper records the planned new file identities. On
+Before the first move the helper records the identities of the selected old and
+new entries, preserving their original names. On
 interruption, setup restores uncommitted moves without overwriting a conflicting
-file. A conflicting or inaccessible transaction is preserved and stops setup.
+file, then continues setup. If the new version was already committed, setup
+only retries cleanup; it does not restore the old version or its registration.
+If a committed backup is locked, the next same-volume upgrade can use the
+other staging directory (`.upgrade-next` or `.upgrade`). Each attempt retries cleanup
+before selecting a free directory. Setup also clears empty staging and
+recognized unused or committed staging before a fresh install, overwrite or
+legacy removal, without attempting to restore another account's registration.
+An unknown, conflicting or
+inaccessible staging directory is preserved and blocks operations that would
+overwrite or uninstall that installation. The recovery error includes the path
+and the underlying failure; users should not delete the staging directory.
 The current installer and uninstaller serialize the switch and cleanup.
 During staging, setup also guards the installed legacy uninstaller image from
 being opened for execution. The released legacy uninstaller itself is unchanged.
-All-users, different-scope and unsupported layouts retain the registered removal
-flow. An unexpected entry in an otherwise eligible installation stops the fast
-path before moving files. Windows PowerShell must support the packaged file
-operations helper for the fast path.
+All-users and different-scope installations can use the registered removal
+flow. Before starting a legacy uninstaller, setup checks
+its actual target for unexpected top-level entries and links, because the
+legacy uninstaller can remove the whole installation directory. Unrelated,
+nonconflicting entries do not block the same-volume switch. The managed CLI
+name follows the same product naming rule
+as the packaged launcher; the browser authentication alias is taken from the
+installer build configuration. An unsafe path (such as a junction in the installation
+path) or an unexpected type at a program entry stops the upgrade without
+removing the old installation.
+If Windows PowerShell policy prevents inspecting the installation, setup does
+not invoke the legacy uninstaller from this path.
+Helper results include the failed step and reason in `install-timing.log`;
+preparation and switch failures also surface this detail in the installation
+window.
 
 The caption uses a visibly distinct cool gray-blue (`#E6E9F2`) on supported DWM
 versions, above the near-white (`#FBFBFD`) content, retaining native caption dragging,

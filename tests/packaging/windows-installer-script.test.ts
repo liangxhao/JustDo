@@ -177,7 +177,10 @@ test('the real config activates both build seams while keeping native uninstalle
     );
     const config = require('../../electron-builder.config.cjs');
     expect(config.nsis.script).toBeUndefined();
-    const target = { packager: { projectDir: path.resolve(__dirname, '../..') }, isPortable: false };
+    const target = {
+      packager: { projectDir: path.resolve(__dirname, '../..'), appInfo: { productName: config.productName } },
+      isPortable: false,
+    };
     const source = await NsisTarget.prototype.computeFinalScript.call(target, 'upstream', false, new Map());
     expect(source).toContain('$INSTDIR\\.justdo-app-$JustDoInstallerSessionId-64.');
     expect(source).not.toContain('!define INSTALLER_ANIMATION_DIR');
