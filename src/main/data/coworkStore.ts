@@ -284,6 +284,12 @@ const mapPlanHandoff = (row: PlanHandoffRow): CoworkPlanHandoff => ({
   updatedAt: row.updated_at,
 });
 
+export class ActiveSessionRunError extends Error {
+  constructor(readonly accepted: boolean) {
+    super('This session already has an active user run.');
+  }
+}
+
 export class CoworkStore {
   private db: Database.Database;
 
@@ -305,7 +311,7 @@ export class CoworkStore {
       [input.sessionId],
     );
     if (open) {
-      throw new Error('This session already has an active user run.');
+      throw new ActiveSessionRunError(open.accepted_at !== null);
     }
 
     const id = uuidv4();

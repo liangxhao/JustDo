@@ -3,6 +3,8 @@ import type { SendMotionOrigin } from '@/libs/openclaw-chat/components/message/s
 export interface ComposerSubmissionMetadata {
   startedAt: number;
   sendMotionOrigin?: SendMotionOrigin;
+  /** Recheck ordinary composer followup eligibility after asynchronous admission. */
+  canQueueFollowup?: () => boolean;
 }
 
 /** Preserve the human Send click across model and composer preparation. */

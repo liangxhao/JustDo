@@ -35,7 +35,7 @@ import { t } from '../../core/i18n';
 import { createNativeChildSessionDiscovery } from '../../cowork/sessions/nativeChildSessionDiscovery';
 import { copyCoworkSession, forkCoworkSession, type SessionBranchOperationDependencies } from '../../cowork/sessions/sessionBranchOperations';
 import { deleteBoundNativeSession } from '../../cowork/sessions/sessionDeletion';
-import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
+import { ActiveSessionRunError, type CoworkSession, type CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
@@ -537,7 +537,8 @@ export const registerCoworkSessionHandlers = ({
       (input.pluginPrompt !== undefined && typeof input.pluginPrompt !== 'string')
     )
       return { success: false, error: 'Invalid session run input.' };
-    if (isAllowedWorkspaceSender?.(_event) === true)
+    const isWorkspaceSender = isAllowedWorkspaceSender?.(_event) === true;
+    if (isWorkspaceSender)
       getCoworkEngineRouter().cancelAutomaticErrorRetry?.(input.sessionId);
     const startupUnavailable = getStartupEngineNotReadyResponse?.();
     if (startupUnavailable) return startupUnavailable;
@@ -616,6 +617,12 @@ export const registerCoworkSessionHandlers = ({
           });
         }
       }
+      if (unknownAdmissions.has(input.sessionId)) {
+        if (input.pluginPrompt)
+          await getSessionPlugins?.().cancel(input.sessionId, input.clientTurnId)
+            .catch((): void => undefined);
+        return { success: false, errorCode: SessionRunBeginErrorCode.RuntimeUnknown };
+      }
       if (
         stoppingSessions.has(input.sessionId) ||
         getSessionPlugins?.().isDeleting(input.sessionId)
@@ -635,12 +642,24 @@ export const registerCoworkSessionHandlers = ({
             .catch((): void => undefined);
         return { success: false, error: t('sessionWorkspaceChanged') };
       }
+      let timing: SessionRunTiming;
+      try {
+        timing = store.beginSessionRun(input);
+      } catch (error) {
+        // Only an admitted predecessor can hand an ordinary user input over to native followup.
+        if (
+          error instanceof ActiveSessionRunError && error.accepted && isWorkspaceSender &&
+          session && !session.external?.readOnly && !input.pluginPrompt
+        ) {
+          return { success: false, errorCode: SessionRunBeginErrorCode.FollowupAvailable };
+        }
+        throw error;
+      }
       idleConfirmations.delete(input.sessionId);
       terminalOutcomes.delete(input.sessionId);
       finalizedOutcomes.delete(input.sessionId);
       getCoworkEngineRouter().cancelAutomaticErrorRetry?.(input.sessionId);
-      let timing = store.beginSessionRun(input);
-      if (isAllowedWorkspaceSender?.(_event) === true && !input.pluginPrompt &&
+      if (isWorkspaceSender && !input.pluginPrompt &&
         !getSessionPlugins?.().isManaged(input.sessionId)) {
         await getCoworkEngineRouter().armAutomaticErrorRetry?.(input.sessionId, input.clientTurnId);
         timing = store.getSessionRun(timing.id) ?? timing;

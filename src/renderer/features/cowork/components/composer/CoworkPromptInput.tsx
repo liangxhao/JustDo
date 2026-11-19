@@ -1450,7 +1450,20 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 ? browserGatewayPrompt
                 : undefined,
               isRunActive,
-              submission,
+              submission && submissionAvailabilityRef.current.canQueue &&
+              !appComposer.selected && !trimmedValue.startsWith('/')
+                ? {
+                    ...submission,
+                    canQueueFollowup: () =>
+                      submissionIsCurrent() &&
+                      appComposer.isCurrentSelection() &&
+                      !isStopPending() &&
+                      !goalActionPendingRef.current &&
+                      !sessionGoalRef.current &&
+                      !submissionAvailabilityRef.current.disabled &&
+                      submissionAvailabilityRef.current.canQueue,
+                  }
+                : submission,
             );
           } catch (error) {
             if (goalClear) cancelGoalClear();

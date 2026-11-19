@@ -10,6 +10,7 @@ import { store } from '@/store';
 
 import CoworkPromptInput from './CoworkPromptInput';
 import { captureHomeComposerModelRef } from './selection/homeModelSelection';
+import type { ComposerSubmissionMetadata } from './submission/composerSubmissionTiming';
 
 vi.mock('@/app/shell/startup/routing/useEngineReadiness', () => ({
   useEngineReadiness: () => ({ ready: true, pending: false, failed: false }),
@@ -121,6 +122,38 @@ test.each(['send', 'queue', 'rejected', 'unconfirmed', 'navigate', 'return', 'di
     await act(async () => { fixture.finishDefaults({ success: true }); });
   },
 );
+
+test('allows followup for a normal send and keeps the draft if submission becomes blocked', async () => {
+  modelSendFixture();
+  let completeSend!: (accepted: boolean) => void;
+  const pending = new Promise<boolean>(resolve => { completeSend = resolve; });
+  const onSubmit = vi.fn((_prompt: string, ..._rest: unknown[]) => pending);
+  const onQueue = vi.fn();
+  const composer = (disabled: boolean) => (
+    <Provider store={store}>
+      <CoworkPromptInput
+        sessionId="ordinary-followup" disabled={disabled}
+        onSubmit={onSubmit} onQueue={onQueue}
+      />
+    </Provider>
+  );
+  const view = render(composer(false));
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  fireEvent.change(input, { target: { value: 'Follow up on the delegated task' } });
+  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') });
+  await waitFor(() => expect(send).toHaveProperty('disabled', false));
+  fireEvent.click(send);
+
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+  const submission = onSubmit.mock.calls[0][5] as ComposerSubmissionMetadata;
+  expect(submission.canQueueFollowup?.()).toBe(true);
+  view.rerender(composer(true));
+  expect(submission.canQueueFollowup?.()).toBe(false);
+  await act(async () => completeSend(false));
+
+  expect(input.value).toBe('Follow up on the delegated task');
+  expect(onQueue).not.toHaveBeenCalled();
+});
 
 test('keeps a failed prewarm choice across navigation, reports only on Send, and replaces its receipt on the next choice', async () => {
   const fixture = modelSendFixture();

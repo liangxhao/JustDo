@@ -664,9 +664,20 @@ export class CoworkService {
     this.terminalIdleConfirmationTokens.delete(sessionId);
   }
 
-  async beginSessionRun(input: BeginSessionRunInput): Promise<SessionRunTiming> {
-    this.cancelTerminalIdleConfirmation(input.sessionId);
-    this.invalidateRuntimeActivity(input.sessionId);
+  async beginSessionRun(input: BeginSessionRunInput): Promise<SessionRunTiming>;
+  async beginSessionRun(
+    input: BeginSessionRunInput,
+    options: { allowFollowup: boolean },
+  ): Promise<SessionRunTiming | null>;
+  async beginSessionRun(
+    input: BeginSessionRunInput,
+    options?: { allowFollowup: boolean },
+  ): Promise<SessionRunTiming | null> {
+    const allowFollowup = options?.allowFollowup === true;
+    if (!allowFollowup) {
+      this.cancelTerminalIdleConfirmation(input.sessionId);
+      this.invalidateRuntimeActivity(input.sessionId);
+    }
     const result = await window.electron.cowork.beginSessionRun(input);
     if (!result.success || !result.timing) {
       if (result.snapshot) {
@@ -678,14 +689,17 @@ export class CoworkService {
           }),
         );
       }
+      const followupAvailable = result.errorCode === SessionRunBeginErrorCode.FollowupAvailable;
+      if (followupAvailable && allowFollowup) return null;
       const localizedError =
-        result.errorCode === SessionRunBeginErrorCode.RuntimeActive
+        followupAvailable || result.errorCode === SessionRunBeginErrorCode.RuntimeActive
           ? i18nService.t('coworkSessionRuntimeActive')
           : result.errorCode === SessionRunBeginErrorCode.RuntimeUnknown
             ? i18nService.t('coworkSessionRuntimeUnknown')
             : result.error;
       throw new Error(localizedError || 'Failed to begin session run');
     }
+    if (allowFollowup) this.cancelTerminalIdleConfirmation(input.sessionId);
     this.invalidateRuntimeActivity(input.sessionId);
     store.dispatch(
       setSessionRuntimeSnapshot({

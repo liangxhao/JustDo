@@ -19,6 +19,12 @@ describe('submitCoworkMessage', () => {
     expect(onFailure).toHaveBeenCalledWith(error);
   });
 
+  it('preserves a known rejection already handled by the followup path', async () => {
+    const onFailure = vi.fn();
+    await expect(submitCoworkMessage(async () => false, onFailure)).resolves.toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
   it('waits for a closed sender cleanup before returning failure to the composer', async () => {
     let release!: () => void;
     let cleaned = false;

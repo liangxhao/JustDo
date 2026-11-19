@@ -487,6 +487,12 @@ OpenClaw 原生提供单次 `chat.send.queueMode: "followup"`、
 `chat.history.pendingInputs` / `inputReceipts` 和 `chat.abort.discardPendingInput`。
 本应用直接按当前物理 sessionId 提交 followup，并使用 `suppressCommandInterpretation` 防止排队正文中的指令立即执行。
 
+主 Agent 等待子任务时，界面可能已显示普通发送，而 Main 仍持有已接收的上一轮回执。
+普通主聊天输入在此时收到 Main 明确的未提交回执后，复用同一次提交操作走原生 followup。
+Gateway 按同一会话的活动和队列状态决定排队或立即开始，输入框只展示原生确认的待发输入。
+此切换仅发生在普通发送尚未调用 Gateway 时，仍需核对当前输入、会话和排队条件。
+需要绑定本轮的 MCP App 画布快照时，等待普通发送恢复可用后再提交。
+
 原生 Gateway 负责接收、排序、消费和持久化；应用不创建执行队列或第二套消息数据库。
 排队发送不覆盖当前 transcript、runId、流式回复或 Main 的单个活动运行记录；后继执行通过原生生命周期事件进入现有显示与状态恢复流程。
 排队接收身份使用 `justdo-queue-` 前缀，其接收／取消事件不能被误认为当前 `justdo-` 暂定运行的身份绑定。

@@ -1187,6 +1187,51 @@ describe('cowork runtime activity reconciliation', () => {
     expect(store.getState().cowork.sessionRunTimings[sessionId]).toEqual([timing]);
   });
 
+  test('offers followup only for the explicit pre-send response and an opting-in caller', async () => {
+    const beginSessionRun = vi.fn().mockResolvedValue({
+      success: false,
+      errorCode: SessionRunBeginErrorCode.FollowupAvailable,
+    });
+    vi.stubGlobal('window', { electron: { cowork: { beginSessionRun } } });
+    const input = { sessionId: 'active-receipt', clientTurnId: 'next-input', startedAt: 1_000 };
+
+    await expect(coworkService.beginSessionRun(input, { allowFollowup: true })).resolves.toBeNull();
+    await expect(coworkService.beginSessionRun(input)).rejects.toThrow(
+      i18nService.t('coworkSessionRuntimeActive'),
+    );
+
+    beginSessionRun.mockResolvedValue({ success: false, errorCode: SessionRunBeginErrorCode.RuntimeActive });
+    await expect(coworkService.beginSessionRun(input, { allowFollowup: true })).rejects.toThrow(
+      i18nService.t('coworkSessionRuntimeActive'),
+    );
+  });
+
+  test('keeps a runtime observation in flight when begin hands the input to native followup', async () => {
+    const sessionId = 'followup-runtime-observation';
+    let finishStatus!: (status: unknown) => void;
+    const getSessionRuntimeStatus = vi.fn(() =>
+      new Promise(resolve => { finishStatus = resolve; }),
+    );
+    vi.stubGlobal('window', { electron: { cowork: {
+      getSessionRuntimeStatus,
+      beginSessionRun: vi.fn().mockResolvedValue({
+        success: false, errorCode: SessionRunBeginErrorCode.FollowupAvailable,
+      }),
+    } } });
+    const refresh = coworkService.refreshSessionRuntimeActivity(sessionId, { includeSubagents: true });
+    await Promise.resolve();
+
+    await expect(coworkService.beginSessionRun({
+      sessionId, clientTurnId: 'next-input', startedAt: 1_000,
+    }, { allowFollowup: true })).resolves.toBeNull();
+    finishStatus({ success: true, revision: 1, known: true, mainRunning: false,
+      subagentRunning: true, running: true });
+    await refresh;
+
+    expect(store.getState().cowork.sessionRuntimeActivity[sessionId]).toBe(true);
+    expect(store.getState().cowork.sessionMainRuntimeActivity[sessionId]).toBeUndefined();
+  });
+
   test('applies an authoritative idle snapshot with a native revision', async () => {
     const sessionId = 'runtime-idle-session';
     store.dispatch(setSessionRuntimeActivity({ sessionId, running: true }));

@@ -133,6 +133,7 @@ export interface JustDoChatWrapperRef {
   getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
   withdrawQueuedInput: (inputId: string, expectedSessionKey: string) => Promise<void>;
   hasUnconfirmedQueuedInput: () => boolean;
+  hasCanvasPreparations: () => boolean;
   queueMessage: (
     text: string,
     attachments: CoworkAttachmentPayload[] | undefined,
@@ -627,6 +628,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         },
         hasUnconfirmedQueuedInput: () =>
           controllerRef.current?.hasUnconfirmedQueuedInput() ?? false,
+        hasCanvasPreparations: () => controllerRef.current?.mcpApps.hasCanvasPreparations ?? false,
         getQueuedInputDetail: (inputId, expectedSessionKey) => {
           const controller = controllerRef.current;
           return controller?.state.sessionKey === expectedSessionKey

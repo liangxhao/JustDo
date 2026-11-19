@@ -2490,6 +2490,23 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
 
   // When there's a current session, show the session detail view
   if (currentSession) {
+    const submitFollowup = (
+      chat: JustDoChatWrapperRef,
+      sessionKey: string,
+      prompt: string,
+      attachments?: CoworkAttachmentPayload[],
+      gatewayPrompt?: string,
+    ) => submitCoworkMessage(
+      () => chat.queueMessage(prompt, attachments, gatewayPrompt, sessionKey),
+      error => {
+        window.dispatchEvent(
+          new CustomEvent('app:showToast', {
+            detail: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      },
+    );
+
     const handleQueueMessage = async (
       prompt: string,
       attachments?: CoworkAttachmentPayload[],
@@ -2515,16 +2532,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const operation = createSessionSubmission();
       operation.sessionKey = sessionKey;
       pendingMessageSubmissionsRef.current.set(currentSession.id, operation);
-      return submitCoworkMessage(
-        () => chat.queueMessage(prompt, attachments, gatewayPrompt, sessionKey),
-        error => {
-          window.dispatchEvent(
-            new CustomEvent('app:showToast', {
-              detail: error instanceof Error ? error.message : String(error),
-            }),
-          );
-        },
-      ).finally(() => {
+      return submitFollowup(chat, sessionKey, prompt, attachments, gatewayPrompt).finally(() => {
         operation.finish();
         if (
           !operation.stopping &&
@@ -2591,13 +2599,26 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             throw new Error(permission.error || i18nService.t('permissionModeSaveFailed'));
           }
           ensureSubmissionCurrent();
-          const timing = await coworkService.beginSessionRun({
-            sessionId: currentSession.id,
-            clientTurnId,
-            startedAt,
-            expectedWorkspaceRoot: permission.workspaceRoot,
-            ...(explicitPlugin ? { pluginPrompt: outboundPrompt } : {}),
-          });
+          const timing = await coworkService.beginSessionRun(
+            {
+              sessionId: currentSession.id,
+              clientTurnId,
+              startedAt,
+              expectedWorkspaceRoot: permission.workspaceRoot,
+              ...(explicitPlugin ? { pluginPrompt: outboundPrompt } : {}),
+            },
+            { allowFollowup: !explicitPlugin && composerSubmission?.canQueueFollowup?.() === true },
+          );
+          if (!timing) {
+            ensureSubmissionCurrent();
+            if (!composerSubmission?.canQueueFollowup?.()) return false;
+            const chat = chatWrapperRef.current;
+            if (!chat) throw new Error(i18nService.t('coworkQueueUnavailable'));
+            // A prepared canvas is bound to the exact run and requires the direct send path.
+            if (chat.hasCanvasPreparations())
+              throw new Error(i18nService.t('coworkSessionRuntimeActive'));
+            return submitFollowup(chat, targetSessionKey, prompt, attachments, gatewayPrompt);
+          }
           runTimingId = timing.id;
           operation.receiptId = timing.id;
           ensureSubmissionCurrent();

@@ -3,6 +3,7 @@ import type { AutomaticErrorRetryRunMetadata } from './automaticErrorRetry';
 export type SessionRunState = 'running' | 'completed' | 'failed' | 'aborted';
 
 export const SessionRunBeginErrorCode = {
+  FollowupAvailable: 'followup_available',
   RuntimeActive: 'runtime_active',
   RuntimeUnknown: 'runtime_unknown',
 } as const;

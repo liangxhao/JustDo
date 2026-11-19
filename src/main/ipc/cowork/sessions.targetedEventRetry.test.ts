@@ -7,6 +7,7 @@ import type Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { appendBehaviorPluginPrompt, behaviorSessionParticipants } from '../../../../tests/plugins/host/mainBehaviorParticipants';
+import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
 import { CoworkStore } from '../../data/coworkStore';
 import { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
 import type { GatewayClientLike, GatewayEventFrame } from '../../engine/gateway/types';
@@ -142,7 +143,8 @@ function fixture(options: { bound?: boolean; customAgent?: boolean; checkpoint?:
     await router.prepareSession(sessionId);
   }) };
   registerCoworkSessionHandlers({ getCoworkStore: () => store, getCoworkEngineRouter: () => router,
-    setSessionPermissionMode: vi.fn(), getSessionPlugins: () => behaviorSessionParticipants(undefined, launch) });
+    isAllowedWorkspaceSender: () => true, setSessionPermissionMode: vi.fn(),
+    getSessionPlugins: () => behaviorSessionParticipants(undefined, launch) });
   const changed = (payload: Record<string, unknown> = { reason: 'create', agentId, catalogChanged: true, ts: Date.now() }) =>
     seam.handleGatewayEvent({ event: 'sessions.changed', payload });
   const send = () => ipc.get('cowork:session:run:begin')!({}, { sessionId: product.id, clientTurnId: 'next-input', startedAt: 10,
@@ -154,6 +156,28 @@ function fixture(options: { bound?: boolean; customAgent?: boolean; checkpoint?:
   return { native, store, adapter, router, seam, product, row, key, physicalId, methods, request, changed, send, setRead,
     reads: () => pointReads, assertNoExecution };
 }
+
+describe('ordinary submission while a prior receipt is open', () => {
+  it('offers native followup only after the existing user input is admitted', async () => {
+    const f = fixture({ bound: true });
+    const input = { sessionId: f.product.id, clientTurnId: 'next-input', startedAt: 10,
+      expectedWorkspaceRoot: f.product.cwd };
+    const active = f.store.beginSessionRun({ ...input, clientTurnId: 'active-input', startedAt: 5 });
+    const begin = ipc.get('cowork:session:run:begin')!;
+
+    await expect(begin({}, input)).resolves.toEqual({
+      success: false, error: 'This session already has an active user run.',
+    });
+
+    f.store.bindSessionRunRootRun(active.id, active.clientTurnId);
+    await expect(begin({}, input)).resolves.toEqual({
+      success: false, errorCode: SessionRunBeginErrorCode.FollowupAvailable,
+    });
+    expect(f.store.getActiveSessionRun(f.product.id)?.id).toBe(active.id);
+    expect(f.store.getSessionRunByClientTurnId(input.clientTurnId)).toBeUndefined();
+    expect(f.methods).toEqual([]);
+  });
+});
 
 describe('late native publication through actual Main admission layers', () => {
   it.each([false, true])('reobserves once after a create reply for an existing unbound conversation (custom=%s)', async customAgent => {
