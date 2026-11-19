@@ -267,11 +267,14 @@ export class BrowserAgentBridge {
         this.discardTabRuntime(previous);
       }
       const tab = { ...registration, ownerId: event.sender.id };
+      const isReregistration = previous && previous.webContentsId === registration.webContentsId;
       tabs.set(registration.targetId, tab);
       this.tabsBySession.set(scopeId, tabs);
-      console.info(
-        `[BrowserAgentBridge] Registered embedded browser tab (session=${registration.sessionId}, target=${registration.targetId}, guest=${registration.webContentsId})`,
-      );
+      if (!isReregistration) {
+        console.info(
+          `[BrowserAgentBridge] Registered embedded browser tab (session=${registration.sessionId}, target=${registration.targetId}, guest=${registration.webContentsId})`,
+        );
+      }
       if (!this.activeTargets.has(scopeId)) {
         this.activeTargets.set(scopeId, { targetId: registration.targetId });
       }
