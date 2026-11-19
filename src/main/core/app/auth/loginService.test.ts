@@ -22,6 +22,7 @@ const session: AuthenticatedLogin = {
   displayName: 'Alice',
   headerValues: { 'X-Cookie': 'synthetic-cookie', 'X-Tool-Token': 'synthetic-tool-token' },
 };
+const seedLogin = (store: LoginUserInfoStore) => store.writeLogin(session);
 
 afterEach(() => {
   vi.useRealTimers();
@@ -31,7 +32,9 @@ afterEach(() => {
 });
 
 function setup(
-  adapterOverrides: Partial<LoginSdkAdapter> = {},
+  { seedStore, ...adapterOverrides }: Partial<LoginSdkAdapter> & {
+    seedStore?: (store: LoginUserInfoStore, file: string) => void;
+  } = {},
   publishCommittedHeaders?: (values: Readonly<Record<string, unknown>>) => void,
 ) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-login-'));
@@ -42,6 +45,7 @@ function setup(
     LOGIN_STORAGE_CONFIG.userInfoFileName,
   );
   const store = new LoginUserInfoStore(file);
+  seedStore?.(store, file);
   const adapter: LoginSdkAdapter = {
     available: true,
     login: vi.fn(async (): Promise<LoginSdkResult> => ({ status: 'authenticated', session })),
@@ -79,10 +83,9 @@ test('an unavailable SDK cannot simulate a login or enable models', async () => 
   expect(fs.existsSync(context.file)).toBe(false);
 });
 
-test('manual file import restores display state without repeating model startup or requiring the SDK', async () => {
-  const context = setup({ available: false });
-  context.store.writeLogin(session);
-  await context.service.restoreFromFile();
+test('the first account query shows saved credentials before SDK or model startup', () => {
+  const context = setup({ available: false, seedStore: seedLogin });
+
   expect(context.service.getState().status).toBe(AuthStatus.LocalCredentials);
   expect(context.service.getState().profile?.displayName).toBe('Alice');
   expect(context.onLoginCommitted).not.toHaveBeenCalled();
@@ -93,9 +96,7 @@ test('manual file import restores display state without repeating model startup 
 });
 
 test('a canceled popup leaves imported credentials intact and does not refresh services', async () => {
-  const context = setup({ login: vi.fn(async () => ({ status: 'canceled' })) });
-  context.store.writeLogin(session);
-  await context.service.restoreFromFile();
+  const context = setup({ seedStore: seedLogin, login: vi.fn(async () => ({ status: 'canceled' })) });
   expect((await context.service.login()).canceled).toBe(true);
   expect(context.service.getState().loginPhase).toBeNull();
   expect(context.store.read()?.values.mtoken).toBe(session.mtoken);
@@ -273,10 +274,12 @@ test('Cookie renewal preserves long-lived mtoken and other tool fields and refre
 });
 
 test('drops obsolete Cookie expiry metadata when saving a credential update', async () => {
-  const context = setup();
-  const login = context.store.writeLogin(session);
-  fs.writeFileSync(context.file, JSON.stringify({ ...login.values, cookieExpiresAt: 1_800_000_000_000 }));
-  await context.service.restoreFromFile();
+  const context = setup({
+    seedStore: (store, file) => {
+      const login = seedLogin(store);
+      fs.writeFileSync(file, JSON.stringify({ ...login.values, cookieExpiresAt: 1_800_000_000_000 }));
+    },
+  });
 
   await expect(context.service.updateCredentials(context.service.captureCredentialLease()!, {
     headerValues: { 'X-Cookie': 'replacement-cookie' },
@@ -351,10 +354,13 @@ test.each([false, true])('only resumes automatic renewal after verified SDK rest
   vi.useFakeTimers();
   const response = Promise.withResolvers<CredentialUpdate>();
   const refresh = vi.fn((_options: { signal: AbortSignal }) => response.promise);
-  const context = setup({ restoreSession: async () => confirmed, refreshCredentials: refresh });
-  context.store.writeLogin(session);
+  const context = setup({
+    seedStore: seedLogin,
+    restoreSession: async () => confirmed,
+    refreshCredentials: refresh,
+  });
 
-  await context.service.restoreFromFile();
+  await context.service.restoreSdkSession();
   await vi.advanceTimersByTimeAsync(0);
   expect(refresh).toHaveBeenCalledTimes(confirmed ? 1 : 0);
   context.service.onSystemResume();
@@ -573,9 +579,7 @@ test('an atomic write failure does not publish login or call the refresh hook', 
 });
 
 test('invalid SDK credentials cannot clear an existing identity or write a derived JWT', async () => {
-  const context = setup();
-  context.store.writeLogin(session);
-  await context.service.restoreFromFile();
+  const context = setup({ seedStore: seedLogin });
   for (const name of ['X-ACCESS-JWT', 'userName', 'avatarUrl', 'loginTime', 'cookieExpiresAt']) {
     context.adapter.login = async () => ({
       status: 'authenticated',
@@ -589,9 +593,14 @@ test('invalid SDK credentials cannot clear an existing identity or write a deriv
 });
 
 test('restoring a verified SDK session does not create a second model refresh', async () => {
-  const context = setup({ restoreSession: async () => true });
-  context.store.writeLogin(session);
-  await context.service.restoreFromFile();
+  const verification = Promise.withResolvers<boolean>();
+  const context = setup({ seedStore: seedLogin, restoreSession: () => verification.promise });
+  const restoration = context.service.restoreSdkSession();
+
+  expect(context.service.getState().status).toBe(AuthStatus.LocalCredentials);
+  verification.resolve(true);
+  await restoration;
+
   expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
   expect(context.onLoginCommitted).not.toHaveBeenCalled();
 });
@@ -599,9 +608,8 @@ test('restoring a verified SDK session does not create a second model refresh', 
 test('restoration publishes the latest committed Cookie for the verified account', async () => {
   const verification = Promise.withResolvers<boolean>();
   const publish = vi.fn();
-  const context = setup({ restoreSession: () => verification.promise }, publish);
-  context.store.writeLogin(session);
-  const restoration = context.service.restoreFromFile();
+  const context = setup({ seedStore: seedLogin, restoreSession: () => verification.promise }, publish);
+  const restoration = context.service.restoreSdkSession();
   context.store.writeLogin({ ...session, headerValues: { 'X-Cookie': 'updated-during-restore' } });
 
   verification.resolve(true);
@@ -631,6 +639,7 @@ test('disposal aborts SDK restoration and releases SDK listeners only once', asy
   let complete!: (confirmed: boolean) => void;
   const dispose = vi.fn();
   const context = setup({
+    seedStore: seedLogin,
     dispose,
     restoreSession: options => {
       signal = options.signal;
@@ -639,8 +648,7 @@ test('disposal aborts SDK restoration and releases SDK listeners only once', asy
       });
     },
   });
-  context.store.writeLogin(session);
-  const restoration = context.service.restoreFromFile();
+  const restoration = context.service.restoreSdkSession();
   context.service.dispose();
   context.service.dispose();
   expect(signal.aborted).toBe(true);

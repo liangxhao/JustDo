@@ -3149,8 +3149,8 @@ if (agentBridgeArgv) {
       startupSync?.success ? builtinModelCredential : null,
     );
     builtinModelCredentialMonitor.start(builtinModelCredential);
-    // This display restoration never gates or repeats the existing JWT/model startup flow.
-    void getLoginService().restoreFromFile();
+    // The local account is available on the first query. SDK verification can follow model startup.
+    void getLoginService().restoreSdkSession();
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled && ACTIVITY_REPORTING_CONFIG.enabled) {
       userActivityService = new UserActivityService({
         getCredential: getActiveBuiltinModelCredential,

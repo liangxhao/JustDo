@@ -45,8 +45,8 @@ type CookieRenewal = {
 export class LoginService {
   private state: AuthState;
   private generation = 0;
-  private identity: string | null = null;
-  private credentialVersion: string | null = null;
+  private identity: string | null;
+  private credentialVersion: string | null;
   private queue: Promise<unknown> = Promise.resolve();
   private loginAttempt: { controller: AbortController; promise: Promise<AuthActionResult> } | null =
     null;
@@ -58,30 +58,45 @@ export class LoginService {
   private readonly lifetime = new AbortController();
 
   constructor(private readonly dependencies: Dependencies) {
-    this.state = { ...INITIAL_AUTH_STATE, sdkAvailable: dependencies.adapter.available };
+    const login = dependencies.store.read();
+    this.identity = login?.identity ?? null;
+    this.credentialVersion = login?.credentialVersion ?? null;
+    this.state = {
+      ...INITIAL_AUTH_STATE,
+      sdkAvailable: dependencies.adapter.available,
+      status: login ? AuthStatus.LocalCredentials : AuthStatus.SignedOut,
+      profile: login?.profile ?? null,
+    };
   }
 
   getState(): AuthState {
     return this.state;
   }
 
-  /** File import restores display state; only an SDK-confirmed session can renew its Cookie. */
-  async restoreFromFile(): Promise<void> {
-    if (this.disposed) return;
-    this.pauseCookieRenewal();
-    const generation = ++this.generation;
-    const login = this.dependencies.store.read();
-    this.applyLogin(login, AuthStatus.LocalCredentials);
-    if (!login || !this.dependencies.adapter.available || !this.dependencies.adapter.restoreSession)
+  /** Only an SDK-confirmed session can renew its Cookie. */
+  async restoreSdkSession(): Promise<void> {
+    const { adapter, store } = this.dependencies;
+    const { operation, profile, status } = this.state;
+    if (
+      this.disposed ||
+      status !== AuthStatus.LocalCredentials ||
+      operation !== AuthOperation.Idle ||
+      !profile ||
+      !adapter.available ||
+      !adapter.restoreSession
+    )
       return;
+
+    const generation = this.generation;
+    const identity = this.identity;
     try {
-      const confirmed = await this.dependencies.adapter.restoreSession({
+      const confirmed = await adapter.restoreSession({
         signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)]),
-        profile: login.profile,
+        profile,
       });
       if (!confirmed || this.disposed || generation !== this.generation) return;
-      const current = this.dependencies.store.read();
-      if (current?.identity !== login.identity) return;
+      const current = store.read();
+      if (!current || current.identity !== identity) return;
       this.applyLogin(current, AuthStatus.SignedIn);
       this.scheduleCookieRenewal(current, { restored: true });
       this.publishHeaders(current);

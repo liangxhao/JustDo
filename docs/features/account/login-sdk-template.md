@@ -140,8 +140,8 @@ SDK 未确认的手工导入会话仅恢复显示，应用不自行获取 Cookie
 ## 手工凭据联调
 
 无需为了手动导入新增开发入口。现有启动流程继续读取由 `resolveOutboundHeaderUserInfoPath()`
-解析的文件、换取 JWT、发现模型、同步 Gateway 并启动模型凭据监控。账号模板在其后恢复显示，
-SDK 确认会话后可安排 Cookie 续期。模型启动继续使用原有的 JWT 生命周期。
+解析的文件、换取 JWT、发现模型、同步 Gateway 并启动模型凭据监控。Main 初始化账号服务时读取同一文件，
+首次界面查询即可取得本地账号状态。SDK 会话验证在模型凭据监控启动后进行，确认会话后可安排 Cookie 续期。
 
 文件路径是 `<app.getPath('appData')>/<productName>/<directoryName>/<userInfoFileName>`，
 目录名与用户信息文件名分别来自 `src/config/loginStorage.ts` 的 `LOGIN_STORAGE_CONFIG`，

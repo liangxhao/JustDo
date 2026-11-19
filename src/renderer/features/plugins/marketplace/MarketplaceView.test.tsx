@@ -966,9 +966,10 @@ test('reports update check failures distinctly and allows a manual retry', async
 
 test('updates the unconfigured marketplace notice with account state and keeps local controls available', async () => {
   api.listSources.mockResolvedValue({ success: true, sources: [] });
-  const signedOut = { ...INITIAL_AUTH_STATE, sdkAvailable: true };
-  const signedIn = { ...signedOut, status: AuthStatus.SignedIn, revision: 1 };
-  const getState = vi.fn<() => Promise<AuthState>>().mockResolvedValue(signedOut);
+  const restored = { ...INITIAL_AUTH_STATE, status: AuthStatus.LocalCredentials, sdkAvailable: true };
+  const signedOut = { ...INITIAL_AUTH_STATE, sdkAvailable: true, revision: 1 };
+  const signedIn = { ...signedOut, status: AuthStatus.SignedIn, revision: 2 };
+  const getState = vi.fn<() => Promise<AuthState>>().mockResolvedValue(restored);
   let notifyAuthChange!: (state: AuthState) => void;
   Object.assign(window.electron, {
     auth: {
@@ -981,16 +982,16 @@ test('updates the unconfigured marketplace notice with account state and keeps l
   });
   render(<Harness installed={INSTALLED} />);
 
-  await screen.findByText('marketplaceSignInRequired');
+  await screen.findByText('marketplaceNotConfigured');
+  expect(screen.queryByText('marketplaceSignInRequired')).toBeNull();
   expect(screen.getByRole('switch')).toBeTruthy();
-  getState.mockResolvedValue(signedIn);
-  act(() => notifyAuthChange(signedIn));
-  expect(screen.getByText('marketplaceNotConfigured')).toBeTruthy();
 
   fireEvent.click(screen.getByRole('button', { name: 'marketplaceFilter.updates' }));
   await screen.findByText('marketplaceNotConfigured');
-  act(() => notifyAuthChange({ ...signedOut, revision: 2 }));
+  act(() => notifyAuthChange(signedOut));
   expect(screen.getByText('marketplaceSignInRequired')).toBeTruthy();
+  act(() => notifyAuthChange(signedIn));
+  expect(screen.getByText('marketplaceNotConfigured')).toBeTruthy();
   expect(api.search).not.toHaveBeenCalled();
 });
 
