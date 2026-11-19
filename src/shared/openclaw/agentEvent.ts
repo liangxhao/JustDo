@@ -58,7 +58,10 @@ export interface NormalizedChatEvent {
   frameSeq: number | null;
   /** Native run sequence carried by the chat payload, never the WS frame sequence. */
   sourceSeq?: number;
+  /** Exact terminal time from a verified native run receipt, when available. */
+  endedAt?: number;
   state: 'delta' | 'final' | 'aborted' | 'error';
+  yielded?: true;
   message?: unknown;
   deltaText?: string;
   replace: boolean;
@@ -186,6 +189,7 @@ export function normalizeChatEvent(params: {
     lifecycleGeneration: firstString(payload.lifecycleGeneration, payload.gatewayGeneration),
     frameSeq: safeInteger(params.frameSeq),
     state,
+    ...(state === 'final' && payload.yielded === true ? { yielded: true as const } : {}),
     ...(sourceSeq !== null ? { sourceSeq } : {}),
     ...(payload.message !== undefined ? { message: payload.message } : {}),
     ...(typeof payload.deltaText === 'string' ? { deltaText: payload.deltaText } : {}),

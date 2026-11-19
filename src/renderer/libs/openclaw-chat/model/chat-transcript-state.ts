@@ -37,6 +37,8 @@ export interface ToolItem extends BaseTurnItem {
   agentSequenceUnconfirmed?: boolean;
   /** Actual toolResult record time, unlike an assistant message's model-start timestamp. */
   historyCompletedAt?: number;
+  /** The yielded display closed before this tool reported its result. */
+  completionInferredAtYield?: true;
   input?: unknown;
   output?: string;
   /** Sanitized native item progress; separate from the authoritative result. */
@@ -153,6 +155,8 @@ export interface ChatTranscriptState {
   recentRuns: Map<string, RecentRunState>;
   /** Identity-only fences live until this session projection is reset. */
   terminalRunIds: Set<string>;
+  /** Runs replaced in the live display while their execution result remained unknown. */
+  retiredDisplayRunIds: Set<string>;
   revision: number;
 }
 
@@ -177,6 +181,7 @@ export function createChatTranscriptState(
     activeTurn: null,
     recentRuns: new Map(),
     terminalRunIds: new Set(),
+    retiredDisplayRunIds: new Set(),
     revision: 0,
   };
 }
@@ -194,6 +199,7 @@ export function resetChatTranscriptState(
   state.activeTurn = null;
   state.recentRuns.clear();
   state.terminalRunIds.clear();
+  state.retiredDisplayRunIds.clear();
   state.revision += 1;
 }
 

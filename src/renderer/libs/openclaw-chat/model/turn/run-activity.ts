@@ -18,6 +18,7 @@ export type RunProgressStage =
   | 'preparing-tool'
   | 'compacting'
   | 'waiting-model'
+  | 'waiting-continuation'
   | 'thinking'
   | 'responding'
   | 'running-tool'
@@ -47,6 +48,7 @@ export type RunProgressDetail =
 
 export interface RunActivityOptions {
   modelActivity?: boolean;
+  yielded?: true;
   provider?: string;
   model?: string;
   retryReason?: unknown;
@@ -65,6 +67,7 @@ export interface RunActivity {
   lastAgentEventAt: number;
   lastModelActivityAt: number | null;
   hasRunningTool: boolean;
+  yielded?: true;
   provider?: string;
   model?: string;
   retryReason?: RunRetryReason;
@@ -73,7 +76,7 @@ export interface RunActivity {
   retryAt?: number;
   progress?: RunProgressDetail;
   activeRunConfirmedAt: number | null;
-  probeState: 'idle' | 'checking' | 'active' | 'failed';
+  probeState: 'idle' | 'checking' | 'active' | 'inactive' | 'failed';
 }
 
 export function createRunActivity(runId: string, startedAt: number): RunActivity {
@@ -101,6 +104,7 @@ export type WaitingStatusKind =
   | 'retry-tool-call-format'
   | 'rate-limited'
   | 'response-paused'
+  | 'outcome-unconfirmed'
   | 'disconnected'
   | 'reconnecting'
   | 'probe-failed';
@@ -191,6 +195,8 @@ export function advanceRunActivity(
   }
   next.lastAgentEventAt = at;
   next.hasRunningTool = hasRunningTool;
+  if (options.yielded) next.yielded = true;
+  else if (stage !== 'waiting-continuation') delete next.yielded;
   if (options.provider) next.provider = options.provider;
   if (options.model) next.model = options.model;
   delete next.retryAttempt;
@@ -212,6 +218,20 @@ export function advanceRunActivity(
     next.activeRunConfirmedAt = null;
   }
   return next;
+}
+
+/** Presentation of an admitted pause can outlive the chat delivery owner. */
+export function retainYieldedActivity(
+  activity: RunActivity | null,
+  runId: string | null,
+  yielded?: true,
+): RunActivity | null {
+  if (!runId) return null;
+  const current = activity?.runId === runId ? activity : null;
+  if (current?.yielded) return current;
+  return yielded
+    ? advanceRunActivity(current ?? createRunActivity(runId, Date.now()), 'waiting-continuation', { yielded }, false)
+    : null;
 }
 
 export function projectWaitingStatus(params: {
@@ -236,12 +256,15 @@ export function projectWaitingStatus(params: {
   if (transportStatus === 'disconnected') {
     return { kind: 'disconnected', tone: 'warning', quietMs };
   }
+  if (activity.probeState === 'inactive') {
+    return { kind: 'outcome-unconfirmed', tone: 'neutral', quietMs };
+  }
   // A running tool is observable work, not evidence that the model is stalled.
   // Resume model-wait notices only after the last running tool settles.
   if (activity.hasRunningTool) return null;
   // Explicit queue/context preparation is not a stalled model request.
   if (
-    ['queued', 'preparing', 'preparing-workspace', 'memory-flushing', 'compacting'].includes(
+    ['queued', 'preparing', 'preparing-workspace', 'memory-flushing', 'compacting', 'waiting-continuation'].includes(
       activity.stage,
     )
   )

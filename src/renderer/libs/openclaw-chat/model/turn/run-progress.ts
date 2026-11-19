@@ -1,4 +1,5 @@
 import type { ToolItem } from '../chat-transcript-state';
+import { isWaitingSessionsYield } from '../tools/tool-lifecycle';
 import type { RunActivityOptions, RunProgressStage } from './run-activity';
 
 export const RUN_STREAM_PROGRESS_ITEM_ID = 'run-stream-progress';
@@ -35,13 +36,15 @@ export function readRunningToolActivity(
   progress?: RunActivityOptions['progress'];
   modelActivity: true;
 } {
-  const candidate =
-    toolCallId === undefined
-      ? [...(tools?.values() ?? [])].reverse().find(item => item.status === 'running')
-      : tools?.get(toolCallId);
+  const latestFirst = toolCallId === undefined ? [...(tools?.values() ?? [])].reverse() : [];
+  const candidate = toolCallId === undefined
+    ? latestFirst.find(item => item.status === 'running')
+    : tools?.get(toolCallId);
   const tool = candidate?.status === 'running' ? candidate : undefined;
   return {
-    stage: tool ? 'running-tool' : 'waiting-model',
+    stage: tool ? 'running-tool' : isWaitingSessionsYield(latestFirst[0])
+      ? 'waiting-continuation'
+      : 'waiting-model',
     modelActivity: true,
     ...(tool
       ? {
@@ -82,6 +85,13 @@ export function readRunProgress(
   data: Record<string, unknown>,
 ): ({ stage: RunProgressStage } & RunActivityOptions) | null {
   const phase = typeof data.phase === 'string' ? data.phase : '';
+  if (
+    stream === 'lifecycle' && phase === 'end' && data.yielded === true &&
+    data.livenessState === 'paused' && data.stopReason === 'end_turn' && data.aborted !== true &&
+    data.status !== 'cancelled' && data.status !== 'timed_out' && data.timeoutPhase == null && data.error == null
+  ) {
+    return { stage: 'waiting-continuation', yielded: true };
+  }
   if (stream === 'lifecycle' && phase === 'progress') {
     const stage =
       typeof data.stage === 'string' &&

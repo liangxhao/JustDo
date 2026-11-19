@@ -61,7 +61,585 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('quiet foreground run recovery', () => {
+  const nativeSession = {
+    key: sessionKey,
+    sessionId: 'physical-session',
+    lifecycleRevision: 'session-revision',
+    hasActiveRun: false,
+  };
+
+  test('recovers an ordinary missed terminal and lets the next message reach Gateway', async () => {
+    const answer = {
+      role: 'assistant',
+      content: 'Persisted reply',
+      __openclaw: { id: 'reply-1', seq: 1, runId: 'run-progress' },
+    };
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.describe') return { session: nativeSession };
+      if (method === 'agent.wait') return { runId: 'run-progress', status: 'ok', endedAt: 2_000 };
+      if (method === 'chat.send') return { runId: 'next-run', status: 'started' };
+      return { sessionId: nativeSession.sessionId, messages: [answer] };
+    });
+    controller.state.client!.request = request;
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(request).toHaveBeenCalledWith('agent.wait', { runId: 'run-progress', timeoutMs: 0 });
+    expect(controller.state.chatSending).toBe(false);
+    expect(controller.state.runActivity).toBeNull();
+    expect(controller.getCurrentTurnTiming()).toMatchObject({ status: 'final', endedAt: 2_000 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(controller.state.chatMessages).toContainEqual(
+      expect.objectContaining({ content: 'Persisted reply' }),
+    );
+    await controller.sendMessage('Next question');
+    expect(request).toHaveBeenCalledWith('chat.send', expect.objectContaining({ message: 'Next question' }));
+    expect(controller.state.chatRunId).toBe('next-run');
+  });
+
+  test.each([
+    { runId: 'run-progress', status: 'timeout' },
+    { runId: 'different-run', status: 'ok', endedAt: 2_000 },
+    { runId: 'run-progress', status: 'ok', endedAt: 2_000, yielded: true },
+  ])('shows an unconfirmed result for idle without an exact terminal (%j)', async result => {
+    const request = vi.fn(async (method: string) =>
+      method === 'sessions.describe' ? { session: nativeSession } : result,
+    );
+    controller.state.client!.request = request;
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(controller.state.chatSending).toBe(true);
+    expect(controller.state.chatRunId).toBe('run-progress');
+    expect(projectWaitingStatus({
+      activity: controller.state.runActivity, transportStatus: 'connected',
+    })).toMatchObject({ kind: 'outcome-unconfirmed' });
+    expect(request).not.toHaveBeenCalledWith('chat.send', expect.anything());
+  });
+
+  test('sends a distinct prepared input when an admitted idle run has no result', async () => {
+    const oldRunId = 'run-progress';
+    const newRunId = 'next-client-input';
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.describe') return { session: nativeSession };
+      if (method === 'agent.wait') return { runId: oldRunId, status: 'timeout' };
+      if (method === 'chat.send') return { runId: newRunId, status: 'started' };
+      return { sessionId: nativeSession.sessionId, messages: [] };
+    });
+    controller.state.client!.request = request;
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(false);
+    expect(controller.state.chatRunId).toBe(oldRunId);
+    await expect(controller.sendMessage('New input')).rejects.toThrow('already being sent');
+
+    await controller.sendMessage('New input', [], undefined, {
+      clientTurnId: newRunId, allowInactivePredecessor: true,
+    });
+
+    expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    expect(request).toHaveBeenCalledWith('chat.send', expect.objectContaining({
+      message: 'New input', sessionId: nativeSession.sessionId, idempotencyKey: newRunId,
+    }));
+    expect(controller.state.transcript.terminalRunIds.has(oldRunId)).toBe(false);
+    emit('assistant', { text: 'Previous reply' });
+    handle({ event: 'chat', payload: { sessionKey, runId: oldRunId, state: 'final' } });
+    expect(controller.state.chatRunId).toBe(newRunId);
+    expect(controller.state.runActivity?.runId).toBe(newRunId);
+  });
+
+  test.each(['lost acknowledgement', 'in-flight acknowledgement'])(
+    'holds the original send without admission evidence (%s)', async acknowledgement => {
+      const unknownRunId = 'unknown-submit';
+      const request = vi.fn(async (method: string) => {
+        if (method === 'sessions.describe') return { session: nativeSession };
+        if (method === 'agent.wait') return { runId: unknownRunId, status: 'timeout' };
+        if (method === 'chat.send') {
+          if (acknowledgement === 'lost acknowledgement') throw new Error('Lost acknowledgement');
+          return { runId: unknownRunId, status: 'in_flight' };
+        }
+        return { sessionId: nativeSession.sessionId, messages: [] };
+      });
+      controller.state.client!.request = request;
+      controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+      const markUnknown = vi.fn();
+      const submitted = controller.sendMessage('Previous input', [], undefined, {
+        clientTurnId: unknownRunId, onRequestUnknown: markUnknown,
+      });
+      await expect(submitted).rejects.toThrow();
+      expect(markUnknown).toHaveBeenCalledWith(unknownRunId);
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      await expect(controller.sendMessage('New input', [], undefined, { allowInactivePredecessor: true }))
+        .rejects.toThrow('already being sent');
+      expect(controller.state.chatRunId).toBe(unknownRunId);
+      expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+    },
+  );
+
+  test.each([true, false])('follows the native owner after an unknown send (active IDs present=%s)', async hasActiveRunIds => {
+    const originalRun = 'justdo-unconfirmed-original';
+    const followupRun = 'native-followup-run';
+    const request = vi.fn(async (method: string, params: { message?: string; idempotencyKey?: string }) => {
+      if (method === 'chat.send') {
+        if (params.message === 'Prior input') throw new Error('Lost acknowledgement');
+        return { status: 'started', runId: params.idempotencyKey };
+      }
+      return { sessionId: nativeSession.sessionId, messages: [] };
+    });
+    controller.state.client!.request = request;
+    controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+    const recordUnknown = vi.fn();
+    await expect(controller.sendMessage('Prior input', [], undefined, {
+      clientTurnId: originalRun, onRequestUnknown: recordUnknown,
+    })).rejects.toThrow('Lost acknowledgement');
+    await controller.queueMessage('Next input', [], undefined, sessionKey, 'ask', nativeSession.sessionId);
+
+    expect(recordUnknown).toHaveBeenCalledWith(originalRun);
+    expect(request).toHaveBeenCalledWith('chat.send', expect.objectContaining({
+      message: 'Next input', queueMode: 'followup', sessionId: nativeSession.sessionId,
+    }));
+    emit('assistant', { text: 'New output before ownership sync' }, { runId: followupRun });
+    expect(controller.state.chatRunId).toBe(originalRun);
+    const adopt = (controller as unknown as {
+      applyInFlightRunSnapshot: (run: unknown, key: string, sessionId: string, previous: string, info: unknown) => void;
+    }).applyInFlightRunSnapshot.bind(controller);
+    adopt({ runId: followupRun }, sessionKey, nativeSession.sessionId, originalRun, {
+      sessionId: nativeSession.sessionId, hasActiveRun: true, activeRunIds: [originalRun, followupRun],
+    });
+    expect(controller.state.chatRunId).toBe(originalRun);
+    adopt({ runId: followupRun }, sessionKey, nativeSession.sessionId, originalRun, {
+      sessionId: nativeSession.sessionId, hasActiveRun: true,
+      ...(hasActiveRunIds ? { activeRunIds: [followupRun] } : {}),
+    });
+    expect(controller.state.chatRunId).toBe(followupRun);
+    expect(controller.state.transcript.terminalRunIds.has(originalRun)).toBe(false);
+    expect(controller.state.chatMessages).toContainEqual(expect.objectContaining({ content: 'Prior input' }));
+    emit('assistant', { text: 'Late original output' }, { runId: originalRun });
+    expect(controller.state.chatRunId).toBe(followupRun);
+
+    adopt({ runId: originalRun }, sessionKey, nativeSession.sessionId, followupRun, {
+      sessionId: nativeSession.sessionId, hasActiveRun: true,
+      ...(hasActiveRunIds ? { activeRunIds: [originalRun] } : {}),
+    });
+    expect(controller.state.chatRunId).toBe(originalRun);
+  });
+
+  test.each(['deferred-reload', 'empty-history'] as const)(
+    'recovers the successor of an unknown send through %s', async recovery => {
+      const originalRun = 'justdo-unconfirmed-original';
+      const successorRun = 'native-successor';
+      const messages = recovery === 'empty-history' ? [] : [{
+        role: 'user', content: 'Earlier input', __openclaw: { id: 'earlier-input', seq: 1 },
+      }];
+      let successorActive = false;
+      const request = vi.fn(async (method: string, params?: { queueMode?: string; idempotencyKey?: string }) => {
+        if (method === 'chat.send') {
+          if (params?.queueMode !== 'followup') throw new Error('Lost acknowledgement');
+          return { status: 'started', runId: params.idempotencyKey };
+        }
+        return {
+          sessionId: nativeSession.sessionId,
+          sessionInfo: { ...nativeSession, hasActiveRun: successorActive },
+          messages,
+          pendingInputs: { items: [], total: 0 },
+          ...(successorActive ? {
+            inFlightRun: {
+              runId: successorRun,
+              startedAt: Date.now(),
+              events: [{
+                runId: successorRun, seq: 1, sessionKey, sessionId: nativeSession.sessionId,
+                ts: Date.now(), stream: 'assistant', data: { text: 'Recovered output' },
+              }],
+            },
+          } : {}),
+        };
+      });
+      controller.state.client!.request = request;
+      controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+      await controller.loadHistory();
+      await expect(controller.sendMessage('Previous input', [], undefined, {
+        clientTurnId: originalRun, onRequestUnknown: vi.fn(),
+      })).rejects.toThrow('Lost acknowledgement');
+
+      successorActive = recovery === 'empty-history';
+      await controller.queueMessage('Second input', [], undefined, sessionKey, 'ask', nativeSession.sessionId);
+      await vi.advanceTimersByTimeAsync(0);
+      if (recovery === 'deferred-reload') {
+        // An ordinary debounce is already waiting for the current run to end.
+        const controllerRecovery = controller as unknown as {
+          scheduleDeferredHistoryReload(sessionKey: string, reason: string): void;
+        };
+        controllerRecovery.scheduleDeferredHistoryReload(sessionKey, 'session-message');
+        successorActive = true;
+        emit('lifecycle', { phase: 'start' }, { runId: successorRun });
+        await vi.advanceTimersByTimeAsync(1_300);
+      }
+
+      expect(controller.state.chatRunId).toBe(successorRun);
+      expect(controller.getActiveNativeChatRunId()).toBe(successorRun);
+      expect(controller.state.transcript.activeTurn?.items).toEqual([
+        expect.objectContaining({ type: 'content', text: 'Recovered output' }),
+      ]);
+      expect(controller.state.chatMessages).toContainEqual(expect.objectContaining({ content: 'Previous input' }));
+      expect(controller.state.transcript.terminalRunIds.has(originalRun)).toBe(false);
+    },
+  );
+
+  test.each([false, true])(
+    'treats a scoped native snapshot as admission evidence after a missed start (active IDs present=%s)',
+    async hasActiveRunIds => {
+      const restoredRun = 'native-restored-run';
+      const request = vi.fn(async (method: string) => {
+        if (method === 'sessions.describe') return { session: nativeSession };
+        if (method === 'agent.wait') return { runId: restoredRun, status: 'timeout' };
+        if (method === 'chat.send') return { status: 'started', runId: 'next-run' };
+        return {
+          messages: [],
+          sessionId: nativeSession.sessionId,
+          sessionInfo: {
+            ...nativeSession, hasActiveRun: true,
+            ...(hasActiveRunIds ? { activeRunIds: [restoredRun] } : {}),
+          },
+          inFlightRun: { runId: restoredRun, startedAt: Date.now() },
+        };
+      });
+      controller.state.client!.request = request;
+      controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+      await controller.loadHistory();
+      expect(controller.state.chatRunId).toBe(restoredRun);
+      expect(controller.getActiveNativeChatRunId()).toBe(restoredRun);
+      Object.assign(controller.state.client!, { generation: 2 });
+      expect(controller.getActiveNativeChatRunId()).toBeNull();
+
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(controller.state.runActivity?.probeState).toBe('inactive');
+      await controller.sendMessage('New input', [], undefined, { allowInactivePredecessor: true });
+
+      expect(controller.state.chatRunId).toBe('next-run');
+      expect(controller.state.transcript.terminalRunIds.has(restoredRun)).toBe(false);
+    },
+  );
+
+  test('shows the durable reply when a followup finishes before the ownership read', async () => {
+    const originalRun = 'justdo-unconfirmed-original';
+    const successorRun = 'native-fast-successor';
+    let queueAdmission = '';
+    let successorFinished = false;
+    let originalPersisted = false;
+    const request = vi.fn(async (method: string, params?: { queueMode?: string; idempotencyKey?: string }) => {
+      if (method === 'chat.send') {
+        if (params?.queueMode !== 'followup') throw new Error('Lost acknowledgement');
+        queueAdmission = params.idempotencyKey ?? '';
+        return { status: 'started', runId: queueAdmission };
+      }
+      return {
+        sessionId: nativeSession.sessionId,
+        sessionInfo: { ...nativeSession, activeRunIds: [] },
+        messages: successorFinished ? [
+          { role: 'user', content: 'Second input', timestamp: 91_001, __openclaw: {
+            id: 'second-input', seq: 1, runId: successorRun, idempotencyKey: `${queueAdmission}:user`,
+          } },
+          { role: 'assistant', content: 'Persisted successor output', timestamp: 91_002, __openclaw: {
+            id: 'second-reply', seq: 2, runId: successorRun,
+          } },
+          ...(originalPersisted ? [{ role: 'user', content: 'Previous input', timestamp: 92_000, __openclaw: {
+            id: 'original-input', seq: 3, idempotencyKey: `${originalRun}:user`,
+          } }] : []),
+        ] : [],
+        pendingInputs: { items: [], total: 0 },
+      };
+    });
+    controller.state.client!.request = request;
+    controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+    await expect(controller.sendMessage('Previous input', [], undefined, {
+      clientTurnId: originalRun, onRequestUnknown: vi.fn(),
+    })).rejects.toThrow('Lost acknowledgement');
+    vi.setSystemTime(91_000);
+    await controller.queueMessage('Second input', [], undefined, sessionKey, 'ask', nativeSession.sessionId);
+    await vi.advanceTimersByTimeAsync(0);
+
+    emit('lifecycle', { phase: 'start' }, { runId: successorRun });
+    successorFinished = true;
+    handle({ event: 'chat', payload: {
+      sessionKey, sessionId: nativeSession.sessionId, runId: successorRun, state: 'final',
+    } });
+    // A native batch can invalidate history without publishing individual rows.
+    handle({ event: 'sessions.changed', payload: { sessionKey, phase: 'message' } });
+    await vi.advanceTimersByTimeAsync(1_300);
+
+    expect(controller.state.chatMessages).toEqual([
+      expect.objectContaining({ content: 'Previous input' }),
+      expect.objectContaining({ content: 'Second input' }),
+      expect.objectContaining({ content: 'Persisted successor output' }),
+    ]);
+    expect(controller.state.chatRunId).toBe(originalRun);
+    expect(controller.state.transcript.terminalRunIds.has(originalRun)).toBe(false);
+
+    originalPersisted = true;
+    await controller.loadHistory();
+    expect(controller.state.chatMessages).toEqual([
+      expect.objectContaining({ content: 'Second input' }),
+      expect.objectContaining({ content: 'Persisted successor output' }),
+      expect.objectContaining({ content: 'Previous input', __openclaw: expect.objectContaining({ id: 'original-input' }) }),
+    ]);
+  });
+
+  test('adopts a native successor when the previous idle display is in a background tab', async () => {
+    let successorStarted = false;
+    const successorSession = () => ({
+      ...nativeSession,
+      hasActiveRun: successorStarted,
+      activeRunIds: successorStarted ? ['native-successor'] : [],
+    });
+    const request = vi.fn(async (method: string, params?: { sessionKey?: string }) => {
+      if (method === 'sessions.describe') return { session: successorSession() };
+      if (method === 'agent.wait') return { runId: 'run-progress', status: 'timeout' };
+      return params?.sessionKey === sessionKey
+        ? { sessionId: nativeSession.sessionId, sessionInfo: successorSession(), messages: [] }
+        : { sessionId: 'other-physical-session', messages: [] };
+    });
+    controller.state.client!.request = request;
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    const away = controller.switchSession('agent:main:justdo:another-session');
+    await vi.advanceTimersByTimeAsync(5_000);
+    await away;
+    successorStarted = true;
+    emit('lifecycle', { phase: 'start' }, { runId: 'native-successor' });
+    emit('assistant', { text: 'New reply' }, { runId: 'native-successor' });
+    emit('assistant', { text: 'Late previous reply' });
+    const returned = controller.switchSession(sessionKey);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await returned;
+
+    expect(controller.state.chatRunId).toBe('native-successor');
+    expect(controller.state.transcript.activeTurn?.items).toEqual([
+      expect.objectContaining({ text: 'New reply' }),
+    ]);
+  });
+
+  test('keeps early successor text away from an acknowledged client run until native handoff', async () => {
+    const oldRunId = 'justdo-acknowledged-input';
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.describe') return { session: nativeSession };
+      if (method === 'agent.wait') return { runId: oldRunId, status: 'timeout' };
+      if (method === 'chat.send') return { runId: oldRunId, status: 'started' };
+      return { sessionId: nativeSession.sessionId, messages: [] };
+    });
+    controller.state.client!.request = request;
+    controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+    await controller.sendMessage('Prior input', [], undefined, { clientTurnId: oldRunId });
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    const successor = { runId: 'native-successor' };
+    emit('assistant', { text: 'Early response' }, successor);
+    expect(controller.state.transcript.activeTurn).toMatchObject({ runId: oldRunId, items: [] });
+    emit('lifecycle', { phase: 'start' }, successor);
+    emit('assistant', { text: 'Successor response' }, successor);
+
+    expect(controller.state.transcript.activeTurn?.items).toEqual([
+      expect.objectContaining({ runId: successor.runId, text: 'Successor response' }),
+    ]);
+    expect(controller.state.chatMessages).toContainEqual(expect.objectContaining({ content: 'Prior input' }));
+  });
+
+  test('keeps the yielded successor when a retired run emits a late start', async () => {
+    controller.state.client!.request = vi.fn(async (method: string) =>
+      method === 'sessions.describe' ? { session: nativeSession } : { runId: 'run-progress', status: 'timeout' },
+    );
+    await vi.advanceTimersByTimeAsync(20_000);
+    const successor = { runId: 'native-successor' };
+    emit('lifecycle', { phase: 'start' }, successor);
+    expect(controller.state.transcript.retiredDisplayRunIds.has('run-progress')).toBe(true);
+    emit('lifecycle', {
+      phase: 'end', yielded: true, livenessState: 'paused', stopReason: 'end_turn', executionSettled: true,
+    }, successor);
+
+    emit('lifecycle', { phase: 'start' });
+
+    expect(controller.state.chatRunId).toBe(successor.runId);
+    expect(controller.state.transcript.activeTurn).toMatchObject({ runId: successor.runId, status: 'running' });
+    expect(controller.state.runActivity?.stage).toBe('waiting-continuation');
+  });
+
+  test('ignores a terminal receipt if native session identity changes during recovery', async () => {
+    let revision = nativeSession.lifecycleRevision;
+    const request = vi.fn(async (method: string) => {
+      if (method === 'sessions.describe') {
+        return { session: { ...nativeSession, lifecycleRevision: revision } };
+      }
+      revision = 'replacement-revision';
+      return { runId: 'run-progress', status: 'ok', endedAt: 2_000 };
+    });
+    controller.state.client!.request = request;
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(request).toHaveBeenCalledWith('agent.wait', { runId: 'run-progress', timeoutMs: 0 });
+    expect(controller.state.chatSending).toBe(true);
+    expect(controller.state.transcript.activeTurn).toMatchObject({ runId: 'run-progress', status: 'running' });
+  });
+
+  test('keeps compaction active when a previous turn receipt arrives during it', async () => {
+    let resolveWait!: (result: unknown) => void;
+    const wait = new Promise(resolve => { resolveWait = resolve; });
+    const request = vi.fn(async (method: string) =>
+      method === 'sessions.describe' ? { session: nativeSession } : wait,
+    );
+    controller.state.client!.request = request;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(request).toHaveBeenCalledWith('agent.wait', { runId: 'run-progress', timeoutMs: 0 });
+
+    handle({ event: 'session.operation', payload: { sessionKey, operation: 'compact', phase: 'start' } });
+    resolveWait({ runId: 'run-progress', status: 'ok', endedAt: 2_000 });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(controller.state.compactionInFlight).toBe(true);
+    expect(controller.state.chatSending).toBe(true);
+  });
+});
+
 describe('native run progress through the chat controller', () => {
+  test.each([
+    ['yielded', true], ['already_pending', true], ['deferred', false], ['nothing_pending', false],
+  ])('uses the native Yield result %s to decide whether the turn is waiting to continue', (status, waiting) => {
+    const tool = { toolCallId: 'yield-call', name: 'sessions_yield' };
+    emit('tool', { ...tool, phase: 'start' });
+    emit('tool', { ...tool, phase: 'result', result: { details: { status } } });
+
+    expect(controller.state.runActivity?.stage).toBe(waiting ? 'waiting-continuation' : 'waiting-model');
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(waiting);
+    expect(projectWaitingStatus({
+      activity: controller.state.runActivity, transportStatus: 'connected', now: 61_000,
+    })?.kind ?? null).toBe(waiting ? null : 'waiting-model');
+
+    emit('item', requestActivityItem());
+    expect(controller.state.runActivity?.stage).toBe('receiving-model');
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(false);
+  });
+
+  test.each([
+    { paused: false, toolStartedAt: 2_500, expectedStage: 'running-tool' },
+    { paused: false, toolStartedAt: 1_500, expectedStage: 'waiting-continuation' },
+    { paused: true, toolStartedAt: 2_500, expectedStage: 'waiting-continuation' },
+  ])('reconciles the waiting indicator with a repaired tool start (%j)', ({ paused, toolStartedAt, expectedStage }) => {
+    vi.setSystemTime(2_000);
+    const yieldCall = { toolCallId: 'yield-call', name: 'sessions_yield' };
+    emit('tool', { ...yieldCall, phase: 'start' });
+    emit('tool', { ...yieldCall, phase: 'result', result: { details: { status: 'already_pending' } } });
+    if (paused) emit('lifecycle', {
+      phase: 'end', yielded: true, livenessState: 'paused', stopReason: 'end_turn', executionSettled: true,
+    });
+
+    handle({ event: 'session.message', payload: {
+      sessionKey, sessionId: 'physical-session', hasActiveRun: true, runId: 'run-progress', messageSeq: 1,
+      message: {
+        role: 'assistant', timestamp: toolStartedAt,
+        __openclaw: { id: 'tool-start', seq: 1, runId: 'run-progress' },
+        content: [{ type: 'toolCall', id: 'tool-call', name: 'read' }],
+      },
+    } });
+
+    expect(controller.state.transcript.activeTurn?.toolById.get('tool-call')?.status).toBe('running');
+    expect(controller.state.runActivity?.stage).toBe(expectedStage);
+  });
+
+  test.each([
+    'native-final', 'lifecycle-fallback', 'early-successor', 'native-snapshot', 'embedded-snapshot', 'embedded-after-final',
+  ] as const)(
+    'keeps the paused display and admits continuation without rebinding the old turn (%s)', async handoff => {
+    const paused = { phase: 'end', yielded: true, livenessState: 'paused', stopReason: 'end_turn', executionSettled: true };
+    emit('lifecycle', paused, { sessionId: 'foreign-incarnation' });
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(false);
+
+    emit('tool', { phase: 'start', toolCallId: 'yield-call', name: 'sessions_yield' });
+    const previous = controller.state.transcript.activeTurn!;
+    emit('lifecycle', paused);
+    expect(controller.state.runActivity?.stage).toBe('waiting-continuation');
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(true);
+    expect(previous.status).toBe('running');
+    expect(controller.shouldSubmitFollowup('agent:main:another')).toBe(false);
+
+    if (handoff === 'native-final' || handoff === 'embedded-after-final') {
+      handle({ event: 'chat', payload: {
+        sessionKey, runId: previous.runId, state: 'final', yielded: true,
+      } });
+    } else if (handoff === 'lifecycle-fallback') {
+      await vi.advanceTimersByTimeAsync(1_600);
+    }
+    if (handoff === 'native-final' || handoff === 'lifecycle-fallback' || handoff === 'embedded-after-final') {
+      expect(controller.state.chatSending).toBe(false);
+      expect(controller.shouldSubmitFollowup(sessionKey)).toBe(true);
+      expect(projectTurnItems(controller.state.transcript.activeTurn, false, null, controller.state.runActivity)
+        .at(-1)).toMatchObject({ kind: 'waiting', stage: 'waiting-continuation' });
+    }
+
+    const successor = { runId: 'native-successor', lifecycleGeneration: 'successor-generation' };
+    if (handoff === 'native-snapshot' || handoff === 'embedded-snapshot' || handoff === 'embedded-after-final') {
+      const recovery = controller as unknown as { applyInFlightRunSnapshot: (
+        run: { runId: string }, key: string, physicalId: string, requestRunId: string | null,
+        native: { sessionId: string; hasActiveRun: boolean; activeRunIds?: string[] },
+      ) => void };
+      const requestRunId = controller.state.chatRunId;
+      recovery.applyInFlightRunSnapshot(successor, sessionKey, 'physical-session', requestRunId, {
+        sessionId: 'physical-session', hasActiveRun: true, activeRunIds: [previous.runId, successor.runId],
+      });
+      expect(controller.state.chatRunId).toBe(requestRunId);
+      recovery.applyInFlightRunSnapshot(successor, sessionKey, 'physical-session', requestRunId, {
+        sessionId: 'physical-session', hasActiveRun: true,
+        ...(handoff === 'native-snapshot' ? { activeRunIds: [successor.runId] } : {}),
+      });
+      expect(controller.state.chatRunId).toBe(successor.runId);
+    } else {
+      emit('lifecycle', { phase: 'start' }, successor);
+    }
+    emit('assistant', { text: 'Continuation of the delegated work' }, successor);
+
+    expect(previous.runId).toBe('run-progress');
+    expect(previous.toolById.get('yield-call')?.status).toBe('completed');
+    expect(controller.state.transcript.activeTurn).toMatchObject({ runId: successor.runId, items: [
+      expect.objectContaining({ type: 'content', text: 'Continuation of the delegated work' }),
+    ] });
+    expect(controller.state.runActivity?.stage).toBe('responding');
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(false);
+  });
+
+  test.each([
+    { beforeYield: 'missing', isError: false, expectedStatus: 'completed' },
+    { beforeYield: 'running', isError: true, expectedStatus: 'failed' },
+    { beforeYield: 'cancelled', isError: false, expectedStatus: 'cancelled' },
+  ])('restores the late native nested result after Yield ($beforeYield)', ({ beforeYield, isError, expectedStatus }) => {
+    emit('tool', { phase: 'start', name: 'tool_call', toolCallId: 'parent-tool' });
+    if (beforeYield !== 'missing') emit('tool', { phase: 'start', name: 'read', toolCallId: 'nested-tool' });
+    if (beforeYield === 'running') {
+      emit('tool', { phase: 'update', name: 'read', toolCallId: 'nested-tool', partialResult: 'in progress' });
+    }
+    if (beforeYield === 'cancelled') emit('tool', { phase: 'cancel', name: 'read', toolCallId: 'nested-tool' });
+    handle({ event: 'chat', payload: { sessionKey, runId: 'run-progress', state: 'final', yielded: true } });
+    expect(controller.state.runActivity?.stage).toBe('waiting-continuation');
+    expect(controller.state.chatSending).toBe(false);
+    handle({ event: 'session.message', payload: {
+      sessionKey, sessionId: 'physical-session', hasActiveRun: false, runId: 'run-progress',
+      messageSeq: 2, message: {
+        role: 'custom', customType: 'openclaw.nested-tool.v1', display: true, excludeFromContext: true,
+        timestamp: 1_000, __openclaw: { id: 'nested-result', seq: 2, runId: 'run-progress' },
+        content: [
+          { type: 'toolCall', id: 'nested-tool', name: 'read', parentToolCallId: 'parent-tool' },
+          { type: 'toolResult', role: 'toolResult', toolCallId: 'nested-tool', toolName: 'read',
+            parentToolCallId: 'parent-tool', isError, content: [{ type: 'text', text: 'result' }] },
+        ],
+      },
+    } });
+
+    expect(controller.state.transcript.activeTurn?.toolById.get('nested-tool')).toMatchObject({
+      status: expectedStatus, output: 'result', presentation: { parentToolCallId: 'parent-tool' },
+    });
+    expect(controller.state.chatMessages).toContainEqual(expect.objectContaining({
+      __openclaw: expect.objectContaining({ id: 'nested-result' }),
+    }));
+  });
+
   test('keeps hidden model output active without inventing tool identity or character counts', () => {
     emit('run_status', { phase: 'starting_model' });
     for (let index = 1; index <= 65; index++) {

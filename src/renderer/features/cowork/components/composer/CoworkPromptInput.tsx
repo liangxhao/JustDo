@@ -10,7 +10,11 @@ import {
   waitForComposerModelSelection,
 } from './selection/selectComposerModel';
 import { SlashCommandMenu } from './SlashCommandMenu';
-import type { ComposerSubmissionMetadata } from './submission/composerSubmissionTiming';
+import {
+  captureComposerDraftLifetime,
+  clearComposerDraftLifetime,
+  type ComposerSubmissionMetadata,
+} from './submission/composerSubmissionTiming';
 export { appendMediaDirectiveLines } from './draft/composerMedia';
 import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
@@ -116,6 +120,7 @@ import { RealtimeVoiceOrb } from '@/features/speech/realtime/RealtimeVoiceOrb';
 import { useRealtimeVoiceSession } from '@/features/speech/realtime/useRealtimeVoiceSession';
 import { requestSpeechSettings } from '@/features/speech/speechSettingsNavigation';
 import type { ChatContextUsageSnapshot } from '@/libs/openclaw-chat/gateway/chat-controller';
+import { recordRestagedAudioDirective } from '@/libs/openclaw-chat/gateway/input/chat-queued-input';
 import { configService } from '@/services/config';
 import { i18nService } from '@/services/i18n';
 import { rendererPreferences } from '@/services/rendererPreferences';
@@ -192,11 +197,7 @@ interface CoworkPromptInputProps {
     pluginSubmission?: AppSubmission,
     submission?: ComposerSubmissionMetadata,
   ) => boolean | void | Promise<boolean | void>;
-  onQueue?: (
-    prompt: string,
-    attachments?: CoworkAttachmentPayload[],
-    gatewayPrompt?: string,
-  ) => boolean | void | Promise<boolean | void>;
+  onQueue?: CoworkPromptInputProps['onSubmit'];
   onStop?: () => boolean | void | Promise<boolean | void>;
   /** Stable cancellation identity while a temporary session becomes canonical. */
   stopOperationKey?: string;
@@ -541,6 +542,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     const modelSupportsImage = !!effectiveSelectedModel?.supportsImage;
     const [value, setRenderedValue] = useState(draftPrompt);
     const latestValueRef = useRef(value);
+    const draftPresenceRef = useRef<{ key: string; hasContent: boolean } | null>(null);
     // Every text update must be visible to imperative appends immediately,
     // including draft restoration and edits before React renders again.
     const setValue = useCallback((nextValue: string) => {
@@ -965,6 +967,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const detail = (event as CustomEvent<{ clear?: boolean }>).detail;
         const shouldClear = detail?.clear ?? true;
         if (shouldClear) {
+          clearComposerDraftLifetime(draftKey);
           setValue('');
           dispatch(clearDraftAttachments(draftKey));
           appComposer.clear();
@@ -991,6 +994,22 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setValue(draftPrompt);
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [draftKey, setValue]); // intentionally omit draftPrompt to only trigger on session switch
+
+    useEffect(() => {
+      const previous = draftPresenceRef.current;
+      const hasContent = hasComposerContent(
+        latestValueRef.current,
+        attachments.length,
+        browserAnnotations.length,
+        Boolean(browserRecording),
+        false,
+        messageQuotes.length,
+      );
+      if (!hasContent && previous?.key === draftKey && previous.hasContent) {
+        clearComposerDraftLifetime(draftKey);
+      }
+      draftPresenceRef.current = { key: draftKey, hasContent };
+    }, [draftKey, value, attachments.length, browserAnnotations.length, browserRecording, messageQuotes.length]);
 
     useEffect(() => {
       if (value !== draftPrompt) {
@@ -1163,6 +1182,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 );
                 return;
               }
+              if (staged.draftPath) {
+                recordRestagedAudioDirective(
+                  appendMediaDirectiveLines('', [staged.path]),
+                  appendMediaDirectiveLines('', [staged.draftPath]),
+                );
+              }
               mediaDirectivePaths.push(staged.path);
               continue;
             }
@@ -1242,6 +1267,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
 
           if (
             !submissionIsCurrent() ||
+            submission?.isDraftCurrent?.() === false ||
             isStopPending() ||
             goalActionPendingRef.current ||
             submissionAvailabilityRef.current.disabled
@@ -1277,6 +1303,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
             const sourceAttachments = selectDraftAttachments(current, draftKey);
             const isVisible = renderedSessionIdRef.current === sessionId;
             if (
+              submission?.isDraftCurrent?.() === false ||
               !canClearSubmittedDraft({
                 submittedText: promptValue,
                 submittedAttachments: attachments,
@@ -1288,6 +1315,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
               })
             )
               return;
+            clearComposerDraftLifetime(draftKey);
             if (clearVisibleValue && isVisible) {
               latestValueRef.current = '';
               setValue('');
@@ -1456,6 +1484,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                     ...submission,
                     canQueueFollowup: () =>
                       submissionIsCurrent() &&
+                      submission.isDraftCurrent?.() !== false &&
                       appComposer.isCurrentSelection() &&
                       !isStopPending() &&
                       !goalActionPendingRef.current &&
@@ -1552,6 +1581,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         const submission: ComposerSubmissionMetadata = {
           startedAt: Date.now(),
           sendMotionOrigin: captureSendMotionOrigin(textareaRef.current),
+          isDraftCurrent: captureComposerDraftLifetime(currentDraftKeyRef.current),
         };
         const owner = { contextKey: modelSelectionContextKey, token: Symbol() };
         const modelContext = renderedModelContextRef.current;

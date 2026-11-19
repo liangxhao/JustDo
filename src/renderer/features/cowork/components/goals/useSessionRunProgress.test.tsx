@@ -20,10 +20,10 @@ test('retains the manual compaction stop control when layout restores A after vi
     onActivityChange,
   }: {
     sessionKey: string;
-    onActivityChange: (progress: GoalRunProgress | null, sourceSessionKey: string) => void;
+    onActivityChange: (progress: GoalRunProgress | null, sourceSessionKey: string, nativeForegroundRunId: string | null) => void;
   }) => {
     useLayoutEffect(() => {
-      onActivityChange(sessionKey === 'A' ? compacting : null, sessionKey);
+      onActivityChange(sessionKey === 'A' ? compacting : null, sessionKey, null);
     }, [onActivityChange, sessionKey]);
     return null;
   };
@@ -58,17 +58,34 @@ test('isolates old session activity and cleanup from current compaction', () => 
     initialProps: { sessionKey: 'A' },
   });
   const report = result.current.onActivityChange;
-  act(() => report(compacting, 'A'));
+  act(() => report(compacting, 'A', null));
   rerender({ sessionKey: 'B' });
   expect(result.current.progress).toBeNull();
-  act(() => report(compacting, 'B'));
+  act(() => report(compacting, 'B', null));
   act(() => {
-    report(null, 'A');
-    report({ ...compacting, phase: 'running' }, 'A');
+    report(null, 'A', null);
+    report({ ...compacting, phase: 'running' }, 'A', null);
   });
   expect(result.current.progress).toBe(compacting);
-  act(() => report(null, 'B'));
+  act(() => report(null, 'B', null));
   expect(result.current.progress).toBeNull();
+});
+
+test('uses confirmed foreground activity only from the currently selected native session', () => {
+  const { result, rerender } = renderHook(({ sessionKey }) => useSessionRunProgress(sessionKey), {
+    initialProps: { sessionKey: 'A' },
+  });
+  const report = result.current.onActivityChange;
+  act(() => report(null, 'A', 'run-a'));
+  expect(result.current.nativeForegroundRunId).toBe('run-a');
+  rerender({ sessionKey: 'B' });
+  expect(result.current.nativeForegroundRunId).toBeNull();
+  act(() => report(null, 'B', 'run-b'));
+  expect(result.current.nativeForegroundRunId).toBe('run-b');
+  rerender({ sessionKey: 'A' });
+  expect(result.current.nativeForegroundRunId).toBeNull();
+  act(() => report(null, 'A', null));
+  expect(result.current.nativeForegroundRunId).toBeNull();
 });
 
 test('retains native-key activity reported in the layout that updates the selected key', () => {
@@ -77,11 +94,11 @@ test('retains native-key activity reported in the layout that updates the select
     onActivityChange,
   }: {
     onSessionKeyChange: (sessionKey: string) => void;
-    onActivityChange: (progress: GoalRunProgress | null, sourceSessionKey: string) => void;
+    onActivityChange: (progress: GoalRunProgress | null, sourceSessionKey: string, nativeForegroundRunId: string | null) => void;
   }) => {
     useLayoutEffect(() => {
       onSessionKeyChange('native-A');
-      onActivityChange(compacting, 'native-A');
+      onActivityChange(compacting, 'native-A', null);
     }, [onActivityChange, onSessionKeyChange]);
     return null;
   };
@@ -106,11 +123,11 @@ test('keeps promotion and a later new conversation separate from the old native 
   const { result, rerender } = renderHook(({ sessionKey }) => useSessionRunProgress(sessionKey), {
     initialProps: { sessionKey: 'temp-A' },
   });
-  act(() => result.current.onActivityChange(compacting, 'temp-A'));
+  act(() => result.current.onActivityChange(compacting, 'temp-A', null));
   rerender({ sessionKey: 'canonical-A' });
   expect(result.current.progress).toBeNull();
-  act(() => result.current.onActivityChange(compacting, 'canonical-A'));
-  act(() => result.current.onActivityChange(null, 'temp-A'));
+  act(() => result.current.onActivityChange(compacting, 'canonical-A', null));
+  act(() => result.current.onActivityChange(null, 'temp-A', null));
   expect(result.current.progress).toBe(compacting);
   rerender({ sessionKey: 'temp-B' });
   expect(result.current.progress).toBeNull();

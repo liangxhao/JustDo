@@ -146,8 +146,10 @@ import {
 import {
   advanceRunActivity,
   createRunActivity,
+  retainYieldedActivity,
   RUN_PROBE_INTERVAL_MS,
   RUN_STALL_NOTICE_MS,
+  type RunActivity,
   type RunActivityOptions,
   type RunProgressStage,
 } from '@/libs/openclaw-chat/model/turn/run-activity';
@@ -165,8 +167,8 @@ import {
 import { i18nService } from '@/services/i18n';
 
 import { markNativeBoardRealtime } from '../pipeline/native-board';
-import { nativeQueuedInputRunId } from './input/chat-pending-inputs';
-import { hasUnconfirmedQueuedInput, sendQueuedInput } from './input/chat-queued-input';
+import { hasNativePendingFollowup, nativeQueuedInputRunId } from './input/chat-pending-inputs';
+import { hasUnconfirmedQueuedInput, matchInputForRecovery, sendQueuedInput } from './input/chat-queued-input';
 
 // ─── ChatController ─────────────────────────────────────────────────────────
 
@@ -252,7 +254,7 @@ export class ChatController {
   private lifecycleEndFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private postFinalHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
   private postFinalHistoryRecovery: PostFinalHistoryRecovery | null = null;
-  private deferredHistoryReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private deferredHistoryReload: chatControllerRecovery.DeferredHistoryReload | null = null;
   private activeToolHistoryCatchUpTimer: ReturnType<typeof setTimeout> | null = null;
   private deferredHistoryReloadAttempts = new Map<string, number>();
   private observedSessionMessageSeqBySession = new Map<
@@ -291,6 +293,24 @@ export class ChatController {
   private suspendedRunId: string | null = null;
   private runActivityTimer: ReturnType<typeof setTimeout> | null = null;
   private runProbeToken: symbol | null = null;
+  private readonly acknowledgedChatTurns = new WeakMap<AssistantTurn, {
+    runId: string;
+    sessionId: string;
+    client: GatewayClient;
+    generation: number;
+  }>();
+  private readonly unconfirmedChatRuns = new WeakMap<ChatTranscriptState, { runId: string; sessionId: string }>();
+  private readonly inactiveChatRuns = new WeakMap<ChatTranscriptState, {
+    runId: string;
+    sessionKey: string;
+    sessionId: string;
+    turn: AssistantTurn;
+    activity: RunActivity;
+    client: GatewayClient;
+    generation: number;
+    historyGeneration: number;
+    agentSeq: number;
+  }>();
   private terminalLifecycleSeen = false;
   private transcriptIdSequence = 0;
   private expectedPlanImplementationReset: {
@@ -436,16 +456,18 @@ export class ChatController {
     this.notify();
   }
 
-  /** Apply a product receipt only to the same live run, including background sessions. */
+  /** Apply a confirmed result only to the same live run, including background sessions. */
   settleConfirmedRun(
     sessionKey: string,
     runId: string,
     state: 'completed' | 'failed' | 'aborted',
+    receipt?: { endedAt: number; error?: string },
   ): void {
     const live = this.isSelectedSession(sessionKey)
       ? this.state
       : this.findLiveSessionState(sessionKey)?.[1];
     if (!live) return;
+    if (this.unconfirmedChatRunId(live) === runId) this.unconfirmedChatRuns.delete(live.transcript);
     const turn = live.transcript.activeTurn;
     // Sending can already be cleared while the transcript still awaits its
     // terminal frame. Never let an old receipt terminate a replacement run.
@@ -477,6 +499,7 @@ export class ChatController {
       frameSeq: null,
       replace: false,
       state: state === 'completed' ? 'final' : state === 'failed' ? 'error' : 'aborted',
+      ...(receipt ? { endedAt: receipt.endedAt, errorMessage: receipt.error } : {}),
     };
     if (!this.isSelectedSession(sessionKey)) {
       this.applyBackgroundChatEvent(event);
@@ -654,6 +677,7 @@ export class ChatController {
   private beginRunActivity(runId: string, startedAt = Date.now()): void {
     this.clearRunActivityTimer();
     this.runProbeToken = null;
+    this.inactiveChatRuns.delete(this.state.transcript);
     this.state.runActivity = createRunActivity(runId, startedAt);
     this.scheduleRunActivityCheck();
   }
@@ -665,7 +689,7 @@ export class ChatController {
   ): void {
     const at = options.at ?? Date.now();
     let activity = this.state.runActivity;
-    if (!activity) {
+    if (!activity || (activity.yielded && activity.runId !== runId && this.state.chatRunId === runId)) {
       this.beginRunActivity(runId, at);
       activity = this.state.runActivity;
     }
@@ -701,7 +725,7 @@ export class ChatController {
   private scheduleRunActivityCheck(delayMs?: number): void {
     this.clearRunActivityTimer();
     const activity = this.state.runActivity;
-    if (!activity || !this.state.chatSending) return;
+    if (!activity || !this.state.chatSending || activity.yielded) return;
     const quietSince = Math.max(
       activity.lastModelActivityAt ?? activity.startedAt,
       activity.stageChangedAt,
@@ -728,50 +752,96 @@ export class ChatController {
   }
 
   private async probeActiveRun(): Promise<void> {
-    const activity = this.state.runActivity;
-    const client = this.state.client;
-    if (!activity || !client || !this.state.connected || this.runProbeToken) return;
+    const {
+      runActivity: activity, client, sessionKey, currentSessionId, chatRunId, transcript, compactionInFlight,
+    } = this.state;
+    if (!activity || activity.yielded || !client || !this.state.connected || this.runProbeToken) return;
     const runId = activity.runId;
-    const sessionKey = this.state.sessionKey;
-    const modelActivityAt = activity.lastModelActivityAt;
-    const stageChangedAt = activity.stageChangedAt;
+    const generation = client.generation;
+    const suspendedRunId = this.suspendedRunId;
+    const { activeTurn, historyGeneration } = transcript;
+    const agentSeq = activeTurn?.lastAgentSeq;
+    const lifecycleGeneration = activeTurn?.lifecycleGeneration;
     const probeToken = Symbol('run-probe');
+    const isCurrent = () =>
+      this.runProbeToken === probeToken &&
+      this.state.client === client && client.generation === generation && this.state.connected &&
+      this.state.sessionKey === sessionKey && this.state.currentSessionId === currentSessionId &&
+      this.state.transcript === transcript && transcript.historyGeneration === historyGeneration &&
+      this.state.chatSending && this.state.chatRunId === chatRunId &&
+      this.state.runActivity === activity && activity.runId === runId &&
+      this.state.compactionInFlight === compactionInFlight && this.suspendedRunId === suspendedRunId &&
+      transcript.activeTurn === activeTurn && activeTurn?.lastAgentSeq === agentSeq &&
+      activeTurn?.lifecycleGeneration === lifecycleGeneration;
+    const describe = async () => (await client.request<{ session?: Record<string, unknown> | null }>(
+      'sessions.describe', { key: sessionKey },
+    ))?.session;
     this.runProbeToken = probeToken;
-    activity.probeState = 'checking';
+    if (activity.probeState !== 'inactive') activity.probeState = 'checking';
     this.notify();
     try {
-      const result = await client.request<{ session?: Record<string, unknown> | null }>(
-        'sessions.describe',
-        { key: sessionKey },
-      );
-      const current = this.state.runActivity;
-      if (
-        !current ||
-        current.runId !== runId ||
-        this.state.sessionKey !== sessionKey ||
-        current.lastModelActivityAt !== modelActivityAt ||
-        current.stageChangedAt !== stageChangedAt
-      ) {
-        return;
-      }
-      const session = result?.session;
+      const session = await describe();
+      if (!isCurrent()) return;
       const active = session?.hasActiveRun === true;
-      current.probeState = active ? 'active' : 'idle';
-      current.activeRunConfirmedAt = active ? Date.now() : null;
+      if (
+        currentSessionId && session?.key === sessionKey && session.sessionId === currentSessionId &&
+        session.hasActiveRun === false && chatRunId === runId && activeTurn?.runId === runId &&
+        activeTurn.sessionId === currentSessionId && activeTurn.status === 'running' &&
+        !suspendedRunId && !compactionInFlight
+      ) {
+        const receipt = asRecord(await client.request('agent.wait', { runId, timeoutMs: 0 }));
+        if (!isCurrent()) return;
+        const outcome = chatControllerRecovery.readRunWaitDisplayOutcome(receipt, {
+          runId, sessionId: currentSessionId,
+        });
+        const missingResult = receipt?.runId === runId && receipt.status === 'timeout' &&
+          receipt.endedAt === undefined && receipt.timeoutPhase === undefined &&
+          receipt.yielded !== true && !receipt.pendingError;
+        const acknowledgement = this.acknowledgedChatTurns.get(activeTurn);
+        const admitted = acknowledgement?.runId === runId && acknowledgement.sessionId === currentSessionId;
+        let verifiedIdle = false;
+        if (outcome || (missingResult && admitted)) {
+          const confirmedSession = await describe();
+          if (!isCurrent()) return;
+          if (
+            confirmedSession?.key === sessionKey && confirmedSession.sessionId === currentSessionId &&
+            confirmedSession.lifecycleRevision === session.lifecycleRevision &&
+            confirmedSession.hasActiveRun === false
+          ) {
+            if (outcome) {
+              this.settleConfirmedRun(sessionKey, runId, outcome.state, outcome);
+              return;
+            }
+            verifiedIdle = true;
+            this.inactiveChatRuns.set(transcript, {
+              runId, sessionKey, sessionId: currentSessionId, turn: activeTurn, activity, client, generation, historyGeneration,
+              agentSeq: activeTurn.lastAgentSeq,
+            });
+          } else if (
+            confirmedSession?.key !== sessionKey || confirmedSession.sessionId !== currentSessionId ||
+            confirmedSession.lifecycleRevision !== session.lifecycleRevision ||
+            (Array.isArray(confirmedSession.activeRunIds) && confirmedSession.activeRunIds.includes(runId))
+          ) {
+            this.inactiveChatRuns.delete(transcript);
+          }
+        } else {
+          this.inactiveChatRuns.delete(transcript);
+        }
+        activity.probeState = outcome || (missingResult && admitted && !verifiedIdle) ? 'failed' : 'inactive';
+        activity.activeRunConfirmedAt = null;
+      } else {
+        if (session?.key !== sessionKey || session.sessionId !== currentSessionId ||
+          (Array.isArray(session.activeRunIds) && session.activeRunIds.includes(runId))) {
+          this.inactiveChatRuns.delete(transcript);
+        }
+        activity.probeState = active ? 'active' : 'idle';
+        activity.activeRunConfirmedAt = active ? Date.now() : null;
+      }
       this.notify();
     } catch {
-      const current = this.state.runActivity;
-      if (
-        !current ||
-        current.runId !== runId ||
-        this.state.sessionKey !== sessionKey ||
-        current.lastModelActivityAt !== modelActivityAt ||
-        current.stageChangedAt !== stageChangedAt
-      ) {
-        return;
-      }
-      current.probeState = 'failed';
-      current.activeRunConfirmedAt = null;
+      if (!isCurrent()) return;
+      activity.probeState = 'failed';
+      activity.activeRunConfirmedAt = null;
       this.notify();
     } finally {
       if (this.runProbeToken === probeToken) this.runProbeToken = null;
@@ -787,7 +857,102 @@ export class ChatController {
   private clearRunActivity(): void {
     this.clearRunActivityTimer();
     this.runProbeToken = null;
+    this.inactiveChatRuns.delete(this.state.transcript);
     this.state.runActivity = null;
+  }
+
+  private getInactiveChatRun(cached?: SessionLiveState, forSuccessor = false): AssistantTurn | null {
+    const { client, connected } = this.state;
+    const { chatSending, chatRunId, currentSessionId, runActivity, transcript, compactionInFlight } = cached ?? this.state;
+    const observed = this.inactiveChatRuns.get(transcript);
+    return observed && connected && chatSending && observed.turn.status === 'running' &&
+      client === observed.client && client.generation === observed.generation &&
+      (forSuccessor || (runActivity?.probeState === 'inactive' && transcript.historyGeneration === observed.historyGeneration)) &&
+      transcript.activeTurn === observed.turn &&
+      chatRunId === observed.runId && observed.turn.runId === observed.runId &&
+      normalizeTranscriptSessionKey(transcript.sessionKey) === normalizeTranscriptSessionKey(observed.sessionKey) &&
+      currentSessionId === observed.sessionId && currentSessionId === observed.turn.sessionId &&
+      runActivity === observed.activity && observed.turn.lastAgentSeq === observed.agentSeq &&
+      (cached || !this.suspendedRunId) && !compactionInFlight
+      ? observed.turn : null;
+  }
+
+  private releaseChatDisplay(turn: AssistantTurn | null, cached?: SessionLiveState, retire = true): void {
+    const live = cached ?? this.state;
+    const { transcript } = live;
+    if (transcript.activeTurn !== turn) return;
+    if (retire && turn) transcript.retiredDisplayRunIds.add(turn.runId);
+    transcript.activeTurn = null;
+    transcript.revision += 1;
+    live.chatSending = false;
+    live.chatRunId = null;
+    if (cached) {
+      this.inactiveChatRuns.delete(transcript);
+      cached.runActivity = null;
+      cached.terminalLifecycleSeen = false;
+      cached.assistantSnapshotRunId = null;
+      cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
+    } else {
+      this.terminalLifecycleSeen = false;
+      this.resetAssistantSnapshotSource();
+      this.clearLifecycleEndFallback();
+      this.clearRunActivity();
+    }
+  }
+
+  private unconfirmedChatRunId(live: Pick<SessionLiveState, 'transcript' | 'currentSessionId'>): string | null {
+    const admission = this.unconfirmedChatRuns.get(live.transcript);
+    return admission && admission.sessionId === live.currentSessionId ? admission.runId : null;
+  }
+
+  noteUnconfirmedChatRun(sessionKey: string, runId: string, sessionId: string): void {
+    const live = this.isSelectedSession(sessionKey)
+      ? this.state : this.findLiveSessionState(sessionKey)?.[1];
+    if (live?.chatRunId === runId && (!live.currentSessionId || live.currentSessionId === sessionId)) {
+      this.unconfirmedChatRuns.set(live.transcript, { runId, sessionId });
+    }
+  }
+
+  private conflictsWithInactiveChatRun(runId: string | null, cached?: SessionLiveState): boolean {
+    const live = cached ?? this.state;
+    const unconfirmedRunId = this.unconfirmedChatRunId(live);
+    if (unconfirmedRunId && live.chatRunId && live.chatRunId !== runId &&
+      (unconfirmedRunId === live.chatRunId || unconfirmedRunId === runId)) return true;
+    const previous = this.getInactiveChatRun(cached, true);
+    return previous !== null && previous.runId !== runId;
+  }
+
+  private releaseInactiveChatRunForSuccessor(
+    successor: Pick<NormalizedAgentEvent, 'runId' | 'sessionKey' | 'sessionId'>,
+    cached?: SessionLiveState,
+  ): void {
+    const previous = this.getInactiveChatRun(cached, true);
+    const { transcript } = cached ?? this.state;
+    if (
+      !previous || successor.runId === previous.runId || successor.sessionId !== previous.sessionId ||
+      !successor.sessionKey ||
+      normalizeTranscriptSessionKey(successor.sessionKey) !== normalizeTranscriptSessionKey(previous.sessionKey) ||
+      transcript.retiredDisplayRunIds.has(successor.runId) ||
+      isTerminalRun(transcript, successor.runId)
+    ) return;
+    this.releaseChatDisplay(previous, cached);
+  }
+
+  private recordChatRunStart(
+    event: NormalizedAgentEvent,
+    live: Pick<SessionLiveState, 'currentSessionId' | 'transcript'>,
+    previousTurn: AssistantTurn | null,
+    previousRunId: string | undefined,
+  ): void {
+    const turn = live.transcript.activeTurn;
+    const client = this.state.client;
+    if (
+      client && turn?.runId === event.runId && (turn !== previousTurn || previousRunId === event.runId) &&
+      event.sessionId && event.sessionId === turn.sessionId && event.sessionId === live.currentSessionId &&
+      event.sessionKey && normalizeTranscriptSessionKey(event.sessionKey) === normalizeTranscriptSessionKey(turn.sessionKey)
+    ) this.acknowledgedChatTurns.set(turn, {
+      runId: event.runId, sessionId: event.sessionId, client, generation: client.generation,
+    });
   }
 
   private cacheSessionMessages(
@@ -1032,9 +1197,10 @@ export class ChatController {
     );
   }
 
-  private publishActiveToolHistoryRepair(): void {
+  private publishActiveToolHistoryRepair(newerOwnedAppend?: unknown): void {
     return chatControllerHistory.publishActiveToolHistoryRepair.call(
       this.chatControllerHistoryContext,
+      newerOwnedAppend,
     );
   }
 
@@ -1286,6 +1452,7 @@ export class ChatController {
         return;
       }
       debugLog('[ChatCtrl] ▶ lifecycle:end fallback', this._snap());
+      const yieldedActivity = retainYieldedActivity(this.state.runActivity, endingRunId);
       reduceChatEvent(
         this.state.transcript,
         {
@@ -1295,14 +1462,16 @@ export class ChatController {
           lifecycleGeneration: this.state.transcript.activeTurn?.lifecycleGeneration ?? null,
           frameSeq: null,
           state: 'final',
+          ...(yieldedActivity ? { yielded: true as const } : {}),
           replace: false,
         },
         this.transcriptDependencies,
       );
-      this.finishCurrentTurnTiming('final', endingRunId);
+      if (!yieldedActivity) this.finishCurrentTurnTiming('final', endingRunId);
       this.state.chatSending = false;
       this.state.chatRunId = null;
       this.clearRunActivity();
+      this.state.runActivity = yieldedActivity;
       this.terminalLifecycleSeen = false;
       this.flushPendingHistoryReload();
       this.notify();
@@ -1543,6 +1712,7 @@ export class ChatController {
     }
 
     const [sessionKey, cached] = cachedEntry;
+    if (this.conflictsWithInactiveChatRun(payload.runId, cached)) return;
     if (
       payload.state === 'delta' &&
       !isChatTextRetraction(payload) &&
@@ -1570,7 +1740,10 @@ export class ChatController {
       this.persistRunFailure(sessionKey, payload.sessionId, payload.runId, failedErrorMessage);
     }
 
-    this.finishTurnTimingForSession(sessionKey, payload.state, payload.runId);
+    const yieldedActivity = payload.state === 'final'
+      ? retainYieldedActivity(cached.runActivity, payload.runId, payload.yielded)
+      : null;
+    if (!yieldedActivity) this.finishTurnTimingForSession(sessionKey, payload.state, payload.runId);
     let terminalMessage =
       payload.state === 'final'
         ? stripAssistantSilentReplySuffix(payload.message)
@@ -1603,7 +1776,7 @@ export class ChatController {
     cached.chatSending = false;
     cached.compactionInFlight = false;
     cached.chatRunId = null;
-    cached.runActivity = null;
+    cached.runActivity = yieldedActivity;
     cached.terminalLifecycleSeen = false;
     cached.assistantSnapshotRunId = null;
     cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
@@ -1616,6 +1789,20 @@ export class ChatController {
     const cachedEntry = this.findLiveSessionState(event.sessionKey, event.sessionId);
     if (!cachedEntry) return;
     const [sessionKey, cached] = cachedEntry;
+    const previousTurn = cached.transcript.activeTurn;
+    const previousRunId = previousTurn?.runId;
+    const liveStart = event.stream === 'lifecycle' && event.data.phase === 'start';
+    if (liveStart) {
+      this.releaseInactiveChatRunForSuccessor(event, cached);
+    }
+    if (this.conflictsWithInactiveChatRun(event.runId, cached)) return;
+    if (liveStart && this.retireYieldedDisplayForSuccessor(cached.transcript, cached.runActivity, event)) {
+      cached.chatSending = false;
+      cached.chatRunId = null;
+      cached.runActivity = createRunActivity(event.runId, event.timestamp);
+      cached.assistantSnapshotRunId = null;
+      cached.ignoredDeltaAfterAssistantSnapshotCount = 0;
+    }
     const backgroundAssistantText = assistantEventText(event.data);
     if (
       event.stream === 'assistant' &&
@@ -1655,6 +1842,7 @@ export class ChatController {
       return;
     }
     if (reduceResult !== 'applied') return;
+    if (liveStart) this.recordChatRunStart(event, cached, previousTurn, previousRunId);
 
     const tools = cached.transcript.activeTurn?.toolById;
     const phase = event.data.phase;
@@ -1730,7 +1918,12 @@ export class ChatController {
     }
     if (event.stream !== 'lifecycle') return;
 
-    if (phase === 'start') cached.terminalLifecycleSeen = false;
+    if (phase === 'start') {
+      cached.terminalLifecycleSeen = false;
+      if (cached.runActivity?.runId !== event.runId) {
+        cached.runActivity = createRunActivity(event.runId, event.timestamp);
+      }
+    }
     if (phase === 'end' && event.data.aborted === true) {
       this.applyBackgroundChatEvent({
         runId: event.runId,
@@ -1828,11 +2021,49 @@ export class ChatController {
     }
   }
 
+  private retireYieldedDisplayForSuccessor(
+    transcript: ChatState['transcript'], activity: RunActivity | null,
+    successor: Pick<NormalizedAgentEvent, 'runId' | 'sessionId' | 'sessionKey'>,
+  ): boolean {
+    const previous = transcript.activeTurn;
+    if (
+      previous?.status !== 'running' || !activity?.yielded || activity.runId !== previous.runId ||
+      successor.runId === previous.runId || !successor.sessionId ||
+      successor.sessionId !== previous.sessionId || successor.sessionId !== transcript.sessionId ||
+      (successor.sessionKey && normalizeTranscriptSessionKey(successor.sessionKey) !== normalizeTranscriptSessionKey(transcript.sessionKey)) ||
+      transcript.retiredDisplayRunIds.has(successor.runId) ||
+      isTerminalRun(transcript, successor.runId)
+    ) return false;
+    // The old display owner yielded. The successor starts under its own native ID.
+    return reduceChatEvent(transcript, {
+      runId: previous.runId, sessionKey: transcript.sessionKey, sessionId: previous.sessionId,
+      lifecycleGeneration: previous.lifecycleGeneration, frameSeq: null, state: 'final', yielded: true, replace: false,
+    }, this.transcriptDependencies) === 'applied';
+  }
+
+  private releaseSelectedYieldedDisplay(successor: Pick<NormalizedAgentEvent, 'runId' | 'sessionId' | 'sessionKey'>): void {
+    if (!this.retireYieldedDisplayForSuccessor(this.state.transcript, this.state.runActivity, successor)) return;
+    this.state.chatSending = false;
+    this.state.chatRunId = null;
+    this.resetAssistantSnapshotSource();
+    this.clearLifecycleEndFallback();
+  }
+
   private applyNormalizedAgentEvent(
     event: NormalizedAgentEvent,
     options: { replaySnapshot?: boolean } = {},
   ): void {
     const previousTurn = this.state.transcript.activeTurn;
+    const previousRunId = previousTurn?.runId;
+    const liveStart = !options.replaySnapshot && event.stream === 'lifecycle' && event.data.phase === 'start';
+    if (liveStart) {
+      this.releaseInactiveChatRunForSuccessor(event);
+      this.releaseSelectedYieldedDisplay(event);
+    }
+    if (this.conflictsWithInactiveChatRun(event.runId)) {
+      this.scheduleDeferredHistoryReload(this.state.sessionKey, 'inactive-run-successor');
+      return;
+    }
     const previousHighWater =
       previousTurn?.runId === event.runId
         ? Math.max(previousTurn.lastAgentSeq, previousTurn.lastSnapshotAgentSeq ?? -1)
@@ -1871,6 +2102,7 @@ export class ChatController {
       return;
     }
     if (reduceResult === 'applied') {
+      if (liveStart) this.recordChatRunStart(event, this.state, previousTurn, previousRunId);
       // Native routes live tool results through agent or session.tool by recipient.
       if (
         !options.replaySnapshot &&
@@ -1948,22 +2180,52 @@ export class ChatController {
     sessionId: string | null,
     requestRunId: string | null,
     sessionInfo: ChatHistorySnapshot['sessionInfo'],
+    requireExactOwner = false,
   ): void {
     const runId = snapshot?.runId?.trim();
     if (!snapshot || !runId || this.state.sessionKey !== sessionKey) return;
 
-    const currentRunId = this.state.chatRunId;
     const activeRunIds = sessionInfo?.activeRunIds;
+    const previousRunId = this.state.chatRunId;
+    const exactActiveSnapshot = sessionId !== null && sessionId === this.state.currentSessionId &&
+      sessionId === this.state.transcript.sessionId && sessionInfo?.sessionId === sessionId &&
+      (sessionInfo.key === undefined ||
+        normalizeTranscriptSessionKey(sessionInfo.key) === normalizeTranscriptSessionKey(sessionKey)) &&
+      sessionInfo.hasActiveRun === true &&
+      (activeRunIds === undefined || (Array.isArray(activeRunIds) && activeRunIds.includes(runId)));
+    if (requireExactOwner && !exactActiveSnapshot) return;
+    if (exactActiveSnapshot && previousRunId === requestRunId &&
+        !(previousRunId && activeRunIds?.includes(previousRunId))) {
+      const unconfirmedRunId = this.unconfirmedChatRunId(this.state);
+      const previous = this.state.transcript.activeTurn;
+      if (
+        unconfirmedRunId && previousRunId &&
+        (!previous || (previous.runId === previousRunId && previous.sessionId === sessionId)) &&
+        previousRunId !== runId &&
+        (unconfirmedRunId === previousRunId || unconfirmedRunId === runId) &&
+        !isTerminalRun(this.state.transcript, runId) && !this.state.transcript.retiredDisplayRunIds.has(runId)
+      ) {
+        // Native selected a different foreground owner. The old submission is
+        // still tracked and can be restored if native later starts it.
+        this.releaseChatDisplay(previous, undefined, previousRunId !== unconfirmedRunId);
+        this.pendingHistoryReload = true;
+      }
+      this.releaseInactiveChatRunForSuccessor({ runId, sessionKey, sessionId });
+      this.releaseSelectedYieldedDisplay({ runId, sessionKey, sessionId });
+    }
+    const currentRunId = this.state.chatRunId;
     const terminalSnapshotRun = isTerminalRun(this.state.transcript, runId);
     const snapshotIsActive =
       sessionInfo?.hasActiveRun !== false &&
       (!Array.isArray(activeRunIds) || activeRunIds.includes(runId));
-    const requestObservedRunRetirement = Boolean(requestRunId && !currentRunId);
+    const requestObservedRunRetirement = Boolean(requestRunId && !currentRunId && previousRunId === currentRunId);
     const canBindRequestedProvisionalRun = Boolean(
       currentRunId?.startsWith('justdo-') && currentRunId === requestRunId,
     );
     if (
       terminalSnapshotRun ||
+      this.state.transcript.retiredDisplayRunIds.has(runId) ||
+      this.conflictsWithInactiveChatRun(runId) ||
       !snapshotIsActive ||
       requestObservedRunRetirement ||
       (currentRunId && currentRunId !== runId && !canBindRequestedProvisionalRun)
@@ -1981,8 +2243,18 @@ export class ChatController {
 
     const activeTurn = this.state.transcript.activeTurn;
     if (activeTurn && activeTurn.runId !== runId) {
-      if (!canBindRequestedProvisionalRun || activeTurn.items.length > 0) return;
-      this.bindAcknowledgedRun(sessionKey, activeTurn.runId, runId);
+      const pausedOwner = this.state.runActivity;
+      if (
+        exactActiveSnapshot && previousRunId === requestRunId && !currentRunId &&
+        activeTurn.status === 'final' && activeTurn.sessionId === sessionId &&
+        pausedOwner?.yielded && pausedOwner.runId === activeTurn.runId && !activeRunIds?.includes(activeTurn.runId)
+      ) {
+        this.releaseChatDisplay(activeTurn, undefined, false);
+        this.pendingHistoryReload = true;
+      } else {
+        if (!canBindRequestedProvisionalRun || activeTurn.items.length > 0) return;
+        this.bindAcknowledgedRun(sessionKey, activeTurn.runId, runId);
+      }
     }
     if (!this.state.transcript.activeTurn) {
       beginAssistantTurn(
@@ -2001,6 +2273,15 @@ export class ChatController {
 
     this.state.chatRunId = runId;
     this.state.chatSending = true;
+    const snapshotTurn = this.state.transcript.activeTurn;
+    const client = this.state.client;
+    if (exactActiveSnapshot && client && snapshotTurn?.runId === runId && snapshotTurn.sessionId === sessionId) {
+      this.acknowledgedChatTurns.set(snapshotTurn, { runId, sessionId, client, generation: client.generation });
+      this.inactiveChatRuns.delete(this.state.transcript);
+      if (this.state.runActivity?.runId === runId && this.state.runActivity.probeState === 'inactive') {
+        this.state.runActivity = { ...this.state.runActivity, probeState: 'active', activeRunConfirmedAt: Date.now() };
+      }
+    }
     if (!this.state.runActivity || this.state.runActivity.runId !== runId) {
       this.beginRunActivity(
         runId,
@@ -2263,11 +2544,17 @@ export class ChatController {
     attachments: CoworkAttachmentPayload[] = [],
     gatewayMessage = message,
     expectedSessionKey = this.state.sessionKey,
+    permissionMode?: import('@shared/security/approvals').PermissionMode,
+    expectedSessionId?: string,
+    assertCurrent?: () => void,
+    isDraftCurrent?: () => boolean,
   ): Promise<void> {
-    // Native custody owns ordering and persistence. Do not replace the active
-    // transcript, run identity, timers or Main's single active user-run receipt.
+    // Native custody owns ordering and persistence.
+    if (expectedSessionId && this.state.currentSessionId !== expectedSessionId) {
+      throw new Error(i18nService.t('coworkQueueUnavailable'));
+    }
     try {
-      await sendQueuedInput(this.state, gatewayMessage, attachments, expectedSessionKey);
+      await sendQueuedInput(this.state, gatewayMessage, attachments, expectedSessionKey, permissionMode, assertCurrent, isDraftCurrent);
     } finally {
       if (this.state.sessionKey === expectedSessionKey) void this.loadHistory(true);
     }
@@ -2275,6 +2562,38 @@ export class ChatController {
 
   hasUnconfirmedQueuedInput(): boolean {
     return hasUnconfirmedQueuedInput(this.state);
+  }
+
+  matchInputForRecovery(
+    message: string,
+    attachments: CoworkAttachmentPayload[] | undefined,
+    expectedSessionKey: string,
+  ): Promise<boolean> | null {
+    return matchInputForRecovery(this.state, message, attachments ?? [], expectedSessionKey);
+  }
+
+  getActiveNativeChatRunId(): string | null {
+    const { connected, client, chatSending, chatRunId, currentSessionId, runActivity, transcript } = this.state;
+    const turn = transcript.activeTurn;
+    if (
+      !connected || !client || this.suspendedRunId || !chatSending || !chatRunId ||
+      !currentSessionId || transcript.sessionId !== currentSessionId || turn?.status !== 'running' ||
+      turn.runId !== chatRunId || turn.sessionId !== currentSessionId || runActivity?.runId !== chatRunId ||
+      runActivity.yielded || runActivity.probeState === 'inactive' || this.getInactiveChatRun(undefined, true)
+    ) return null;
+    const acknowledged = this.acknowledgedChatTurns.get(turn);
+    return acknowledged?.runId === chatRunId && acknowledged.sessionId === currentSessionId &&
+      acknowledged.client === client && acknowledged.generation === client.generation ? chatRunId : null;
+  }
+
+  shouldSubmitFollowup(expectedSessionKey: string): boolean {
+    const { sessionKey, connected, client, currentSessionId, transcript, chatRunId, runActivity } = this.state;
+    if (!connected || !client || !currentSessionId || this.suspendedRunId || sessionKey !== expectedSessionKey) return false;
+    return hasNativePendingFollowup(this.state) || (
+      transcript.sessionId === currentSessionId &&
+      runActivity?.stage === 'waiting-continuation' &&
+      (runActivity.runId === chatRunId || (chatRunId === null && runActivity.yielded === true))
+    );
   }
 
   async withdrawQueuedInput(inputId: string): Promise<void> {
@@ -2340,8 +2659,9 @@ export class ChatController {
       clientTurnId?: string;
       onRunBound?: (runId: string) => void | Promise<void>;
       /** Synchronous owning-sender evidence, immediately before native submission. */
-      onRequestIssued?: () => void;
+      onRequestIssued?: (nativeSessionId: string | null) => void;
       onOptimisticMessage?: (message: object) => void;
+      allowInactivePredecessor?: boolean;
     } = {},
   ): Promise<void> {
     const client = this.state.client;
@@ -2363,7 +2683,8 @@ export class ChatController {
     ) {
       throw new Error(i18nService.t('coworkCompactionInProgress'));
     }
-    if (this.state.chatSending) throw new Error('A message is already being sent');
+    const inactive = options.allowInactivePredecessor ? this.getInactiveChatRun() : null;
+    if (this.state.chatSending && !inactive) throw new Error('A message is already being sent');
 
     const browserPrompt = parseBrowserAnnotationPrompt(gatewayMessage);
     const commandMessage = browserPrompt?.userText ?? gatewayMessage;
@@ -2487,10 +2808,11 @@ export class ChatController {
       client.generation !== generation ||
       this.state.sessionKey !== sessionKey ||
       this.state.currentSessionId !== nativeSessionId ||
-      this.state.chatSending ||
+      (this.state.chatSending && (!inactive || this.getInactiveChatRun() !== inactive)) ||
       options.isCancelled?.()
     )
       throw new Error('The message submission context changed');
+    if (inactive) this.releaseChatDisplay(inactive);
     debugLog('[ChatCtrl] sendMessage:', displayMessage.slice(0, 60), {
       sessionKey,
       runId,
@@ -2500,7 +2822,7 @@ export class ChatController {
     this.resetActiveToolHistoryCatchUpForRun(sessionKey);
     this.historyReloadRequested.delete(sessionKey);
     this.immediateHistoryReloadRequested.delete(sessionKey);
-    this.pendingHistoryReload = false;
+    this.pendingHistoryReload = inactive !== null;
 
     // Optimistic: append user message immediately
     const attachmentBlocks = toAttachmentContentBlocks(attachments);
@@ -2545,12 +2867,15 @@ export class ChatController {
 
     let sendAcknowledged = false;
     try {
-      options.onRequestIssued?.();
+      options.onRequestIssued?.(nativeSessionId);
       if ('onRequest' in preparedSend) preparedSend.onRequest?.();
       const ack = await client.request<
         SessionGoalMutationResult | { runId?: string; status?: string }
       >(preparedSend.method, preparedSend.params);
       sendAcknowledged = true;
+      if (!goalStartOperation && ack?.status === 'in_flight' && options.onRequestUnknown) {
+        throw new Error(i18nService.t('coworkSendOutcomeUnknown'));
+      }
       if (goalStartOperation) {
         const receipt = asRecord(ack);
         const receiptGoal = asRecord(receipt?.goal);
@@ -2620,6 +2945,14 @@ export class ChatController {
       }
 
       if (ack?.runId) this.bindAcknowledgedRun(sessionKey, runId, ack.runId);
+      const acknowledgedLive = this.isSelectedSession(sessionKey)
+        ? this.state : this.findLiveSessionState(sessionKey, nativeSessionId)?.[1];
+      const acknowledgedTurn = acknowledgedLive?.transcript.activeTurn;
+      if (
+        ack?.status === 'started' && nativeSessionId && acknowledgedTurn &&
+        ack.runId === acknowledgedTurn.runId && acknowledgedTurn.sessionId === nativeSessionId &&
+        acknowledgedLive?.currentSessionId === nativeSessionId && this.state.client === client && client.generation === generation
+      ) this.acknowledgedChatTurns.set(acknowledgedTurn, { runId: ack.runId, sessionId: nativeSessionId, client, generation });
 
       // If status is "ok", the run already completed
       const acknowledgedRunId = ack?.runId ?? runId;
@@ -2638,6 +2971,7 @@ export class ChatController {
         : (!sendAcknowledged && asRecord(err)?.requestSent === false) ||
           typeof asRecord(err)?.gatewayCode === 'string';
       if (options.onRequestUnknown && !definitiveRejection) {
+        if (nativeSessionId) this.noteUnconfirmedChatRun(sessionKey, runId, nativeSessionId);
         await options.onRequestUnknown(runId);
         throw err;
       }
@@ -2800,6 +3134,7 @@ export class ChatController {
       },
       publishActiveToolHistoryRepair: { get: () => this.publishActiveToolHistoryRepair.bind(this) },
       applyInFlightRunSnapshot: { get: () => this.applyInFlightRunSnapshot.bind(this) },
+      unconfirmedChatRunId: { get: () => () => this.unconfirmedChatRunId(this.state) },
       rememberRunModel: { get: () => this.rememberRunModel.bind(this) },
       localCompactionStatusBySession: { get: () => this.localCompactionStatusBySession },
       deferredHistoryReloadAttempts: { get: () => this.deferredHistoryReloadAttempts },
@@ -2858,10 +3193,10 @@ export class ChatController {
           this.postFinalHistoryRecovery = value;
         },
       },
-      deferredHistoryReloadTimer: {
-        get: () => this.deferredHistoryReloadTimer,
+      deferredHistoryReload: {
+        get: () => this.deferredHistoryReload,
         set: value => {
-          this.deferredHistoryReloadTimer = value;
+          this.deferredHistoryReload = value;
         },
       },
       activeToolHistoryCatchUpTimer: {
@@ -2917,6 +3252,7 @@ export class ChatController {
         get: () => this.ensureTranscriptSessionIdentity.bind(this),
       },
       applyBackgroundChatEvent: { get: () => this.applyBackgroundChatEvent.bind(this) },
+      conflictsWithInactiveChatRun: { get: () => this.conflictsWithInactiveChatRun.bind(this) },
       flushPendingAnnounceEvents: { get: () => this.flushPendingAnnounceEvents.bind(this) },
       pendingAnnounceEvents: { get: () => this.pendingAnnounceEvents },
       assistantSnapshotRunId: {

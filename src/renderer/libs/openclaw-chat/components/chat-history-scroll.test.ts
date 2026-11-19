@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { ChatScrollController } from '../controllers/chat-scroll-controller';
 import { ChatController } from '../gateway/chat-controller';
+import { beginAssistantTurn, createChatTranscriptState } from '../model/chat-transcript-state';
 import type { GatewayMessage } from '../types';
 import type { JustDoChatElement } from './justdo-chat';
 
@@ -216,6 +217,49 @@ test('searches a loaded offscreen entry inside a long folded turn without mounti
   expect(target.querySelector('.chat-search-mark')?.textContent).toBe('Intermediate commentary 100');
   expect(root.querySelectorAll('[data-entry-id]').length).toBeLessThanOrEqual(251);
   expect(request).toHaveBeenCalledTimes(initialRequests);
+  expect(navigate).toHaveBeenCalled();
+});
+
+test('finds and navigates folded followup output after the previous live response', async () => {
+  const runId = 'previous-run';
+  const commentary = Array.from({ length: 500 }, (_, index): GatewayMessage => ({
+    role: 'assistant',
+    content: `Queued commentary ${index}`,
+    __openclaw: { id: `followup-commentary-${index}`, seq: index + 3 },
+  }));
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.messages = [
+    { role: 'user', content: 'First request', __openclaw: { id: 'first-user', seq: 1, runId } },
+    { role: 'user', content: 'Queued request',
+      __openclaw: { id: 'followup-user', seq: 2, idempotencyKey: 'justdo-queue-next:user' } },
+    ...commentary,
+    { role: 'assistant', content: 'Next final response',
+      __openclaw: { id: 'followup-reply', seq: 503, runId: 'next-run' } },
+    { role: 'user', content: 'Later request', __openclaw: { id: 'later-user', seq: 504 } },
+  ];
+  chat.activeTurn = beginAssistantTurn(createChatTranscriptState(sessionKey, sessionId), { runId }, {
+    now: () => 1_000,
+    createId: prefix => `${prefix}-live`,
+  });
+  chat.activeTurn.items.push({
+    id: 'live-content', runId, type: 'content', status: 'streaming', text: 'Previous live response',
+    sourceMode: 'snapshot', firstSeq: 1, lastSeq: 1, startedAt: 1_000, updatedAt: 1_000,
+  });
+  chat.isStreaming = true;
+  chat.searchQuery = 'Queued commentary 100';
+  document.body.append(chat);
+  await chat.updateComplete;
+  const navigate = vi.spyOn(ChatScrollController.prototype, 'navigateToElement')
+    .mockImplementation(() => undefined);
+
+  const text = chat.shadowRoot!.textContent!;
+  expect(text).toContain('Previous live response');
+  expect(text.indexOf('Queued request')).toBeGreaterThan(text.indexOf('Previous live response'));
+  expect(chat.shadowRoot?.querySelector('[data-entry-id="followup-commentary-100"]')).toBeNull();
+  expect(chat.getSearchMatchCount()).toBe(1);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  expect(chat.shadowRoot?.querySelector('[data-entry-id="followup-commentary-100"] .chat-search-mark')?.textContent)
+    .toBe('Queued commentary 100');
   expect(navigate).toHaveBeenCalled();
 });
 

@@ -101,6 +101,12 @@ function readIdentity(
   };
 }
 
+export function readCommittedUserInputKey(message: unknown): string | null {
+  const identity = readIdentity(message, {});
+  return identity?.role === 'user' && identity.id && identity.sequence !== null && !identity.isImported
+    ? identity.idempotencyKey : null;
+}
+
 function sameIdentity(left: SessionMessageIdentity | null, right: SessionMessageIdentity): boolean {
   if (!left || left.role !== right.role) return false;
   if (left.isImported || right.isImported) {
@@ -170,6 +176,7 @@ export function applySessionMessagePayload(
     activeRunId: string | null;
     runActive: boolean | undefined;
     isRecentTerminalRun: (runId: string) => boolean;
+    exactToolResult?: boolean;
   },
 ): SessionMessageApplyResult {
   const event = asRecord(payload);
@@ -256,7 +263,10 @@ export function applySessionMessagePayload(
       (options.activeRunId === producerRunId ||
         (!options.activeRunId && options.isRecentTerminalRun(producerRunId))),
     );
-    if (!previousRunAssistant && !currentRunAssistant) {
+    const ownedToolResult = options.exactToolResult === true && identity.id !== null &&
+      identity.sequence !== null && !identity.isImported && producerRunId !== null &&
+      (options.activeRunId === producerRunId || options.isRecentTerminalRun(producerRunId));
+    if (!previousRunAssistant && !currentRunAssistant && !ownedToolResult) {
       return {
         kind: 'fallback',
         messages: [...messages],

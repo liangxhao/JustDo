@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, waitFor } from '@testing-library/react';
-import { createRef } from 'react';
+import { type ComponentProps, createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
@@ -47,6 +47,7 @@ afterEach(() => {
 
 async function setup(
   request = vi.fn().mockResolvedValue({ ok: true, aborted: false, runIds: [] }),
+  onActivityChange?: ComponentProps<typeof JustDoChatWrapper>['onActivityChange'],
 ) {
   const reload = vi.spyOn(ChatController.prototype, 'loadHistory').mockResolvedValue(true);
   const connect = vi.spyOn(ChatController.prototype, 'connect').mockImplementation(async function (
@@ -55,12 +56,12 @@ async function setup(
     this.state.connected = true;
     this.state.initialHistoryReady = true;
     this.state.currentSessionId = 'native-runtime-session';
-    this.state.client = { request, stop: vi.fn() } as unknown as NonNullable<
+    this.state.client = { request, stop: vi.fn(), generation: 1 } as unknown as NonNullable<
       ChatController['state']['client']
     >;
   });
   const ref = createRef<JustDoChatWrapperRef>();
-  render(<JustDoChatWrapper ref={ref} />);
+  render(<JustDoChatWrapper ref={ref} onActivityChange={onActivityChange} />);
   await waitFor(() => expect(connect).toHaveBeenCalledOnce());
   const controller = connect.mock.instances[0] as ChatController;
   act(() => controller.setPendingUserMessage('please stop'));
@@ -69,6 +70,35 @@ async function setup(
 }
 
 describe('actual wrapper initial native dispatch lifecycle', () => {
+  it('reports a native foreground run to the composer only while it owns execution', async () => {
+    const reports = vi.fn();
+    const { ref, controller, params } = await setup(
+      vi.fn().mockRejectedValue(new Error('Transport lost')), reports,
+    );
+    await act(async () => {
+      await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({ requestSent: true });
+    });
+    expect(reports).toHaveBeenLastCalledWith(expect.any(Object), nativeKey, null);
+    const { handleEvent } = controller as unknown as {
+      handleEvent: (event: { event: string; payload: unknown }) => void;
+    };
+    const emitLifecycle = (seq: number, data: Record<string, unknown>) => act(() => {
+      handleEvent.call(controller, {
+        event: 'agent', payload: {
+          runId: params.idempotencyKey, sessionKey: nativeKey, sessionId: 'native-runtime-session',
+          seq, ts: Date.now(), stream: 'lifecycle', data,
+        },
+      });
+    });
+
+    emitLifecycle(1, { phase: 'start' });
+    expect(reports).toHaveBeenLastCalledWith(expect.any(Object), nativeKey, params.idempotencyKey);
+    emitLifecycle(2, {
+      phase: 'end', executionSettled: true, yielded: true, livenessState: 'paused', stopReason: 'end_turn',
+    });
+    expect(reports).toHaveBeenLastCalledWith(expect.any(Object), nativeKey, null);
+  });
+
   it('admits the prepared first send after subscription while history is still loading', async () => {
     const { ref, controller, request, params } = await setup();
     controller.state.initialHistoryReady = false;
@@ -93,12 +123,16 @@ describe('actual wrapper initial native dispatch lifecycle', () => {
     expect(ref.current!.isInitialDispatchReady(nativeKey)).toBe(false);
   });
 
-  it('retains the exact delegated send owner after an unknown transport failure', async () => {
-    const request = vi.fn().mockRejectedValue(new Error('Transport lost'));
+  it.each([false, true])('retains the delegated send owner while acceptance is unknown (in-flight=%s)', async inFlight => {
+    const request = inFlight
+      ? vi.fn().mockResolvedValue({ runId: 'initial-stop', status: 'in_flight' })
+      : vi.fn().mockRejectedValue(new Error('Transport lost'));
     const { ref, controller, params } = await setup(request);
-    await expect(ref.current!.dispatchInitialTurn(params)).rejects.toMatchObject({
+    const onUnconfirmed = vi.fn();
+    await expect(ref.current!.dispatchInitialTurn(params, undefined, onUnconfirmed)).rejects.toMatchObject({
       requestSent: true,
     });
+    expect(onUnconfirmed).toHaveBeenCalledWith('native-runtime-session');
     expect(controller.state.chatRunId).toBe(params.idempotencyKey);
     expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
     const internal = controller as unknown as {

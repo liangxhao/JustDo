@@ -1,3 +1,4 @@
+import type { PermissionMode } from '../security/approvals';
 import type { AutomaticErrorRetryRunMetadata } from './automaticErrorRetry';
 
 export type SessionRunState = 'running' | 'completed' | 'failed' | 'aborted';
@@ -59,6 +60,7 @@ export interface BeginSessionRunInput {
 
 export const SessionRunIpc = {
   Unknown: 'cowork:session:run:unknown',
+  AuthorizeUnknownFollowup: 'cowork:session:run:authorize-unknown-followup',
   PluginSubmissionStarted: 'cowork:session:run:plugin-submission-started',
   PluginSubmissionAbortedBeforeSend: 'cowork:session:run:plugin-submission-aborted-before-send',
 } as const;
@@ -67,4 +69,17 @@ export interface SessionRunUnknownInput {
   sessionId: string;
   id: string;
   cancelled?: boolean;
+  requireRunning?: true;
 }
+
+export interface UnknownSessionFollowupInput {
+  sessionId: string;
+  id: string;
+  runId: string;
+  sessionKey: string;
+  workspaceRoot: string;
+}
+
+export type UnknownSessionFollowupResult =
+  | { success: true; permissionMode: PermissionMode }
+  | { success: false; error?: string };

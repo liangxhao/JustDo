@@ -54,6 +54,11 @@ import {
   type QueuedInputSnapshot,
   queuedInputSnapshot,
 } from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
+import {
+  bindChatInputAdmissionOwner,
+  rememberDirectInput,
+  type RetainedDirectInput,
+} from '@/libs/openclaw-chat/gateway/input/chat-queued-input';
 import { dispatchInitialTurn } from '@/libs/openclaw-chat/gateway/input/initial-turn-dispatch';
 import {
   resolveSummaryArtifactResource,
@@ -89,13 +94,14 @@ interface JustDoChatWrapperProps {
   className?: string;
   assistantName?: string;
   workingDirectory?: string;
+  inputAdmissionOwner?: object;
   searchQuery?: string;
   searchCaseSensitive?: boolean;
   searchNavigationToken?: number;
   searchNavigationDirection?: 1 | -1;
   processSummariesExpanded?: boolean;
   onSearchMatchCountChange?: (total: number, index: number) => void;
-  onActivityChange?: (progress: GoalRunProgress | null, sessionKey: string) => void;
+  onActivityChange?: (progress: GoalRunProgress | null, sessionKey: string, nativeForegroundRunId: string | null) => void;
   onQueuedInputsChange?: (snapshot: QueuedInputSnapshot | null) => void;
   onContextUsageChange?: (usage: ChatContextUsageSnapshot | null) => void;
   onProgressCardChange?: (state: ProgressCardViewState | null) => void;
@@ -128,17 +134,29 @@ export interface JustDoChatWrapperRef {
   dispatchInitialTurn: (
     params: Record<string, unknown>,
     isCancelled?: () => boolean,
+    onUnconfirmed?: (nativeSessionId: string) => void,
   ) => Promise<unknown>;
   isInitialDispatchReady: (sessionKey: string) => boolean;
   getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
   withdrawQueuedInput: (inputId: string, expectedSessionKey: string) => Promise<void>;
   hasUnconfirmedQueuedInput: () => boolean;
+  rememberDirectInput: (input: RetainedDirectInput) => boolean;
+  matchInputForRecovery: (
+    message: string,
+    attachments: CoworkAttachmentPayload[] | undefined,
+    expectedSessionKey: string,
+  ) => Promise<boolean> | null;
+  shouldSubmitFollowup: (expectedSessionKey: string) => boolean;
   hasCanvasPreparations: () => boolean;
   queueMessage: (
     text: string,
     attachments: CoworkAttachmentPayload[] | undefined,
     gatewayMessage: string | undefined,
     expectedSessionKey: string,
+    permissionMode?: import('@shared/security/approvals').PermissionMode,
+    expectedSessionId?: string,
+    assertCurrent?: () => void,
+    isDraftCurrent?: () => boolean,
   ) => Promise<void>;
   sendMessage: (
     text: string,
@@ -151,7 +169,8 @@ export interface JustDoChatWrapperRef {
       onRequestUnknown?: (runId: string) => void | Promise<void>;
       clientTurnId?: string;
       onRunBound?: (runId: string) => void | Promise<void>;
-      onRequestIssued?: () => void;
+      onRequestIssued?: (nativeSessionId: string | null) => void;
+      allowInactivePredecessor?: boolean;
       sendMotionOrigin?: SendMotionOrigin;
     },
   ) => Promise<void>;
@@ -202,6 +221,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       className,
       assistantName,
       workingDirectory,
+      inputAdmissionOwner,
       searchQuery,
       searchCaseSensitive,
       searchNavigationToken,
@@ -595,7 +615,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         isInitialDispatchReady: sessionKey =>
           !branchCreationPendingRef.current &&
           (controllerRef.current?.isInitialDispatchReady(sessionKey) ?? false),
-        dispatchInitialTurn: async (params, isCancelled) => {
+        dispatchInitialTurn: async (params, isCancelled, onUnconfirmed) => {
           assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller)
@@ -605,12 +625,26 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           const sessionKey = controller.state.sessionKey;
           const dispatchRunId =
             typeof params.idempotencyKey === 'string' ? params.idempotencyKey : '';
-          const receipt = await dispatchInitialTurn(
-            controller.state,
-            params,
-            () => controller.beginInitialDispatch(sessionKey, dispatchRunId),
-            isCancelled,
-          );
+          const nativeSessionId = typeof params.sessionId === 'string' ? params.sessionId : controller.state.currentSessionId;
+          let receipt: unknown;
+          try {
+            receipt = await dispatchInitialTurn(
+              controller.state,
+              params,
+              () => controller.beginInitialDispatch(sessionKey, dispatchRunId),
+              isCancelled,
+            );
+            if ((receipt as { status?: string } | null)?.status === 'in_flight') {
+              throw Object.assign(new Error(i18nService.t('coworkSendOutcomeUnknown')), { requestSent: true });
+            }
+          } catch (error) {
+            const failure = error as { requestSent?: unknown; gatewayCode?: unknown } | null;
+            if (nativeSessionId && dispatchRunId && failure?.requestSent === true && typeof failure.gatewayCode !== 'string') {
+              controller.noteUnconfirmedChatRun(sessionKey, dispatchRunId, nativeSessionId);
+              onUnconfirmed?.(nativeSessionId);
+            }
+            throw error;
+          }
           if (isChatSendStopReceipt(receipt)) {
             // A native control ACK never starts this initial execution. Its
             // optimistic prompt otherwise waits forever for a stream terminal.
@@ -628,6 +662,16 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         },
         hasUnconfirmedQueuedInput: () =>
           controllerRef.current?.hasUnconfirmedQueuedInput() ?? false,
+        rememberDirectInput: input => {
+          const controller = controllerRef.current;
+          if (!controller) return false;
+          rememberDirectInput(controller.state, input);
+          return true;
+        },
+        matchInputForRecovery: (message, attachments, expectedSessionKey) =>
+          controllerRef.current?.matchInputForRecovery(message, attachments, expectedSessionKey) ?? null,
+        shouldSubmitFollowup: expectedSessionKey =>
+          controllerRef.current?.shouldSubmitFollowup(expectedSessionKey) ?? false,
         hasCanvasPreparations: () => controllerRef.current?.mcpApps.hasCanvasPreparations ?? false,
         getQueuedInputDetail: (inputId, expectedSessionKey) => {
           const controller = controllerRef.current;
@@ -642,12 +686,12 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
             throw new Error(i18nService.t('coworkQueueUnavailable'));
           await controller.withdrawQueuedInput(inputId);
         },
-        queueMessage: async (text, attachments, gatewayMessage, expectedSessionKey) => {
+        queueMessage: async (text, attachments, gatewayMessage, expectedSessionKey, permissionMode, expectedSessionId, assertCurrent, isDraftCurrent) => {
           assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller?.state.initialHistoryReady || controller.state.historyReadFailed)
             throw new Error(i18nService.t('storageHistoryFailed'));
-          await controller.queueMessage(text, attachments, gatewayMessage, expectedSessionKey);
+          await controller.queueMessage(text, attachments, gatewayMessage, expectedSessionKey, permissionMode, expectedSessionId, assertCurrent, isDraftCurrent);
         },
         sendMessage: async (text: string, attachments = [], gatewayMessage, options) => {
           assertSessionMutationAllowed();
@@ -783,6 +827,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     // Create the Lit element and controller on mount
     useEffect(() => {
       const controller = new ChatController();
+      if (inputAdmissionOwner) bindChatInputAdmissionOwner(controller.state, inputAdmissionOwner);
       controllerRef.current = controller;
       setController(controller);
       const unsubscribeVoice = subscribeRealtimeVoiceTimeline(update => {
@@ -843,10 +888,11 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           onSessionKeyChangeRef.current?.(controller.state.sessionKey);
         }
         const progress = buildGoalRunProgress(controller.state);
-        const key = `${controller.state.sessionKey}:${goalRunProgressKey(progress)}`;
+        const nativeForegroundRunId = controller.getActiveNativeChatRunId();
+        const key = JSON.stringify([controller.state.sessionKey, goalRunProgressKey(progress), nativeForegroundRunId]);
         if (key !== lastActivityKeyRef.current) {
           lastActivityKeyRef.current = key;
-          onActivityChangeRef.current?.(progress, controller.state.sessionKey);
+          onActivityChangeRef.current?.(progress, controller.state.sessionKey, nativeForegroundRunId);
         }
         const usage = controller.state.contextUsage;
         const contextKey = usage
@@ -945,7 +991,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         lastContextUsageKeyRef.current = '';
         lastProgressCardKeyRef.current = '';
         lastReportedSessionKeyRef.current = '';
-        onActivityChangeRef.current?.(null, controller.state.sessionKey);
+        onActivityChangeRef.current?.(null, controller.state.sessionKey, null);
         queuedInputsCallback.current?.(null);
         onContextUsageChangeRef.current?.(null);
         onProgressCardChangeRef.current?.(null);
@@ -959,7 +1005,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         setController(null);
         connectedRef.current = false;
       };
-    }, []);
+    }, [inputAdmissionOwner]);
 
     const connectController = useCallback((target: ChatController) => {
       if (controllerRef.current !== target || connectedRef.current ||

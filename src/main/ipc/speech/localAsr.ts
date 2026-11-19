@@ -22,7 +22,7 @@ export function registerLocalAsrHandlers(): void {
         return { success: false, error: 'Invalid audio attachment request.' };
       }
       try {
-        return { success: true, path: await stageAudioAttachment(source, workspace) };
+        return { success: true, ...await stageAudioAttachment(source, workspace) };
       } catch {
         return { success: false, error: 'Could not copy the audio attachment into the workspace.' };
       }

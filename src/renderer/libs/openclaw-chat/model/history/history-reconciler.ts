@@ -237,19 +237,28 @@ function preserveOptimisticTailMessages(
   return optimisticTail.length > 0 ? [...historyMessages, ...optimisticTail] : historyMessages;
 }
 
+function matchesUserRun(message: unknown, runId: string): boolean {
+  if (messageRole(message) !== 'user') return false;
+  const value = asRecord(message);
+  return readActiveTurnMessageRunId(message) === runId ||
+    (asRecord(value?.__openclaw)?.idempotencyKey ?? value?.idempotencyKey) === `${runId}:user`;
+}
+
 function restoreMissingOptimisticMessages(
   historyMessages: unknown[],
   previousMessages: unknown[],
   isVisibleMessage: (message: unknown) => boolean,
+  unconfirmedRunId?: string | null,
 ): unknown[] {
   const latestHistoryTimestamp = latestMessageTimestampMs(historyMessages);
-  const missing = previousMessages.flatMap((message, previousIndex) =>
-    isProtectableOptimisticMessage(message, isVisibleMessage) &&
-    isNewerThanHistoryTail(message, latestHistoryTimestamp) &&
-    !historyHasSameOrNewerMessage(historyMessages, message)
-      ? [{ message, previousIndex }]
-      : [],
-  );
+  const missing = previousMessages.flatMap((message, previousIndex) => {
+    if (!isProtectableOptimisticMessage(message, isVisibleMessage)) return [];
+    const missingInput = unconfirmedRunId && matchesUserRun(message, unconfirmedRunId)
+      ? !historyMessages.some(candidate => matchesUserRun(candidate, unconfirmedRunId))
+      : isNewerThanHistoryTail(message, latestHistoryTimestamp) &&
+        !historyHasSameOrNewerMessage(historyMessages, message);
+    return missingInput ? [{ message, previousIndex }] : [];
+  });
   if (missing.length === 0) return historyMessages;
 
   const restored = [...historyMessages];
@@ -419,6 +428,7 @@ export function reconcileHistory(
     currentMessages?: unknown[];
     activeRun?: boolean;
     bootstrapActiveRun?: { runId: string; startedAt?: number };
+    unconfirmedRunId?: string | null;
     isVisibleMessage?: (message: unknown) => boolean;
   },
 ): HistoryReconciliationResult {
@@ -505,16 +515,20 @@ export function reconcileHistory(
     return rejected('materialized-fallback', 'deferred');
   }
 
+  const unconfirmedRunId = params.unconfirmedRunId;
+  const ordinaryPreviousMessages = unconfirmedRunId ? requestStartMessages.filter(message =>
+    !isLocallyOptimisticHistoryTail(message) || !matchesUserRun(message, unconfirmedRunId),
+  ) : requestStartMessages;
   let messages = preserveOptimisticTailMessages(
     incomingMessages,
-    requestStartMessages,
+    ordinaryPreviousMessages,
     isVisibleMessage,
   );
   // Interrupted overlays can already be present while the immediately
   // preceding user prompt is still missing from Gateway history. Restore that
   // protected prompt at its chronological position instead of accepting a
   // transcript whose assistant result has lost its user turn.
-  messages = restoreMissingOptimisticMessages(messages, requestStartMessages, isVisibleMessage);
+  messages = restoreMissingOptimisticMessages(messages, requestStartMessages, isVisibleMessage, unconfirmedRunId);
   const lateOptimisticTail = collectLateOptimisticTailMessages(
     requestStartMessages,
     currentMessages,

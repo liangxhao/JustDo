@@ -1298,6 +1298,7 @@ export function reduceAgentEvent(
   options: AgentEventReduceOptions = {},
 ): TranscriptReduceResult {
   if (!eventMatchesTranscriptSession(state, event)) return 'ignored-session';
+  if (state.retiredDisplayRunIds.has(event.runId)) return 'ignored-run';
   const previousTurn = state.activeTurn;
   const admission = classifyAgentEvent({
     selected: state,
@@ -1547,15 +1548,19 @@ function extractMessageText(message: unknown): string {
     .join('');
 }
 
-function finishTurnItems(turn: AssistantTurn, status: TurnStatus, now: number): void {
+function finishTurnItems(turn: AssistantTurn, status: TurnStatus, now: number, yielded?: true): void {
+  const yieldTool = yielded
+    ? [...turn.items].reverse().find(item => item.type === 'tool' && isSessionsYieldTool(item.name))
+    : undefined;
   for (const item of turn.items) {
     if (item.type === 'thinking' && item.status === 'running') {
       item.status = status === 'final' ? 'completed' : 'interrupted';
       item.updatedAt = now;
     } else if (item.type === 'tool' && item.status === 'running') {
-      if (status === 'final' && isSessionsYieldTool(item.name) && !hasToolResultPayload(item)) {
+      if (status === 'final' && item !== yieldTool && isSessionsYieldTool(item.name) && !hasToolResultPayload(item)) {
         continue;
       }
+      if (status === 'final' && yielded) item.completionInferredAtYield = true;
       item.status = status === 'error' ? 'failed' : status === 'final' ? 'completed' : 'cancelled';
       item.updatedAt = now;
     } else if (item.type === 'content' && item.status === 'streaming') {
@@ -1570,6 +1575,7 @@ export function reduceChatEvent(
   event: NormalizedChatEvent,
   dependencies: TranscriptReducerDependencies,
 ): TranscriptReduceResult {
+  if (event.runId && state.retiredDisplayRunIds.has(event.runId)) return 'ignored-run';
   if (event.runId && isTerminalRun(state, event.runId) && state.activeTurn?.runId !== event.runId) {
     return 'ignored-run';
   }
@@ -1776,8 +1782,8 @@ export function reduceChatEvent(
   }
 
   turn.status = event.state;
-  turn.endedAt ??= now;
-  finishTurnItems(turn, event.state, now);
+  turn.endedAt ??= event.endedAt === undefined ? now : Math.max(turn.startedAt, event.endedAt);
+  finishTurnItems(turn, event.state, now, event.yielded);
   if (event.state === 'aborted' || event.state === 'error') {
     const message =
       event.errorMessage?.trim() ||

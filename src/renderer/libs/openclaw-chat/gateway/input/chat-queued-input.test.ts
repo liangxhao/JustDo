@@ -1,3 +1,4 @@
+import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { projectPersistedMessagesForActiveTurn } from '../../model/history/optimistic-history-tail';
@@ -9,6 +10,7 @@ import {
   queuedInputSnapshot,
   refreshNativePendingInputs,
 } from './chat-pending-inputs';
+import { fingerprintChatInput, recordRestagedAudioDirective } from './chat-queued-input';
 
 const sessionKey = 'agent:main:justdo:one';
 const controllers: ChatController[] = [];
@@ -17,7 +19,9 @@ afterEach(() => {
 });
 
 function fixture() {
-  const request = vi.fn().mockResolvedValue({ status: 'started' });
+  const request = vi.fn(async (method: string, params: Record<string, unknown> = {}) =>
+    method === 'chat.send' ? { runId: params.idempotencyKey, status: 'started' } : {},
+  );
   const controller = new ChatController();
   controllers.push(controller);
   Object.assign(controller.state, {
@@ -166,8 +170,19 @@ describe('native queued input', () => {
     const transcript = controller.state.transcript;
     await controller.queueMessage('first', [
       { name: 'image.png', mimeType: 'image/png', base64Data: 'YWJj' },
-    ]);
-    await controller.queueMessage('second');
+    ], undefined, sessionKey, 'ask');
+    const firstRunId = request.mock.calls[0][1].idempotencyKey;
+    request.mockResolvedValueOnce({ inputReceipts: [{ runId: firstRunId, state: 'pending' }] });
+    await refreshNativePendingInputs(controller.state, {
+      sessionId: 'native-one',
+      pendingInputs: { total: 1, items: [{
+        id: 'first-input', runId: firstRunId, state: 'queued', queued: true, acceptedAt: 1,
+        message: { role: 'user', content: 'first' },
+      }] },
+    }, vi.fn(), vi.fn());
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(true);
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(false);
+    await controller.queueMessage('second', [], undefined, sessionKey, 'ask');
     expect(request).toHaveBeenNthCalledWith(
       1,
       'chat.send',
@@ -176,6 +191,7 @@ describe('native queued input', () => {
         sessionId: 'native-one',
         message: 'first',
         queueMode: 'followup',
+        expectedPermissionMode: 'guarded',
         suppressCommandInterpretation: true,
         deliver: false,
         justdoUserInitiated: true,
@@ -185,29 +201,238 @@ describe('native queued input', () => {
       }),
     );
     expect(request.mock.calls[0][1].idempotencyKey).not.toBe(
-      request.mock.calls[1][1].idempotencyKey,
+      request.mock.calls[2][1].idempotencyKey,
     );
     expect(controller.state.chatRunId).toBe('justdo-active');
     expect(controller.state.chatSending).toBe(true);
     expect(controller.state.transcript).toBe(transcript);
     expect(controller.state.chatMessages).toEqual([]);
     expect(refresh).toHaveBeenCalledTimes(2);
+    controller.state.currentSessionId = 'new-native-incarnation';
+    expect(controller.shouldSubmitFollowup(sessionKey)).toBe(false);
   });
 
-  test('reuses the same identity after a lost acknowledgement and rejects edited retries', async () => {
+  test('keeps separate identities for distinct drafts after two lost acknowledgements', async () => {
+    const { controller, request } = fixture();
+    request.mockRejectedValueOnce(new Error('connection lost')).mockRejectedValueOnce(new Error('response lost'));
+    await expect(controller.queueMessage('first')).rejects.toThrow();
+    controller.state.chatSending = false;
+    controller.state.chatRunId = null;
+    await expect(controller.queueMessage('second')).rejects.toThrow();
+    await controller.queueMessage('third');
+    const firstId = request.mock.calls[0][1].idempotencyKey;
+    const secondId = request.mock.calls[1][1].idempotencyKey;
+    const thirdId = request.mock.calls[2][1].idempotencyKey;
+    expect(new Set([firstId, secondId, thirdId]).size).toBe(3);
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(true);
+
+    await controller.queueMessage('first');
+    expect(request.mock.calls[3][1].idempotencyKey).toBe(firstId);
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(true);
+    await controller.queueMessage('second');
+    expect(request.mock.calls[4][1].idempotencyKey).toBe(secondId);
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(false);
+  });
+
+  test('a permission change alone does not issue a new request for the same unknown draft', async () => {
+    const { controller, request } = fixture();
+    request.mockRejectedValueOnce(new Error('connection lost'));
+    await expect(controller.queueMessage('first', [], undefined, sessionKey, 'ask')).rejects.toThrow();
+    await expect(controller.queueMessage('first', [], undefined, sessionKey, 'auto')).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
+
+    await controller.queueMessage('first', [], undefined, sessionKey, 'ask');
+
+    expect(request.mock.calls[1][1].idempotencyKey).toBe(request.mock.calls[0][1].idempotencyKey);
+  });
+
+  test.each(['in_flight', 'mismatched'])('keeps an uncertain %s acknowledgement under its original ID', async outcome => {
+    const { controller, request } = fixture();
+    request.mockImplementationOnce(async (_method, params) => outcome === 'in_flight'
+      ? { runId: params.idempotencyKey, status: 'in_flight' }
+      : { runId: 'another-input', status: 'started' });
+    await expect(controller.queueMessage('first')).rejects.toThrow();
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(true);
+
+    await controller.queueMessage('first');
+
+    expect(request.mock.calls[1][1].idempotencyKey).toBe(request.mock.calls[0][1].idempotencyKey);
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(false);
+  });
+
+  test('a definitively unsent retry retains the earlier uncertain request', async () => {
     const { controller, request } = fixture();
     request.mockRejectedValueOnce(new Error('connection lost'));
     await expect(controller.queueMessage('first')).rejects.toThrow();
+    request.mockRejectedValueOnce(Object.assign(new Error('socket closed'), { requestSent: false }));
+    await expect(controller.queueMessage('first')).rejects.toThrow();
     expect(controller.hasUnconfirmedQueuedInput()).toBe(true);
-    controller.state.chatSending = false;
-    controller.state.chatRunId = null;
-    await expect(controller.queueMessage('changed')).rejects.toThrow();
-    expect(request).toHaveBeenCalledTimes(1);
+
     await controller.queueMessage('first');
+
+    expect(request.mock.calls.map(([, params]) => params.idempotencyKey)).toEqual(
+      Array<string>(3).fill(request.mock.calls[0][1].idempotencyKey as string),
+    );
+  });
+
+  test('answers an unchanged retry from an exact recovered native receipt without sending it again', async () => {
+    const { controller, request } = fixture();
+    request.mockRejectedValueOnce(new Error('connection lost')).mockRejectedValueOnce(new Error('response lost'));
+    await expect(controller.queueMessage('first')).rejects.toThrow();
+    await expect(controller.queueMessage('second')).rejects.toThrow();
+    const firstId = request.mock.calls[0][1].idempotencyKey;
+    const secondId = request.mock.calls[1][1].idempotencyKey;
+    const emptyHistory = { sessionId: 'native-one', pendingInputs: { total: 0, items: [] } };
+    request.mockResolvedValueOnce({
+      sessionId: 'different-native-session', inputReceipts: [{ runId: secondId, state: 'pending' }],
+    });
+    await refreshNativePendingInputs(controller.state, emptyHistory, vi.fn(), vi.fn());
+    request.mockResolvedValueOnce({
+      sessionId: 'native-one', inputReceipts: [{ runId: firstId, state: 'consumed', consumedByEventId: 'original-row' }],
+    });
+    await refreshNativePendingInputs(controller.state, emptyHistory, vi.fn(), vi.fn());
+
+    expect(request).toHaveBeenLastCalledWith('chat.history', expect.objectContaining({
+      inputRunIds: expect.arrayContaining([firstId, secondId]),
+    }));
+    await controller.queueMessage('first');
+    expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(2);
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(true);
+    await controller.queueMessage('second');
+    expect(request.mock.calls.at(-1)?.[1].idempotencyKey).toBe(secondId);
     expect(controller.hasUnconfirmedQueuedInput()).toBe(false);
-    expect(request.mock.calls[1][1].idempotencyKey).toBe(request.mock.calls[0][1].idempotencyKey);
-    await controller.queueMessage('changed');
-    expect(request).toHaveBeenCalledTimes(3);
+  });
+
+  test.each(['input receipt', 'persisted history', 'receipt lookup history', 'live append'])(
+    'recovered admission from %s only intercepts retries of its own draft', async evidence => {
+      const { controller, request, event } = fixture();
+      request.mockRejectedValueOnce(new Error('connection lost'));
+      await expect(controller.queueMessage('First draft')).rejects.toThrow();
+      const runId = request.mock.calls[0][1].idempotencyKey;
+      const message = {
+        role: 'user', content: 'First draft',
+        __openclaw: { id: 'first-row', seq: 1, idempotencyKey: `${runId}:user` },
+      };
+      const history = { sessionId: 'native-one', pendingInputs: { total: 0, items: [] } };
+      if (evidence === 'input receipt') {
+        request.mockResolvedValueOnce({
+          sessionId: 'native-one',
+          inputReceipts: [{ runId, state: 'consumed', consumedByEventId: 'first-row' }],
+        });
+        await refreshNativePendingInputs(controller.state, history, vi.fn(), vi.fn());
+      } else if (evidence === 'persisted history') {
+        await refreshNativePendingInputs(controller.state, { ...history, messages: [message] }, vi.fn(), vi.fn());
+      } else if (evidence === 'receipt lookup history') {
+        request.mockResolvedValueOnce({ ...history, inputReceipts: [], messages: [message] });
+        await refreshNativePendingInputs(controller.state, history, vi.fn(), vi.fn());
+      } else {
+        event('session.message', { sessionKey, sessionId: 'native-one', message, runActive: true });
+      }
+
+      expect(controller.hasUnconfirmedQueuedInput()).toBe(false);
+      expect(await controller.matchInputForRecovery('A new draft', [], sessionKey)).toBe(false);
+      expect(await controller.matchInputForRecovery('First draft', [], sessionKey)).toBe(true);
+      await controller.queueMessage('First draft');
+      expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
+      expect(controller.matchInputForRecovery('First draft', [], sessionKey)).toBeNull();
+    },
+  );
+
+  test('does not dispatch after the physical session changes while hashing a draft', async () => {
+    const { controller, request } = fixture();
+    const sending = controller.queueMessage('first');
+    controller.state.currentSessionId = 'different-native-session';
+
+    await expect(sending).rejects.toThrow();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  test('fingerprints the outbound text and included attachment data', async () => {
+    const file = { name: 'sample.png', mimeType: 'image/png', base64Data: 'YWJj' };
+    const fingerprint = await fingerprintChatInput('Original', [file]);
+
+    expect(fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(await fingerprintChatInput('Original', [{ ...file }, { ...file, base64Data: '' }])).toBe(fingerprint);
+    expect(await fingerprintChatInput('Original', [{ ...file, base64Data: 'Y2Jh' }])).not.toBe(fingerprint);
+    expect(await fingerprintChatInput('Edited', [file])).not.toBe(fingerprint);
+  });
+
+  test('an unchanged browser draft retries with the original native input and a different context is a new input', async () => {
+    const { controller, request } = fixture();
+    const annotation = {
+      id: 'annotated-page', modelContext: 'First annotation', title: 'Page',
+      displayUrl: 'https://example.test/', markedRegionCount: 1, inspectedElement: false,
+      dataUrl: '', fileName: 'page.png', addedAt: 1,
+    };
+    const draft = 'Describe the page';
+    const original = composeBrowserGatewayPrompt(draft, [annotation]);
+    const retry = composeBrowserGatewayPrompt(draft, [annotation]);
+    const changed = composeBrowserGatewayPrompt(draft, [{ ...annotation, modelContext: 'Second annotation' }]);
+    request.mockRejectedValueOnce(new Error('connection lost'));
+
+    expect(retry).not.toBe(original);
+    await expect(controller.queueMessage(draft, [], original)).rejects.toThrow();
+    await controller.queueMessage(draft, [], changed);
+    await controller.queueMessage(draft, [], retry);
+
+    expect(request.mock.calls[1][1]).toMatchObject({ message: changed });
+    expect(request.mock.calls[1][1].idempotencyKey).not.toBe(request.mock.calls[0][1].idempotencyKey);
+    expect(request.mock.calls[2]).toEqual(request.mock.calls[0]);
+  });
+
+  test('a replaced external audio copy keeps the original uncertain draft without blocking edited text', async () => {
+    const { controller, request } = fixture();
+    const original = 'MEDIA:E:/项目/.audio-attachments-first/录音.mp3';
+    const replacement = 'MEDIA:E:/项目/.audio-attachments-replacement/录音.mp3';
+    const firstDraft = `Transcribe this recording\n\n${original}`;
+    const retryDraft = `Transcribe this recording\n\n${replacement}`;
+    request.mockRejectedValueOnce(new Error('connection lost'));
+    await expect(controller.queueMessage(firstDraft)).rejects.toThrow();
+    const firstRunId = request.mock.calls[0][1].idempotencyKey;
+
+    recordRestagedAudioDirective(replacement, original);
+    expect(await fingerprintChatInput(retryDraft, [])).toBe(await fingerprintChatInput(firstDraft, []));
+    await expect(controller.queueMessage(retryDraft)).rejects.toThrow();
+    expect(request).toHaveBeenCalledTimes(1);
+
+    const editedDraft = `Summarize this recording\n\n${replacement}`;
+    await controller.queueMessage(editedDraft);
+    expect(request).toHaveBeenLastCalledWith('chat.send', expect.objectContaining({ message: editedDraft }));
+    expect(request.mock.calls[1][1].idempotencyKey).not.toBe(firstRunId);
+
+    request.mockResolvedValueOnce({
+      sessionId: 'native-one', inputReceipts: [{ runId: firstRunId, state: 'pending' }],
+    });
+    await refreshNativePendingInputs(controller.state, {
+      sessionId: 'native-one', pendingInputs: { total: 0, items: [] },
+    }, vi.fn(), vi.fn());
+    await controller.queueMessage(retryDraft);
+    expect(request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(2);
+  });
+
+  test.each([false, true])('sends a new identical draft after clearing the previous one (receipt recovered=%s)', async recovered => {
+    const { controller, request } = fixture();
+    const draft = 'Transcribe\n\nMEDIA:E:/项目/录音.mp3';
+    let draftCurrent = true;
+    request.mockRejectedValueOnce(new Error('connection lost'));
+    await expect(controller.queueMessage(draft, [], undefined, sessionKey, undefined, undefined, undefined, () => draftCurrent)).rejects.toThrow();
+    const priorRunId = request.mock.calls[0][1].idempotencyKey;
+
+    if (recovered) {
+      request.mockResolvedValueOnce({
+        sessionId: 'native-one', inputReceipts: [{ runId: priorRunId, state: 'pending' }],
+      });
+      await refreshNativePendingInputs(controller.state, {
+        sessionId: 'native-one', pendingInputs: { total: 0, items: [] },
+      }, vi.fn(), vi.fn());
+    }
+
+    draftCurrent = false;
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(false);
+    await controller.queueMessage(draft);
+    const sends = request.mock.calls.filter(([method]) => method === 'chat.send');
+    expect(sends).toHaveLength(2);
+    expect(sends[1][1].idempotencyKey).not.toBe(priorRunId);
   });
 
   test('allows a corrected submission after a definitive rejection', async () => {
@@ -222,19 +447,36 @@ describe('native queued input', () => {
     );
   });
 
+  test('rechecks Stop after preparing the input fingerprint and before sending', async () => {
+    const { controller, request } = fixture();
+    let cancelled = false;
+    const sending = controller.queueMessage('next', [], undefined, sessionKey, 'ask', 'native-one', () => {
+      if (cancelled) throw new Error('Stopped before dispatch');
+    });
+    cancelled = true;
+
+    await expect(sending).rejects.toThrow('Stopped before dispatch');
+    expect(request).not.toHaveBeenCalled();
+    expect(controller.hasUnconfirmedQueuedInput()).toBe(false);
+  });
+
   test('rejects duplicate in-flight sends and does not refresh another selected session', async () => {
     const { controller, request, refresh } = fixture();
     let accept!: (value: unknown) => void;
-    request.mockReturnValueOnce(
+    let markIssued!: (runId: unknown) => void;
+    const issued = new Promise(resolve => { markIssued = resolve; });
+    request.mockImplementationOnce((_method, params) =>
       new Promise(resolve => {
         accept = resolve;
+        markIssued(params.idempotencyKey);
       }),
     );
     const sending = controller.queueMessage('first');
+    const runId = await issued;
     await expect(controller.queueMessage('first')).rejects.toThrow();
     refresh.mockClear();
     controller.state.sessionKey = 'agent:main:justdo:two';
-    accept({ status: 'started' });
+    accept({ runId, status: 'started' });
     await sending;
     expect(refresh).not.toHaveBeenCalled();
     expect(request).toHaveBeenCalledTimes(1);

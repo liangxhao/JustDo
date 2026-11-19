@@ -6,6 +6,17 @@ export function isSessionsYieldTool(name: string): boolean {
   return name.trim().toLowerCase() === SESSIONS_YIELD_TOOL_NAME;
 }
 
+export function isWaitingSessionsYield(tool: ToolItem | undefined): boolean {
+  if (tool?.status !== 'completed' || !isSessionsYieldTool(tool.name) || !tool.output) return false;
+  try {
+    const result = JSON.parse(tool.output) as { status?: unknown; details?: { status?: unknown } } | null;
+    const status = result?.details?.status ?? result?.status;
+    return status === 'yielded' || status === 'already_pending';
+  } catch {
+    return false;
+  }
+}
+
 export function hasToolResultPayload(tool: Pick<ToolItem, 'output' | 'error'>): boolean {
   return [tool.output, tool.error].some(value => {
     if (value === undefined) return false;

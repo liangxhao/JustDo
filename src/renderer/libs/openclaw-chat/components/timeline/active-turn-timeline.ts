@@ -662,6 +662,7 @@ const waitingStatusKeys = {
   'retry-auth': 'coworkWaitingRetryAuth',
   'retry-tool-call-format': 'coworkWaitingToolCallFormat',
   'response-paused': 'coworkWaitingResponsePaused',
+  'outcome-unconfirmed': 'coworkWaitingOutcomeUnconfirmed',
   disconnected: 'coworkWaitingDisconnected',
   reconnecting: 'coworkWaitingReconnecting',
   'probe-failed': 'coworkWaitingProbeFailed',
@@ -679,6 +680,24 @@ function waitingStatusLabel(status: WaitingStatusProjection): string {
       .replace('{max}', String(status.maxRetries));
   }
   return i18nService.t(waitingStatusKeys[status.kind]);
+}
+
+function renderWaitingStatus(status: WaitingStatusProjection): TemplateResult {
+  return html`
+    <div
+      class=${`chat-group chat-group--assistant chat-group--continuation waiting-status waiting-status--${status.tone}`}
+    >
+      <div class="chat-group__avatar" aria-hidden="true"></div>
+      <div class="chat-group__content">
+        <div class="waiting-status__message" role="status" aria-live="polite">
+          ${status.kind === 'outcome-unconfirmed'
+            ? nothing
+            : html`<span class="waiting-status__indicator" aria-hidden="true"></span>`}
+          <span>${waitingStatusLabel(status)}</span>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function renderToolImages(tool: ToolItem, readImage?: ToolImageArtifactReader) {
@@ -823,6 +842,7 @@ export function renderTimelineItem(
     );
   }
   if (item.kind === 'waiting') {
+    if (item.notice?.kind === 'outcome-unconfirmed') return renderWaitingStatus(item.notice);
     return renderReadingIndicatorGroup({
       showAvatar,
       assistantAvatar,
@@ -837,21 +857,7 @@ export function renderTimelineItem(
           : formatActiveTurnDuration(Math.max(0, now - item.startedAt)),
     });
   }
-  if (item.kind === 'waiting-status') {
-    return html`
-      <div
-        class=${`chat-group chat-group--assistant chat-group--continuation waiting-status waiting-status--${item.status.tone}`}
-      >
-        <div class="chat-group__avatar" aria-hidden="true"></div>
-        <div class="chat-group__content">
-          <div class="waiting-status__message" role="status" aria-live="polite">
-            <span class="waiting-status__indicator" aria-hidden="true"></span>
-            <span>${waitingStatusLabel(item.status)}</span>
-          </div>
-        </div>
-      </div>
-    `;
-  }
+  if (item.kind === 'waiting-status') return renderWaitingStatus(item.status);
   if (item.kind === 'progress-receipt') {
     return renderProgressReceipt(item.item, showAvatar, assistantAvatar);
   }

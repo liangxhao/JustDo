@@ -1,3 +1,4 @@
+import { readTranscriptIdentity } from '../history/transcript-identity';
 import {
   type ChatMinimapEntry,
   projectChatMinimapEntries,
@@ -24,12 +25,18 @@ export interface PersistedTimelineView {
   minimapKeySignature: string;
   assistantTurnOpen: boolean;
   assistantTurnOpenBeforeLast: boolean;
+  activeInsertion: {
+    precedingRows: readonly VisibleTimelineRow[];
+    followingRows: readonly VisibleTimelineRow[];
+    assistantTurnOpen: boolean;
+  } | null;
 }
 
 export interface IncrementalTimelineView {
   persistedRows: readonly VisibleTimelineRow[];
   seamRow: VisibleTimelineRow | null;
   activeRows: readonly VisibleTimelineRow[];
+  followingRows?: readonly VisibleTimelineRow[];
   minimapPrefix: readonly ChatMinimapEntry[];
   minimapTail: ChatMinimapEntry | null;
   minimapKeySignature: string;
@@ -46,7 +53,7 @@ function historyMessageRole(
   return String(nested.role ?? outer.role ?? '').toLowerCase();
 }
 
-function endsWithOpenAssistantTurn(items: readonly PersistedTimelineItem[]): boolean {
+function endsWithOpenAssistantTurn(items: readonly VisibleTimelineItem[]): boolean {
   let assistantTurnOpen = false;
   for (const item of items) {
     if (item.kind === 'phase-boundary') {
@@ -80,6 +87,7 @@ export class PersistedTimelineRenderCache {
   private source: readonly PersistedTimelineItem[] | null = null;
   private protectTrailingTurn = false;
   private foldUnresolvedTools = false;
+  private activeBeforeMessageId: string | null = null;
   private cached: PersistedTimelineView | null = null;
   private buildRevision = 0;
 
@@ -90,11 +98,13 @@ export class PersistedTimelineRenderCache {
   get(
     timeline: readonly PersistedTimelineItem[],
     options: ProcessFoldOptions = {},
+    activeBeforeMessageId: string | null = null,
   ): PersistedTimelineView {
     const protectTrailingTurn = options.protectTrailingTurn ?? false;
     const foldUnresolvedTools = options.foldUnresolvedTools ?? false;
     if (this.source === timeline && this.protectTrailingTurn === protectTrailingTurn &&
-      this.foldUnresolvedTools === foldUnresolvedTools && this.cached)
+      this.foldUnresolvedTools === foldUnresolvedTools &&
+      this.activeBeforeMessageId === activeBeforeMessageId && this.cached)
       return this.cached;
 
     const coalesced = coalesceAdjacentProcessSummaries(timeline);
@@ -107,9 +117,14 @@ export class PersistedTimelineRenderCache {
     );
     const minimapEntries = projectChatMinimapEntries(coalesced);
     const minimapTail = minimapEntries[minimapEntries.length - 1] ?? null;
+    const followingIndex = activeBeforeMessageId === null ? -1 : rows.findIndex(({ item }) =>
+      item.kind === 'history-message' && readTranscriptIdentity(item.message)?.value === activeBeforeMessageId,
+    );
+    const precedingRows = followingIndex >= 0 ? rows.slice(0, followingIndex) : null;
     this.source = timeline;
     this.protectTrailingTurn = protectTrailingTurn;
     this.foldUnresolvedTools = foldUnresolvedTools;
+    this.activeBeforeMessageId = activeBeforeMessageId;
     this.cached = {
       timeline: coalesced,
       rows,
@@ -121,6 +136,11 @@ export class PersistedTimelineRenderCache {
       minimapKeySignature: minimapEntries.map(entry => entry.key).join('|'),
       assistantTurnOpen: endsWithOpenAssistantTurn(coalesced),
       assistantTurnOpenBeforeLast: endsWithOpenAssistantTurn(coalesced.slice(0, -1)),
+      activeInsertion: precedingRows && {
+        precedingRows,
+        followingRows: rows.slice(followingIndex),
+        assistantTurnOpen: endsWithOpenAssistantTurn(precedingRows.map(row => row.item)),
+      },
     };
     this.buildRevision += 1;
     return this.cached;
@@ -130,6 +150,7 @@ export class PersistedTimelineRenderCache {
     this.source = null;
     this.protectTrailingTurn = false;
     this.foldUnresolvedTools = false;
+    this.activeBeforeMessageId = null;
     this.cached = null;
     this.buildRevision += 1;
   }
@@ -147,6 +168,22 @@ export function projectIncrementalTimelineView(params: {
   const persistedRows = suppressTrailingAssistantFooter
     ? persisted.rowsWithSuppressedFooter
     : persisted.rows;
+  if (persisted.activeInsertion && activeTimeline.length > 0) {
+    const { precedingRows, followingRows, assistantTurnOpen } = persisted.activeInsertion;
+    const activeRows = prepareVisibleTimelineRows(activeTimeline, { initialAssistantTurnOpen: assistantTurnOpen });
+    return {
+      persistedRows: precedingRows,
+      seamRow: null,
+      activeRows: foldCompletedProcessRows(activeRows, {
+        protectTrailingTurn: !params.foldSettledTurn,
+        foldUnresolvedTools: params.foldSettledTurn ? params.foldUnresolvedTools : undefined,
+      }),
+      followingRows,
+      minimapPrefix: persisted.minimapPrefix,
+      minimapTail: persisted.minimapTail,
+      minimapKeySignature: persisted.minimapKeySignature,
+    };
+  }
   const lastPersisted = persisted.timeline[persisted.timeline.length - 1];
   const firstActive = activeTimeline[0];
   const mergedSeam =

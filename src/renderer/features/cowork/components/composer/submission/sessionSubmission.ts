@@ -1,5 +1,9 @@
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+
+import type { RetainedDirectInput } from '@/libs/openclaw-chat/gateway/input/chat-queued-input';
+
 /** Admission and cancellation share a session-scoped operation until both settle. */
-export const createSessionSubmission = () => {
+export const createSessionSubmission = (isDraftCurrent?: () => boolean) => {
   let finish!: () => void;
   const settled = new Promise<void>(resolve => {
     finish = resolve;
@@ -11,14 +15,52 @@ export const createSessionSubmission = () => {
     stopAttempt: undefined as Promise<boolean> | undefined,
     unknown: false,
     unknownMarked: false,
+    isDraftCurrent,
     receiptId: undefined as string | undefined,
     sessionKey: undefined as string | undefined,
     runId: undefined as string | undefined,
+    unknownInput: undefined as {
+      fingerprint: string;
+      nativeSessionId: string;
+      workspaceRoot: string;
+    } | undefined,
     settled,
     finish,
   };
 };
 export type SessionSubmission = ReturnType<typeof createSessionSubmission>;
+
+/** Main can report a successor without publishing the previous receipt's outcome. */
+export function hasAcceptedSubmissionSuccessor(
+  operation: SessionSubmission,
+  previous: SessionRunTiming,
+  latest: SessionRunTiming | undefined,
+): boolean {
+  const successorRunId = latest?.rootRunId;
+  return latest !== undefined && !operation.cancelled && !operation.stopping &&
+    previous.acceptedAt !== undefined && previous.id === operation.receiptId &&
+    (operation.runId === previous.clientTurnId || operation.runId === previous.rootRunId) &&
+    Boolean(successorRunId) && successorRunId !== previous.rootRunId && successorRunId !== operation.runId &&
+    latest.id !== previous.id && latest.sessionId === previous.sessionId && latest.acceptedAt !== undefined &&
+    latest.startedAt > previous.startedAt;
+}
+
+/** Retain the native input identity while releasing the session submission guard. */
+export function readRetainedDirectSubmission(
+  operation: SessionSubmission,
+  timing: SessionRunTiming,
+): RetainedDirectInput | null {
+  const { unknownInput, sessionKey, runId, isDraftCurrent } = operation;
+  if (
+    !unknownInput || !sessionKey || !runId || operation.stopping || operation.cancelled ||
+    timing.state === 'aborted' || timing.acceptedAt === undefined || timing.id !== operation.receiptId ||
+    (timing.clientTurnId !== runId && timing.rootRunId !== runId) || isDraftCurrent?.() === false
+  ) return null;
+  return {
+    sessionKey, sessionId: unknownInput.nativeSessionId, fingerprint: unknownInput.fingerprint, runId,
+    isDraftCurrent,
+  };
+}
 
 /** Preserve canonical identity before receipt persistence can yield or fail. */
 export const bindSessionSubmissionRun = async (
@@ -44,6 +86,7 @@ export const getSessionStopOperationKey = (
 export const stopSessionSubmission = async (
   operation: SessionSubmission | undefined,
   stop: () => Promise<boolean>,
+  options: { pendingFollowup?: Promise<void>; nativeTargetRunId?: string } = {},
 ): Promise<boolean> => {
   if (!operation) return stop();
   operation.cancelled = true;
@@ -65,12 +108,16 @@ export const stopSessionSubmission = async (
         await requestStop();
         // Keep admission fenced even when the UI stops waiting. A late ACK must
         // still be cancelled before another submission can use this session.
-        await operation.settled;
+        await Promise.all([operation.settled, options.pendingFollowup]);
         // An explicit retry may still be cancelling pre-admission work. Wait
         // for it before issuing the required post-admission cancellation.
         await operation.stopAttempt;
         const finallyStopped = await requestStop();
-        return finallyStopped && !operation.unknown;
+        // A confirmed foreground successor can receive the Stop result while
+        // the older submission still owns its cancellation fence.
+        const targetsSuccessor = Boolean(options.nativeTargetRunId && operation.runId &&
+          options.nativeTargetRunId !== operation.runId);
+        return finallyStopped && (!operation.unknown || targetsSuccessor);
       } finally {
         operation.stopping = false;
         operation.stopCompletion = undefined;

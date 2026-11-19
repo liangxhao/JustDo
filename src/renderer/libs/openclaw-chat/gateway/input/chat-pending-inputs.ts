@@ -10,6 +10,11 @@ import { extractText } from '../../pipeline/message-extract';
 import type { GatewayMessage } from '../../types';
 import { asRecord, type ChatState, readExplicitMessageRunId } from '../chat-controller-support';
 import { isTruncatedHistoryMessage } from '../history/chat-history-protocol';
+import {
+  recoverQueuedInputAdmissions,
+  recoverQueuedInputsFromMessages,
+  unconfirmedQueuedInputRunIds,
+} from './chat-queued-input';
 
 type PendingView = {
   revision: number;
@@ -68,7 +73,9 @@ export async function refreshNativePendingInputs(
   };
   try {
     assertHistoryScope(response);
-    let page = parseNativePendingInputs(asRecord(response)?.pendingInputs);
+    const history = asRecord(response);
+    if (Array.isArray(history?.messages)) recoverQueuedInputsFromMessages(state, history.sessionId, history.messages);
+    let page = parseNativePendingInputs(history?.pendingInputs);
     if (!page || !view.client) {
       return;
     }
@@ -141,6 +148,7 @@ export async function refreshNativePendingInputs(
     const runIds = [
       ...new Set([
         ...recovered.flatMap(item => (item.runId ? [item.runId] : [])),
+        ...unconfirmedQueuedInputRunIds(state),
         ...(state.pendingUserMessage && state.chatRunId && state.chatRunId.length <= 256
           ? [state.chatRunId]
           : []),
@@ -159,16 +167,20 @@ export async function refreshNativePendingInputs(
       );
       if (!isScopeCurrent(state, view)) return;
       assertHistoryScope(latest);
+      const receipts = Array.isArray(latest?.inputReceipts) ? latest.inputReceipts : undefined;
       const beforeReceipts = recovered;
-      recovered = filterNativePendingInputsByReceipts(recovered, latest?.inputReceipts, batch);
+      recovered = filterNativePendingInputsByReceipts(recovered, receipts, batch);
+      if (receipts && view.sessionId && latest?.sessionId === view.sessionId) {
+        recoverQueuedInputAdmissions(state, receipts);
+        if (Array.isArray(latest.messages)) recoverQueuedInputsFromMessages(state, view.sessionId, latest.messages);
+      }
       const retiredVisibleInput = beforeReceipts.some(
         input =>
           input.message.display !== false && !recovered.some(current => current.id === input.id),
       );
       if (
         state.pendingUserMessage &&
-        Array.isArray(latest?.inputReceipts) &&
-        latest.inputReceipts.some(receipt => {
+        receipts?.some(receipt => {
           const record = asRecord(receipt);
           return (
             record?.runId === state.chatRunId &&
@@ -177,21 +189,19 @@ export async function refreshNativePendingInputs(
         })
       )
         view.suppressedOptimistic = state.pendingUserMessage;
-      const consumed =
-        Array.isArray(latest?.inputReceipts) &&
-        latest.inputReceipts.some(receipt => {
-          const record = asRecord(receipt);
-          return (
-            (record?.state === 'consumed' &&
-              !state.chatMessages.some(
-                message => asRecord(asRecord(message)?.__openclaw)?.id === record.consumedByEventId,
-              )) ||
-            (record?.cancelled === true &&
-              [...items.values()].some(
-                input => input.runId === record.runId && input.state !== 'cancelled',
-              ))
-          );
-        });
+      const consumed = receipts?.some(receipt => {
+        const record = asRecord(receipt);
+        return (
+          (record?.state === 'consumed' &&
+            !state.chatMessages.some(
+              message => asRecord(asRecord(message)?.__openclaw)?.id === record.consumedByEventId,
+            )) ||
+          (record?.cancelled === true &&
+            [...items.values()].some(
+              input => input.runId === record.runId && input.state !== 'cancelled',
+            ))
+        );
+      });
       // Native consumption may remove custody without retaining a consumed
       // receipt. Exact queried absence still needs a canonical history refresh.
       if (consumed || retiredVisibleInput) onConsumed();
@@ -211,6 +221,12 @@ export async function refreshNativePendingInputs(
 export function nativePendingInputReadFailed(state: ChatState): boolean {
   const view = views.get(state);
   return !!view && isScopeCurrent(state, view) && view.failed;
+}
+
+export function hasNativePendingFollowup(state: ChatState): boolean {
+  const view = views.get(state);
+  return !!view && isScopeCurrent(state, view) &&
+    view.items.some(input => input.message.display !== false && isFollowupInput(input));
 }
 
 export function nativeQueuedInputRunId(state: ChatState, inputId: string): string | undefined {

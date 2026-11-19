@@ -34,7 +34,7 @@ export const chatTranslations = {
     coworkQueueWithdraw: '撤回排队输入',
     coworkQueueUnavailable: '当前会话暂时无法接收排队输入，请稍后重试。',
     coworkQueueOutcomeUnknown:
-      '尚未确认排队结果。请保留原文重试，系统会避免重复提交；也可刷新会话查看待处理输入。',
+      '这条消息的接收状态待确认。你可以继续发送新消息。重复提交同一草稿会沿用原请求。',
     coworkQueuePlaceholder: '继续输入，发送后将在当前任务结束后执行…',
     coworkQueueCommandUnsupported: '任务运行时仅支持排队普通消息，请在任务结束后执行命令。',
     messageQuoteContext: '引用的助手消息（用户提供的参考内容）',
@@ -237,7 +237,7 @@ export const chatTranslations = {
     coworkStopFailed: '未能确认任务已停止，请检查引擎连接后重试',
     coworkSendMessage: '发送消息',
     coworkSendOutcomeUnknown:
-      '尚未确认消息是否已受理，正在查询任务状态。请勿重复发送；如需取消，可点击停止。',
+      '上一条消息的接收状态待确认。你可以继续发送新消息。',
     coworkProgressCardTitle: '任务进度',
     coworkProgressCardCompletedCount: '已完成 {completed}/{total}',
     coworkProgressCardPending: '待处理',
@@ -319,10 +319,12 @@ export const chatTranslations = {
     coworkMinimapUserMessage: '用户消息',
     coworkConnectionInterrupted: '连接已中断，已保留当前可见内容。',
     coworkWaitingModel: '仍在等待响应…',
+    coworkWaitingOutcomeUnconfirmed: '上一轮结果未确认。你可以继续发送新消息。',
     coworkWorkingStarting: '正在处理请求…',
     coworkWorkingQueued: '正在排队…',
     coworkWorkingPreparing: '正在整理上下文…',
     coworkWorkingWaiting: '正在等待响应…',
+    coworkWorkingWaitingContinuation: '等待任务继续…',
     coworkWorkingThinking: '正在思考…',
     coworkWorkingResponding: '正在回复…',
     coworkWorkingTool: '正在使用工具…',
@@ -789,7 +791,7 @@ export const chatTranslations = {
     coworkQueueUnavailable:
       'This conversation cannot accept queued input right now. Please try again later.',
     coworkQueueOutcomeUnknown:
-      'Queue admission is not confirmed. Retry the unchanged message to avoid duplicates, or refresh the conversation to check pending inputs.',
+      'We’re checking whether this message was received. You can send a new message. Submitting the same draft reuses the original request.',
     coworkQueuePlaceholder: 'Type a follow-up to run after the current task…',
     coworkQueueCommandUnsupported:
       'Only regular messages can be queued while a task is running. Run commands after the task ends.',
@@ -1006,7 +1008,7 @@ export const chatTranslations = {
     coworkStopFailed: 'Could not confirm the task stopped. Check the engine connection and retry.',
     coworkSendMessage: 'Send message',
     coworkSendOutcomeUnknown:
-      'Message acceptance is not confirmed. Checking task status. Avoid sending again; use Stop to cancel.',
+      'We’re checking whether the previous message was received. You can send a new message.',
     coworkProgressCardTitle: 'Task progress',
     coworkProgressCardCompletedCount: '{completed}/{total} completed',
     coworkProgressCardPending: 'Pending',
@@ -1088,10 +1090,12 @@ export const chatTranslations = {
     coworkMinimapUserMessage: 'User message',
     coworkConnectionInterrupted: 'Connection interrupted. Visible work was preserved.',
     coworkWaitingModel: 'Still waiting for a response…',
+    coworkWaitingOutcomeUnconfirmed: 'The previous result is unconfirmed. You can send a new message.',
     coworkWorkingStarting: 'Processing your request…',
     coworkWorkingQueued: 'Queued…',
     coworkWorkingPreparing: 'Preparing context…',
     coworkWorkingWaiting: 'Waiting for a response…',
+    coworkWorkingWaitingContinuation: 'Waiting for the task to continue…',
     coworkWorkingThinking: 'Thinking…',
     coworkWorkingResponding: 'Responding…',
     coworkWorkingTool: 'Using tools…',

@@ -109,7 +109,7 @@ test.each(['send', 'queue', 'rejected', 'unconfirmed', 'navigate', 'return', 'di
     if (outcome === 'send' || outcome === 'queue') {
       await waitFor(() => expect(outcome === 'queue' ? onQueue : onSubmit).toHaveBeenCalledOnce());
       expect((outcome === 'queue' ? onQueue : onSubmit).mock.calls[0][0]).toBe('Captured draft');
-      if (outcome === 'send') expect(onSubmit.mock.calls[0][5]).toEqual({ startedAt: 10_000 });
+      if (outcome === 'send') expect(onSubmit.mock.calls[0][5]).toMatchObject({ startedAt: 10_000 });
     } else {
       const contextKey = `${sessionId}${String.fromCharCode(0)}main`;
       await waitFor(() => expect(store.getState().cowork.pendingModelSelectionTaskIds[contextKey])[

@@ -1062,6 +1062,10 @@ export function handleClose(this: ChatControllerSessionContext): void {
   this.state.historyReadFailed = false;
   this.connectionInitializationSeq += 1;
   this.historyPagingGeneration += 1;
+  if (!this.state.chatSending && this.state.runActivity?.yielded) this.clearRunActivity();
+  for (const cached of this.liveStateBySession.values()) {
+    if (!cached.chatSending && cached.runActivity?.yielded) cached.runActivity = null;
+  }
   for (const runId of this.pendingSideChats.keys()) {
     this.publishSideChatFailure(runId);
     this.retainSideChatTombstone(runId);

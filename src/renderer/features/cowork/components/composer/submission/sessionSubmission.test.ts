@@ -1,11 +1,46 @@
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   canClearSubmittedDraft,
   createSessionSubmission,
+  hasAcceptedSubmissionSuccessor,
   SESSION_STOP_WAIT_MS,
   stopSessionSubmission,
 } from './sessionSubmission';
+
+describe('superseded unknown submission', () => {
+  const previous: SessionRunTiming = {
+    id: 'receipt-a', sessionId: 'session', clientTurnId: 'run-a', rootRunId: 'run-b',
+    state: 'running', startedAt: 100, acceptedAt: 110,
+  };
+  const latest: SessionRunTiming = {
+    ...previous, id: 'receipt-c', clientTurnId: 'recovered-run-c', rootRunId: 'run-c',
+    startedAt: 120, acceptedAt: 125,
+  };
+  const pending = () => Object.assign(createSessionSubmission(), {
+    receiptId: previous.id, runId: previous.clientTurnId, unknown: true, unknownMarked: true,
+  });
+
+  it('allows retiring an accepted input guard when Main has admitted a distinct later receipt', () => {
+    const operation = pending();
+    expect(hasAcceptedSubmissionSuccessor(operation, previous, latest)).toBe(true);
+    expect(operation.unknown).toBe(true);
+  });
+
+  it('preserves the guard if the previous input or newer receipt is still unconfirmed', () => {
+    const operation = pending();
+    expect(hasAcceptedSubmissionSuccessor(operation, { ...previous, acceptedAt: undefined }, latest)).toBe(false);
+    expect(hasAcceptedSubmissionSuccessor(operation, previous, { ...latest, acceptedAt: undefined })).toBe(false);
+    expect(hasAcceptedSubmissionSuccessor(operation, previous, { ...latest, startedAt: previous.startedAt })).toBe(false);
+  });
+
+  it('preserves the older cancellation fence even with a later accepted receipt', () => {
+    const operation = pending();
+    operation.cancelled = true;
+    expect(hasAcceptedSubmissionSuccessor(operation, previous, latest)).toBe(false);
+  });
+});
 
 describe('session submission cancellation', () => {
   it('releases the stop control for hung admission while fencing and cancelling a late ACK', async () => {
@@ -96,6 +131,15 @@ describe('session submission cancellation', () => {
     operation.unknown = true;
     operation.finish();
     expect(await stopSessionSubmission(operation, vi.fn().mockResolvedValue(true))).toBe(false);
+  });
+
+  it('preserves a failed Stop result even for a distinct successor with known native custody', async () => {
+    const operation = createSessionSubmission();
+    operation.unknown = true;
+    operation.runId = 'unknown-predecessor';
+    operation.finish();
+    const stop = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    expect(await stopSessionSubmission(operation, stop, { nativeTargetRunId: 'successor' })).toBe(false);
   });
 
   it('reports failure if the late admitted operation cannot be stopped', async () => {

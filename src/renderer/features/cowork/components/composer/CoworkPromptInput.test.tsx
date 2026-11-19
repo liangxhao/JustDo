@@ -6,6 +6,7 @@ import { flushSync } from 'react-dom';
 import { Provider, useSelector } from 'react-redux';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { addDraftAttachment } from '@/features/cowork/coworkSlice';
 import { setAvailableModels, setSelectedModel } from '@/features/models/modelSlice';
 import type { AppMode } from '@/features/plugins/app/browserRegistry';
 import type { RealtimeVoiceViewState } from '@/features/speech/realtime/realtimeVoiceController';
@@ -567,6 +568,74 @@ function deferredSessionState() {
   });
   return { promise, resolve };
 }
+
+test('keeps a retyped draft when the cleared submission is accepted late', async () => {
+  store.dispatch(setAvailableModels([{ id: 'draft-lifetime-model', name: 'Model' }]));
+  vi.stubGlobal('electron', {
+    extensions: { list: vi.fn().mockResolvedValue({ success: true, extensions: [] }), onChanged: () => () => {} },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  let accept!: (accepted: boolean) => void;
+  const pending = new Promise<boolean>(resolve => { accept = resolve; });
+  const onSubmit = vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(true);
+  render(
+    <Provider store={store}>
+      <CoworkPromptInput sessionId="temp-draft-lifetime" onSubmit={onSubmit} />
+    </Provider>,
+  );
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement;
+  fireEvent.change(input, { target: { value: 'Send this' } });
+  fireEvent.click(send);
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+
+  fireEvent.change(input, { target: { value: '' } });
+  fireEvent.change(input, { target: { value: 'Send this' } });
+  await act(async () => { accept(true); });
+
+  expect(input.value).toBe('Send this');
+  await waitFor(() => expect(send.disabled).toBe(false));
+  fireEvent.click(send);
+  await waitFor(() => expect(input.value).toBe(''));
+  expect(onSubmit).toHaveBeenCalledTimes(2);
+});
+
+test('keeps a new draft when audio staging finishes for a discarded one', async () => {
+  store.dispatch(setAvailableModels([{ id: 'audio-draft-model', name: 'Model' }]));
+  const sessionId = 'temp-discarded-audio';
+  store.dispatch(addDraftAttachment({
+    draftKey: sessionId, attachment: { path: 'E:/外部/录音.wav', name: '录音.wav' },
+  }));
+  let finishStaging!: (result: { success: true; path: string }) => void;
+  const staging = new Promise<{ success: true; path: string }>(resolve => { finishStaging = resolve; });
+  const stageAttachment = vi.fn().mockReturnValue(staging);
+  vi.stubGlobal('electron', {
+    extensions: { list: vi.fn().mockResolvedValue({ success: true, extensions: [] }), onChanged: () => () => {} },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }), stageAttachment },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const onSubmit = vi.fn().mockResolvedValue(true);
+  render(
+    <Provider store={store}>
+      <CoworkPromptInput sessionId={sessionId} workingDirectory="E:/项目" onSubmit={onSubmit} />
+    </Provider>,
+  );
+  const input = screen.getByRole('textbox') as HTMLTextAreaElement;
+  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') }) as HTMLButtonElement;
+  fireEvent.change(input, { target: { value: 'Transcribe' } });
+  fireEvent.click(send);
+  await waitFor(() => expect(stageAttachment).toHaveBeenCalledWith('E:/外部/录音.wav', 'E:/项目'));
+
+  act(() => { window.dispatchEvent(new CustomEvent('cowork:focus-input')); });
+  fireEvent.change(input, { target: { value: 'New message' } });
+  await act(async () => { finishStaging({ success: true, path: 'E:/项目/.audio-attachments/录音.wav' }); });
+
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(input.value).toBe('New message');
+  fireEvent.click(send);
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+});
 
 test('waits for engine readiness and retires previous state failures while restarting', async () => {
   store.dispatch(setAvailableModels([{ id: 'state-startup-model', name: 'Model' }]));
@@ -1143,7 +1212,7 @@ test.each(['current', 'draft', 'selection'] as const)(
         epoch: 'test-epoch',
         input: { mode: 'auto', verify: true },
       });
-      expect(args[5]).toEqual({ startedAt: expect.any(Number) });
+      expect(args[5]).toMatchObject({ startedAt: expect.any(Number) });
     } else {
       expect(onSubmit).not.toHaveBeenCalled();
       if (context === 'draft') view.rerender(composer());

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import type { ContentItem } from '../chat-transcript-state';
+import { readMessageFollowingActiveTurn } from '../history/optimistic-history-tail';
 import { type PersistedTimelineItem, projectPersistedTimeline } from './project-history-timeline';
 import type { ActiveTurnTimelineItem, ProcessSummaryTimelineItem, QuestionPresentationTimelineItem } from './project-turn-items';
 import {
@@ -38,6 +39,27 @@ function summary(key: string): ProcessSummaryTimelineItem {
 }
 
 describe('PersistedTimelineRenderCache', () => {
+  test('keeps the previous live reply above a later committed followup and successor reply', () => {
+    const previous = { role: 'user', content: 'Original request', __openclaw: { id: 'original', seq: 1 } };
+    const active = { role: 'assistant', content: 'Delegated result', __openclaw: { id: 'active', seq: 2, runId: 'run-live' } };
+    const following = { role: 'user', content: 'Queued followup',
+      __openclaw: { id: 'following', seq: 3, idempotencyKey: 'justdo-queue-next:user' } };
+    const successor = { role: 'assistant', content: 'Next response', __openclaw: { id: 'successor', seq: 4, runId: 'native-successor' } };
+    const persisted = new PersistedTimelineRenderCache().get(
+      projectPersistedTimeline([previous, following, successor]), {},
+      readMessageFollowingActiveTurn([previous, active, following, successor], 'run-live'),
+    );
+    const timeline = projectIncrementalTimelineView({
+      persisted, activeTimeline: [activeContent('Delegated result', 2)], suppressTrailingAssistantFooter: true,
+    });
+
+    const rows = [...timeline.persistedRows, ...timeline.activeRows, ...(timeline.followingRows ?? [])];
+    expect(rows.map(({item}) => item.kind === 'history-message' ? item.message.content :
+      item.kind === 'content' ? item.item.text : null)).toEqual([
+      'Original request', 'Delegated result', 'Queued followup', 'Next response',
+    ]);
+  });
+
   test.each([false, true])('replaces an unknown historical result with its real native receipt (failure: %s)', failed => {
     const cache = new PersistedTimelineRenderCache();
     const call = {

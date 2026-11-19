@@ -15,6 +15,7 @@ export const runProgressLabelKeys = {
   'preparing-tool': 'coworkWorkingToolReady',
   compacting: 'coworkWorkingCompacting',
   'waiting-model': 'coworkWorkingWaiting',
+  'waiting-continuation': 'coworkWorkingWaitingContinuation',
   thinking: 'coworkWorkingThinking',
   responding: 'coworkWorkingResponding',
   'running-tool': 'coworkWorkingTool',

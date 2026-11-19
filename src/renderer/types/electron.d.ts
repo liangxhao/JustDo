@@ -31,6 +31,8 @@ import type { SessionStorageApi } from '../../shared/openclaw/sessionStorage';
 import type { StorageDirectoryApi } from '../../shared/storage/storageDirectory';
 import type { StorageRelocationApi } from '../../shared/storage/storageRelocation';
 type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRunUnknownInput;
+type UnknownSessionFollowupInput = import('../../shared/cowork/sessionRun').UnknownSessionFollowupInput;
+type UnknownSessionFollowupResult = import('../../shared/cowork/sessionRun').UnknownSessionFollowupResult;
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
@@ -1167,6 +1169,9 @@ interface IElectronAPI {
       snapshot?: SessionRuntimeSnapshot;
       error?: string;
     }>;
+    authorizeUnknownSessionFollowup: (
+      input: UnknownSessionFollowupInput,
+    ) => Promise<UnknownSessionFollowupResult>;
     failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) => Promise<{
       success: boolean;
       snapshot?: SessionRuntimeSnapshot;

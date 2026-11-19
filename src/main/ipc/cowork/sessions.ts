@@ -23,6 +23,8 @@ import {
   type SessionRuntimeSnapshot,
   type SessionRunTiming,
   type SessionRunUnknownInput,
+  type UnknownSessionFollowupInput,
+  type UnknownSessionFollowupResult,
 } from '../../../shared/cowork/sessionRun';
 import { CoworkSessionSearchIpc } from '../../../shared/cowork/sessionSearch';
 import type { CoworkSubagentConversationIdentity } from '../../../shared/cowork/subagentDetails';
@@ -39,6 +41,7 @@ import { ActiveSessionRunError, type CoworkSession, type CoworkStore } from '../
 import type { CoworkEngineRouter } from '../../engine';
 import { isWorkspacePathWithin } from '../../engine/openclaw/runtimeAdapterSupport';
 import type { PermissionModeOperationResult } from '../../openclaw/permissions/sessionPermissionModeCoordinator';
+import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import {
   parseCoworkSessionSearchOptions,
   searchCoworkSessionMessages,
@@ -746,13 +749,14 @@ export const registerCoworkSessionHandlers = ({
         !input ||
         typeof input.sessionId !== 'string' ||
         typeof input.id !== 'string' ||
-        (input.cancelled !== undefined && typeof input.cancelled !== 'boolean')
+        (input.cancelled !== undefined && typeof input.cancelled !== 'boolean') ||
+        (input.requireRunning !== undefined && input.requireRunning !== true)
       ) {
         return { success: false, error: 'Invalid unknown session run input.' };
       }
       const store = getCoworkStore();
       let timing = store.getLatestSessionRun(input.sessionId);
-      if (!timing || timing.id !== input.id) {
+      if (!timing || timing.id !== input.id || (input.requireRunning && timing.state !== 'running')) {
         return { success: false, error: 'The session run is no longer current.' };
       }
       const cancelled =
@@ -790,6 +794,56 @@ export const registerCoworkSessionHandlers = ({
       };
     }
   });
+
+  ipcMain.handle(
+    SessionRunIpc.AuthorizeUnknownFollowup,
+    (event, input: UnknownSessionFollowupInput): UnknownSessionFollowupResult => {
+      if (
+        isAllowedWorkspaceSender?.(event) !== true || !input ||
+        ![input.sessionId, input.id, input.runId, input.sessionKey, input.workspaceRoot]
+          .every(value => typeof value === 'string' && value.trim().length > 0)
+      ) return { success: false };
+
+      const startup = getStartupEngineNotReadyResponse?.();
+      if (startup) return { success: false, error: startup.error };
+
+      const { sessionId } = input;
+      const unknown = unknownAdmissions.get(sessionId);
+      if (
+        (unknown && (unknown.id !== input.id || unknown.runId !== input.runId || unknown.cancelled)) ||
+        stoppingSessions.has(sessionId) || terminalOutcomes.get(sessionId) === 'aborted' ||
+        [...deletingSessionSets].some(ids => ids.has(sessionId))
+      ) return { success: false };
+
+      const plugins = getSessionPlugins?.();
+      const store = getCoworkStore();
+      const session = store.getSession(sessionId);
+      if (
+        !session || session.branchCreationPending || session.external?.readOnly ||
+        (session.agentId && !store.getAgent(session.agentId)?.enabled) ||
+        plugins?.isDeleting(sessionId) || plugins?.isManaged(sessionId)
+      ) return { success: false };
+
+      const nativeKey = session.nativeSessionKey || session.external?.sessionKey ||
+        buildManagedSessionKey(sessionId, session.agentId);
+      if (nativeKey !== input.sessionKey) return { success: false };
+      if (session.cwd !== input.workspaceRoot) {
+        return { success: false, error: t('sessionWorkspaceChanged') };
+      }
+
+      const timing = store.getLatestSessionRun(sessionId);
+      if (timing?.id !== input.id || timing.state !== 'running') {
+        return { success: false };
+      }
+      const originalRunMatches = (timing.rootRunId ?? timing.clientTurnId) === input.runId;
+      if (unknown ? !originalRunMatches : (
+        timing.acceptedAt === undefined || (!originalRunMatches && timing.clientTurnId !== input.runId)
+      )) return { success: false };
+
+      // Yield can confirm admission while the same receipt still tracks native continuation.
+      return { success: true, permissionMode: session.permissionMode };
+    },
+  );
 
   ipcMain.handle('cowork:session:run:bind', (_event, input: { id: string; rootRunId: string }) => {
     try {

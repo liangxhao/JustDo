@@ -173,6 +173,7 @@ export function projectTurnItems(
   waitingStatus: WaitingStatusProjection | null = null,
   activity: RunActivity | null = null,
 ): ActiveTurnTimelineItem[] {
+  const yieldedWaiting = activity?.stage === 'waiting-continuation' && activity.yielded === true;
   const working =
     activity && (!turn || activity.runId === turn.runId)
       ? {
@@ -183,7 +184,7 @@ export function projectTurnItems(
         }
       : {};
   if (!turn) {
-    const pending = isAwaitingTurn
+    const pending = isAwaitingTurn || yieldedWaiting
       ? [{ kind: 'waiting' as const, key: 'waiting:pending-turn', ...working }]
       : [];
     return waitingStatus && !activity
@@ -367,7 +368,7 @@ export function projectTurnItems(
     }
   }
   flushSummary();
-  if (turn.status === 'running' && activity?.runId === turn.runId) {
+  if ((turn.status === 'running' || yieldedWaiting) && activity?.runId === turn.runId) {
     projected.push({ kind: 'waiting', key: `waiting:${turn.runId}`, ...working });
   }
   if (waitingStatus && turn.status === 'running' && !activity) {

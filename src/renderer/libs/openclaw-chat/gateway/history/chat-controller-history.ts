@@ -35,10 +35,18 @@ import {
   isSessionsYieldTool,
 } from '@/libs/openclaw-chat/model/tools/tool-lifecycle';
 import {
+  asToolRecord,
+  isNativeToolResultMessage,
+  isToolCallRecord,
+  readToolCallId,
+  unwrapToolMessage,
+} from '@/libs/openclaw-chat/model/tools/tool-message-adapter';
+import {
   confirmRecoveredToolSequence,
   hydrateToolPrecedingSegments,
 } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
 import { type RunProgressStage } from '@/libs/openclaw-chat/model/turn/run-activity';
+import { readRunningToolActivity } from '@/libs/openclaw-chat/model/turn/run-progress';
 import {
   hydrateGatewayHistoryForDisplay,
   projectGatewayHistoryForDisplay,
@@ -176,7 +184,9 @@ export interface ChatControllerHistoryContext {
     sessionId: string | null,
     requestRunId: string | null,
     sessionInfo: ChatHistorySnapshot['sessionInfo'],
+    requireExactOwner?: boolean,
   ) => void;
+  readonly unconfirmedChatRunId: () => string | null;
   readonly rememberRunModel: (message: unknown, runId?: string | null, terminal?: boolean) => void;
   readonly localCompactionStatusBySession: Map<string, LocalCompactionStatus>;
   readonly deferredHistoryReloadAttempts: Map<string, number>;
@@ -260,6 +270,12 @@ export function hydrateActiveToolItemsFromHistory(
   );
   const authoritativeSegmentsByToolId = precedingSegmentsByToolCallId(activeRunMessages);
   const authoritativeToolResultIds = toolResultCallIds(activeRunMessages);
+  const ownedToolResults = toolResultCallIds(activeRunMessages.filter(value =>
+    readExplicitMessageRunId(value) === activeTurn.runId && readOpenClawMessageSeq(value) !== null &&
+    isNativeToolResultMessage(value),
+  ));
+  const repairsYieldedTurn = activeTurn.status === 'final' && this.state.runActivity?.yielded === true &&
+    this.state.runActivity.runId === activeTurn.runId;
   const ownedImageSequences = new Set(activeRunMessages.flatMap(message => {
     const runId = options.backfillMissingToolsFromAppend
       ? options.committedImageRunId
@@ -269,6 +285,7 @@ export function hydrateActiveToolItemsFromHistory(
   }));
   let changed = false;
   for (const [toolCallId, persistedTool] of persistedTools) {
+    const hasOwnedResult = ownedToolResults.has(toolCallId);
     const persistedImages = persistedTool.presentation?.imageArtifacts;
     const imageArtifacts = authoritativeToolResultIds.has(toolCallId) &&
       persistedImages?.every(image => image.messageSeq !== undefined && ownedImageSequences.has(image.messageSeq))
@@ -279,13 +296,12 @@ export function hydrateActiveToolItemsFromHistory(
       const timestampMatchesActiveTurn =
         persistedTool.startedAt > 0 && persistedTool.startedAt >= activeTurn.startedAt;
       const canBackfillMissingTool =
-        options.backfillMissingToolsFromAppend === true ||
+        hasOwnedResult || options.backfillMissingToolsFromAppend === true ||
         (options.backfillMissingSessionsYield === true && isSessionsYieldTool(persistedTool.name));
       if (
         !canBackfillMissingTool ||
-        activeTurn.status !== 'running' ||
-        !this.state.chatSending ||
-        !timestampMatchesActiveTurn
+        (!(activeTurn.status === 'running' && this.state.chatSending) && !(repairsYieldedTurn && hasOwnedResult)) ||
+        (!hasOwnedResult && !timestampMatchesActiveTurn)
       ) {
         continue;
       }
@@ -329,12 +345,24 @@ export function hydrateActiveToolItemsFromHistory(
       liveTool.input = persistedTool.input;
       changed = true;
     }
-    if (liveTool.output === undefined && persistedTool.output !== undefined) {
+    const canApplyPersistedTerminalStatus =
+      persistedTool.status !== 'running' &&
+      (!isSessionsYieldTool(liveTool.name) ||
+        hasToolResultPayload(persistedTool) ||
+        persistedTool.status !== 'completed');
+    const confirmsYieldedToolResult = hasOwnedResult && canApplyPersistedTerminalStatus &&
+      liveTool.completionInferredAtYield === true;
+    if ((liveTool.output === undefined || confirmsYieldedToolResult) && persistedTool.output !== undefined) {
       liveTool.output = persistedTool.output;
       changed = true;
     }
-    if (liveTool.error === undefined && persistedTool.error !== undefined) {
+    if ((liveTool.error === undefined || confirmsYieldedToolResult) && persistedTool.error !== undefined) {
       liveTool.error = persistedTool.error;
+      changed = true;
+    }
+    const parentToolCallId = persistedTool.presentation?.parentToolCallId;
+    if (hasOwnedResult && parentToolCallId && !liveTool.presentation?.parentToolCallId) {
+      liveTool.presentation = { ...liveTool.presentation, parentToolCallId };
       changed = true;
     }
     if (
@@ -358,11 +386,6 @@ export function hydrateActiveToolItemsFromHistory(
       liveTool.presentation = { ...liveTool.presentation, imageArtifacts };
       changed = true;
     }
-    const canApplyPersistedTerminalStatus =
-      persistedTool.status !== 'running' &&
-      (!isSessionsYieldTool(liveTool.name) ||
-        hasToolResultPayload(persistedTool) ||
-        persistedTool.status !== 'completed');
     if (liveTool.agentSequenceUnconfirmed === true && authoritativeToolResultIds.has(toolCallId)) {
       const completedAt = persistedTool.updatedAt || persistedTool.startedAt;
       if (liveTool.historyCompletedAt !== completedAt) {
@@ -383,8 +406,9 @@ export function hydrateActiveToolItemsFromHistory(
           'history',
         ) || changed;
     }
-    if (liveTool.status === 'running' && canApplyPersistedTerminalStatus) {
+    if (confirmsYieldedToolResult || (liveTool.status === 'running' && canApplyPersistedTerminalStatus)) {
       liveTool.status = persistedTool.status;
+      delete liveTool.completionInferredAtYield;
       changed = true;
     }
   }
@@ -392,18 +416,31 @@ export function hydrateActiveToolItemsFromHistory(
   return changed;
 }
 
-export function publishActiveToolHistoryRepair(this: ChatControllerHistoryContext): void {
+export function publishActiveToolHistoryRepair(
+  this: ChatControllerHistoryContext,
+  newerOwnedAppend?: unknown,
+): void {
   const activeTurn = this.state.transcript.activeTurn;
   if (!activeTurn) return;
-  const hasRunningTool = [...activeTurn.toolById.values()].some(tool => tool.status === 'running');
+  const { stage, progress } = readRunningToolActivity(activeTurn.toolById);
   // A background tool repair must not rewind a newer Thinking/Content stage.
-  const currentStage = this.state.runActivity?.stage;
-  const preservesLiveStage =
-    currentStage === 'thinking' || currentStage === 'responding' || currentStage === 'retrying';
-  this.updateRunActivity(
-    activeTurn.runId,
-    hasRunningTool ? 'running-tool' : preservesLiveStage ? currentStage : 'waiting-model',
-  );
+  const activity = this.state.runActivity;
+  const currentStage = activity?.stage;
+  const preservesLiveStage = currentStage === 'thinking' || currentStage === 'responding' ||
+    currentStage === 'retrying' || (stage === 'waiting-continuation' && (
+      currentStage === 'starting-model' || currentStage === 'receiving-model' ||
+      currentStage === 'generating-tool-input' || currentStage === 'preparing-tool'
+    ));
+  const appendedMessage = unwrapToolMessage(newerOwnedAppend);
+  const resumesTentativeYield = !activity?.yielded && progress?.kind === 'tool' &&
+    appendedMessage?.role === 'assistant' && Array.isArray(appendedMessage.content) &&
+    appendedMessage.content.some(value => {
+      const block = asToolRecord(value);
+      return block && isToolCallRecord(block) && readToolCallId(block) === progress.toolCallId;
+    });
+  if (currentStage !== 'waiting-continuation' || resumesTentativeYield) {
+    this.updateRunActivity(activeTurn.runId, stage !== 'running-tool' && preservesLiveStage ? currentStage : stage);
+  }
   // Tool starts and terminal history rows must bypass streaming throttling
   // so the repaired card and its waiting status change appear together.
   this.notifyStream('terminal');
@@ -977,6 +1014,7 @@ export async function loadHistory(
   this.historyLoadsInFlight.add(sessionKey);
   const previousMessages = this.state.chatMessages;
   const requestRunId = this.state.chatRunId;
+  const requestTranscriptRevision = this.state.transcript.revision;
   debugLog('[ChatCtrl] loadHistory START', {
     seq: loadSeq,
     sessionKey,
@@ -1292,10 +1330,26 @@ export async function loadHistory(
       // disappeared; retain it and retry. Explicit reset/session/leaf scope
       // changes take the replacement path above and are still allowed empty.
       this.state.chatLoading = false;
+      if (result?.sessionId === authoritativeSessionId) {
+        this.applyInFlightRunSnapshot(
+          result?.inFlightRun, sessionKey, authoritativeSessionId, requestRunId, result?.sessionInfo, true,
+        );
+        refreshPendingInputs();
+      }
       this.scheduleDeferredHistoryReload(sessionKey, 'empty-history-snapshot');
       this.notify();
       return false;
     }
+
+    // A follow-up can complete before any foreground snapshot exposes it.
+    // When native confirms this unchanged session is idle, read its durable
+    // rows while retaining the original unknown turn and its receipt.
+    const unconfirmedRunId = replacesHistoryProjection || switchesHistoryBranch ? null : this.unconfirmedChatRunId();
+    const restoresIdleUnconfirmedHistory = requestRunId !== null && requestRunId === this.state.chatRunId &&
+      requestRunId === unconfirmedRunId && this.state.transcript.revision === requestTranscriptRevision &&
+      !this.state.compactionInFlight && authoritativeSessionId !== null && result?.sessionId === authoritativeSessionId &&
+      result.sessionInfo?.sessionId === authoritativeSessionId && result.sessionInfo.hasActiveRun === false &&
+      !result.inFlightRun;
 
     // Active-run history is not allowed to replace the live timeline, but it
     // can safely hydrate the same Tool boundary by its stable call ID. This is
@@ -1347,11 +1401,13 @@ export async function loadHistory(
       messages,
       requestStartMessages: replacesHistoryProjection ? [] : previousMessages,
       currentMessages: this.state.chatMessages,
+      unconfirmedRunId,
       activeRun:
         this.state.chatSending &&
         !replacesHistoryProjection &&
         !options.reconcileSuspended &&
-        !catchesUpMissingInitialHistory,
+        !catchesUpMissingInitialHistory &&
+        !restoresIdleUnconfirmedHistory,
       bootstrapActiveRun:
         !this.expectInitialHistory &&
         !this.state.initialHistoryReady &&

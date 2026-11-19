@@ -68,7 +68,10 @@ import {
   type AssistantTurn,
   type AssistantTurnTiming,
 } from '@/libs/openclaw-chat/model/chat-transcript-state';
-import { projectPersistedMessagesForActiveTurn } from '@/libs/openclaw-chat/model/history/optimistic-history-tail';
+import {
+  projectPersistedMessagesForActiveTurn,
+  readMessageFollowingActiveTurn,
+} from '@/libs/openclaw-chat/model/history/optimistic-history-tail';
 import { planImplementationEntryIds } from '@/libs/openclaw-chat/model/history/transcript-identity';
 import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/input/optimistic-user-message';
 import {
@@ -177,6 +180,7 @@ const MERMAID_BUBBLE_MAX_WIDTH = 820;
 const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
 const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 2;
 const MINIMAP_RENDER_LIMIT = 250;
+const FOLLOWING_HISTORY_VIEWPORT = 'following-history';
 const MAX_SPEECH_AUDIO_BASE64_LENGTH = 64 * 1024 * 1024;
 
 interface SearchDomMatch {
@@ -406,6 +410,7 @@ export class JustDoChatElement extends LitElement {
   private projectedActiveHistorySource: GatewayMessage[] | null = null;
   private projectedActiveTurnKey = '';
   private projectedActiveMessages: GatewayMessage[] = [];
+  private projectedFollowingMessageId: string | null = null;
   private peerFilteredHistory = new WeakMap<GatewayMessage[], GatewayMessage[]>();
   private peerPerspectiveHistory = new WeakMap<GatewayMessage[], GatewayMessage[]>();
   private persistedRenderRevision = 0;
@@ -834,6 +839,9 @@ export class JustDoChatElement extends LitElement {
     ) {
       this.projectedActiveHistorySource = activePersistedMessages;
       this.projectedActiveTurnKey = activeTurnHistoryKey;
+      this.projectedFollowingMessageId = sourceActiveTurn
+        ? readMessageFollowingActiveTurn(activePersistedMessages, sourceActiveTurn.runId)
+        : null;
       this.projectedActiveMessages = projectPersistedMessagesForActiveTurn(
         activePersistedMessages,
         sourceActiveTurn,
@@ -945,8 +953,11 @@ export class JustDoChatElement extends LitElement {
         (historyTimeline.length > 0 || activeTimeline.length > 0)
           ? projectActiveTurnFooter(activeFooterTiming)
           : null;
+      const persistedView = this.persistedTimelineRenderCache.get(
+        historyTimeline, processFoldOptions, this.projectedFollowingMessageId,
+      );
       const timelineView = projectIncrementalTimelineView({
-        persisted: this.persistedTimelineRenderCache.get(historyTimeline, processFoldOptions),
+        persisted: persistedView,
         activeTimeline,
         suppressTrailingAssistantFooter: activeTurnFooter !== null || isStreaming,
         foldSettledTurn:
@@ -978,8 +989,9 @@ export class JustDoChatElement extends LitElement {
             },
           } satisfies ActiveTurnTimelineItem)
         : null;
+      this.historyPresentationRows = timelineView.followingRows ? persistedView.rows : timelineView.persistedRows;
       this.resolveOpenProcessSummaryKey(
-        timelineView.persistedRows,
+        this.historyPresentationRows,
         [
           ...(timelineView.seamRow ? [timelineView.seamRow.item] : []),
           ...timelineView.activeRows.map(row => row.item),
@@ -1007,7 +1019,9 @@ export class JustDoChatElement extends LitElement {
             aria-busy=${activeTurn?.status === 'running' || isStreaming || retryBusy}
           >
             <div class="sr-only" role="status" aria-live="polite">
-              ${activeTurn && (activeTurn.status !== 'error' || !hiddenRetryRunIds.has(activeTurn.runId))
+              ${ctrl?.state.runActivity?.stage === 'waiting-continuation'
+                ? i18nService.t('coworkWorkingWaitingContinuation')
+                : activeTurn && (activeTurn.status !== 'error' || !hiddenRetryRunIds.has(activeTurn.runId))
                 ? i18nService.t(this.activeTurnStatusKey(activeTurn)) : nothing}
             </div>
             ${retryStatus ? html`<div role="status" aria-live="polite" data-automatic-error-retry>
@@ -1069,6 +1083,9 @@ export class JustDoChatElement extends LitElement {
                   `
                 : nothing
             }
+            ${timelineView.followingRows
+              ? this.renderPersistedRows(timelineView.followingRows, FOLLOWING_HISTORY_VIEWPORT)
+              : nothing}
             ${
               ctrl
                 ? html`
@@ -1102,6 +1119,7 @@ export class JustDoChatElement extends LitElement {
         historyTimeline,
         processFoldOptions,
       ).rows;
+      this.historyPresentationRows = visibleRows;
       const minimapEntries = projectChatMinimapEntries(historyTimeline);
       this.resolveOpenProcessSummaryKey(
         visibleRows,
@@ -1553,7 +1571,7 @@ export class JustDoChatElement extends LitElement {
     }
     if (element?.closest('[data-jump-to-latest]')) {
       const latest = this.historyPresentationRows[this.historyPresentationRows.length - 1];
-      if (latest) this.historyViewports.get('history')?.reveal(latest.item.key);
+      if (latest) this.revealPersistedHistoryRow(latest.item.key);
       this.chatScrollController.jumpToLatest();
       return;
     }
@@ -2017,8 +2035,8 @@ export class JustDoChatElement extends LitElement {
     let target: HTMLElement | null = null;
     for (let index = 0; index < match.path.length; index += 1) {
       const key = match.path[index];
-      const viewport = index === 0 ? 'history' : `completed:${match.path[index - 1]}`;
-      this.historyViewports.get(viewport)?.reveal(key);
+      if (index === 0) this.revealPersistedHistoryRow(key);
+      else this.historyViewports.get(`completed:${match.path[index - 1]}`)?.reveal(key);
       target = [...this.renderRoot.querySelectorAll<HTMLElement>('.history-viewport-row')]
         .find(row => row.dataset.historyKey === key) ?? null;
       if (!target) return null;
@@ -2412,13 +2430,17 @@ export class JustDoChatElement extends LitElement {
     return read;
   }
 
-  private renderPersistedRows(rows: readonly VisibleTimelineRow[]) {
-    this.historyPresentationRows = rows;
-    const renderedRows = this.historyRenderScheduler.select(
-      rows,
-      this.processSummarySessionIdentity ?? 'direct',
-      Boolean(this.searchQuery.trim()),
-    );
+  private renderPersistedRows(
+    rows: readonly VisibleTimelineRow[],
+    viewport: 'history' | typeof FOLLOWING_HISTORY_VIEWPORT = 'history',
+  ) {
+    const renderedRows = viewport === 'history'
+      ? this.historyRenderScheduler.select(
+          rows,
+          this.processSummarySessionIdentity ?? 'direct',
+          Boolean(this.searchQuery.trim()),
+        )
+      : rows;
     return guard(
       [
         renderedRows,
@@ -2434,7 +2456,7 @@ export class JustDoChatElement extends LitElement {
       ],
       () =>
         this.renderHistoryViewport(
-          'history',
+          viewport,
           renderedRows,
           row => row.item.key,
           row => {
@@ -2474,7 +2496,8 @@ export class JustDoChatElement extends LitElement {
       host: this,
       scope: JSON.stringify([this.processSummarySessionIdentity ?? 'direct',
         this._controller?.state.client?.generation ?? 0, this.historyOwnerRevision, name]),
-      follow: () => name === 'history' && this.chatScrollController.state.mode === 'follow',
+      follow: () => (name === 'history' || name === FOLLOWING_HISTORY_VIEWPORT) &&
+        this.chatScrollController.state.mode === 'follow',
       defer: () => this.chatScrollController.isDraggingScrollbar,
       beforeCommit: () => {
         this.historyDisclosureState.capture(this.renderRoot);
@@ -2884,15 +2907,20 @@ export class JustDoChatElement extends LitElement {
   private revealHistoryPresentation(matches: (item: VisibleTimelineItem) => boolean): boolean {
     for (const row of this.historyPresentationRows) {
       const item = row.item;
-      if (matches(item)) return this.historyViewports.get('history')?.reveal(item.key) ?? false;
+      if (matches(item)) return this.revealPersistedHistoryRow(item.key);
       if (item.kind !== 'completed-process') continue;
       const child = item.items.find(matches);
       if (!child) continue;
-      this.historyViewports.get('history')?.reveal(item.key);
+      this.revealPersistedHistoryRow(item.key);
       materializeDisclosureContents(this.renderRoot);
       return this.historyViewports.get(`completed:${item.key}`)?.reveal(child.key) ?? false;
     }
     return false;
+  }
+
+  private revealPersistedHistoryRow(key: string): boolean {
+    return this.historyViewports.get('history')?.reveal(key) === true ||
+      this.historyViewports.get(FOLLOWING_HISTORY_VIEWPORT)?.reveal(key) === true;
   }
 
   private readonly handleMinimapScroll = (): void => {

@@ -1,35 +1,106 @@
 import { afterEach, expect, test, vi } from 'vitest';
 
 import { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
+import {
+  bindChatInputAdmissionOwner,
+  fingerprintChatInput,
+  recoverQueuedInputsFromMessages,
+  rememberDirectInput,
+} from '@/libs/openclaw-chat/gateway/input/chat-queued-input';
 
 import {
   bindSessionSubmissionRun,
   createSessionSubmission,
+  readRetainedDirectSubmission,
   stopSessionSubmission,
 } from './sessionSubmission';
 
 afterEach(() => vi.useRealTimers());
 
-test('repeats session stop after an in-flight native queue admission is acknowledged', async () => {
+test.each([false, true])('recognizes the original audio input after remount until its draft is discarded (%s)', async discarded => {
+  const owner = {};
+  let draftCurrent = true;
+  const previousController = new ChatController();
+  const controller = new ChatController();
+  bindChatInputAdmissionOwner(previousController.state, owner);
+  bindChatInputAdmissionOwner(controller.state, owner);
+  const request = vi.fn(async (_method: string, params: { idempotencyKey: string; message: string }) =>
+    ({ status: 'started', runId: params.idempotencyKey }));
+  Object.assign(controller.state, {
+    sessionKey: 'session-a', currentSessionId: 'native-a', connected: true, client: { request },
+  });
+  vi.spyOn(controller, 'loadHistory').mockResolvedValue(true);
+  const audio = 'MEDIA:E:/项目/.audio-attachments/录音.mp3';
+  const draft = `Transcribe\n\n${audio}`;
+  const operation = Object.assign(createSessionSubmission(() => draftCurrent), {
+    sessionKey: 'session-a', receiptId: 'receipt-a', runId: 'direct-a', unknown: true,
+    unknownInput: {
+      fingerprint: await fingerprintChatInput(draft, []), nativeSessionId: 'native-a', workspaceRoot: 'E:/项目',
+    },
+  });
+  const retained = readRetainedDirectSubmission(operation, {
+    id: 'receipt-a', sessionId: 'product-a', clientTurnId: 'direct-a', rootRunId: 'other-run',
+    startedAt: 10, acceptedAt: 11, endedAt: 12, state: 'completed',
+  })!;
+  rememberDirectInput(previousController.state, retained);
+
+  const edited = `Summarize\n\n${audio}`;
+  expect(await controller.matchInputForRecovery(edited, [], 'session-a')).toBe(false);
+  await controller.queueMessage(edited);
+  recoverQueuedInputsFromMessages(controller.state, 'native-a', [{
+    role: 'user', content: draft, __openclaw: { id: 'other-row', seq: 1, idempotencyKey: 'other-run:user' },
+  }]);
+  expect(await controller.matchInputForRecovery(draft, [], 'session-a')).toBe(true);
+  await expect(controller.queueMessage(draft)).rejects.toThrow();
+  if (discarded) {
+    draftCurrent = false;
+    expect(controller.matchInputForRecovery(draft, [], 'session-a')).toBeNull();
+  } else {
+    recoverQueuedInputsFromMessages(controller.state, 'native-a', [{
+      role: 'user', content: draft, __openclaw: { id: 'first-row', seq: 2, idempotencyKey: 'direct-a:user' },
+    }]);
+  }
+  await controller.queueMessage(draft);
+  expect(request.mock.calls.map(([, params]) => params.message)).toEqual(discarded ? [edited, draft] : [edited]);
+  expect(controller.matchInputForRecovery(draft, [], 'session-a')).toBeNull();
+});
+
+test.each([false, true])('repeats Stop after native followup settles (older admission unknown=%s)', async hasUnknownPredecessor => {
   vi.useFakeTimers();
   const controller = new ChatController();
   let acknowledge!: (result: unknown) => void;
+  let reportRunId!: (runId: string) => void;
+  const requestIssued = new Promise<string>(resolve => { reportRunId = resolve; });
   Object.assign(controller.state, {
     sessionKey: 'session-a', currentSessionId: 'native-a', connected: true,
     chatRunId: 'active-run', chatSending: true,
-    client: { request: vi.fn(() => new Promise(resolve => { acknowledge = resolve; })) },
+    client: { request: vi.fn((_method: string, params: { idempotencyKey: string }) => new Promise(resolve => {
+      acknowledge = resolve;
+      reportRunId(params.idempotencyKey);
+    })) },
   });
   vi.spyOn(controller, 'loadHistory').mockResolvedValue(true);
   const operation = createSessionSubmission();
   const sending = controller.queueMessage('next').finally(operation.finish);
+  const runId = await requestIssued;
+  const predecessor = hasUnknownPredecessor ? createSessionSubmission() : undefined;
+  if (predecessor) {
+    predecessor.unknown = true;
+    predecessor.runId = 'unconfirmed-predecessor';
+    predecessor.finish();
+  }
   const stop = vi.fn().mockResolvedValue(true);
-  const stopping = stopSessionSubmission(operation, stop);
+  const stopping = stopSessionSubmission(predecessor ?? operation, stop, {
+    pendingFollowup: predecessor ? operation.settled : undefined,
+    nativeTargetRunId: 'active-run',
+  });
   await Promise.resolve();
   expect(stop).toHaveBeenCalledTimes(1);
-  expect(operation.stopping).toBe(true);
-  acknowledge({ status: 'started' });
+  expect((predecessor ?? operation).stopping).toBe(true);
+  acknowledge({ status: 'started', runId });
   await sending;
   expect(await stopping).toBe(true);
+  if (predecessor) expect(predecessor.unknown).toBe(true);
   expect(stop).toHaveBeenCalledTimes(2);
   expect(controller.state.chatRunId).toBe('active-run');
 });

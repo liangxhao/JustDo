@@ -89,6 +89,7 @@ import { COMPOSER_FRAME_CLASS } from '@/features/cowork/components/composer/draf
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/selection/agentModelSelection';
 import { captureHomeComposerModelRef } from '@/features/cowork/components/composer/selection/homeModelSelection';
 import {
+  captureComposerDraftLifetime,
   type ComposerSubmissionMetadata,
   resolveComposerSubmissionStartedAt,
 } from '@/features/cowork/components/composer/submission/composerSubmissionTiming';
@@ -208,6 +209,7 @@ import type {
   RewindEditorDraft,
 } from '@/libs/openclaw-chat/gateway/chat-controller';
 import type { QueuedInputSnapshot } from '@/libs/openclaw-chat/gateway/input/chat-pending-inputs';
+import { fingerprintChatInput } from '@/libs/openclaw-chat/gateway/input/chat-queued-input';
 import type {
   SessionSummaryResources,
   SummaryResource,
@@ -236,6 +238,8 @@ import {
   bindSessionSubmissionRun,
   createSessionSubmission,
   getSessionStopOperationKey,
+  hasAcceptedSubmissionSuccessor,
+  readRetainedDirectSubmission,
   type SessionSubmission,
   stopSessionSubmission,
 } from './composer/submission/sessionSubmission';
@@ -600,6 +604,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     setHistoryReadiness({ sessionKey, ready });
   }, []);
   const pendingMessageSubmissionsRef = useRef(new Map<string, SessionSubmission>());
+  const pendingFollowupSubmissionsRef = useRef(new Map<string, SessionSubmission>());
+  const hasPendingMessageSubmission = (sessionId: string) =>
+    pendingMessageSubmissionsRef.current.has(sessionId) || pendingFollowupSubmissionsRef.current.has(sessionId);
   // Buffer for pending user message when JustDoChatWrapper isn't mounted yet
   const pendingPromptRef = useRef<string | null>(null);
   const pendingSendMotionRef = useRef<SendMotionOrigin | undefined>(undefined);
@@ -924,11 +931,19 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       cancelAnimationFrame(frame);
     };
   }, [currentSessionId, pendingSourceReveal]);
-  useEffect(() => {
+  const reconcileUnknownSubmissions = useCallback((runTimings: typeof sessionRunTimings) => {
     for (const [sessionId, operation] of pendingMessageSubmissionsRef.current) {
       if (!operation.unknownMarked) continue;
-      const timing = sessionRunTimings[sessionId]?.find(run => run.id === operation.receiptId);
-      if (timing && timing.state !== 'running') {
+      const timings = runTimings[sessionId];
+      const timing = timings?.find(run => run.id === operation.receiptId);
+      if (!timing) continue;
+      const latest = timings?.[timings.length - 1];
+      if (timing.state === 'running' && !hasAcceptedSubmissionSuccessor(operation, timing, latest)) continue;
+      const input = readRetainedDirectSubmission(operation, timing);
+      if (input && !chatWrapperRef.current?.rememberDirectInput(input)) continue;
+      if (timing.state === 'running') {
+        pendingMessageSubmissionsRef.current.delete(sessionId);
+      } else {
         if (operation.sessionKey && operation.runId) {
           chatWrapperRef.current?.settleConfirmedRun(
             operation.sessionKey,
@@ -940,7 +955,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         if (!operation.stopping) pendingMessageSubmissionsRef.current.delete(sessionId);
       }
     }
-  }, [sessionRunTimings]);
+  }, []);
+  useEffect(() => {
+    reconcileUnknownSubmissions(sessionRunTimings);
+  }, [historyReadiness, reconcileUnknownSubmissions, sessionRunTimings]);
   const isOpenClawEngine = useSelector(selectIsOpenClawEngine);
   const engineReadiness = useEngineReadiness();
   const isEngineReady = !isOpenClawEngine || engineReadiness.ready;
@@ -1019,7 +1037,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       : canonicalGatewaySessionKey;
   const currentGatewaySessionKeyRef = useRef(currentGatewaySessionKey);
   currentGatewaySessionKeyRef.current = currentGatewaySessionKey;
-  const { progress: goalRunProgress, onActivityChange } =
+  const { progress: goalRunProgress, nativeForegroundRunId, onActivityChange } =
     useSessionRunProgress(currentGatewaySessionKey);
   const summaryNavigationScope = useRef({ sessionKey: currentGatewaySessionKey, generation: 0 });
   if (summaryNavigationScope.current.sessionKey !== currentGatewaySessionKey) {
@@ -1164,13 +1182,14 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       resolveStartSettled = resolve;
     });
     let cancelledStartStopped = false;
-    pendingStartRef.current = {
+    const pendingStart: NonNullable<typeof pendingStartRef.current> = {
       requestId,
       worktree,
       cancelled: false,
       cancellationAction: null,
       settled,
     };
+    pendingStartRef.current = pendingStart;
     const isPendingStartCancelled = () => {
       const pending = pendingStartRef.current;
       return !pending || pending.requestId !== requestId || pending.cancelled;
@@ -1313,6 +1332,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         dispatch(clearActiveSkills());
       }
 
+      let unconfirmedInitialSessionId: string | undefined;
       const attemptStart = async (attemptId: string) => {
         if (pendingStartRef.current?.requestId === requestId) {
           pendingStartRef.current.clientTurnId = attemptId;
@@ -1377,9 +1397,67 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           },
                         );
                     }
+                    const originalDraftIsCurrent = submission?.isDraftCurrent;
+                    const canonicalDraftIsCurrent = originalDraftIsCurrent && captureComposerDraftLifetime(request.sessionId);
                     return chatWrapperRef.current!.dispatchInitialTurn(
                       request.params,
                       () => isPendingStartCancelled() || isTransportCancelled(),
+                      nativeSessionId => {
+                        unconfirmedInitialSessionId = request.sessionId;
+                        if (prompt.trimStart().startsWith('/') || readAppInput(gatewayPrompt ?? prompt) ||
+                          pendingMessageSubmissionsRef.current.has(request.sessionId)) return;
+                        const operation = createSessionSubmission(originalDraftIsCurrent && canonicalDraftIsCurrent
+                          ? () => originalDraftIsCurrent() && canonicalDraftIsCurrent()
+                          : undefined);
+                        operation.sessionKey = request.sessionKey;
+                        operation.runId = attemptId;
+                        operation.unknown = true;
+                        operation.finish();
+                        pendingMessageSubmissionsRef.current.set(request.sessionId, operation);
+                        const reconcileSettled = (timing: SessionRunTiming) => {
+                          operation.cancelled ||= pendingStart.cancelled || isTransportCancelled();
+                          operation.unknownMarked = true;
+                          reconcileUnknownSubmissions({ [request.sessionId]: [timing] });
+                        };
+                        void (async () => {
+                          const [runs, session, fingerprint] = await Promise.all([
+                            window.electron.cowork.listSessionRuns(request.sessionId),
+                            window.electron.cowork.getSession(request.sessionId),
+                            fingerprintChatInput(gatewayPrompt ?? prompt, attachments ?? []),
+                          ]);
+                          const timing = runs.timings?.find(run => run.clientTurnId === attemptId);
+                          if (!timing || !session.session || pendingMessageSubmissionsRef.current.get(request.sessionId) !== operation) return;
+                          operation.receiptId = timing.id;
+                          operation.unknownInput = { fingerprint, nativeSessionId, workspaceRoot: session.session.cwd };
+                          if (timing.state !== 'running') {
+                            reconcileSettled(timing);
+                            return;
+                          }
+                          await coworkService.markSessionRunUnknown({
+                            sessionId: request.sessionId,
+                            id: timing.id,
+                            cancelled: operation.cancelled || pendingStart.cancelled || isTransportCancelled(),
+                            requireRunning: true,
+                          });
+                          operation.unknownMarked = true;
+                          reconcileUnknownSubmissions(selectSessionRunTimings(store.getState()));
+                        })().catch(async () => {
+                          // The running-only registration may lose a race to native settlement.
+                          if (!operation.receiptId || !operation.unknownInput) return;
+                          const result = await window.electron.cowork.listSessionRuns(request.sessionId)
+                            .catch(() => null);
+                          const timing = result?.timings?.find(run =>
+                            run.id === operation.receiptId && run.state !== 'running',
+                          );
+                          if (timing && pendingMessageSubmissionsRef.current.get(request.sessionId) === operation) {
+                            reconcileSettled(timing);
+                          }
+                        }).finally(() => {
+                          if (!operation.unknownMarked && pendingMessageSubmissionsRef.current.get(request.sessionId) === operation) {
+                            pendingMessageSubmissionsRef.current.delete(request.sessionId);
+                          }
+                        });
+                      },
                     );
                   }
                   await new Promise(resolve => setTimeout(resolve, 30));
@@ -1469,6 +1547,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           pendingStartRef.current?.requestId === requestId
             ? (pendingStartRef.current.canonicalSessionId ?? tempSessionId)
             : tempSessionId;
+        if (!startCancelled && unconfirmedInitialSessionId === failedSessionId) return false;
         const selected = store.getState().cowork.currentSession;
         const failedSessionKey =
           selected?.id === failedSessionId
@@ -1557,8 +1636,10 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         finishWorktreeInitialCommit(false);
       // Main knows the canonical session before chat.send acknowledges it. Send
       // cancellation by operation identity even if that acknowledgement is lost.
-      if (!pendingStart.clientTurnId) return pendingStart.settled;
-      return coworkService.cancelSessionStart(pendingStart.clientTurnId);
+      if (!currentSession || !pendingMessageSubmissionsRef.current.get(currentSession.id)?.unknownMarked) {
+        if (!pendingStart.clientTurnId) return pendingStart.settled;
+        return coworkService.cancelSessionStart(pendingStart.clientTurnId);
+      }
     }
     if (!currentSession) return false;
     const targetSessionKey = currentGatewaySessionKey;
@@ -1569,24 +1650,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       targetSendingRunId ??
       (timing?.state === 'running' ? (timing.rootRunId ?? timing.clientTurnId) : null);
     const pendingSubmission = pendingMessageSubmissionsRef.current.get(currentSession.id);
-    if (pendingSubmission?.unknown && pendingSubmission.receiptId) {
-      pendingSubmission.cancelled = true;
-      // Persist cancellation intent without delaying the actual native abort.
-      // A late unknown-admission report is fenced by the Main stop handler too.
-      void coworkService
-        .markSessionRunUnknown({
-          sessionId: currentSession.id,
-          id: pendingSubmission.receiptId,
-          cancelled: true,
-        })
-        .then(() => {
-          pendingSubmission.unknownMarked = true;
-        })
-        .catch(() => {
-          // Keep the operation unknown and retryable if persistence is unavailable.
-        });
-    }
-    const stopping = stopSessionSubmission(pendingSubmission, async () => {
+    const pendingFollowup = pendingFollowupSubmissionsRef.current.get(currentSession.id);
+    const targetSubmission = pendingSubmission?.unknown && targetSendingRunId &&
+      pendingSubmission.runId !== targetSendingRunId ? undefined : pendingSubmission;
+    const nativeTargetRunId = targetSendingRunId === nativeForegroundRunId
+      ? targetSendingRunId ?? undefined : undefined;
+    const stopOwner = pendingSubmission ?? pendingFollowup;
+    const additionalFollowup = pendingSubmission ? pendingFollowup : undefined;
+    if (additionalFollowup) additionalFollowup.cancelled = true;
+    const stopping = stopSessionSubmission(stopOwner, async () => {
       const results = await Promise.allSettled([
         coworkService.stopSession(currentSession.id),
         targetSessionKey
@@ -1598,10 +1670,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         results[0].value === true &&
         results[1].status === 'fulfilled'
       );
+    }, {
+      pendingFollowup: additionalFollowup?.settled,
+      nativeTargetRunId,
     });
     // The UI has a bounded wait, while admission cancellation can finish later.
     // Retain its fence and apply its eventual receipt even after that UI wait.
-    void (pendingSubmission?.stopCompletion ?? stopping).then(stopped => {
+    void (stopOwner?.stopCompletion ?? stopping).then(stopped => {
+      if (pendingFollowup && pendingFollowupSubmissionsRef.current.get(currentSession.id) === pendingFollowup) {
+        pendingFollowupSubmissionsRef.current.delete(currentSession.id);
+      }
       if (
         pendingSubmission &&
         !pendingSubmission.stopping &&
@@ -1613,7 +1691,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       if (stopped && targetSessionKey) {
         // Admission can bind a canonical run while Stop is waiting. Apply the
         // receipt to that operation only, even after navigating to another chat.
-        const stoppedRunId = pendingSubmission?.runId ?? targetRunId;
+        const stoppedRunId = targetSubmission?.runId ?? targetRunId;
         if (stoppedRunId) {
           chatWrapperRef.current?.settleConfirmedRun(targetSessionKey, stoppedRunId, 'aborted');
         }
@@ -2411,7 +2489,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           return false;
                         if (!(await handleStopSession())) return false;
                         return browserTaskStopped(
-                          () => pendingMessageSubmissionsRef.current.has(sessionKey),
+                          () => hasPendingMessageSubmission(sessionKey),
                           () =>
                             coworkService.getSessionRuntimeStatus(sessionKey, {
                               includeSubagents: true,
@@ -2423,7 +2501,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 }
                 onCheckTaskStopped={() =>
                   browserTaskStopped(
-                    () => pendingMessageSubmissionsRef.current.has(sessionKey),
+                    () => hasPendingMessageSubmission(sessionKey),
                     () =>
                       coworkService.getSessionRuntimeStatus(sessionKey, {
                         includeSubagents: true,
@@ -2496,8 +2574,23 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       prompt: string,
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
+      authorize?: () => Promise<{
+        nativeSessionId: string;
+        permissionMode: Parameters<JustDoChatWrapperRef['queueMessage']>[4];
+      }>,
+      assertCurrent?: () => void,
+      isDraftCurrent?: () => boolean,
     ) => submitCoworkMessage(
-      () => chat.queueMessage(prompt, attachments, gatewayPrompt, sessionKey),
+      async () => {
+        if (authorize) {
+          const { nativeSessionId, permissionMode } = await authorize();
+          return chat.queueMessage(prompt, attachments, gatewayPrompt, sessionKey, permissionMode, nativeSessionId, assertCurrent, isDraftCurrent);
+        }
+        const selected = store.getState().cowork.currentSession;
+        const permissionMode = selected?.id === currentSession.id
+          ? selected.permissionMode : currentSession.permissionMode;
+        return chat.queueMessage(prompt, attachments, gatewayPrompt, sessionKey, permissionMode, undefined, assertCurrent, isDraftCurrent);
+      },
       error => {
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
@@ -2511,6 +2604,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       prompt: string,
       attachments?: CoworkAttachmentPayload[],
       gatewayPrompt?: string,
+      _worktree?: boolean,
+      _pluginSubmission?: AppSubmission,
+      composerSubmission?: ComposerSubmissionMetadata,
     ) => {
       if (
         goalPresence.sessionId !== currentSession.id ||
@@ -2527,18 +2623,52 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const sessionKey = currentGatewaySessionKey;
       const chat = chatWrapperRef.current;
-      if (!sessionKey || !chat || pendingMessageSubmissionsRef.current.has(currentSession.id))
-        return false;
+      const sessionId = currentSession.id;
+      if (!sessionKey || !chat || pendingFollowupSubmissionsRef.current.has(sessionId)) return false;
+      const original = pendingMessageSubmissionsRef.current.get(sessionId);
+      const unresolved = original?.unknownInput;
+      const originalId = original?.receiptId;
+      const originalRunId = original?.runId;
+      if (original && (
+        !original.unknown || !original.unknownMarked || original.cancelled || original.stopping ||
+        original.sessionKey !== sessionKey || !unresolved || !originalId || !originalRunId ||
+        !composerSubmission?.canQueueFollowup?.() || chat.hasCanvasPreparations() ||
+        readAppInput(gatewayPrompt ?? prompt) !== undefined
+      )) return false;
       const operation = createSessionSubmission();
       operation.sessionKey = sessionKey;
-      pendingMessageSubmissionsRef.current.set(currentSession.id, operation);
-      return submitFollowup(chat, sessionKey, prompt, attachments, gatewayPrompt).finally(() => {
+      const submissions = original ? pendingFollowupSubmissionsRef.current : pendingMessageSubmissionsRef.current;
+      submissions.set(sessionId, operation);
+      const assertCurrent = () => {
+        if (
+          operation.cancelled || original?.cancelled || original?.stopping ||
+          currentSessionIdRef.current !== sessionId || currentGatewaySessionKeyRef.current !== sessionKey ||
+          chatWrapperRef.current !== chat || composerSubmission?.canQueueFollowup?.() === false ||
+          (original && chat.hasCanvasPreparations())
+        ) throw new Error(i18nService.t('coworkQueueUnavailable'));
+      };
+      const authorize = original && unresolved && originalId && originalRunId ? async () => {
+        const fingerprint = await fingerprintChatInput(gatewayPrompt ?? prompt, attachments ?? []);
+        assertCurrent();
+        if (fingerprint === unresolved.fingerprint && original.isDraftCurrent?.() !== false) {
+          throw new Error(i18nService.t('coworkSendOutcomeUnknown'));
+        }
+        const receipt = await window.electron.cowork.authorizeUnknownSessionFollowup({
+          sessionId, id: originalId, runId: originalRunId, sessionKey, workspaceRoot: unresolved.workspaceRoot,
+        });
+        assertCurrent();
+        if (!receipt.success) {
+          throw new Error(receipt.error ?? i18nService.t('coworkQueueUnavailable'));
+        }
+        return { nativeSessionId: unresolved.nativeSessionId, permissionMode: receipt.permissionMode };
+      } : undefined;
+      return submitFollowup(chat, sessionKey, prompt, attachments, gatewayPrompt, authorize, assertCurrent, composerSubmission?.isDraftCurrent).finally(() => {
         operation.finish();
         if (
           !operation.stopping &&
-          pendingMessageSubmissionsRef.current.get(currentSession.id) === operation
+          submissions.get(sessionId) === operation
         )
-          pendingMessageSubmissionsRef.current.delete(currentSession.id);
+          submissions.delete(sessionId);
       });
     };
 
@@ -2555,9 +2685,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       if (!ensureOpenClawReadyForSubmit() || pendingStartRef.current?.cancelled) return false;
       const outboundPrompt = gatewayPrompt ?? prompt;
       const explicitPlugin = readAppInput(outboundPrompt) !== undefined;
+      const chat = chatWrapperRef.current;
+      const allowFollowup = !explicitPlugin && composerSubmission?.canQueueFollowup?.() === true;
+      const queue = () => handleQueueMessage(prompt, attachments, gatewayPrompt, undefined, undefined, composerSubmission);
       // The previous run may have finished while a queue acknowledgement was
       // lost. Preserve its idempotency identity even though the composer is idle.
-      if (chatWrapperRef.current?.hasUnconfirmedQueuedInput()) {
+      if (chat?.hasUnconfirmedQueuedInput()) {
         // This exact application suffix is only a restriction hint, not launch
         // authority. A queued native execution has no proven intent lineage yet.
         if (explicitPlugin) {
@@ -2568,13 +2701,24 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           );
           return false;
         }
-        return handleQueueMessage(prompt, attachments, gatewayPrompt);
+        return allowFollowup && !chat.hasCanvasPreparations() ? queue() : false;
       }
       const goalEdit = isGoalEditCommand(outboundPrompt);
       const targetSessionKey = currentGatewaySessionKey;
-      if (!targetSessionKey || pendingMessageSubmissionsRef.current.has(currentSession.id))
-        return false;
-      const operation = createSessionSubmission();
+      if (!targetSessionKey) return false;
+      if (hasPendingMessageSubmission(currentSession.id)) {
+        return allowFollowup ? queue() : false;
+      }
+      if (allowFollowup && chat && !chat.hasCanvasPreparations()) {
+        if (chat.shouldSubmitFollowup(targetSessionKey)) return queue();
+        const recoveredDraft = chat.matchInputForRecovery(outboundPrompt, attachments, targetSessionKey);
+        if (recoveredDraft) {
+          const matchesRecoverableInput = await recoveredDraft;
+          if (!composerSubmission?.canQueueFollowup?.()) return false;
+          if (matchesRecoverableInput || hasPendingMessageSubmission(currentSession.id)) return queue();
+        }
+      }
+      const operation = createSessionSubmission(composerSubmission?.isDraftCurrent);
       operation.sessionKey = targetSessionKey;
       pendingMessageSubmissionsRef.current.set(currentSession.id, operation);
       let requestUnknown = false;
@@ -2617,7 +2761,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             // A prepared canvas is bound to the exact run and requires the direct send path.
             if (chat.hasCanvasPreparations())
               throw new Error(i18nService.t('coworkSessionRuntimeActive'));
-            return submitFollowup(chat, targetSessionKey, prompt, attachments, gatewayPrompt);
+            return submitFollowup(chat, targetSessionKey, prompt, attachments, gatewayPrompt, undefined, () => {
+              ensureSubmissionCurrent();
+              if (!composerSubmission.canQueueFollowup?.() || chat.hasCanvasPreparations()) {
+                throw new Error(i18nService.t('coworkQueueUnavailable'));
+              }
+            }, composerSubmission.isDraftCurrent);
           }
           runTimingId = timing.id;
           operation.receiptId = timing.id;
@@ -2633,10 +2782,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               throw new Error(marked.error || i18nService.t('appPluginSubmitUnavailable'));
             ensureSubmissionCurrent();
           }
+          let dispatchedNativeSessionId: string | null = null;
           await chatWrapper.sendMessage(prompt, attachments, gatewayPrompt, {
             sendMotionOrigin: composerSubmission?.sendMotionOrigin,
             propagateRequestFailure: true,
             expectedSessionKey: targetSessionKey,
+            allowInactivePredecessor: !explicitPlugin && composerSubmission?.canQueueFollowup?.() === true,
             isCancelled: () => {
               try {
                 ensureSubmissionCurrent();
@@ -2654,11 +2805,20 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                 id: timing.id,
                 cancelled: operation.cancelled,
               });
+              if (allowFollowup && dispatchedNativeSessionId) {
+                operation.unknownInput = {
+                  fingerprint: await fingerprintChatInput(outboundPrompt, attachments ?? []),
+                  nativeSessionId: dispatchedNativeSessionId,
+                  workspaceRoot: permission.workspaceRoot ?? currentSession.cwd,
+                };
+              }
               operation.unknownMarked = true;
+              reconcileUnknownSubmissions(selectSessionRunTimings(store.getState()));
             },
             clientTurnId,
-            onRequestIssued: () => {
+            onRequestIssued: nativeSessionId => {
               nativeSendIssued = true;
+              dispatchedNativeSessionId = nativeSessionId;
             },
             onRunBound: async runId => {
               await bindSessionSubmissionRun(operation, runId, () =>
@@ -2712,7 +2872,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       if (currentSessionIdRef.current !== sessionId || currentSession.id !== sessionId)
         return 'failed';
       const stopped = await browserTaskStopped(
-        () => pendingMessageSubmissionsRef.current.has(sessionId),
+        () => hasPendingMessageSubmission(sessionId),
         () =>
           coworkService.getSessionRuntimeStatus(sessionId, {
             includeSubagents: true,
@@ -3433,6 +3593,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             />
             <JustDoChatWrapper
               key="chat-controller"
+              inputAdmissionOwner={pendingMessageSubmissionsRef.current}
               onMcpAppMenuChange={setMcpAppMenu}
               onSummaryResourcesChange={setSummaryResources}
               ref={chatWrapperRef}
@@ -3617,7 +3778,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           currentSession.id,
                           pendingStartRef.current,
                         )}
-                        isStreaming={currentSessionMainRunning}
+                        isStreaming={currentSessionMainRunning || nativeForegroundRunId !== null}
                         automaticRetryActive={automaticErrorRetryActive}
                         allowDraftWhileDisabled={!isEngineReady}
                         disabledMessage={engineUnavailableMessage}
@@ -3834,7 +3995,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                             goalPresence.sessionId !== currentSession.id ||
                             !goalPresence.ready ||
                             goalPresence.hasGoal ||
-                            pendingMessageSubmissionsRef.current.has(currentSession.id) ||
+                            hasPendingMessageSubmission(currentSession.id) ||
                             chatWrapperRef.current?.hasUnconfirmedQueuedInput()
                           )
                             throw new Error('appPluginSubmitUnavailable');
@@ -4048,7 +4209,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           mcpAppReferences.hasRetainedPanels ||
           widgetReferences.hasRetainedPanels ||
           webpageReferences.hasRetainedPanels) ? (
-          <JustDoChatWrapper key="chat-controller" ref={chatWrapperRef} className="hidden" />
+          <JustDoChatWrapper
+            key="chat-controller"
+            ref={chatWrapperRef}
+            className="hidden"
+            inputAdmissionOwner={pendingMessageSubmissionsRef.current}
+          />
         ) : undefined,
       mcpAppMenu: homeApps.menu,
       maximumBrowserTabs,

@@ -11,6 +11,11 @@ const EXTERNAL_BROWSER_CONTEXT_START = 'EXTERNAL_UNTRUSTED_CONTENT';
 const EXTERNAL_BROWSER_CONTEXT_END = 'END_EXTERNAL_UNTRUSTED_CONTENT';
 const EXTERNAL_BROWSER_CONTEXT_SOURCE = 'Source: Browser';
 const EXTERNAL_BROWSER_CONTEXT_ID_PATTERN = '[a-f0-9]{16}';
+const EXTERNAL_BROWSER_CONTEXT_OPEN = `<<<${EXTERNAL_BROWSER_CONTEXT_START} id="`;
+const EXTERNAL_BROWSER_CONTEXT_CLOSE = `\n<<<${EXTERNAL_BROWSER_CONTEXT_END} id="`;
+const EXTERNAL_BROWSER_CONTEXT_PATTERN = new RegExp(
+  `^${EXTERNAL_BROWSER_CONTEXT_OPEN}(${EXTERNAL_BROWSER_CONTEXT_ID_PATTERN})">>>\\n${EXTERNAL_BROWSER_CONTEXT_SOURCE}\\n---\\n`,
+);
 const BROWSER_CONTEXT_LENGTH_PREFIX = 'content-length:';
 const BROWSER_DISPLAY_LENGTH_PREFIX = 'display-metadata-length:';
 
@@ -126,28 +131,52 @@ export function composeBrowserGatewayPrompt(
   return `<<<${EXTERNAL_BROWSER_CONTEXT_START} id="${boundaryId}">>>\n${EXTERNAL_BROWSER_CONTEXT_SOURCE}\n---\n${BROWSER_CONTEXT_LENGTH_PREFIX}${context.length}\n${context}\n<<<${EXTERNAL_BROWSER_CONTEXT_END} id="${boundaryId}">>>\n\n${userText}`;
 }
 
-function parseLengthDelimitedBrowserContext(params: {
-  value: string;
-  contentStart: number;
-  endBoundary: (contextEnd: number) => number | null;
-}): ParsedBrowserAnnotationPrompt | null {
-  const { value, contentStart, endBoundary } = params;
-  if (value.startsWith(BROWSER_CONTEXT_LENGTH_PREFIX, contentStart)) {
-    const headerEnd = value.indexOf('\n', contentStart);
-    if (headerEnd < 0) return null;
-    const lengthText = value.slice(contentStart + BROWSER_CONTEXT_LENGTH_PREFIX.length, headerEnd);
-    if (!/^\d+$/.test(lengthText)) return null;
-    const contextLength = Number(lengthText);
-    if (!Number.isSafeInteger(contextLength)) return null;
-    const end = headerEnd + 1 + contextLength;
-    const userTextStart = endBoundary(end);
-    if (userTextStart === null) return null;
-    // Gateway/history normalization trims trailing whitespace for submissions
-    // without user text. The exact length and matching boundary above still
-    // validate the envelope; EOF after that boundary is a valid empty prompt.
-    if (userTextStart !== value.length && value.slice(userTextStart, userTextStart + 2) !== '\n\n')
-      return null;
-    let context = value.slice(headerEnd + 1, end);
+function readLengthDelimitedBrowserContext(value: string, lengthOffset: number, boundaryId: string) {
+  if (!value.startsWith(BROWSER_CONTEXT_LENGTH_PREFIX, lengthOffset)) return null;
+  const headerEnd = value.indexOf('\n', lengthOffset);
+  if (headerEnd < 0) return null;
+  const lengthText = value.slice(lengthOffset + BROWSER_CONTEXT_LENGTH_PREFIX.length, headerEnd);
+  if (!/^\d+$/.test(lengthText)) return null;
+  const contextLength = Number(lengthText);
+  if (!Number.isSafeInteger(contextLength)) return null;
+  const contextStart = headerEnd + 1;
+  const contextEnd = contextStart + contextLength;
+  const closingBoundary = `${EXTERNAL_BROWSER_CONTEXT_CLOSE}${boundaryId}">>>`;
+  if (!value.startsWith(closingBoundary, contextEnd)) return null;
+  const textOffset = contextEnd + closingBoundary.length;
+  // Gateway history can trim the blank line following an empty user prompt.
+  if (textOffset !== value.length && !value.startsWith('\n\n', textOffset)) return null;
+  return { contextStart, contextEnd, userTextStart: textOffset + 2 };
+}
+
+/** Keep the original delimiters when reusing the native identity of a browser draft. */
+export function readBrowserPromptBoundary(value: string) {
+  const start = EXTERNAL_BROWSER_CONTEXT_PATTERN.exec(value);
+  if (!start?.[1]) return null;
+  const id = start[1];
+  const envelope = readLengthDelimitedBrowserContext(value, start[0].length, id);
+  if (!envelope) return null;
+  const openingOffset = EXTERNAL_BROWSER_CONTEXT_OPEN.length;
+  const closingOffset = envelope.contextEnd + EXTERNAL_BROWSER_CONTEXT_CLOSE.length;
+  return {
+    id,
+    userTextStart: envelope.userTextStart,
+    replace(replacement: string): string {
+      return value.slice(0, openingOffset) + replacement +
+        value.slice(openingOffset + id.length, closingOffset) + replacement +
+        value.slice(closingOffset + id.length);
+    },
+  };
+}
+
+function parseLengthDelimitedBrowserContext(
+  value: string,
+  lengthOffset: number,
+  boundaryId: string,
+): ParsedBrowserAnnotationPrompt | null {
+  const envelope = readLengthDelimitedBrowserContext(value, lengthOffset, boundaryId);
+  if (envelope) {
+    let context = value.slice(envelope.contextStart, envelope.contextEnd);
     let recording: BrowserRecordingDraft | undefined;
     if (context.startsWith('recording-data-length:')) {
       const lineEnd = context.indexOf('\n');
@@ -189,32 +218,20 @@ function parseLengthDelimitedBrowserContext(params: {
       }
     }
     return {
-      userText: value.slice(userTextStart + 2),
+      userText: value.slice(envelope.userTextStart),
       annotations,
       modelContext,
       ...(recording ? { recording } : {}),
     };
   }
-
   return null;
 }
 
 export function parseBrowserAnnotationPrompt(value: string): ParsedBrowserAnnotationPrompt | null {
-  const externalStart = new RegExp(
-    `^<<<${EXTERNAL_BROWSER_CONTEXT_START} id="(${EXTERNAL_BROWSER_CONTEXT_ID_PATTERN})">>>\\n${EXTERNAL_BROWSER_CONTEXT_SOURCE}\\n---\\n`,
-  ).exec(value);
+  const externalStart = EXTERNAL_BROWSER_CONTEXT_PATTERN.exec(value);
   if (externalStart?.[1]) {
     const boundaryId = externalStart[1];
-    const parsed = parseLengthDelimitedBrowserContext({
-      value,
-      contentStart: externalStart[0].length,
-      endBoundary: contextEnd => {
-        const boundary = `\n<<<${EXTERNAL_BROWSER_CONTEXT_END} id="${boundaryId}">>>`;
-        return value.slice(contextEnd, contextEnd + boundary.length) === boundary
-          ? contextEnd + boundary.length
-          : null;
-      },
-    });
+    const parsed = parseLengthDelimitedBrowserContext(value, externalStart[0].length, boundaryId);
     if (parsed) return parsed;
     // Persisted recording-only envelopes can have stale lengths after Gateway
     // text sanitization. Recover only the exact compact-JSON grammar, never by

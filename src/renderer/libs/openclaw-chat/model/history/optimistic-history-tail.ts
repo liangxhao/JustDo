@@ -1,3 +1,5 @@
+import { QUEUED_INPUT_RUN_ID_PREFIX } from '@shared/openclaw/pendingInputs';
+
 import { cleanFailureDisplayText } from '../../pipeline/system-message-display';
 import type { AssistantTurn, ChatTranscriptState } from '../chat-transcript-state';
 import { isTurnCompactionMessage, matchesCompactionHistory } from '../turn/compaction-item';
@@ -84,6 +86,32 @@ export function readActiveTurnMessageRunId(message: unknown): string | null {
     if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
   }
   return null;
+}
+
+/** Anchor live output above a later committed input or successor response. */
+export function readMessageFollowingActiveTurn(messages: readonly unknown[], runId: string): string | null {
+  let lastOwnedSequence = 0;
+  let followingId: string | null = null;
+  for (const message of messages) {
+    const record = asRecord(message);
+    const marker = asRecord(record?.__openclaw);
+    const sequence = marker?.seq;
+    if (typeof marker?.id !== 'string' || typeof sequence !== 'number' ||
+        !Number.isSafeInteger(sequence) || sequence <= 0 || isLocallyOptimisticHistoryTail(message)) continue;
+    const role = messageRole(message);
+    const owner = readActiveTurnMessageRunId(message);
+    if ((role === 'user' || role === 'assistant') && owner === runId) {
+      lastOwnedSequence = sequence;
+      followingId = null;
+    } else if (!followingId && lastOwnedSequence > 0 && sequence > lastOwnedSequence && (
+      (role === 'assistant' && owner !== null) ||
+      (role === 'user' && typeof marker.idempotencyKey === 'string' &&
+        marker.idempotencyKey.startsWith(QUEUED_INPUT_RUN_ID_PREFIX) && marker.idempotencyKey.endsWith(':user'))
+    )) {
+      followingId = marker.id;
+    }
+  }
+  return followingId;
 }
 
 /** Bootstrap the durable prefix without taking ownership of a live run's output. */

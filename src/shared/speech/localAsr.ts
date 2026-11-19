@@ -54,4 +54,10 @@ export const isLocalAudioAttachment = (filePath: string): boolean =>
   LOCAL_AUDIO_ATTACHMENT_EXTENSIONS.some(extension =>
     filePath.toLowerCase().endsWith(`.${extension}`),
   );
-export type StageAudioAttachmentResult = { success: boolean; path?: string; error?: string };
+export type StageAudioAttachmentResult = {
+  success: boolean;
+  path?: string;
+  /** First path for draft comparison when the same file version had to be copied again. */
+  draftPath?: string;
+  error?: string;
+};

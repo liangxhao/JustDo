@@ -129,7 +129,12 @@ import {
   SessionReviewIpc,
   type SessionReviewQuery,
 } from '../../shared/cowork/sessionReview';
-import { SessionRunIpc, type SessionRunUnknownInput } from '../../shared/cowork/sessionRun';
+import {
+  SessionRunIpc,
+  type SessionRunUnknownInput,
+  type UnknownSessionFollowupInput,
+  type UnknownSessionFollowupResult,
+} from '../../shared/cowork/sessionRun';
 import {
   CoworkSessionSearchIpc,
   type CoworkSessionSearchOptions,
@@ -956,6 +961,10 @@ contextBridge.exposeInMainWorld('electron', {
     ...createAutomaticErrorRetryApi(),
     markSessionRunUnknown: (input: SessionRunUnknownInput) =>
       ipcRenderer.invoke(SessionRunIpc.Unknown, input),
+    authorizeUnknownSessionFollowup: (
+      input: UnknownSessionFollowupInput,
+    ): Promise<UnknownSessionFollowupResult> =>
+      ipcRenderer.invoke(SessionRunIpc.AuthorizeUnknownFollowup, input),
     failSessionRun: (input: { sessionId: string; id: string; endedAt: number }) =>
       ipcRenderer.invoke('cowork:session:run:fail', input),
     patchSessionModel: (options: { sessionId: string; model: string; agentId?: string }) =>

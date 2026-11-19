@@ -1,13 +1,16 @@
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugins/host/mainBehaviorParticipants';
-import { SessionRunBeginErrorCode } from '../../../shared/cowork/sessionRun';
+import { SessionRunBeginErrorCode, SessionRunIpc, type SessionRunTiming } from '../../../shared/cowork/sessionRun';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from '../../engine';
 import {
   getSessionRuntimeStatus,
   getSessionRuntimeStatuses,
   invalidateTargetedSessionStatusChecks,
+  isRuntimeSessionRowActive,
+  isRuntimeSessionRowMainActive,
+  runtimeRowString,
   type RuntimeSessionStatusContext,
 } from '../../engine/openclaw/runtimeSessionStatus';
 
@@ -17,6 +20,8 @@ vi.mock('electron', () => ({ ipcMain: { handle: (name: string, handler: (...args
 import { registerCoworkSessionHandlers } from './sessions';
 
 beforeEach(() => handlers.clear());
+
+const workspaceEvent = {};
 
 function fixture(
   getStartupEngineNotReadyResponse?: () => { success: boolean; code: string; error: string } | undefined,
@@ -33,10 +38,19 @@ function fixture(
   const getLatestSessionRun = vi.fn<() => unknown>(() => checkpoint);
   const finishSessionRun = vi.fn();
   const reopenSessionRun = vi.fn(() => ({ ...checkpoint, state: 'running' }));
+  const bindSessionRunRootRun = vi.fn((_id: string, rootRunId: string) => {
+    const current = getLatestSessionRun() as SessionRunTiming;
+    const timing = { ...current, rootRunId, acceptedAt: current.acceptedAt ?? 150 };
+    getLatestSessionRun.mockReturnValue(timing);
+    return timing;
+  });
+  const registerUnknownSessionRun = vi.fn();
+  const stopSession = vi.fn().mockResolvedValue(undefined);
+  const requestGateway = vi.fn();
   const store = {
     getSession: () => source, getAgent: () => ({ enabled: true }),
     getSessionRuns: () => [checkpoint], getLatestSessionRun, beginSessionRun,
-    reopenSessionRun, finishSessionRun,
+    reopenSessionRun, finishSessionRun, bindSessionRunRootRun,
   } as unknown as CoworkStore;
   const native = { key, agentId: 'main', sessionId: 'native-current', lifecycleRevision: 'revision', hasActiveRun: false };
   const request = vi.fn().mockResolvedValue({ session: native });
@@ -50,6 +64,8 @@ function fixture(
     reconcileDisconnectedTurn: vi.fn(async () => {}),
     compactionInFlightSessionIds: new Set(), isSessionActive: () => state.active,
     goalContinuationCoordinator: { getSnapshot: () => undefined },
+    getSessionKeysForSession: () => [key],
+    runtimeRowString, isRuntimeSessionRowMainActive, isRuntimeSessionRowActive,
     // An unrelated publication can invalidate a full roster during pagination.
     // This is a genuine unknown snapshot, never permission to assume idle.
     getRuntimeSessionSnapshot: vi.fn(async () => ({ known: false, sessions: [], hasMore: false })),
@@ -58,19 +74,103 @@ function fixture(
     rootRunIdBySession: new Map(), subagentStatusCache: new Map(),
   } as unknown as RuntimeSessionStatusContext;
   registerCoworkSessionHandlers({ getCoworkStore: () => store,
+    isAllowedWorkspaceSender: event => event === workspaceEvent,
     getStartupEngineNotReadyResponse,
+    requestGateway,
     ...(getSubmissionParticipant ? {
       getSessionPlugins: () => behaviorSessionParticipants(undefined, getSubmissionParticipant()),
     } : {}),
-    getCoworkEngineRouter: () => ({ getSessionRuntimeStatus: (id: string, options: Parameters<typeof getSessionRuntimeStatus>[1]) =>
+    getCoworkEngineRouter: () => ({ registerUnknownSessionRun, stopSession, getSessionRuntimeStatus: (id: string, options: Parameters<typeof getSessionRuntimeStatus>[1]) =>
       getSessionRuntimeStatus.call(context, id, options) }) as CoworkEngineRouter,
     setSessionPermissionMode: vi.fn() });
   return { context, request, native, source, state, beginSessionRun, key, unknownRuns,
-    checkpoint, getLatestSessionRun, finishSessionRun, reopenSessionRun,
+    checkpoint, getLatestSessionRun, finishSessionRun, reopenSessionRun, registerUnknownSessionRun,
+    requestGateway,
     send: (pluginPrompt?: string) => handlers.get('cowork:session:run:begin')!({}, {
       ...next, ...(pluginPrompt ? { pluginPrompt } : {}),
     }) };
 }
+
+test('authorizes a distinct native followup while retaining the tracked unknown primary send', async () => {
+  const f = fixture();
+  const { sessionId, id, clientTurnId: runId } = f.checkpoint;
+  const input = { sessionId, id, runId, sessionKey: f.key, workspaceRoot: f.source.cwd };
+  const authorize = handlers.get(SessionRunIpc.AuthorizeUnknownFollowup)!;
+  const markUnknown = handlers.get(SessionRunIpc.Unknown)!;
+  f.getLatestSessionRun.mockReturnValue({ id, sessionId, clientTurnId: runId, state: 'running', startedAt: 100 });
+
+  expect(await authorize(workspaceEvent, input)).toEqual({ success: false });
+  expect(await markUnknown(workspaceEvent, { sessionId, id })).toMatchObject({ success: true });
+  expect(await authorize(workspaceEvent, input)).toEqual({ success: true, permissionMode: 'ask' });
+  await expect(f.send()).resolves.toMatchObject({ success: false, errorCode: SessionRunBeginErrorCode.RuntimeActive });
+
+  expect(f.registerUnknownSessionRun).toHaveBeenCalledExactlyOnceWith(sessionId, runId, { cancelled: false });
+  expect(f.finishSessionRun).not.toHaveBeenCalled();
+  expect(f.beginSessionRun).not.toHaveBeenCalled();
+  expect(f.request).not.toHaveBeenCalled();
+});
+
+test('rejects unknown followup authorization for another sender, target, or cancelled send', async () => {
+  const f = fixture();
+  const { sessionId, id, clientTurnId: runId } = f.checkpoint;
+  const input = { sessionId, id, runId, sessionKey: f.key, workspaceRoot: f.source.cwd };
+  const authorize = handlers.get(SessionRunIpc.AuthorizeUnknownFollowup)!;
+  const markUnknown = handlers.get(SessionRunIpc.Unknown)!;
+  f.getLatestSessionRun.mockReturnValue({ id, sessionId, clientTurnId: runId, state: 'running', startedAt: 100 });
+  expect(await markUnknown(workspaceEvent, { sessionId, id })).toMatchObject({ success: true });
+
+  expect(await authorize({}, input)).toEqual({ success: false });
+  expect(await authorize(workspaceEvent, { ...input, sessionKey: 'agent:main:another' }))
+    .toEqual({ success: false });
+  expect(await authorize(workspaceEvent, { ...input, runId: 'different-run' })).toEqual({ success: false });
+  expect(await authorize(workspaceEvent, { ...input, workspaceRoot: '/previous-workspace' }))
+    .toMatchObject({ success: false });
+  expect(await markUnknown(workspaceEvent, { sessionId, id, cancelled: true })).toMatchObject({ success: true });
+  expect(await authorize(workspaceEvent, input)).toEqual({ success: false });
+  expect(f.beginSessionRun).not.toHaveBeenCalled();
+});
+
+test('continues to authorize distinct followups after native Yield confirms the original admission', async () => {
+  const f = fixture();
+  const { sessionId, id, clientTurnId: runId } = f.checkpoint;
+  const input = { sessionId, id, runId, sessionKey: f.key, workspaceRoot: f.source.cwd };
+  const authorize = handlers.get(SessionRunIpc.AuthorizeUnknownFollowup)!;
+  const markUnknown = handlers.get(SessionRunIpc.Unknown)!;
+  const status = handlers.get('cowork:session:runtimeStatus')!;
+  const stop = handlers.get('cowork:session:stop')!;
+  const waiting = { ...f.native, hasActiveSubagentRun: true };
+  f.getLatestSessionRun.mockReturnValue({ id, sessionId, clientTurnId: runId, state: 'running', startedAt: 100 });
+  f.request.mockResolvedValue({ session: waiting });
+  vi.mocked(f.context.getRuntimeSessionSnapshot).mockResolvedValue({ known: true, sessions: [waiting], hasMore: false });
+  f.requestGateway.mockResolvedValue({ runId, status: 'ok', yielded: true });
+
+  expect(await markUnknown(workspaceEvent, { sessionId, id })).toMatchObject({ success: true });
+  await expect(status(workspaceEvent, sessionId, { includeSubagents: true })).resolves.toMatchObject({
+    known: true, mainRunning: false, subagentRunning: true,
+    timing: { id, state: 'running', rootRunId: runId, acceptedAt: 150 },
+  });
+  expect(await authorize(workspaceEvent, input)).toEqual({ success: true, permissionMode: 'ask' });
+  const admitted = f.getLatestSessionRun() as SessionRunTiming;
+  f.getLatestSessionRun.mockReturnValue({ ...admitted, rootRunId: 'native-successor' });
+  expect(await authorize(workspaceEvent, input)).toEqual({ success: true, permissionMode: 'ask' });
+  expect(await authorize(workspaceEvent, { ...input, runId: 'different-run' })).toEqual({ success: false });
+  expect(await stop(workspaceEvent, sessionId)).toMatchObject({ success: true });
+  expect(await authorize(workspaceEvent, input)).toEqual({ success: false });
+  expect(f.registerUnknownSessionRun).toHaveBeenCalledOnce();
+  expect(f.finishSessionRun).not.toHaveBeenCalled();
+});
+
+test('keeps a settled first turn closed when unknown registration arrives late', async () => {
+  const f = fixture();
+  const { sessionId, id } = f.checkpoint;
+  const markUnknown = handlers.get(SessionRunIpc.Unknown)!;
+  f.getLatestSessionRun.mockReturnValue({ ...f.checkpoint, state: 'completed' });
+
+  expect(await markUnknown(workspaceEvent, { sessionId, id, requireRunning: true }))
+    .toMatchObject({ success: false });
+  expect(f.reopenSessionRun).not.toHaveBeenCalled();
+  expect(f.registerUnknownSessionRun).not.toHaveBeenCalled();
+});
 
 test('admits an existing main input from its current native row despite unrelated roster changes', async () => {
   const f = fixture();

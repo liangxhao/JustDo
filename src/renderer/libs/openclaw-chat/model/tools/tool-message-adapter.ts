@@ -1,3 +1,5 @@
+import { OPENCLAW_NESTED_TOOL_CUSTOM_TYPE } from '@shared/openclaw/constants';
+
 import { isToolErrorOutput } from '@/libs/openclaw-chat/pipeline/tool-cards';
 
 export function asToolRecord(value: unknown): Record<string, unknown> | null {
@@ -10,6 +12,17 @@ export function unwrapToolMessage(value: unknown): Record<string, unknown> | nul
   const record = asToolRecord(value);
   if (!record) return null;
   return asToolRecord(record.message) ?? record;
+}
+
+export function isNativeToolResultMessage(value: unknown): boolean {
+  const message = unwrapToolMessage(value);
+  if (!message) return false;
+  const role = typeof message.role === 'string' ? message.role.toLowerCase() : '';
+  return ['tool', 'toolresult', 'tool_result', 'function'].includes(role) || (
+    role === 'custom' && message.customType === OPENCLAW_NESTED_TOOL_CUSTOM_TYPE &&
+    message.display === true && message.excludeFromContext === true && Array.isArray(message.content) &&
+    message.content.some(block => isToolResultType(asToolRecord(block)?.type))
+  );
 }
 
 function metadataOf(value: Record<string, unknown>): Record<string, unknown> | null {

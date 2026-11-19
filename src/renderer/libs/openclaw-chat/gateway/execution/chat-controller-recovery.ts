@@ -1,3 +1,4 @@
+import type { SessionRunState } from '@shared/cowork/sessionRun';
 import {
   normalizeAgentEvent,
   normalizeChatEvent,
@@ -28,6 +29,7 @@ import {
 import { applySessionMessagePayload } from '@/libs/openclaw-chat/model/history/session-message-apply';
 import { isPendingUserMessageMatch } from '@/libs/openclaw-chat/model/input/optimistic-user-message';
 import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/timeline/project-history-timeline';
+import { isNativeToolResultMessage } from '@/libs/openclaw-chat/model/tools/tool-message-adapter';
 import {
   readPreambleText,
   readToolProgressText,
@@ -36,6 +38,7 @@ import {
 } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
 import { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 import {
+  retainYieldedActivity,
   type RunActivityOptions,
   type RunProgressStage,
 } from '@/libs/openclaw-chat/model/turn/run-activity';
@@ -94,12 +97,20 @@ import {
   summarizeMessageForDebug,
   withThinkingContent,
 } from '../chat-controller-support';
+import { recoverQueuedInputsFromMessages } from '../input/chat-queued-input';
 import { hasSelectedAssistantTextSource, recoverAssistantText } from './assistant-text-recovery';
 import { findPersistedChatFinal } from './chat-final-source';
+
+export interface DeferredHistoryReload {
+  timer: ReturnType<typeof setTimeout>;
+  sessionKey: string;
+  reason: string;
+}
+
 export interface ChatControllerRecoveryContext {
   postFinalHistoryReloadTimer: NodeJS.Timeout | null;
   postFinalHistoryRecovery: PostFinalHistoryRecovery | null;
-  deferredHistoryReloadTimer: NodeJS.Timeout | null;
+  deferredHistoryReload: DeferredHistoryReload | null;
   activeToolHistoryCatchUpTimer: NodeJS.Timeout | null;
   readonly clearActiveToolHistoryCatchUp: () => void;
   readonly observedSessionMessageSeqBySession: Map<
@@ -136,6 +147,7 @@ export interface ChatControllerRecoveryContext {
   readonly historyReloadRequested: Set<string>;
   readonly hasExpectedInitialHistory: () => boolean;
   readonly scheduleDeferredHistoryReload: (sessionKey: string, reason: string) => void;
+  readonly conflictsWithInactiveChatRun: (runId: string | null) => boolean;
   readonly postFinalHistoryHasCaughtUp: (recovery: PostFinalHistoryRecovery) => boolean;
   readonly scheduleNextPostFinalHistoryReload: (recovery: PostFinalHistoryRecovery) => void;
   readonly clearPostFinalHistoryReload: () => void;
@@ -210,7 +222,7 @@ export interface ChatControllerRecoveryContext {
   readonly currentMessageHistory: ChunkedMessageHistory;
   readonly setCurrentSessionMessages: (
     messages: unknown[],
-    options?: { resetLoadedHistory?: boolean },
+    options?: { resetLoadedHistory?: boolean; preserveActiveTurn?: boolean },
   ) => void;
   readonly applySessionContextUsage: (value: unknown, sessionKey: string) => boolean;
   readonly admitExpectedInitialHistoryMessage: (message: unknown) => boolean;
@@ -218,7 +230,7 @@ export interface ChatControllerRecoveryContext {
     messages: unknown[],
     options?: ActiveToolHistoryOptions,
   ) => boolean;
-  readonly publishActiveToolHistoryRepair: () => void;
+  readonly publishActiveToolHistoryRepair: (newerOwnedAppend?: unknown) => void;
   readonly rememberRunModel: (message: unknown, runId?: string | null, terminal?: boolean) => void;
   readonly hydrateCurrentSessionImages: (messages: unknown[], sessionKey: string) => void;
   readonly observeSessionMessageSeq: (
@@ -279,9 +291,9 @@ export function clearPostFinalHistoryReload(this: ChatControllerRecoveryContext)
 }
 
 export function clearDeferredHistoryReload(this: ChatControllerRecoveryContext): void {
-  if (!this.deferredHistoryReloadTimer) return;
-  clearTimeout(this.deferredHistoryReloadTimer);
-  this.deferredHistoryReloadTimer = null;
+  if (!this.deferredHistoryReload) return;
+  clearTimeout(this.deferredHistoryReload.timer);
+  this.deferredHistoryReload = null;
 }
 
 export function clearActiveToolHistoryCatchUp(this: ChatControllerRecoveryContext): void {
@@ -487,7 +499,12 @@ export function scheduleDeferredHistoryReload(
     this.deferredHistoryReloadAttempts.set(sessionKey, attempts);
   }
   this.historyReloadRequested.add(sessionKey);
-  if (this.deferredHistoryReloadTimer) {
+  const scheduled = this.deferredHistoryReload;
+  if (scheduled) {
+    if (scheduled.sessionKey === sessionKey && reason === 'inactive-run-successor') {
+      // The successor's snapshot may be the only way to release chatSending.
+      this.deferredHistoryReload = { ...scheduled, reason };
+    }
     debugLog('[ChatCtrl] deferred history reload already scheduled', {
       sessionKey,
       reason,
@@ -496,8 +513,11 @@ export function scheduleDeferredHistoryReload(
     return;
   }
 
-  this.deferredHistoryReloadTimer = setTimeout(() => {
-    this.deferredHistoryReloadTimer = null;
+  const timer = setTimeout(() => {
+    const reload = this.deferredHistoryReload;
+    if (reload?.timer !== timer) return;
+    const reason = reload.reason;
+    this.deferredHistoryReload = null;
     if (this.state.sessionKey !== sessionKey || !this.state.connected) {
       this.historyReloadRequested.delete(sessionKey);
       this.deferredHistoryReloadAttempts.delete(sessionKey);
@@ -513,7 +533,7 @@ export function scheduleDeferredHistoryReload(
     // for the whole run to finish; ordinary active-run refreshes stay gated.
     const canCatchUpMissingInitialHistory = !this.hasExpectedInitialHistory();
     if (
-      (this.state.chatSending && !canCatchUpMissingInitialHistory) ||
+      (this.state.chatSending && !canCatchUpMissingInitialHistory && reason !== 'inactive-run-successor') ||
       this.historyLoadsInFlight.has(sessionKey)
     ) {
       debugLog('[ChatCtrl] deferred history reload waiting', {
@@ -546,6 +566,7 @@ export function scheduleDeferredHistoryReload(
     });
     void this.loadHistory(true);
   }, DEFERRED_HISTORY_RELOAD_DELAY_MS);
+  this.deferredHistoryReload = { timer, sessionKey, reason };
 }
 
 export function postFinalHistoryHasCaughtUp(
@@ -672,6 +693,34 @@ export function schedulePostFinalHistoryReload(
   };
   this.postFinalHistoryRecovery = recovery;
   this.scheduleNextPostFinalHistoryReload(recovery);
+}
+
+export function readRunWaitDisplayOutcome(
+  receipt: Record<string, unknown> | null,
+  { runId, sessionId }: { runId: string; sessionId: string },
+): { state: Exclude<SessionRunState, 'running'>; endedAt: number; error?: string } | null {
+  const terminal = asRecord(receipt?.terminalReceipt);
+  if (
+    receipt?.runId !== runId || typeof receipt.endedAt !== 'number' ||
+    !Number.isFinite(receipt.endedAt) || receipt.yielded === true || receipt.pendingError ||
+    receipt.stopReason === 'restart' || receipt.stopReason === 'superseded' ||
+    (receipt.terminalReceipt !== undefined &&
+      (terminal?.runId !== runId || terminal.sessionId !== sessionId)) ||
+    (receipt.status !== 'ok' && receipt.status !== 'error' && receipt.status !== 'timeout')
+  ) return null;
+
+  const timedOut = receipt.status === 'timeout' || receipt.stopReason === 'timeout';
+  if (!timedOut && (receipt.stopReason === 'aborted' || receipt.stopReason === 'rpc')) {
+    return { state: 'aborted', endedAt: receipt.endedAt };
+  }
+  if (timedOut || receipt.status === 'error') {
+    return {
+      state: 'failed',
+      endedAt: receipt.endedAt,
+      error: readNonBlankString(receipt.error) ?? i18nService.t('coworkProgressCardFailed'),
+    };
+  }
+  return { state: 'completed', endedAt: receipt.endedAt };
 }
 
 export async function reconcileSuspendedRun(this: ChatControllerRecoveryContext): Promise<void> {
@@ -1012,6 +1061,14 @@ export function handleTimelineEvent(
         normalizeTranscriptSessionKey(this.state.sessionKey);
       if (!matchesSelectedSession) {
         this.applyBackgroundChatEvent(payload, failedErrorMessage ?? undefined);
+        return;
+      }
+      if (payload.runId && this.state.transcript.retiredDisplayRunIds.has(payload.runId)) {
+        if (payload.state !== 'delta') this.scheduleDeferredHistoryReload(this.state.sessionKey, 'retired-run');
+        return;
+      }
+      if (this.conflictsWithInactiveChatRun(payload.runId)) {
+        this.scheduleDeferredHistoryReload(this.state.sessionKey, 'inactive-run-successor');
         return;
       }
       if (
@@ -1491,11 +1548,14 @@ export function handleTimelineEvent(
       (explicitMessageRunId === undefined || expectedRunIds.has(explicitMessageRunId)) &&
       (activeRunIds.length === 0 || activeRunIds.some(runId => expectedRunIds.has(runId))) &&
       runActive !== false;
+    const exactToolResult = eventSessionId !== null && eventSessionId === activeSessionId &&
+      isNativeToolResultMessage(payload?.message);
+    const ownsLateResult = exactToolResult && activeTurn && explicitMessageRunId === activeTurn.runId;
     const repairedActiveTail =
       payload?.message !== undefined &&
       !isTruncatedHistoryMessage(payload.message) &&
       sessionIdentityMatches &&
-      runIdentityMatches &&
+      (runIdentityMatches || ownsLateResult) &&
       this.hydrateActiveToolItemsFromHistory([payload.message], {
         backfillMissingSessionsYield: true,
         backfillMissingToolsFromAppend: true,
@@ -1503,8 +1563,20 @@ export function handleTimelineEvent(
           ? { committedImageRunId: explicitMessageRunId }
           : {}),
       });
-    if (repairedActiveTail) this.publishActiveToolHistoryRepair();
     const loadedMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
+    if (repairedActiveTail) {
+      const activity = this.state.runActivity;
+      const appendedAt = messageTimestampMs(payload?.message);
+      const appendedSeq = readOpenClawMessageSeq(payload?.message);
+      const marker = asRecord(asRecord(payload?.message)?.__openclaw);
+      const newerOwnedAppend = activity?.stage === 'waiting-continuation' &&
+        eventSessionKey && eventSessionId !== null && eventSessionId === activeSessionId &&
+        activity.runId === this.state.chatRunId && runIdentityMatches && runActive === true &&
+        readExplicitMessageRunId(payload?.message) === activity.runId &&
+        Boolean(readNonBlankString(marker?.id)) && appendedSeq !== null && appendedSeq > (loadedMessageSeq ?? 0) &&
+        appendedAt !== null && appendedAt > activity.lastAgentEventAt;
+      this.publishActiveToolHistoryRepair(newerOwnedAppend ? payload?.message : undefined);
+    }
     const projectedAppend =
       payload?.message === undefined ? [] : projectGatewayHistoryForDisplay([payload.message]);
     const appendIsTruncated =
@@ -1524,14 +1596,32 @@ export function handleTimelineEvent(
               activeRunId:
                 activeTurn?.status === 'running' ? activeTurn.runId : this.state.chatRunId,
               runActive,
+              exactToolResult,
               isRecentTerminalRun: runId => isTerminalRun(this.state.transcript, runId),
             },
           )
         : null;
     if (directApply?.kind === 'applied') {
       this.rememberRunModel(directApply.message, explicitMessageRunId);
+      if (directApply.role === 'user') {
+        recoverQueuedInputsFromMessages(this.state, eventSessionId, [directApply.message]);
+      }
+      const activity = this.state.runActivity;
+      const publishedAt = messageTimestampMs(directApply.message);
+      if (
+        activity && runActive === true && eventSessionId !== null && eventSessionId === activeSessionId &&
+        directApply.role === 'assistant' && explicitMessageRunId === activity.runId &&
+        this.state.chatRunId === activity.runId && publishedAt !== null && publishedAt > activity.lastAgentEventAt &&
+        (directApply.sequence ?? 0) > (loadedMessageSeq ?? 0)
+      ) {
+        const text = extractSnapshotText(directApply.message);
+        if (text && !isHiddenOrPendingControlReplyText(text))
+          this.updateRunActivity(activity.runId, 'responding', { modelActivity: true, at: publishedAt });
+      }
       this.state.transcript.historySource = 'gateway';
-      this.setCurrentSessionMessages(directApply.messages);
+      this.setCurrentSessionMessages(directApply.messages, {
+        preserveActiveTurn: Boolean(ownsLateResult && this.state.runActivity?.yielded),
+      });
       if (
         directApply.role === 'user' &&
         this.state.pendingUserMessage &&
@@ -1671,7 +1761,10 @@ export function handleFinal(
     }
   }
   this.rememberRunModel(payload.message, payload.runId, true);
-  this.finishCurrentTurnTiming('final', payload.runId);
+  const yieldedActivity = payload.runId && this.state.transcript.activeTurn?.runId === payload.runId
+    ? retainYieldedActivity(this.state.runActivity, payload.runId, payload.yielded)
+    : null;
+  if (!yieldedActivity) this.finishCurrentTurnTiming('final', payload.runId);
   const baselineMessageSeq = readLatestOpenClawMessageSeq(this.state.chatMessages);
   const baselineCompleteMessageCount = this.state.chatMessages.filter(
     candidate =>
@@ -1730,6 +1823,7 @@ export function handleFinal(
   this.state.compactionInFlight = false;
   this.state.chatRunId = null;
   this.clearRunActivity();
+  this.state.runActivity = yieldedActivity;
   this.suspendedRunId = null;
   this.terminalLifecycleSeen = false;
   this.resetAssistantSnapshotSource();
@@ -1861,7 +1955,12 @@ export function handleAgentEvent(
   }
 
   const progress = readRunProgress(stream, data);
-  if (progress) {
+  if (progress?.stage === 'waiting-continuation') {
+    if (this.state.runActivity?.runId === runId) {
+      this.updateRunActivity(runId, progress.stage, { yielded: progress.yielded, at: payload.timestamp });
+      this.notifyStream('terminal');
+    }
+  } else if (progress) {
     this.state.chatSending = true;
     this.state.chatRunId = runId;
     const { stage, ...options } = progress;
