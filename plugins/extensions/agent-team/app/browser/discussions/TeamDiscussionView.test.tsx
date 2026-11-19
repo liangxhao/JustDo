@@ -455,6 +455,12 @@ it.each(['preparing', 'prepare_failed'] as const)(
   },
 );
 
+it('keeps the Stop button visible and disabled when the discussion is idle', async () => {
+  render(<TeamDiscussionView entry={{ roomId: 'room' }} embedded onClose={vi.fn()} />);
+  const button = await screen.findByRole('button', { name: 'teamStop' });
+  expect(button).toHaveProperty('disabled', true);
+});
+
 it.each(['discussion', 'summary', 'queue'] as const)(
   'stops the exact room from a single header control during %s activity',
   async activity => {

@@ -2,6 +2,7 @@ import { StopIcon } from '@heroicons/react/24/outline';
 import type { AgentResult } from '../state';
 import { useEffect, useRef, useState } from 'react';
 
+import { stopButtonClassName } from '../shared/stopButtonStyles';
 import { i18nService } from '../ui';
 
 /** Native receipts keep owning execution state; an acknowledgement only ends the button's wait. */
@@ -50,7 +51,7 @@ export default function CollaborationStopButton({
       aria-busy={stopping}
       disabled={disabled || stopping}
       onClick={() => void handleStop()}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-red-500/10 hover:text-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-40"
+      className={stopButtonClassName}
     >
       {stopping ? (
         <span

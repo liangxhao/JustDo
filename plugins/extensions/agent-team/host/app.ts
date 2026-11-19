@@ -87,7 +87,19 @@ export function register(host: AppMainHost): AppMainRegistration {
   let creating: Promise<unknown> = Promise.resolve();
   const commands: AppMainRegistration['commands'] = [
     { id: 'collaboration.list', invoke: result(() => roomStore().listRoomEntries()) },
-    { id: 'collaboration.read', invoke: result(id => getCollaboration().read(sessionId(id))) },
+    {
+      id: 'collaboration.read',
+      invoke: result(id => {
+        const snapshot = getCollaboration().read(sessionId(id));
+        if (!snapshot.room) return snapshot;
+        return {
+          ...snapshot,
+          hasStoppableDiscussion: getDiscussion().metadata.hasStoppableWorkForSource(
+            snapshot.room.anchorSessionId,
+          ),
+        };
+      }),
+    },
     {
       id: 'collaboration.continue',
       invoke: result(input => getCollaboration().prepareContinuation(input)),

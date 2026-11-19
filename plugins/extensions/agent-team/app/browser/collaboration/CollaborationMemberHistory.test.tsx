@@ -84,10 +84,15 @@ describe('Team native history public port', () => {
 
   it('stops only the precise current native incarnation and run', async () => {
     mount({ roomId: 'room' });
+    const button = screen.getByRole('button', { name: 'Stop this assistant' });
+    expect(button).toHaveProperty('disabled', true);
     notify(state({ running: true, canStop: true, runId: 'run' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Stop this assistant' }));
+    expect(button).toHaveProperty('disabled', false);
+    fireEvent.click(button);
     await act(async () => {});
     expect(stopMember).toHaveBeenCalledExactlyOnceWith({ sourceSessionId: 'source', roomId: 'room', targetSessionKey: member.sessionKey, runId: 'run', nativeSessionId: 'native-peer' });
+    notify(state());
+    expect(button).toHaveProperty('disabled', true);
   });
 
   it.each([
@@ -98,8 +103,7 @@ describe('Team native history public port', () => {
   ])('withholds stop admission for an incomplete or mismatched native state %j', bad => {
     mount({ roomId: 'room' });
     notify(state({ running: true, canStop: true, runId: 'run', ...bad }));
-    const button = screen.queryByRole('button', { name: 'Stop this assistant' });
-    if (button) expect(button.hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button', { name: 'Stop this assistant' })).toHaveProperty('disabled', true);
     expect(stopMember).not.toHaveBeenCalled();
   });
 

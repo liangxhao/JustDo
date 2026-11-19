@@ -259,6 +259,7 @@ export default function CollaborationPanel({
   const [memberSession, setMemberSession] = useState<AppNativeHistoryState | null>(null);
   const agents = useSelector((state: RootState) => state.agent.agents);
   const sessions = useSelector((state: RootState) => state.cowork?.sessions ?? EMPTY_SESSIONS);
+  const runtimeActivity = useSelector((state: RootState) => state.cowork?.sessionRuntimeActivity);
   const runTimings = useSelector(
     (state: RootState) => state.cowork?.sessionRunTimings ?? EMPTY_RUN_TIMINGS,
   );
@@ -322,6 +323,17 @@ export default function CollaborationPanel({
     continueRequestsRevision,
   ]);
   const room = snapshot?.room?.id === roomId || !roomId ? snapshot?.room : undefined;
+  const canStop =
+    enabled &&
+    room &&
+    !room.deleting &&
+    (room.members.some(member => runtimeActivity?.[member.sessionId]) ||
+      snapshot?.deliveries.some(
+        delivery =>
+          delivery.state === CollaborationDeliveryState.QUEUED ||
+          delivery.state === CollaborationDeliveryState.DISPATCHING,
+      ) ||
+      snapshot?.hasStoppableDiscussion);
   const selectedRound = roundId
     ? snapshot?.rounds?.find(round => round.id === roundId)
     : snapshot?.rounds?.[snapshot.rounds.length - 1];
@@ -420,7 +432,7 @@ export default function CollaborationPanel({
               <CollaborationStopButton
                 key={room.id}
                 label={i18nService.t('collaborationStop')}
-                disabled={room.deleting === true}
+                disabled={!canStop}
                 stop={() => teamApi.collaboration.stop(room.anchorSessionId)}
               />
               {enabled && (

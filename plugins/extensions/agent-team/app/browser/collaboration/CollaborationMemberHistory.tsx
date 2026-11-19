@@ -79,7 +79,8 @@ export default function CollaborationMemberHistory({
   const canStop =
     !receipt &&
     roomId &&
-    native?.canStop &&
+    native?.running &&
+    native.canStop &&
     native.runId &&
     native.nativeSessionId &&
     native.sessionKey === member.sessionKey;
@@ -113,7 +114,7 @@ export default function CollaborationMemberHistory({
               !receipt && native?.running ? 'collaborationWorking' : 'collaborationHistoryReadOnly',
             )}
           </span>
-          {roomId && !receipt && native?.running && native.sessionKey === member.sessionKey && (
+          {roomId && !receipt && (
             <CollaborationStopButton
               key={`${roomId}:${member.sessionKey}`}
               label={host.t('collaborationStopMember')}

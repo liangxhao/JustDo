@@ -177,6 +177,7 @@ export const CollaborationGateway = {
 
 export interface CollaborationSnapshot {
   room?: CollaborationRoom;
+  hasStoppableDiscussion?: boolean;
   deliveries: CollaborationDelivery[];
   rounds?: CollaborationRound[];
   reviews?: CollaborationReview[];

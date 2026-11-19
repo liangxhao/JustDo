@@ -171,6 +171,15 @@ export class TeamDiscussionStore {
       pendingInputs: this.queue.projection(row.id),
     }));
   }
+  hasStoppableWorkForSource(sourceSessionId: string): boolean {
+    const rooms = this.db
+      .prepare('SELECT id, active_discussion_id FROM team_discussion_rooms WHERE source_session_id = ?')
+      .all(sourceSessionId) as Pick<RoomRow, 'id' | 'active_discussion_id'>[];
+    return rooms.some(
+      room =>
+        room.active_discussion_id || this.queue.hasActive(room.id) || this.hasUnsettledSummary(room.id),
+    );
+  }
   summary(discussionId: string): TeamDiscussionSummary | undefined {
     return this.db
       .prepare(

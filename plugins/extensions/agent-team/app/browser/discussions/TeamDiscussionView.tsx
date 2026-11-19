@@ -46,6 +46,7 @@ import { LocalSpeechInputButton } from '../ui';
 import type { DiscussionQuote } from '../quote';
 import { RunControlButton } from '../ui';
 import { COLLABORATION_PALETTE } from '../shared/collaborationPalette';
+import { stopButtonClassName } from '../shared/stopButtonStyles';
 import DiscussionActionsMenu from './DiscussionActionsMenu';
 import { discussionQuestionAgents, discussionRunningAgents } from './discussionActivity';
 import { formatDiscussionExportMessage } from './discussionExport';
@@ -598,18 +599,21 @@ export default function TeamDiscussionView({
       <ArrowUturnLeftIcon className="h-4 w-4" aria-hidden="true" />
     </button>
   );
-  const canStop = !!room && (active || summaryUnsettled || pendingInputs.length > 0);
-  const stopAction = canStop && (
+  const canStop = active || summaryUnsettled || pendingInputs.length > 0;
+  const stopLabel = t(
+    summaryUnsettled && !active && !pendingInputs.length ? 'teamStopSummary' : 'teamStop',
+  );
+  const stopAction = room && (
     <button
       type="button"
-      className={`${headerButton} text-red-500 hover:text-red-600`}
-      aria-label={t(active || pendingInputs.length ? 'teamStop' : 'teamStopSummary')}
-      title={t(active || pendingInputs.length ? 'teamStop' : 'teamStopSummary')}
-      disabled={busy}
+      className={stopButtonClassName}
+      aria-label={stopLabel}
+      title={stopLabel}
+      disabled={!enabled || busy || !canStop}
       onClick={() =>
         void run(async () => {
           const requestId = getDiscussionDraft(draftId.current).pending?.requestId;
-          const result = await teamApi.teamDiscussion.stop(room!.id);
+          const result = await teamApi.teamDiscussion.stop(room.id);
           if (!result.success) throw new Error(result.error);
           if (requestId) settleDiscussionDraft(draftId.current, requestId, false);
           if (alive.current) setRoom(result.value);

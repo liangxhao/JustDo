@@ -168,6 +168,18 @@ function enableSummary(): void {
     );
 }
 
+it('finds active discussion or summary work only for its linked source', () => {
+  enableSummary();
+  expect(store.hasStoppableWorkForSource('source')).toBe(false);
+  const run = store.reserve(input);
+  expect(store.hasStoppableWorkForSource('source')).toBe(true);
+  store.transition('room', run.discussionId, run.generation, 'completed');
+  expect(store.hasStoppableWorkForSource('source')).toBe(true);
+  expect(store.hasStoppableWorkForSource('other-source')).toBe(false);
+  store.updateSummary(run.discussionId, 'delivered');
+  expect(store.hasStoppableWorkForSource('source')).toBe(false);
+});
+
 it('atomically creates a single result handoff for a failed batch without storing its body', () => {
   enableSummary();
   const run = store.reserve(input);

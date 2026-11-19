@@ -226,16 +226,20 @@ describe('collaboration Stop entry points', () => {
         },
       ],
     },
-    rounds: [{ id: 'batch', state: 'open', pending: 1 }],
+    rounds: [{ id: 'batch', state: 'open', pending: 0 }],
     deliveries: [],
   };
-  const mount = (selectedMemberId?: string) => {
+  const mount = (
+    selectedMemberId?: string,
+    activity: Partial<CollaborationSnapshot> = {},
+    memberRunning = false,
+  ) => {
     const stop = vi.fn().mockResolvedValue({ success: true, value: undefined });
     Object.defineProperty(window, 'electron', {
       configurable: true,
       value: {
         collaboration: {
-          read: vi.fn().mockResolvedValue({ success: true, value: snapshot }),
+          read: vi.fn().mockResolvedValue({ success: true, value: { ...snapshot, ...activity } }),
           stop,
         },
       },
@@ -248,7 +252,10 @@ describe('collaboration Stop entry points', () => {
             { id: 'review', name: 'Review' },
           ],
         }),
-        cowork: () => ({ sessions: [{ id: 'idle-source', status: 'idle' }] }),
+        cowork: () => ({
+          sessions: [{ id: 'idle-source', status: 'idle' }],
+          sessionRuntimeActivity: { 'working-peer': memberRunning },
+        }),
       },
     });
     render(
@@ -264,7 +271,7 @@ describe('collaboration Stop entry points', () => {
   };
 
   it('offers whole-team Stop in the flow header even when the organizer is idle', async () => {
-    const stop = mount();
+    const stop = mount(undefined, {}, true);
     const button = await screen.findByRole('button', { name: i18nService.t('collaborationStop') });
     expect(button.closest('div')?.parentElement?.textContent).toContain(
       i18nService.t('collaborationOverview'),
@@ -275,6 +282,18 @@ describe('collaboration Stop entry points', () => {
     // The acknowledgement cannot turn the execution badge into a completed result.
     expect(screen.getByRole('status').textContent).toContain(i18nService.t('teamRound_open'));
   });
+
+  it.each([
+    { name: 'idle team', hasStoppableDiscussion: false, disabled: true },
+    { name: 'linked discussion work', hasStoppableDiscussion: true, disabled: false },
+  ])(
+    'sets whole-team Stop availability with $name and an open batch',
+    async ({ hasStoppableDiscussion, disabled }) => {
+      mount(undefined, { hasStoppableDiscussion });
+      const button = await screen.findByRole('button', { name: i18nService.t('collaborationStop') });
+      expect(button).toHaveProperty('disabled', disabled);
+    },
+  );
 
   it('binds the member detail Stop scope to the exact collaboration room', async () => {
     const stop = mount('working-peer');
