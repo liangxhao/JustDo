@@ -37,6 +37,7 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
     writeFileSync(path.join(directory, executable), version);
     writeFileSync(path.join(directory, uninstaller), version);
     writeFileSync(path.join(directory, marker), version);
+    writeFileSync(path.join(directory, 'resources', 'app.asar'), version);
   }
 
   function recordSwitchPlan() {
@@ -49,16 +50,52 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
     }));
   }
 
-  function invoke(action: string, expected = 0, registeredVersion = oldVersion, registryKey?: string, slot = 0) {
-    const result = spawnSync(powershell, [
+  function helperArguments(action: string, registeredVersion = oldVersion, registryKey?: string, slot = 0) {
+    return [
       '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper,
       '-Action', action, '-InstallRoot', root, '-Application', executable,
       '-Uninstaller', uninstaller, '-AgentCli', agentCli, '-Authentication', 'name:', '-RegisteredVersion', 'v' + registeredVersion,
       '-StagingSlot', String(slot),
       ...(registryKey ? ['-InstallKey', `${registryKey}\\Install`, '-UninstallKey', `${registryKey}\\Uninstall`] : []),
-    ], { encoding: 'utf8', timeout: 20_000, windowsHide: true });
+    ];
+  }
+
+  function invoke(action: string, expected = 0, registeredVersion = oldVersion, registryKey?: string, slot = 0) {
+    const result = spawnSync(powershell, helperArguments(action, registeredVersion, registryKey, slot), {
+      encoding: 'utf8', timeout: 20_000, windowsHide: true,
+    });
     expect(result.status, result.error?.message ?? result.stdout + result.stderr).toBe(expected);
     return result.stderr;
+  }
+
+  async function lockFile(file: string, releaseSignal?: string) {
+    const holder = spawn(powershell, ['-NoProfile', '-Command', [
+      '$ErrorActionPreference = "Stop"',
+      '$stream = [IO.File]::Open($env:FIXTURE_LOCKED_FILE, "Open", "Read", "Read")',
+      '[Console]::WriteLine("ready")',
+      'if ($env:FIXTURE_RELEASE_SIGNAL) {',
+      'while (-not [IO.File]::Exists($env:FIXTURE_RELEASE_SIGNAL)) { Start-Sleep -Milliseconds 50 }',
+      '} else { Start-Sleep -Seconds 60 }',
+      '$stream.Dispose()',
+    ].join('\n')], {
+      windowsHide: true,
+      env: { ...process.env, FIXTURE_LOCKED_FILE: file, FIXTURE_RELEASE_SIGNAL: releaseSignal ?? '' },
+    });
+    const exited = new Promise(resolve => holder.once('close', resolve));
+    const release = async () => { holder.kill(); await exited; };
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => { clearTimeout(timeout); reject(error); };
+        const timeout = setTimeout(() => reject(new Error('File lock was not acquired.')), 5000);
+        holder.once('error', onError);
+        holder.once('exit', () => onError(new Error('File lock helper exited before becoming ready.')));
+        holder.stdout.once('data', () => { clearTimeout(timeout); resolve(); });
+      });
+      return release;
+    } catch (error) {
+      await release();
+      throw error;
+    }
   }
 
   beforeEach(() => {
@@ -295,20 +332,8 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
     invoke('Prepare');
     makePayload(incoming, newVersion);
     invoke('Publish');
-    const backupExe = path.join(backup, executable);
-    const holder = spawn(powershell, ['-NoProfile', '-Command', [
-      '$stream = [IO.File]::Open($env:FIXTURE_LOCKED_FILE, "Open", "Read", "Read")',
-      '[Console]::WriteLine("ready")',
-      'Start-Sleep -Seconds 60',
-      '$stream.Dispose()',
-    ].join('; ')], { windowsHide: true, env: { ...process.env, FIXTURE_LOCKED_FILE: backupExe } });
-    const holderExited = new Promise(resolve => holder.once('close', resolve));
+    const release = await lockFile(path.join(backup, executable));
     try {
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Backup lock was not acquired.')), 5000);
-        holder.once('error', error => { clearTimeout(timeout); reject(error); });
-        holder.stdout.once('data', () => { clearTimeout(timeout); resolve(); });
-      });
       invoke('Clean', 13, newVersion);
       invoke('Recover', 13);
       invoke('Prepare', 0, newVersion, undefined, 1);
@@ -317,14 +342,76 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
       invoke('Clean', 0, '2.1.0', undefined, 1);
       expect(readFileSync(path.join(root, executable), 'utf8')).toBe('2.1.0');
     } finally {
-      holder.kill();
-      await holderExited;
+      await release();
     }
     invoke('Recover');
     expect(existsSync(work)).toBe(false);
   }, 30_000);
 
-  it.runIf(existsSync(makensis))('stages and switches a rebranded payload with a CLI and authentication alias through NSIS', () => {
+  it('restores the old files after a persistent resource lock and switches without re-extracting on retry', async () => {
+    invoke('Prepare');
+    makePayload(incoming, newVersion);
+    const stagedResources = statSync(path.join(incoming, 'resources'), { bigint: true }).ino;
+    const release = await lockFile(path.join(root, marker));
+    try {
+      expect(invoke('Publish', 14)).toMatch(/step=backup-previous-payload message=win32=(5|32|33) rollback=restored/);
+      expect(readFileSync(path.join(root, marker), 'utf8')).toBe(oldVersion);
+      expect(readFileSync(path.join(root, executable), 'utf8')).toBe(oldVersion);
+      expect(readFileSync(path.join(incoming, marker), 'utf8')).toBe(newVersion);
+      expect(readdirSync(backup)).toEqual([]);
+    } finally {
+      await release();
+    }
+    invoke('RetryPublish');
+    expect(statSync(path.join(root, 'resources'), { bigint: true }).ino).toBe(stagedResources);
+    invoke('Clean', 0, newVersion);
+  }, 25_000);
+
+  it('does not replace a file that appeared at a staged destination after rollback', async () => {
+    invoke('Prepare');
+    makePayload(incoming, newVersion);
+    writeFileSync(path.join(incoming, 'new-runtime.dat'), 'bundled');
+    const release = await lockFile(path.join(root, marker));
+    try {
+      invoke('Publish', 14);
+    } finally {
+      await release();
+    }
+    writeFileSync(path.join(root, 'new-runtime.dat'), 'appeared during retry prompt');
+    expect(invoke('RetryPublish', 2)).toContain('The upgrade files changed before retry');
+    expect(readFileSync(path.join(root, 'new-runtime.dat'), 'utf8')).toBe('appeared during retry prompt');
+    expect(readFileSync(path.join(root, executable), 'utf8')).toBe(oldVersion);
+  }, 20_000);
+
+  it('automatically retries the move when the old resource handle is released during the switch', async () => {
+    invoke('Prepare');
+    makePayload(incoming, newVersion);
+    const releaseSignal = path.join(fixture, 'release-lock');
+    const release = await lockFile(path.join(root, marker), releaseSignal);
+    try {
+      const result = await new Promise<{ code: number | null; detail: string }>((resolve, reject) => {
+        const publishing = spawn(powershell, helperArguments('Publish'), { windowsHide: true });
+        let detail = '';
+        publishing.stderr.on('data', chunk => {
+          detail += String(chunk);
+          if (detail.includes('rename-retry') && !existsSync(releaseSignal)) {
+            writeFileSync(releaseSignal, '');
+          }
+        });
+        const timeout = setTimeout(() => publishing.kill(), 10_000);
+        publishing.once('error', error => { clearTimeout(timeout); reject(error); });
+        publishing.once('close', code => { clearTimeout(timeout); resolve({ code, detail }); });
+      });
+      expect(result.code, result.detail).toBe(0);
+      expect(result.detail).toMatch(/rename-retry win32=(5|32|33)/);
+      expect(readFileSync(path.join(root, marker), 'utf8')).toBe(newVersion);
+      invoke('Clean', 0, newVersion);
+    } finally {
+      await release();
+    }
+  }, 25_000);
+
+  it.runIf(existsSync(makensis))('switches through NSIS and falls back to conventional upgrade after rollback', async () => {
     const guid = path.basename(fixture);
     const key = 'Software\\InstallerPayloadFixture\\' + guid;
     const setup = path.join(fixture, 'fixture.exe');
@@ -333,6 +420,7 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
     const diagnostics = path.join(fixture, 'setup.log');
     const authentication = 'chrome.exe';
     const fresh = path.join(fixture, 'fresh');
+    const fallbackMarker = path.join(fixture, 'fallback');
     mkdirSync(path.join(fresh, '.upgrade'), { recursive: true });
     makePayload(payload, newVersion);
     for (const name of [agentCli, authentication]) {
@@ -350,7 +438,8 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
         BROWSER_AUTHENTICATION_EXECUTABLE: authentication, AGENT_CLI_EXECUTABLE: agentCli,
       }).map(([name, value]) => '!define ' + name + ' "' + value + '"'),
       "!define UAC_IsAdmin '0 == 1'",
-      ...['installMode', 'InstallerPayloadRoot', 'keepShortcuts', 'oldDesktopLink', 'newDesktopLink',
+      ...['installMode', 'InstallerPayloadRoot', 'JustDoPayloadLogsAllowed', 'keepShortcuts', 'isTryToKeepShortcuts', 'oldDesktopLink', 'newDesktopLink',
+        'InstallerOldIdentityKind', 'InstallerOldIdentityPath', 'InstallerOldIdentity',
         'oldStartMenuLink', 'newStartMenuLink', 'InstallerLookupMode', 'InstallerLookupState',
         'InstallerLookupDirectory', 'InstallerLookupUninstallDirectory'].map(name => 'Var ' + name),
       '!include "' + path.join(project, 'scripts/packaging/nsis-payload-upgrade.nsh') + '"',
@@ -363,6 +452,14 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
       '!insertmacro JustDoLogInstallEvent "${EN}"',
       '!macroend',
       '!macro FindJustDoProcesses TARGET', 'StrCpy ${TARGET} 1', '!macroend',
+      '!macro RequestAndWaitForInstallerQuit TARGET', 'StrCpy ${TARGET} 0', '!macroend',
+      '!macro StopJustDoProcesses TARGET FILTER', 'StrCpy ${TARGET} 0', '!macroend',
+      '!macro setIsTryToKeepShortcuts', 'StrCpy $isTryToKeepShortcuts "false"', '!macroend',
+      'Function JustDoSelectInstallLogDirectory', 'FunctionEnd',
+      'Function InstallerReadPreviousIdentity',
+      'IfFileExists "$InstallerOldIdentityPath" 0 +2',
+      'StrCpy $InstallerOldIdentity "$InstallerOldIdentityKind"',
+      'FunctionEnd',
       'Function InstallerResolveRegisteredDirectory',
       'StrCpy $InstallerLookupState confirmed',
       'StrCpy $InstallerLookupDirectory "$INSTDIR"',
@@ -384,6 +481,7 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
       '!insertmacro InstallerPreparePayloadUpgrade',
       'StrCmp $INSTDIR "$InstallerPayloadRoot\\.upgrade\\new" +2',
       'Abort "The files were not staged."',
+      'FixtureWritePayload:',
       'SetOutPath "$INSTDIR"',
       'File /r "' + payload + '\\*"',
       '!insertmacro InstallerPublishPayloadUpgrade',
@@ -395,6 +493,24 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
       'ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" InstallLocation',
       'StrCmp $0 "' + root + '" +2',
       'Abort "The registered installation path changed."',
+      'Goto FixtureDone',
+      'InstallerRunConventionalUpgrade:',
+      '!insertmacro JustDoLogInstallEvent "fixture-conventional-upgrade"',
+      'StrCmp $InstallerPayloadFallbackRoot "$INSTDIR" +2',
+      'Abort "The fallback did not retain the original installation target."',
+      'StrCmp $InstallerPayloadFallbackDirectoryId "16" +2',
+      'Abort "The fallback did not capture the directory identity."',
+      'StrCmp $InstallerPayloadFallbackUninstallerId "0" +2',
+      'Abort "The fallback did not capture the uninstaller identity."',
+      'IfFileExists "$INSTDIR\\' + executable + '" +2',
+      'Abort "The previous executable was not restored."',
+      'IfFileExists "$INSTDIR\\.upgrade\\ready" 0 +2',
+      'Abort "The previous uninstaller would have removed staging."',
+      'FileOpen $9 "' + fallbackMarker + '" w',
+      'FileClose $9',
+      'Sleep 500',
+      'Goto FixtureWritePayload',
+      'FixtureDone:',
       'SectionEnd',
     ].join('\n');
     writeFileSync(script, source);
@@ -424,8 +540,35 @@ describe.runIf(process.platform === 'win32')('same-volume upgrade staging', () =
       expect(readFileSync(path.join(root, executable), 'utf8')).toBe(newVersion);
       expect(readFileSync(path.join(root, agentCli), 'utf8')).toBe(newVersion);
       expect(readFileSync(path.join(root, authentication), 'utf8')).toBe(newVersion);
+
+      makePayload(root, oldVersion);
+      const release = await lockFile(path.join(root, 'resources', 'app.asar'));
+      try {
+        const conventional = await new Promise<number | null>((resolve, reject) => {
+          const instance = spawn(setup, [], { windowsHide: true });
+          let watcher: ReturnType<typeof setInterval>;
+          const timeout = setTimeout(() => instance.kill(), 25_000);
+          watcher = setInterval(() => {
+            if (existsSync(fallbackMarker)) {
+              clearInterval(watcher);
+              void release();
+            }
+          }, 50);
+          instance.once('error', error => { clearTimeout(timeout); clearInterval(watcher); reject(error); });
+          instance.once('close', code => { clearTimeout(timeout); clearInterval(watcher); resolve(code); });
+        });
+        expect(conventional).toBe(0);
+        const output = readFileSync(diagnostics, 'utf8');
+        expect(output.match(/phase=payload-upgrade-publish result=14 /g)).toHaveLength(2);
+        expect(output).toContain('phase=payload-upgrade-fallback-start');
+        expect(output).toContain('fixture-conventional-upgrade');
+        expect(readFileSync(path.join(root, executable), 'utf8')).toBe(newVersion);
+        expect(existsSync(work)).toBe(false);
+      } finally {
+        await release();
+      }
     } finally {
       spawnSync('reg.exe', ['delete', 'HKCU\\' + key, '/f', '/reg:64'], { windowsHide: true, stdio: 'ignore' });
     }
-  }, 35_000);
+  }, 55_000);
 });

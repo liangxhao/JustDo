@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Microsoft.Win32.SafeHandles;
 
 public static class InstallerPayloadFiles
@@ -17,6 +18,7 @@ public static class InstallerPayloadFiles
     private const uint ReparseAttribute = 0x400;
     private const int FileDispositionInfoEx = 21;
     private const uint DeleteIgnoringReadOnly = 0x13;
+    private static readonly int[] RenameRetryDelaysMs = { 250, 500, 1000, 1500 };
 
     [StructLayout(LayoutKind.Sequential)]
     private struct FileInformation
@@ -80,9 +82,28 @@ public static class InstallerPayloadFiles
 
     public static void Rename(string source, string destination)
     {
-        // No copy, replacement or reboot fallback.
-        if (!MoveFileExW(source, destination, 0))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not move " + source);
+        string originalIdentity = null;
+        for (var attempt = 0; ; attempt++)
+        {
+            if (attempt != 0 && Identity(source) != originalIdentity)
+                throw new IOException("The move source changed during retry: " + source);
+            if (MoveFileExW(source, destination, 0))
+                return;
+            var error = Marshal.GetLastWin32Error();
+            if (!IsRetryableRenameError(error) || attempt == RenameRetryDelaysMs.Length)
+                throw new Win32Exception(error, "Could not move " + source + " to " + destination);
+            if (attempt == 0)
+            {
+                originalIdentity = Identity(source);
+                Console.Error.WriteLine("rename-retry win32=" + error);
+            }
+            Thread.Sleep(RenameRetryDelaysMs[attempt]);
+        }
+    }
+
+    public static bool IsRetryableRenameError(int error)
+    {
+        return error == 5 || error == 32 || error == 33;
     }
 
     public static void DeleteStagedTree(string root, string work, string path)

@@ -61,10 +61,11 @@ const start = async (executable: string, code: string, args: string[] = []) => {
   return child;
 };
 
-const helper = (installRoot: string, action: string, authenticationExecutable?: string) => new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+const helper = (installRoot: string, action: string, authenticationExecutable?: string, verifiedOnly = false) => new Promise<{ code: number | null; output: string }>((resolve, reject) => {
   const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
     '-File', helperPath, '-Action', action, '-MaxAttempts', '1'];
   if (authenticationExecutable) args.push('-BrowserAuthenticationExecutable', authenticationExecutable);
+  if (verifiedOnly) args.push('-VerifiedExecutablesOnly');
   const child = spawn('powershell.exe', args, {
     windowsHide: true,
     env: { ...process.env, JUSTDO_INSTALL_ROOT: installRoot, JUSTDO_CALLER_PID: String(process.pid), JUSTDO_APP_PROCESS_NAME: 'probe' },
@@ -104,13 +105,17 @@ test.runIf(process.platform === 'win32').each(['electron.exe', 'chrome.exe'])('s
 test.runIf(process.platform === 'win32')('reports legacy processes as unsupported and does not launch a new instance', async () => {
   const f = fixture();
   const legacy = await start(f.executable, 'setInterval(() => {}, 1000); console.log("ready");');
+  const unrelatedPath = path.join(f.installRoot, 'unrelated.exe');
+  copyFileSync(process.execPath, unrelatedPath);
+  const unrelated = await start(unrelatedPath, 'setInterval(() => {}, 1000); console.log("ready");');
   const request = await helper(f.installRoot, 'RequestQuit');
   expect(request.code, request.output).toBe(3);
   expect(legacy.exitCode).toBeNull();
   expect((await helper(f.installRoot, 'Find')).code).toBe(0);
-  const stopped = await helper(f.installRoot, 'Stop');
+  const stopped = await helper(f.installRoot, 'Stop', undefined, true);
   expect(stopped.code, stopped.output).toBe(0);
   await exited(legacy);
+  expect(unrelated.exitCode).toBeNull();
 }, 20_000);
 
 test.runIf(process.platform === 'win32')('requires a valid acknowledgement instead of treating a completed write as acceptance', async () => {
@@ -152,7 +157,7 @@ test.runIf(process.platform === 'win32' && existsSync(compiler))('the native aut
     '!macro RequestInstallerQuit RESULT', 'StrCpy ${RESULT} 3', '!macroend',
     '!macro WaitForJustDoProcesses RESULT ATTEMPTS', 'StrCpy ${RESULT} 1', '!macroend',
     extract('!macro', 'RequestAndWaitForInstallerQuit', '!macroend'),
-    '!macro StopJustDoProcesses RESULT', 'StrCpy ${RESULT} $StopResult', '!macroend',
+    '!macro StopJustDoProcesses RESULT FILTER', 'StrCpy ${RESULT} $StopResult', '!macroend',
     '!macro JustDoSetInstallStatus ZH EN', 'DetailPrint "${EN}"', '!macroend',
     '!macro JustDoAddInstallActivity ZH EN', 'DetailPrint "${EN}"', '!macroend',
     '!macro InstallerMarkPhase', '!macroend',

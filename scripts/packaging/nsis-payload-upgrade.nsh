@@ -1,5 +1,7 @@
 !define INSTALLER_UPGRADE_FOLDER ".upgrade"
 !define INSTALLER_UPGRADE_NEXT_FOLDER ".upgrade-next"
+!define INSTALLER_PAYLOAD_SWITCH_RETRY 14
+!define INSTALLER_PAYLOAD_SWITCH_RECOVERY_FAILED 15
 Var InstallerPayloadLock
 Var InstallerPayloadSlot
 
@@ -155,6 +157,10 @@ Var InstallerPayloadSlot
   ${StrRep}
 !endif
 Var InstallerPayloadLegacyGuard
+Var InstallerPayloadSwitchRetried
+Var InstallerPayloadFallbackRoot
+Var InstallerPayloadFallbackDirectoryId
+Var InstallerPayloadFallbackUninstallerId
 
 !macro InstallerClearStagingBeforeWrite _ROOT
   Push $1
@@ -301,26 +307,114 @@ Var InstallerPayloadLegacyGuard
   ${If} $InstallerPayloadRoot != ""
     StrCpy $INSTDIR "$InstallerPayloadRoot"
     SetOutPath "$INSTDIR"
+    StrCpy $InstallerPayloadSwitchRetried 0
+    InstallerRetryPayloadSwitch:
     !insertmacro InstallerShowCorePhase "正在复查旧版是否已退出…" "Confirming the previous version is closed…"
     !insertmacro FindJustDoProcesses $0
     ${If} $0 == "0"
-      !insertmacro JustDoLogInstallEvent "phase=payload-upgrade-publish result=app-still-running path=$InstallerPayloadRoot"
-      !insertmacro JustDoAddInstallActivity "旧版应用仍在运行，请关闭后重试。" "The previous application is still running. Close it and retry setup."
-      SetErrorLevel 2
-      Abort "The previous application is still running. Close it and retry setup."
+      !insertmacro InstallerShowCorePhase "正在关闭旧版应用…" "Closing the previous application…"
+      !insertmacro RequestAndWaitForInstallerQuit $0
+      ${If} $0 != "0"
+        !insertmacro InstallerStopPayloadProcesses
+      ${EndIf}
     ${EndIf}
     !insertmacro InstallerShowCorePhase "正在切换新旧程序文件…" "Switching to the new application files…"
     !insertmacro JustDoLogInstallEvent "phase=payload-upgrade-publish-start"
-    !insertmacro InstallerRunPayloadHelper "Publish" "$InstallerPayloadRoot" ""
+    ${If} $InstallerPayloadSwitchRetried == 0
+      !insertmacro InstallerRunPayloadHelper "Publish" "$InstallerPayloadRoot" ""
+    ${Else}
+      !insertmacro InstallerRunPayloadHelper "RetryPublish" "$InstallerPayloadRoot" ""
+    ${EndIf}
     Pop $0
     Pop $1
     !insertmacro InstallerReportPayloadHelper "publish" $0 $1
+    ${If} $0 == ${INSTALLER_PAYLOAD_SWITCH_RETRY}
+      ${If} $InstallerPayloadSwitchRetried == 0
+        StrCpy $InstallerPayloadSwitchRetried 1
+        !insertmacro InstallerStopPayloadProcesses
+        Goto InstallerRetryPayloadSwitch
+      ${EndIf}
+      !insertmacro InstallerFallbackAfterPayloadSwitch
+    ${EndIf}
+    ${If} $0 == ${INSTALLER_PAYLOAD_SWITCH_RECOVERY_FAILED}
+      !insertmacro JustDoAddInstallActivity "旧版未能完整恢复，请勿删除升级暂存目录。未启动旧版卸载器：$1" "The previous version was not fully restored. Do not delete the upgrade staging directory. The previous uninstaller was not started: $1"
+    ${EndIf}
     ${If} $0 != 0
       !insertmacro JustDoAddInstallActivity "无法切换新旧程序文件（代码 $0）：$1" "Could not switch the application files (code $0): $1"
       SetErrorLevel 2
       Abort "The staged application files could not be switched."
     ${EndIf}
   ${EndIf}
+!macroend
+
+!macro InstallerStopPayloadProcesses
+  !insertmacro InstallerShowCorePhase "正在关闭此安装目录中仍运行的进程…" "Closing processes running from this installation…"
+  !insertmacro StopJustDoProcesses $0 "-VerifiedExecutablesOnly"
+  !insertmacro JustDoLogInstallEvent "phase=payload-upgrade-forced-shutdown result=$0 detail=$R9"
+  ${If} $0 == "1"
+    !insertmacro JustDoAddInstallActivity "仍有进程在使用旧版，请退出应用后重试；尚未启动卸载器。" "Processes are still using the previous installation. Quit the app and retry; the uninstaller was not started."
+    SetErrorLevel 2
+    Abort "The previous application could not be closed."
+  ${EndIf}
+!macroend
+
+!macro InstallerFallbackAfterPayloadSwitch
+  StrCpy $InstallerLookupMode "CurrentUser"
+  Call InstallerResolveRegisteredDirectory
+  GetFullPathName $0 "$InstallerLookupDirectory\."
+  GetFullPathName $1 "$InstallerLookupUninstallDirectory\."
+  ReadRegStr $2 HKCU "${UNINSTALL_REGISTRY_KEY}" UninstallString
+  ${If} $InstallerLookupState != "confirmed"
+  ${OrIf} $0 != $InstallerPayloadRoot
+  ${OrIf} $1 != $InstallerPayloadRoot
+  ${OrIf} $2 != '$\"$InstallerPayloadRoot\${UNINSTALL_FILENAME}$\" /currentuser'
+    !insertmacro JustDoLogInstallEvent "phase=payload-upgrade-fallback-blocked reason=previous-installation-changed path=$InstallerPayloadRoot"
+    !insertmacro JustDoAddInstallActivity "旧版安装位置或卸载登记已变更，无法安全启动卸载器。" "The previous installation or its registration changed. Setup cannot safely run its uninstaller."
+    SetErrorLevel 2
+    Abort "The previous installation target could not be verified."
+  ${EndIf}
+  !insertmacro InstallerShowCorePhase "同盘切换未成功，正在准备改用旧版卸载程序…" "The file switch did not finish. Preparing to use the previous uninstaller…"
+  !insertmacro JustDoLogInstallEvent "phase=payload-upgrade-fallback-start path=$InstallerPayloadRoot"
+  !insertmacro InstallerRunPayloadHelper "DiscardStaging" "$InstallerPayloadRoot" ""
+  Pop $0
+  Pop $1
+  !insertmacro InstallerReportPayloadHelper "fallback-discard" $0 $1
+  ${If} $0 != 0
+    !insertmacro JustDoAddInstallActivity "未能安全清理升级暂存，未启动旧版卸载器：$1" "The previous uninstaller was not started because staging could not be safely cleared: $1"
+    SetErrorLevel 2
+    Abort "Could not clear the staged files before running the previous uninstaller."
+  ${EndIf}
+  SetOutPath "$PLUGINSDIR"
+  StrCpy $JustDoPayloadLogsAllowed "0"
+  Call JustDoSelectInstallLogDirectory
+  !insertmacro InstallerReleaseLegacyGuard
+  StrCpy $InstallerOldIdentityKind 16
+  StrCpy $InstallerOldIdentityPath "$InstallerPayloadRoot"
+  Call InstallerReadPreviousIdentity
+  StrCpy $InstallerPayloadFallbackDirectoryId "$InstallerOldIdentity"
+  StrCpy $InstallerOldIdentityKind 0
+  StrCpy $InstallerOldIdentityPath "$InstallerPayloadRoot\${UNINSTALL_FILENAME}"
+  Call InstallerReadPreviousIdentity
+  StrCpy $InstallerPayloadFallbackUninstallerId "$InstallerOldIdentity"
+  ${If} $InstallerPayloadFallbackDirectoryId == ""
+  ${OrIf} $InstallerPayloadFallbackUninstallerId == ""
+    !insertmacro JustDoLogInstallEvent "phase=payload-upgrade-fallback-blocked reason=unreadable-identity path=$InstallerPayloadRoot"
+    !insertmacro JustDoAddInstallActivity "无法确认旧版卸载程序，尚未卸载旧版。" "The identity of the previous uninstaller could not be confirmed. It was not started."
+    SetErrorLevel 2
+    Abort "The previous uninstaller identity could not be confirmed."
+  ${EndIf}
+  !insertmacro InstallerUnlockPayloadUpgrade
+  StrCpy $InstallerPayloadFallbackRoot "$InstallerPayloadRoot"
+  StrCpy $InstallerPayloadRoot ""
+  StrCpy $keepShortcuts "false"
+  !insertmacro setIsTryToKeepShortcuts
+  ${If} $isTryToKeepShortcuts == "true"
+    ReadRegStr $0 HKCU "${INSTALL_REGISTRY_KEY}" KeepShortcuts
+    ${If} $0 == "true"
+      StrCpy $keepShortcuts "true"
+    ${EndIf}
+  ${EndIf}
+  Goto InstallerRunConventionalUpgrade
 !macroend
 
 !macro InstallerFinishPayloadUpgrade

@@ -222,7 +222,8 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
             .map(name => `Var ${name}`),
           '!macro JustDoLogInstallEvent TEXT', '  DetailPrint "${TEXT}"', '  ClearErrors', '!macroend',
           ...payloadUpgrade.match(/^!define INSTALLER_UPGRADE(?:_NEXT)?_FOLDER .*$/gm)!,
-          'Var InstallerPayloadLock', 'Var InstallerPayloadSlot',
+          'Var InstallerPayloadLock', 'Var InstallerPayloadSlot', 'Var InstallerPayloadFallbackRoot',
+          'Var InstallerPayloadFallbackDirectoryId', 'Var InstallerPayloadFallbackUninstallerId',
           '!include "StrFunc.nsh"', '${StrRep}',
           ...['InstallerClearStagingBeforeWrite', 'InstallerRunPayloadHelper', 'InstallerCheckPendingPayloadUpgrade', 'InstallerCheckPayloadSlot',
             'InstallerLockPayloadUpgrade', 'InstallerUnlockPayloadUpgrade',
@@ -240,8 +241,32 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
           'Function .onInit', '  InitPluginsDir', '  SetRegView 64', '  SetShellVarContext current',
           `  DeleteRegKey HKCU "${registryKey}"`,
           '  ${GetParameters} $0', '  ${GetOptions} $0 "/case=" $ProbeCase',
+          '  StrCpy $InstallerPayloadFallbackDirectoryId ""',
+          '  StrCpy $InstallerPayloadFallbackUninstallerId ""',
           '  StrCpy $ProbeDeleteAppData "0"', '  StrCpy $ProbeCorrections "0"', '  StrCpy $ProbeCopies "0"',
-          ...initializers, 'FunctionEnd',
+          ...initializers,
+          '  ${If} $ProbeCase == "already-paired-does-not-write"',
+          '    ${GetOptions} $0 "/fallback" $1',
+          '    ${IfNot} ${Errors}',
+          '      StrCpy $InstallerPayloadFallbackRoot "' + nsisLiteral(actualDirectory) + '"',
+          '    ${EndIf}',
+          '    ${If} $InstallerPayloadFallbackRoot != ""',
+          '      StrCpy $InstallerOldIdentityKind 16',
+          '      StrCpy $InstallerOldIdentityPath "$InstallerPayloadFallbackRoot"',
+          '      Call InstallerReadPreviousIdentity',
+          '      StrCpy $InstallerPayloadFallbackDirectoryId "$InstallerOldIdentity"',
+          '      StrCpy $InstallerOldIdentityKind 0',
+          '      StrCpy $InstallerOldIdentityPath "$InstallerPayloadFallbackRoot\\Uninstall Wedax.exe"',
+          '      Call InstallerReadPreviousIdentity',
+          '      StrCpy $InstallerPayloadFallbackUninstallerId "$InstallerOldIdentity"',
+          '      WriteRegStr HKCU "${UNINSTALL_REGISTRY_KEY}\\user" UninstallString \'$\\"$InstallerPayloadFallbackRoot\\Uninstall Wedax.exe$\\" /currentuser\'',
+          '      ${GetOptions} $0 "/change-target" $1',
+          '      ${IfNot} ${Errors}',
+          '        DeleteRegValue HKCU "${UNINSTALL_REGISTRY_KEY}\\user" UninstallString',
+          '      ${EndIf}',
+          '    ${EndIf}',
+          '  ${EndIf}',
+          'FunctionEnd',
           'Section', `  StrCpy $appExe "${nsisLiteral(path.join(actualDirectory, 'Wedax.exe'))}"`,
           '  Push "$ProbeRootKey"', '  Call uninstallOldVersion',
           '  StrCpy $ProbeErrors "0"', '  IfErrors 0 +2', '    StrCpy $ProbeErrors "1"',
@@ -317,6 +342,19 @@ describe.runIf(process.platform === 'win32' && Boolean(compiler) && Boolean(plug
         }
 
         rmSync(observedFile, { force: true });
+        rmSync(slowChild, { force: true });
+        rmSync(exitNonzero, { force: true });
+        rmSync(path.join(actualDirectory, 'Uninstall Wedax.exe.original'), { force: true });
+        const fallbackArgs = ['/case=already-paired-does-not-write', '/fallback'];
+        const fallback = spawnSync(probe, fallbackArgs, { windowsHide: true, timeout: 15_000 });
+        expect(fallback.status, String(fallback.error)).toBe(0);
+        expect(readFileSync(resultFile, 'utf16le').split(/\r?\n/)[0]).toMatch(/^0\t0\t/);
+        expect(existsSync(observedFile)).toBe(true);
+        rmSync(observedFile);
+        const changed = spawnSync(probe, [...fallbackArgs, '/change-target'], { windowsHide: true, timeout: 15_000 });
+        expect(changed.status, String(changed.error)).toBe(0);
+        expect(readFileSync(resultFile, 'utf16le').split(/\r?\n/)[0]).toMatch(/^1\t/);
+        expect(existsSync(observedFile)).toBe(false);
         const pending = path.join(actualDirectory, '.upgrade');
         mkdirSync(pending);
         const recovered = spawnSync(probe, ['/case=repair-without-product-executable'], {

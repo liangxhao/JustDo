@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet('Prepare', 'Publish', 'Clean', 'Recover', 'DiscardStaging', 'CheckLegacyRemoval')]
+  [ValidateSet('Prepare', 'Publish', 'RetryPublish', 'Clean', 'Recover', 'DiscardStaging', 'CheckLegacyRemoval')]
   [string]$Action,
   [Parameter(Mandatory = $true)][string]$InstallRoot,
   [Parameter(Mandatory = $true)][string]$Application,
@@ -35,6 +35,8 @@ $committed = [IO.Path]::Combine($work, 'committed')
 $directory = [IO.FileAttributes]::Directory
 $reparse = [IO.FileAttributes]::ReparsePoint
 $planSizeLimit = 128KB
+$switchRetryExitCode = 14
+$switchRecoveryFailedExitCode = 15
 
 $payloadDirectories = [Collections.Generic.HashSet[string]]::new([string[]]@('resources', 'locales'), [StringComparer]::OrdinalIgnoreCase)
 $payloadFiles = [Collections.Generic.HashSet[string]]::new([string[]]@(
@@ -227,6 +229,27 @@ function Get-PayloadIdentity([string]$Path, [string]$Name) {
   return @{ name = $Name; id = [InstallerPayloadFiles]::Identity([IO.Path]::Combine($Path, $Name)) }
 }
 
+function Read-SwitchPlan {
+  Assert-File $plan
+  if ([IO.FileInfo]::new($plan).Length -gt $planSizeLimit) { throw 'Upgrade plan exceeds the recovery size limit.' }
+  $switchPlan = [IO.File]::ReadAllText($plan) | ConvertFrom-Json
+  if ($null -eq $switchPlan.old -or $null -eq $switchPlan.new) { throw 'Invalid upgrade switch plan.' }
+  Assert-SwitchEntries @($switchPlan.old)
+  Assert-SwitchEntries @($switchPlan.new)
+  return $switchPlan
+}
+
+function Assert-SwitchEntriesUnchanged([object[]]$Recorded, [object[]]$Current) {
+  if ($Recorded.Count -ne $Current.Count) { throw 'The upgrade files changed before retry; no files were moved.' }
+  $identities = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::Ordinal)
+  foreach ($entry in $Recorded) { $identities.Add($entry.name, $entry.id) }
+  foreach ($entry in $Current) {
+    if (-not $identities.ContainsKey($entry.name) -or $identities[$entry.name] -cne $entry.id) {
+      throw "An upgrade entry changed before retry; no files were moved: $($entry.name)"
+    }
+  }
+}
+
 function Test-RegisteredPayload([string]$ExpectedVersion = $RegisteredVersion) {
   $installed = [IO.Path]::Combine($root, 'resources', '.justdo-nsis-installed')
   $resources = [IO.Path]::GetDirectoryName($installed)
@@ -275,8 +298,13 @@ function Write-UpgradeDetail([string]$Step, [string]$Message) {
   [Console]::Error.WriteLine("step=$Step message=" + ($Message -replace '[\x00-\x1f\x7f]+', ' '))
 }
 
-function Get-UpgradeErrorMessage([Exception]$ErrorObject) {
+function Get-UnderlyingUpgradeException([Exception]$ErrorObject) {
   while ($null -ne $ErrorObject.InnerException) { $ErrorObject = $ErrorObject.InnerException }
+  return $ErrorObject
+}
+
+function Get-UpgradeErrorMessage([Exception]$ErrorObject) {
+  $ErrorObject = Get-UnderlyingUpgradeException $ErrorObject
   if ($ErrorObject -is [ComponentModel.Win32Exception]) {
     $nativeCode = $ErrorObject.NativeErrorCode
     return "$($ErrorObject.Message) (Windows error $nativeCode): $([ComponentModel.Win32Exception]::new($nativeCode).Message)"
@@ -284,7 +312,7 @@ function Get-UpgradeErrorMessage([Exception]$ErrorObject) {
   return $ErrorObject.Message
 }
 
-function Restore-Upgrade([switch]$DiscardOnly) {
+function Restore-Upgrade([switch]$DiscardOnly, [switch]$KeepStaged) {
   Assert-Directory $work
   $records = [Collections.Generic.HashSet[string]]::new([string[]]@('new', 'old', 'ready', 'plan', 'switching', 'published', 'committed'), [StringComparer]::Ordinal)
   $contents = @([IO.Directory]::EnumerateFileSystemEntries($work))
@@ -324,11 +352,7 @@ function Restore-Upgrade([switch]$DiscardOnly) {
   $switchPlan = $null
   if ($record.schema -eq 2 -and $contents.Contains($plan)) {
     try {
-      if ([IO.FileInfo]::new($plan).Length -gt $planSizeLimit) { throw 'Upgrade plan exceeds the recovery size limit.' }
-      $switchPlan = [IO.File]::ReadAllText($plan) | ConvertFrom-Json
-      if ($null -eq $switchPlan.old -or $null -eq $switchPlan.new) { throw 'Invalid upgrade switch plan.' }
-      Assert-SwitchEntries @($switchPlan.old)
-      Assert-SwitchEntries @($switchPlan.new)
+      $switchPlan = Read-SwitchPlan
     } catch {
       if ($wasPublished -or $wasSwitching -or $backupNames.Count -ne 0 -or -not $hasBackup) { throw }
       $switchPlan = $null
@@ -409,7 +433,7 @@ function Restore-Upgrade([switch]$DiscardOnly) {
     Restore-Registration $record.previousVersion
   }
   if ($wasPublished) { [IO.File]::Delete($published) }
-  Clear-Upgrade
+  if (-not $KeepStaged) { Clear-Upgrade }
 }
 
 $step = 'validate-installation-path'
@@ -463,7 +487,7 @@ try {
       [IO.Directory]::CreateDirectory($incoming) | Out-Null
       [IO.Directory]::CreateDirectory($backup) | Out-Null
     }
-    'Publish' {
+    { $_ -in @('Publish', 'RetryPublish') } {
       $step = 'check-payload-before-switch'
       $record = Read-UpgradeRecord
       if ($record.schema -ne 2) { throw 'Recover the previous upgrade before switching a new payload.' }
@@ -472,27 +496,52 @@ try {
       Assert-File ([IO.Path]::Combine($incoming, $Application))
       Assert-File ([IO.Path]::Combine($incoming, $Uninstaller))
       Assert-File ([IO.Path]::Combine($incoming, 'resources', '.justdo-nsis-installed'))
+      if ($Action -eq 'RetryPublish') {
+        Assert-File ([IO.Path]::Combine($incoming, 'resources', 'app.asar'))
+      }
       $replacementNames = Get-UniquePayloadNames $newNames
       $oldNames = @(Get-PreviousPayloadNames $root $replacementNames)
       $null = Get-UniquePayloadNames $oldNames
       $oldEntries = @($oldNames | ForEach-Object { Get-PayloadIdentity $root $_ })
       $newEntries = @($newNames | ForEach-Object { Get-PayloadIdentity $incoming $_ })
-      $step = 'write-switch-plan'
-      $planJson = ConvertTo-Json -InputObject @{ old = $oldEntries; new = $newEntries } -Compress
-      if ([Text.Encoding]::UTF8.GetByteCount($planJson) -gt $planSizeLimit) {
-        throw 'Upgrade plan exceeds the recovery size limit.'
+      if ($Action -eq 'RetryPublish') {
+        $step = 'verify-switch-retry'
+        if ($null -ne (Get-Attributes $switching) -or $null -ne (Get-Attributes $published) -or
+            $null -ne (Get-Attributes $committed) -or @([IO.Directory]::EnumerateFileSystemEntries($backup)).Count -ne 0) {
+          throw 'The previous switch was not fully restored; the upgrade staging was preserved.'
+        }
+        $recordedPlan = Read-SwitchPlan
+        Assert-SwitchEntriesUnchanged @($recordedPlan.old) $oldEntries
+        Assert-SwitchEntriesUnchanged @($recordedPlan.new) $newEntries
+      } else {
+        $step = 'write-switch-plan'
+        $planJson = ConvertTo-Json -InputObject @{ old = $oldEntries; new = $newEntries } -Compress
+        if ([Text.Encoding]::UTF8.GetByteCount($planJson) -gt $planSizeLimit) {
+          throw 'Upgrade plan exceeds the recovery size limit.'
+        }
+        Write-NewRecord $plan $planJson
       }
-      Write-NewRecord $plan $planJson
-      $step = 'switch-payload'
       try {
+        $step = 'backup-previous-payload'
         foreach ($name in $oldNames) { Move-PayloadEntry $root $backup $name }
+        $step = 'publish-staged-payload'
         Write-NewRecord $switching
         foreach ($name in $newNames) { Move-PayloadEntry $incoming $root $name }
         Write-NewRecord $published
       } catch {
         $failure = $_
-        try { Restore-Upgrade }
-        catch { throw "$(Get-UpgradeErrorMessage $failure.Exception) Recovery needs attention: $(Get-UpgradeErrorMessage $_.Exception)" }
+        $nativeError = Get-UnderlyingUpgradeException $failure.Exception
+        $retryable = $nativeError -is [ComponentModel.Win32Exception] -and
+          [InstallerPayloadFiles]::IsRetryableRenameError($nativeError.NativeErrorCode)
+        try { Restore-Upgrade -KeepStaged:$retryable }
+        catch {
+          Write-UpgradeDetail $step "rollback=incomplete recovery=$(Get-UpgradeErrorMessage $_.Exception) move=$(Get-UpgradeErrorMessage $failure.Exception)"
+          exit $switchRecoveryFailedExitCode
+        }
+        if ($retryable) {
+          Write-UpgradeDetail $step "win32=$($nativeError.NativeErrorCode) rollback=restored $(Get-UpgradeErrorMessage $nativeError)"
+          exit $switchRetryExitCode
+        }
         throw $failure
       }
     }

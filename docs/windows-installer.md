@@ -223,6 +223,17 @@ inaccessible staging directory is preserved and blocks operations that would
 overwrite or uninstall that installation. The recovery error includes the path
 and the underlying failure; users should not delete the staging directory.
 The current installer and uninstaller serialize the switch and cleanup.
+Same-volume renames briefly retry Windows access and sharing errors (5, 32,
+33). After verified rollback, setup closes processes whose executable is in
+the selected installation and retries the switch once using the same staging.
+If it still cannot move the files after restoring the old installation again,
+setup re-verifies the registered uninstaller and uses the conventional upgrade
+flow. This preserves user data and re-extracts the new payload only after the
+old uninstaller succeeds. Both interactive and silent setup follow this order.
+Setup does not run the uninstaller after incomplete rollback, an identity
+conflict, or a failed safety check. The timing log records the failed move,
+Windows error, rollback and fallback decision. Setup does not change ACLs,
+disable endpoint security, or terminate unrelated programs.
 During staging, setup also guards the installed legacy uninstaller image from
 being opened for execution. The released legacy uninstaller itself is unchanged.
 All-users and different-scope installations can use the registered removal
@@ -534,9 +545,8 @@ checks use the exact installation-directory paths.
   pipe's default Windows access controls. During cleanup it still acknowledges
   retry requests without dispatching another quit, so an already-draining Main
   cannot be mistaken for a legacy process. The pipe retires with the process.
-- Legacy applications without that endpoint use the already-confirmed, scoped
-  force-close in interactive setup. Silent setup does not force-close them and
-  fails while they remain running. A confirmed survivor after force-close stops
+- Legacy applications without that endpoint use scoped force-close in both
+  interactive and automatic setup. A confirmed survivor after force-close stops
   installation; it cannot enter the inspection-unavailable fallback.
 - After an accepted request, the process wait covers the shared application
   cleanup policy, emergency-exit observation and scheduling margin. The NSIS

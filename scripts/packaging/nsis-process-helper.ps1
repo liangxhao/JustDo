@@ -7,7 +7,9 @@ param(
   [int]$MaxAttempts = 120,
 
   [ValidatePattern('^[A-Za-z]+\.exe$')]
-  [string]$BrowserAuthenticationExecutable
+  [string]$BrowserAuthenticationExecutable,
+
+  [switch]$VerifiedExecutablesOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,9 +34,25 @@ try {
     }
   }
   $helperPid = $PID
+  $verifiedPaths = $null
+  if ($VerifiedExecutablesOnly) {
+    $verifiedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($executable in $installedExecutables.Values) { $null = $verifiedPaths.Add($executable) }
+    foreach ($relativePath in @('resources\cfmind\node-runtime\node.exe', 'resources\python-win\python.exe',
+        'resources\python-win\pythonw.exe', 'resources\mingit\cmd\git.exe', 'resources\mingit\mingw64\bin\git.exe')) {
+      $null = $verifiedPaths.Add([IO.Path]::Combine($installRoot, $relativePath))
+    }
+  }
 
   function Stop-MatchedProcess($process) {
     try {
+      $executablePath = $process.Path
+      if ([string]::IsNullOrWhiteSpace($executablePath)) { return }
+      $executablePath = [IO.Path]::GetFullPath($executablePath)
+      if (-not $executablePath.StartsWith($installRoot, [StringComparison]::OrdinalIgnoreCase) -or
+          ($VerifiedExecutablesOnly -and -not $verifiedPaths.Contains($executablePath))) {
+        return
+      }
       $process.Kill()
     } catch {
       [Console]::Error.WriteLine(
@@ -170,7 +188,11 @@ try {
         Stop-MatchedProcess $_
       }
       for ($attempt = 0; $attempt -lt 15; $attempt++) {
-        if ((Get-InstalledProcesses).Count -eq 0) { exit 0 }
+        $remaining = @(Get-InstalledProcesses)
+        if ($VerifiedExecutablesOnly) {
+          $remaining = @($remaining | Where-Object { $verifiedPaths.Contains($_.Path) })
+        }
+        if ($remaining.Count -eq 0) { exit 0 }
         Start-Sleep -Milliseconds 500
       }
       exit 1

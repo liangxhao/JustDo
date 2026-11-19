@@ -717,7 +717,7 @@ FunctionEnd
   ${EndIf}
 !macroend
 
-!macro StopJustDoProcesses _RESULT
+!macro StopJustDoProcesses _RESULT _FILTER
   ; Only stop processes whose executable is inside the current installation.
   ; Matching by process name or a loose "*JustDo*" path can terminate unrelated
   ; applications and development servers.
@@ -731,7 +731,7 @@ FunctionEnd
       System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_CALLER_PID", "$0").r1'
       System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("JUSTDO_APP_PROCESS_NAME", "${APP_FILENAME}").r1'
       !insertmacro JustDoResolveNativePowerShell $R8
-      nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Stop ${BROWSER_AUTHENTICATION_PROCESS_ARGUMENT}'
+      nsExec::ExecToStack /TIMEOUT=15000 '"$R8" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\justdo-process-helper.ps1" -Action Stop ${_FILTER} ${BROWSER_AUTHENTICATION_PROCESS_ARGUMENT}'
       Pop ${_RESULT}
       Pop $R9
       System::Call 'Kernel32::SetEnvironmentVariable(t "JUSTDO_INSTALL_ROOT", t "")i'
@@ -800,8 +800,13 @@ Function JustDoCheckAppRunning
       !insertmacro RequestAndWaitForInstallerQuit $0
       !insertmacro JustDoLogInstallEvent "phase=graceful-shutdown-result mode=silent result=$0 detail=$R9"
       ${If} $0 == "1"
+        !insertmacro StopJustDoProcesses $0 "-VerifiedExecutablesOnly"
+        !insertmacro JustDoLogInstallEvent "phase=forced-shutdown-result mode=silent result=$0 detail=$R9"
+      ${EndIf}
+      ${If} $0 == "1"
         !insertmacro JustDoLogInstallEvent "phase=installer-abort reason=app-still-running"
-        Abort "${PRODUCT_NAME} is still running after a graceful shutdown request."
+        SetErrorLevel 2
+        Abort "${PRODUCT_NAME} is still running after setup tried to close it."
       ${ElseIf} $0 != "0"
         ; Process enumeration is advisory. The old-version removal and atomic
         ; copy below are the authority on whether installed files are actually
@@ -850,7 +855,7 @@ Function JustDoCheckAppRunning
             !insertmacro JustDoSetInstallStatus "正在结束仍占用安装目录的进程…" "Closing processes still using the installation…"
             !insertmacro InstallerMarkPhase
             !insertmacro JustDoLogInstallEvent "phase=forced-shutdown-start reason=graceful-timeout"
-            !insertmacro StopJustDoProcesses $0
+            !insertmacro StopJustDoProcesses $0 ""
             !insertmacro JustDoLogInstallEvent "phase=forced-shutdown-result result=$0 detail=$R9"
           ${EndIf}
           ${If} $0 == "0"
@@ -1654,7 +1659,7 @@ FunctionEnd
         Abort "The previous application is still using this installation."
       ${EndIf}
     ${Else}
-      !insertmacro StopJustDoProcesses $0
+      !insertmacro StopJustDoProcesses $0 ""
       ${If} $0 == "1"
         SetErrorLevel 2
         Abort "The application is still using this installation."
