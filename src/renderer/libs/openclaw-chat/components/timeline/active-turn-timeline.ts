@@ -43,6 +43,7 @@ import {
   OPEN_SPAWNED_AGENT_EVENT,
   spawnedAgentSessionKey,
 } from '../../model/tools/spawn-tool-target';
+import { asToolRecord } from '../../model/tools/tool-message-adapter';
 import {
   toolNesting,
   toolOperation,
@@ -61,7 +62,7 @@ import {
   renderStreamingThinkingGroup,
 } from '../message/message-render';
 import { renderThinkingContent, type ThinkingContentRenderer } from '../message/thinking-content';
-import { getCodeModeSource, getCodeModeTitle } from '../tools/code-mode-presentation';
+import { getCodeModeSource } from '../tools/code-mode-presentation';
 import { type EditDiffMonacoData, resolveEditDiffLanguage } from '../tools/edit-diff-monaco';
 import { resolveToolDisplay } from '../tools/tool-display';
 import { renderCompactionMessage } from './compaction-divider';
@@ -121,9 +122,7 @@ function toolSummaryInput(value: unknown): string {
 
 function toolSummary(tool: ToolItem): string {
   if (getCodeModeSource(tool.name, tool.input) !== null) {
-    return toolSummaryInput(
-      getCodeModeTitle(tool.name, tool.input) ?? i18nService.t('coworkCodeMode'),
-    );
+    return toolSummaryInput(i18nService.t('coworkCodeMode'));
   }
   const editDiff = parseEditToolDiff(tool.name, tool.input);
   return toolTarget(tool) || editDiff?.path || toolSummaryInput(tool.input);
@@ -713,8 +712,10 @@ function renderToolImages(tool: ToolItem, readImage?: ToolImageArtifactReader) {
 }
 
 function renderToolInputPreview(tool: ToolItem, readImage?: ToolImageArtifactReader) {
-  if (readImage && tool.presentation?.imageArtifacts?.length) return nothing;
-  const preview = toolSummary(tool);
+  const inputTitle = asToolRecord(tool.input)?.title;
+  const title = typeof inputTitle === 'string' ? toolSummaryInput(inputTitle) : '';
+  if (!title && readImage && tool.presentation?.imageArtifacts?.length) return nothing;
+  const preview = title || toolSummary(tool);
   return html`<span class="process-summary__tool-input" title=${preview}>${preview}</span>`;
 }
 

@@ -24,6 +24,7 @@ export interface ChromeExtensionProcessItem {
   status?: string;
   text?: string;
   input?: unknown;
+  inputTitle?: string;
   output?: unknown;
   isError?: boolean;
   progressText?: string;

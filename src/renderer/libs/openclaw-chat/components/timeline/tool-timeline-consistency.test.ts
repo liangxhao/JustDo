@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
-import type { TemplateResult } from 'lit';
+import { render, type TemplateResult } from 'lit';
 import { describe, expect, test } from 'vitest';
 
 import { createChatTranscriptState } from '../../model/chat-transcript-state';
 import { projectPersistedTimeline } from '../../model/timeline/project-history-timeline';
 import { type ProcessSummaryTimelineItem, projectTurnItems } from '../../model/timeline/project-turn-items';
 import { reduceAgentEvent } from '../../model/turn/agent-event-reducer';
+import type { ToolOutput } from '../tools/tool-output';
 import { renderTimelineItem } from './active-turn-timeline';
 
 function flatten(value: unknown): string {
@@ -122,6 +123,22 @@ function refreshedSummary(
 }
 
 describe('Tool timeline consistency', () => {
+  test('displays an Exec input title in incremental and refreshed rows', () => {
+    const input = { command: 'npm test', title: '  Run\n focused tests  ' };
+
+    for (const summary of [incrementalSummary(false, input), refreshedSummary(false, input)]) {
+      const view = document.createElement('div');
+      render(renderTimelineItem(summary, 3, true), view);
+
+      const heading = view.querySelector('.process-summary__tool-title');
+      expect(heading?.querySelector('strong')?.textContent?.trim()).toBe('Exec');
+      expect(heading?.querySelector('.process-summary__tool-input')?.textContent).toBe(
+        'Run focused tests',
+      );
+      expect(view.querySelector<ToolOutput>('justdo-tool-output')?.text).toContain(input.command);
+    }
+  });
+
   test.each([false, true])(
     'renders Code Mode source and titles consistently after refresh (failed=%s)',
     failed => {

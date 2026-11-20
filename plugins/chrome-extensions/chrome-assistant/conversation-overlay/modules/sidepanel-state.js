@@ -117,6 +117,19 @@ export function toolInputSummary(value) {
   return compact.length <= 160 ? compact : `${compact.slice(0, 159)}…`;
 }
 
+function readToolInputTitle(value) {
+  let input = value;
+  if (typeof value === 'string' && value.trimStart().startsWith('{')) {
+    try {
+      input = JSON.parse(value);
+    } catch {
+      return '';
+    }
+  }
+  const title = input?.title;
+  return typeof title === 'string' ? title.trim() : '';
+}
+
 export function toolDisplayTitle(value) {
   const name = typeof value === 'string' ? value.trim() : '';
   if (!name) return 'Tool';
@@ -310,6 +323,7 @@ export function messagesFromThread(thread, options = {}) {
             ...(item.display ? { display: item.display } : {}),
           });
       } else if (item.type === 'toolCall') {
+        const inputTitle = readToolInputTitle(item.input);
         const process = {
           key: itemKey(item, itemIndex, 'tool'),
           id: item.toolUseId || item.id,
@@ -317,6 +331,7 @@ export function messagesFromThread(thread, options = {}) {
           name: item.toolName,
           title: toolDisplayTitle(item.toolName),
           input: formatSidePanelValue(item.input),
+          ...(inputTitle ? { inputTitle } : {}),
           output: formatSidePanelValue(item.output),
           isError: item.isError === true,
           status: item.status,

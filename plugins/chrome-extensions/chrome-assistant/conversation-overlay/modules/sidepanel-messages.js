@@ -370,10 +370,11 @@ export function createMessageRenderer(
     name.textContent = process.title;
     name.title = name.textContent;
     const input = tool.querySelector('.process-tool-input');
-    input.textContent =
+    const inputPreview =
       normalizedStatus === 'running' && process.progressText
-        ? toolInputSummary(process.progressText)
-        : toolInputSummary(process.input);
+        ? process.progressText
+        : process.input;
+    input.textContent = toolInputSummary(process.inputTitle ?? inputPreview);
     input.title = input.textContent;
     const progress = tool.querySelector('.process-tool-progress');
     progress.textContent = normalizedStatus === 'running' ? process.progressText || '' : '';

@@ -5,9 +5,3 @@ export function getCodeModeSource(name: string, input: unknown): string | null {
   const code = (input as Record<string, unknown>).code;
   return typeof code === 'string' ? code : null;
 }
-
-export function getCodeModeTitle(name: string, input: unknown): string | null {
-  if (getCodeModeSource(name, input) === null) return null;
-  const title = (input as Record<string, unknown>).title;
-  return typeof title === 'string' && title.trim() ? title.trim() : null;
-}

@@ -364,6 +364,25 @@ describe('side panel process presentation matches the desktop', () => {
     expect(output.textContent).toBe('Second result');
   });
 
+  it('shows the Exec input title before progress and keeps the raw input available', () => {
+    const input = { title: 'Run\n tests', command: 'npm test' };
+    const item = {
+      id: 'exec-1',
+      type: 'toolCall',
+      toolName: 'exec',
+      status: 'inProgress',
+      input: JSON.stringify(input),
+      progressText: 'Running command',
+    };
+
+    renderer.render(messagesFromThread({ id: 'one', turns: [{ items: [item] }] }), 'one');
+
+    expect(messages.querySelector('.process-tool-title strong')?.textContent).toBe('Exec');
+    expect(messages.querySelector('.process-tool-input')?.textContent).toBe('Run tests');
+    expect(messages.querySelector('.process-tool-progress')?.textContent).toBe(item.progressText);
+    expect(messages.querySelector('[data-section="input"] pre')?.textContent).toBe(item.input);
+  });
+
   it('retains the same raw Tool reader and choice when live content becomes a summary and later enters completed history', () => {
     const item = tool('same-source', 'inProgress');
     renderer.render([live(item)], 'one');

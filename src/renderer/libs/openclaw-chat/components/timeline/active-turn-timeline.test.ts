@@ -122,6 +122,7 @@ describe('active turn timeline', () => {
     ['custom_tool', { enabled: false, count: 0 }, 'false'],
     ['custom_tool', 'plain input', 'plain input'],
     ['exec', { command: '', cmd: 'git status' }, 'git status'],
+    ['exec', { command: 'npm test', title: ' \n ' }, 'npm test'],
   ])(
     'previews %s arguments even when native title repeats the tool name',
     (name, input, preview) => {
@@ -351,13 +352,14 @@ describe('active turn timeline', () => {
           status: 'running',
           toolCallId: 'call-live',
           name: 'exec',
-          input: { command: 'npm test' },
+          input: { command: 'npm test', title: 'Run tests' },
         },
       }),
     );
 
     expect(rendered).toContain('data-live-process-id');
     expect(rendered).toContain('process-summary__tool-status--running');
+    expect(rendered).toContain('class="process-summary__tool-input" title=Run tests>Run tests</span>');
     expect(rendered).toContain('npm test');
     expect(rendered).not.toContain('process-live__status');
     expect(rendered).not.toContain('<div class="process-summary__detail-label">Result</div>');
