@@ -1,6 +1,7 @@
 import { sidePanelText as t } from './sidepanel-i18n.js';
 import { createWebConnectionPanel } from './web-connection-panel.js';
 import { createWebLaunchContext } from './web-launch-context.js';
+import { WebLaunchLimits } from '../../contracts/webLaunch.ts';
 
 export const WebLaunchPanelMessage = {
   Register: 'web-launch:panel:register',
@@ -60,6 +61,7 @@ export function createWebLaunchPanel({
   const panelInstanceId = crypto.randomUUID();
   let windowId;
   let current = null;
+  const releasedDrafts = new Set();
   let receipt = null;
   let disposed = false;
   let busy = false;
@@ -257,15 +259,31 @@ export function createWebLaunchPanel({
       })
       .catch(() => {});
   }
+  function rememberReleasedDraft(value) {
+    if (value?.request.status === 'submitted' || value?.execution.executionSettled === true ||
+        CLOSED.has(value?.request.status)) {
+      releasedDrafts.add(value.launchId);
+      if (releasedDrafts.size > WebLaunchLimits.activeReceipts)
+        releasedDrafts.delete(releasedDrafts.values().next().value);
+    }
+  }
   function acceptReceipt(response) {
-    if (!current || disposed) return;
+    if (disposed) return;
     const next = response.receipt;
+    rememberReleasedDraft(next);
+    if (!current || next?.launchId !== current.launchId) {
+      const threadId = response.internal?.threadId;
+      if (threadId && response.internal.clientTurnId &&
+          (next?.request.status === 'submitted' || next?.execution.executionSettled === true))
+        onReceipt({ ...response, threadId, matchesSubmission: false, isCurrentLaunch: false });
+      return;
+    }
     if (
       next &&
-      next.launchId === current.launchId &&
       (!response.internal?.threadId || response.internal.threadId === current.threadId) &&
       (!receipt || next.receiptRevision > receipt.receiptRevision)
     ) {
+      const hadInput = inputAssociated();
       receipt = next;
       current.receipt = next;
       if (response.internal?.clientTurnId) current.clientTurnId = response.internal.clientTurnId;
@@ -323,6 +341,7 @@ export function createWebLaunchPanel({
         current = null;
         receipt = null;
       }
+      if (hadInput && !inputAssociated()) void publishState();
     }
     render();
   }
@@ -387,7 +406,8 @@ export function createWebLaunchPanel({
       SENT.has(envelope.receipt?.request?.status) ||
       (envelope.receipt?.execution?.status && envelope.receipt.execution.status !== 'not-started');
     if (alreadyDispatched) {
-      if (inputAssociated()) return;
+      rememberReleasedDraft(envelope.receipt);
+      if (inputAssociated() || (current && !resume)) return;
       current = { ...envelope, clientTurnId: internal?.clientTurnId };
       receipt = envelope.receipt;
       inputReleased = true;
@@ -397,6 +417,7 @@ export function createWebLaunchPanel({
       if (resume) await restoreDispatched();
       return;
     }
+    if (releasedDrafts.has(envelope.launchId)) return;
     if (composerHasWork(composer) || inputAssociated()) {
       if (restored) blockedRestoration = envelope.launchId;
       else {
@@ -672,6 +693,7 @@ export function createWebLaunchPanel({
       }
     }
     current = null;
+    releasedDrafts.clear();
     receipt = null;
     cancellation = null;
     blockedRestoration = '';
@@ -715,6 +737,7 @@ export function createWebLaunchPanel({
       windowId = nextWindowId;
       lastState = '';
       const composer = readComposer();
+      const previousLaunchId = current?.launchId;
       const result = await request(WebLaunchPanelMessage.Register, {
         composerBusy: Boolean(
           composer.prompt.trim() ||
@@ -739,7 +762,8 @@ export function createWebLaunchPanel({
         Object.hasOwn(result, 'connectionPending')
       )
         connection.accept(result.connectionPending);
-      if (result.envelope) {
+      if (result.envelope &&
+          (current?.launchId === previousLaunchId || current?.launchId === result.envelope.launchId)) {
         const observed = result.observations?.find(
           item => item.receipt?.launchId === result.envelope.launchId,
         );

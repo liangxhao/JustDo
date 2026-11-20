@@ -90,7 +90,7 @@ type Prepare = {
 `prepare` 或 `submit` 的 ACK 丢失后只调用 `read`。尚未收到本次 `prepare` 的 ACK 时用 `source + requestId` 找回回执，已知回执时用 `source + documentLeaseId + launchId`。后台只从新接纳或找回的本次请求更新文档租约；迟到的旧请求响应不能改写当前租约。
 同一仍 active 的文档可用新 `channelGeneration` 只读重连。文档租约终止撤销后不可恢复。
 
-每次真实点击都分配新的 requestId 和点击序号。后台在点击链上调用 `sidePanel.open()`，再按 Chrome 窗口保存有界 FIFO。队首在前一请求精确结算或已明确关闭、原标签页与侧栏可用后，使用原点击快照进入 `prepare`。Main 继续原子限制每窗口一个未结束请求。
+每次真实点击都分配新的 requestId 和点击序号。后台在点击链上调用 `sidePanel.open()`，再按 Chrome 窗口保存有界 FIFO。队首在前一请求获得精确原生发送确认或已关闭，且原标签页和侧栏输入框可用后，使用原点击快照进入 `prepare`。Main 原子检查同一窗口尚未获得原生绑定的活动请求。已获得绑定的请求继续独立执行和回传结果。新对话接管当前侧栏，旧请求的状态更新只作用于各自会话。
 
 等待中可以用原句柄查询或取消。网页得到 `queueStatus`，Main 接纳后才得到正式回执和 launchId。排队输入最长保留 15 分钟。提升队首时重新检查原文档、站点权限、输入框和绝对期限，并由 Main 在准入事务里用 `expectedQueuedPolicyRevision` 比较入队时的全局策略版本。直接点击后立即准入的路径沿用当前策略。未知 Prepare 保留只读恢复，队列不会重放原点击。
 

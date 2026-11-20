@@ -348,6 +348,44 @@ describe('webpage launch admission and persistence', () => {
     expect(f.prepare({ requestId: 'fresh', clickSequence: 3 }).receipt.request.status).toBe('drafted');
   });
 
+  it('submits a second native conversation in the same window and keeps its observation after abandoning the first', async () => {
+    const f = fixture();
+    const first = f.prepare();
+    f.submit(first);
+    await tick();
+    const firstRun = f.accepted;
+
+    const second = f.prepare({ requestId: 'request-2', clickSequence: 2 });
+    const secondBinding = { ...binding, sessionKey: 'agent:main:fixture:second', nativeSessionId: 'native-session-2' };
+    f.chat.sendMessage.mockImplementationOnce(async (value, hooks) => {
+      hooks.assertCurrent();
+      hooks.finalSyncAdmission?.(secondBinding);
+      f.wire();
+      hooks.onNativeAccepted?.({ ...secondBinding, nativeRunId: 'native-2', clientTurnId: value.clientTurnId });
+      return { sessionId: value.sessionId, runId: value.clientTurnId, nativeRunId: 'native-2' };
+    });
+    f.submit(second);
+    await tick();
+
+    expect(first.internal.threadId).not.toBe(second.internal.threadId);
+    expect(first.internal.documentLeaseId).toBe(second.internal.documentLeaseId);
+    expect(f.chat.sendMessage.mock.calls.map(([message]) => message.sessionId)).toEqual([
+      first.internal.threadId, second.internal.threadId,
+    ]);
+    expect(f.state().receipts[first.receipt.launchId]).toMatchObject({
+      executionStatus: 'running', executionSettled: false, nativeBinding: firstRun,
+    });
+    expect(f.state().receipts[second.receipt.launchId]).toMatchObject({
+      executionStatus: 'running', executionSettled: false,
+      nativeBinding: { ...secondBinding, nativeRunId: 'native-2' },
+    });
+    f.service.abandon({ launchId: first.receipt.launchId, confirm: true });
+    await expect(f.service.read(f.ref(first))).rejects.toThrow('EXPIRED');
+    await expect(f.service.read(f.ref(second))).resolves.toMatchObject({
+      receipt: { request: { status: 'submitted' }, execution: { executionSettled: false } },
+    });
+  });
+
   it('starts a new conversation after another tab prunes the expired lease of the still-open page', async () => {
     const f = fixture();
     const first = f.prepare();

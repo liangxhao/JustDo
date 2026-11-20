@@ -1274,11 +1274,12 @@ webLaunchPanel = createWebLaunchPanel({
       turnId &&
       execution?.executionSettled === true &&
       ['completed', 'failed', 'interrupted'].includes(execution.status) &&
-      threadId === sessionSelect.value &&
       expectedTurnId === turnId &&
       knownTurns.get(threadId)?.id === turnId
     ) {
       recordTurnCompletion(threadId, { id: turnId, status: execution.status });
+      if (response.isCurrentLaunch === false && threadId === sessionSelect.value)
+        void refreshAll(threadId);
     }
   },
   onChange: () => {

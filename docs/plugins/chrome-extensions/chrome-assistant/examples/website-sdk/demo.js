@@ -4,9 +4,9 @@ const copy = navigator.language.startsWith('zh')
       title: '网页调用 Chrome 扩展示例',
       record: '示例记录有 12 个订单，其中 3 个待处理。每次接纳新任务时，页面会显示它的新编号。',
       start: '点击 A。首次使用时先允许网站连接，再在侧栏发送草稿。',
-      keepOpen: 'A 发起后，保持侧栏打开并连续点击两次 B。A 尚未结束时，两次点击会分别排队。',
+      keepOpen: 'A 发送后，保持侧栏打开并连续点击两次 B。即使 A 仍在运行，侧栏也会依次切到新对话。',
       reopen:
-        '等待队列依次启动，每次点击都会显示新的任务编号。处理期间可关闭侧栏，再用 Chrome 工具栏的扩展图标打开。',
+        '每次点击都会显示新的任务编号，各笔请求分别回传结果。处理期间可关闭侧栏，再用 Chrome 工具栏的扩展图标打开。',
       context: '订单 12 个，其中 3 个待处理。',
       prompt: {
         draft: '请用一行以 A 开头的文字回答订单总数。',
@@ -33,9 +33,9 @@ const copy = navigator.language.startsWith('zh')
       start:
         'Click A. On first use, allow the website to connect, then send the draft in the side panel.',
       keepOpen:
-        'After A starts, leave the side panel open and click B twice. If A is unfinished, both clicks queue independently.',
+        'After sending A, leave the side panel open and click B twice. The side panel switches to each new conversation while A continues.',
       reopen:
-        'Watch each click receive a new task ID as the queue advances. Use the extension icon to reopen the side panel if you close it.',
+        'Each click gets a new task ID and returns its own result. Use the extension icon to reopen the side panel if you close it.',
       context: 'There are 12 orders, including 3 pending orders.',
       prompt: {
         draft: 'Answer with one line starting with A and give the total number of orders.',

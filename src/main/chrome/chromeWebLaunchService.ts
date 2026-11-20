@@ -350,7 +350,8 @@ export class ChromeWebLaunchService {
       const site = state.sites.find(item => item.origin === value.source.origin);
       if (!site?.enabled) { error = 'SITE_NOT_ALLOWED'; return; }
       const windowKey = webLaunchWindowKey(value.source);
-      if (Object.values(state.receipts).some(receipt => receipt.observed && receipt.windowKey === windowKey && !settled(receipt) && !receipt.notSent)) { error = 'COMPOSER_BUSY'; return; }
+      if (Object.values(state.receipts).some(receipt => receipt.observed && receipt.windowKey === windowKey &&
+        !settled(receipt) && !receipt.notSent && !receipt.nativeBinding)) { error = 'COMPOSER_BUSY'; return; }
       if (Object.values(state.receipts).filter(receipt => receipt.observed && !settled(receipt) && !receipt.notSent).length >= WebLaunchLimits.activeReceipts || Object.keys(state.receipts).length >= 300) { error = 'CAPACITY_EXCEEDED'; return; }
       if (!lease) {
         lease = {
@@ -913,12 +914,13 @@ export class ChromeWebLaunchService {
     this.store.mutate(state => {
       const item = this.get(state, id);
       const lease = state.leases[item.leaseId];
-      if (lease) lease.active = false;
+      if (lease && !Object.values(state.receipts).some(other => other.launchId !== id && other.leaseId === item.leaseId))
+        lease.active = false;
       if (!item.executionSettled && item.clientTurnId && !item.notSent) {
         if (!state.unknownOrigins.includes(item.source.origin)) state.unknownOrigins.push(item.source.origin);
         if (!state.abandonedUnknownOrigins.includes(item.source.origin)) state.abandonedUnknownOrigins.push(item.source.origin);
       }
-      delete state.receipts[id]; // Revoked missing leases/envelopes never regain admission.
+      delete state.receipts[id]; // The click watermark still prevents re-creating this launch.
     });
     this.owners.delete(id);
     owner?.candidates.clear();
@@ -927,7 +929,7 @@ export class ChromeWebLaunchService {
     this.resultReads.delete(id);
     this.refreshing.delete(id);
     this.changed();
-    return { status: 'abandoned', executionSettled: receipt.executionSettled };
+    return { status: 'abandoned', requestId: receipt.requestId, executionSettled: receipt.executionSettled };
   }
 
   revokeDocument(raw: unknown) {

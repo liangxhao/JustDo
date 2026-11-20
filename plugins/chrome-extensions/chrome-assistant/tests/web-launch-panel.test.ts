@@ -909,6 +909,52 @@ describe('website launch panel', () => {
     expect(refreshThread).toHaveBeenCalledExactlyOnceWith('external-thread');
   });
 
+  it('switches to the next website conversation while the first continues and keeps that selection when it finishes', async () => {
+    const { composer, emit, input, onReceipt, panel, refreshThread, sendMessage } = await mount({
+      mode: 'send', automaticSendAllowed: true,
+    });
+    await vi.waitFor(() => expect(panel.inputAssociated()).toBe(false));
+    expect(calls(sendMessage, Message.Submit).map(message => message.launchId)).toEqual([input.launchId]);
+
+    const nextReceipt = { ...input.receipt, launchId: 'launch-two', requestId: 'request-two' };
+    const next = envelope({
+      launchId: nextReceipt.launchId, requestId: nextReceipt.requestId, receipt: nextReceipt,
+      threadId: 'second-thread', prompt: 'Second button', mode: 'send', automaticSendAllowed: true,
+    });
+    const original = sendMessage.getMockImplementation()!;
+    sendMessage.mockImplementation(async message =>
+      message.type === Message.Submit && message.launchId === next.launchId
+        ? {
+            ok: true,
+            receipt: {
+              ...nextReceipt, receiptRevision: 2, request: { status: 'submitted' },
+              execution: { status: 'running', executionSettled: false },
+            },
+            internal: { threadId: next.threadId, clientTurnId: 'second-turn' },
+          }
+        : original(message),
+    );
+    emit({ envelope: next, receipt: nextReceipt });
+    expect(composer.threadId).toBe(next.threadId);
+    await vi.waitFor(() => expect(panel.composerAction(next.threadId, 'second-turn')).toMatchObject({ type: 'stop' }));
+    expect(calls(sendMessage, Message.Submit).map(message => message.launchId)).toEqual([input.launchId, next.launchId]);
+
+    refreshThread.mockClear();
+    emit({ envelope: input, receipt: input.receipt });
+    expect(composer.threadId).toBe(next.threadId);
+    const firstFinished = {
+      ...input.receipt, receiptRevision: 3, request: { status: 'submitted' },
+      execution: { status: 'completed', executionSettled: true },
+    };
+    emit({ receipt: firstFinished, internal: { threadId: input.threadId, clientTurnId: 'client-turn' } });
+    expect(onReceipt).toHaveBeenLastCalledWith(expect.objectContaining({
+      threadId: input.threadId, receipt: firstFinished,
+    }));
+    expect(composer.threadId).toBe(next.threadId);
+    expect(refreshThread).not.toHaveBeenCalledWith(input.threadId);
+    expect(panel.composerAction(next.threadId, 'second-turn')).toMatchObject({ type: 'stop' });
+  });
+
   it('keeps a restored web draft pending when the ordinary composer contains work', async () => {
     const { composer, input, emit, sendMessage, installComposer } = await mount(
       { restored: true, mode: 'send', automaticSendAllowed: true },

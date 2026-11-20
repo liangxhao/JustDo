@@ -29,8 +29,8 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 在扩展设置的 **Website message sending mode** 保留 **Follow website (default)**，按下面的顺序验证连续发起任务。
 
 1. 点击 **A · 打开草稿**（`draft + final`）。首次使用时在侧栏允许连接，再发送草稿。
-2. A 发起后保持侧栏打开，连续点击两次 **B · 自动发送**（`send + final`）。如果 A 仍在执行，每次点击都会显示独立的排队记录。
-3. 等两笔 B 依次创建各自的新对话。可以在 A 执行期间关闭侧栏，再用 Chrome 工具栏中的扩展图标打开，等待中的请求会继续处理。整个过程无需刷新网页。
+2. A 发送后保持侧栏打开，连续点击两次 **B · 自动发送**（`send + final`）。每次点击都会获得新的任务编号，侧栏依次切到对应的新对话。A 仍在执行时也可以发起 B。
+3. 等各笔请求在原网页显示自己的结果。可以在运行期间关闭侧栏，再用 Chrome 工具栏中的扩展图标打开查看。整个过程无需刷新网页。
 
 示例服务从组装目录读取 SDK。要把示例搬到自己的网站，把 `index.html`、`demo.js` 和组装后的 `chrome-assistant.js` 放在同一目录。[示例页面](examples/website-sdk/index.html) · [绑定与回调代码](examples/website-sdk/demo.js)
 
@@ -179,7 +179,7 @@ try {
 
 `onConnection` 可用来提示用户到侧栏授权。任务准备开始后，SDK 先调用 `onRequest`，再传回该请求的状态与结果。根据 `requestId` 关联回执，用 `receiptRevision` 忽略比当前显示更旧的回执。
 
-每次真实点击都会得到新句柄。同一窗口已有未结束请求时，后续点击按顺序等待，包括连续点击同一个按钮。排队请求有自己的 requestId，在获准创建对话时才获得 launchId。
+每次真实点击都会得到新句柄，包括连续点击同一个按钮。侧栏输入框被占用或正在确认发送时，后续点击按顺序等待。上一笔消息确认发送后，侧栏可切到下一笔新对话，已发送的请求继续独立执行。排队请求有自己的 requestId，在获准创建对话时才获得 launchId。
 
 下面的回执同时包含最终文本和一个 Excel 交付件。
 

@@ -274,7 +274,7 @@ describe('web launch background', () => {
     { panelOpen: false, restart: false },
     { panelOpen: false, restart: true },
   ])(
-    'starts a fresh request after an unobserved terminal (panelOpen=$panelOpen, restart=$restart)',
+    'starts a fresh request while the first is running (panelOpen=$panelOpen, restart=$restart)',
     async ({ panelOpen, restart }) => {
       let controller = createWebLaunchBackground({ chromeApi: api, client });
       const panel = { ...panelSender(7), documentId: 'panel-document' };
@@ -295,19 +295,19 @@ describe('web launch background', () => {
       if (!panelOpen) api.runtime.sendMessage.mockRejectedValue(new Error('Panel closed'));
       if (restart) controller = createWebLaunchBackground({ chromeApi: api, client });
 
-      const settled = {
+      const running = {
         ...reply,
         receipt: {
           ...reply.receipt,
           receiptRevision: 3,
           request: { status: 'submitted' },
-          execution: { status: 'completed', executionSettled: true },
+          execution: { status: 'running', executionSettled: false },
           output: { status: 'pending' },
         },
       };
       const original = client.request.getMockImplementation()!;
       client.request.mockImplementation(async (method, params) => {
-        if (method === WebLaunchMethod.Observations) return { observations: [settled] };
+        if (method === WebLaunchMethod.Observations) return { observations: [running] };
         if (method === WebLaunchMethod.Prepare)
           return {
             ...draft,
@@ -333,6 +333,37 @@ describe('web launch background', () => {
       ]);
     },
   );
+
+  it('cancels a new preparation after a failed probe without revoking the running launch', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const draft = structuredClone(reply);
+    await invoke(controller, { type: 'web-launch:panel:register', ...panelScope }, panelSender(7));
+    await invoke(controller, launch);
+    reply.receipt = {
+      ...reply.receipt,
+      receiptRevision: 2,
+      request: { status: 'submitted' },
+      execution: { status: 'running', executionSettled: false },
+    };
+    await invoke(controller, { type: 'web-launch:launch:submit', launchId: 'launch-1', ...panelScope }, panelSender(7));
+
+    const original = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Prepare) {
+        api.tabs.sendMessage.mockRejectedValueOnce(new Error('Document probe failed'));
+        return { ...draft, receipt: { ...draft.receipt, requestId: params.requestId, launchId: 'launch-2' } };
+      }
+      if (method === WebLaunchMethod.Cancel) return {};
+      return original(method, params);
+    });
+    expect(await invoke(controller, { ...launch, requestId: 'request-2', clickSequence: 2 }))
+      .toMatchObject({ ok: false, code: 'LEASE_REVOKED' });
+    expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.Cancel, expect.objectContaining({ launchId: 'launch-2' }));
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.RevokeDocument, expect.anything());
+    expect(await invoke(controller, {
+      type: 'web-launch:document:read', requestId: launch.requestId, documentNonce: launch.documentNonce,
+    })).toMatchObject({ ok: true, receipt: { launchId: 'launch-1', execution: { status: 'running' } } });
+  });
 
   it('cancels a queued click during reconciliation and keeps the next click queued', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
@@ -385,10 +416,10 @@ describe('web launch background', () => {
       const register = { type: 'web-launch:panel:register', ...panelScope };
       await invoke(controller, register, panel);
       const original = client.request.getMockImplementation()!;
-      let settled: any;
+      let running: any;
       client.request.mockImplementation(async (method, params) => {
         if (method === WebLaunchMethod.Observations)
-          return { observations: settled ? [settled] : [] };
+          return { observations: running ? [running] : [] };
         if (method === WebLaunchMethod.Prepare)
           return {
             ...reply,
@@ -412,8 +443,8 @@ describe('web launch background', () => {
           requestId: `request-${sequence}`,
           documentNonce: launch.documentNonce,
         });
-      const finish = (sequence: number) => {
-        settled = {
+      const confirmSend = (sequence: number) => {
+        running = {
           ...reply,
           receipt: {
             ...reply.receipt,
@@ -421,33 +452,33 @@ describe('web launch background', () => {
             launchId: `launch-${sequence}`,
             receiptRevision: 2,
             request: { status: 'submitted' },
-            execution: { status: 'completed', executionSettled: true },
+            execution: { status: 'running', executionSettled: false },
           },
         };
       };
       expect(await click(1)).toMatchObject({ ok: true, receipt: { launchId: 'launch-1' } });
-      const queued = await Promise.all([click(2), click(3)]);
-      expect(queued).toEqual([
-        { ok: true, queueStatus: 'queued' },
-        { ok: true, queueStatus: 'queued' },
-      ]);
+      const waiting = Array.from({ length: 12 }, (_, index) => index + 2);
+      const queued = await Promise.all(waiting.map(click));
+      expect(queued).toEqual(waiting.map(() => ({ ok: true, queueStatus: 'queued' })));
 
       api.runtime.getContexts.mockResolvedValue([]);
       if (restart) controller = createWebLaunchBackground({ chromeApi: api, client });
-      finish(1);
+      confirmSend(1);
       expect(await read(2)).toMatchObject({ ok: true, queueStatus: 'queued' });
       await invoke(controller, register, panel);
       api.runtime.getContexts.mockResolvedValue([{ documentId: panel.documentId }]);
       expect(await read(3)).toMatchObject({ ok: true, queueStatus: 'queued' });
-      expect(await read(2)).toMatchObject({ ok: true, receipt: { launchId: 'launch-2' } });
-      expect(await read(3)).toMatchObject({ ok: true, queueStatus: 'queued' });
-      finish(2);
-      expect(await read(3)).toMatchObject({ ok: true, receipt: { launchId: 'launch-3' } });
+      for (const sequence of waiting) {
+        expect(await read(sequence)).toMatchObject({ ok: true, receipt: { launchId: `launch-${sequence}` } });
+        if (sequence < waiting.at(-1)!)
+          expect(await read(sequence + 1)).toMatchObject({ ok: true, queueStatus: 'queued' });
+        confirmSend(sequence);
+      }
       expect(
         client.request.mock.calls
           .filter(([method]) => method === WebLaunchMethod.Prepare)
           .map(([, params]) => params.clickSequence),
-      ).toEqual([1, 2, 3]);
+      ).toEqual([1, ...waiting]);
     },
   );
 
@@ -885,6 +916,7 @@ describe('web launch background', () => {
           receipt: expect.objectContaining({
             execution: { status: 'running', executionSettled: false },
           }),
+          envelope: undefined,
         }),
       ),
     );
@@ -1213,7 +1245,7 @@ describe('web launch background', () => {
     ).toBe(false);
   });
 
-  it('retires the exact webpage channel on trusted abandon before accepting a new clicked operation', async () => {
+  it('abandons one observation without retiring its webpage channel', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     await invoke(controller, launch);
     await invoke(
@@ -1229,19 +1261,43 @@ describe('web launch background', () => {
           message.documentNonce === launch.documentNonce &&
           options.documentId === sender.documentId,
       ),
-    ).toBe(true);
+    ).toBe(false);
     reply.receipt.requestId = 'request-2';
     reply.receipt.launchId = 'launch-2';
     const result = await invoke(controller, {
       ...launch,
       requestId: 'request-2',
-      documentNonce: 'new-nonce',
       clickSequence: 2,
     });
     expect(result.ok).toBe(true);
-    expect(
-      client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare)[1][1]
-        .documentLeaseId,
-    ).toBeUndefined();
+    const preparations = client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare);
+    expect(preparations[1][1].source).toEqual(preparations[0][1].source);
+  });
+
+  it('drops a delayed preparation for an abandoned launch and processes the next click', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const original = client.request.getMockImplementation()!;
+    let resolvePrepare!: (value: unknown) => void;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Prepare && params.requestId === launch.requestId)
+        return new Promise(resolve => { resolvePrepare = resolve; });
+      if (method === WebLaunchMethod.Abandon)
+        return { status: 'abandoned', requestId: launch.requestId };
+      return original(method, params);
+    });
+    const first = invoke(controller, launch);
+    await vi.waitFor(() => expect(resolvePrepare).toBeDefined());
+    await invoke(
+      controller,
+      { type: 'web-launch:launch:abandon', launchId: 'launch-1', confirm: true },
+      trusted,
+    );
+    resolvePrepare(structuredClone(reply));
+    expect(await first).toMatchObject({ ok: false, code: 'EXPIRED' });
+
+    reply.receipt.requestId = 'request-2';
+    reply.receipt.launchId = 'launch-2';
+    expect(await invoke(controller, { ...launch, requestId: 'request-2', clickSequence: 2 }))
+      .toMatchObject({ ok: true, receipt: { launchId: 'launch-2' } });
   });
 });

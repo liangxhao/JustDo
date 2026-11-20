@@ -25,7 +25,7 @@ const grantedOriginsFrom = sites => sites.filter(hasWebsiteLaunchGrant).map(site
 const scriptId = origin =>
   `web-launch-${[...new TextEncoder().encode(origin)].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
 const PANEL_SUBMIT_REQUEST = 'web-launch:launch:submit';
-const MAX_QUEUED_PER_WINDOW = 10;
+const MAX_QUEUED_PER_WINDOW = 20;
 const MAX_QUEUED_REQUESTS = 100;
 
 function queueResponse(item) {
@@ -48,6 +48,7 @@ function closeQueued(item, error) {
 const terminal = receipt =>
   receipt?.execution.executionSettled === true ||
   ['rejected', 'cancelled', 'expired'].includes(receipt?.request.status);
+const holdsComposer = receipt => !terminal(receipt) && receipt?.request.status !== 'submitted';
 const samePanelTab = (left, right) =>
   left?.tabId === right.tabId && left?.windowId === right.windowId;
 
@@ -62,6 +63,7 @@ export function createWebLaunchBackground({
   const enqueuing = new Map();
   const advancing = new Map();
   const restoredRequests = new Set();
+  const abandonedLaunches = new Map();
   const cancelled = new Set();
   const pendingClicks = new Set();
   const missingWindowOwners = new Set();
@@ -201,12 +203,12 @@ export function createWebLaunchBackground({
         if (!response?.receipt || !response.internal) continue;
         const record = await transaction(() => {
           const current = state.requests[response.receipt.requestId];
-          return current?.launchId === response.receipt.launchId
+          return current?.launchId === response.receipt.launchId && !abandonedLaunches.has(current.launchId)
             ? cacheResponse(current, response)
             : undefined;
         });
         if (!record) continue;
-        if (terminal(record.response.receipt))
+        if (!holdsComposer(record.response.receipt))
           releaseSlot(record.source.windowId, record.requestId);
         notifyPanel(record);
       }
@@ -368,6 +370,7 @@ export function createWebLaunchBackground({
   }
   function envelope(record) {
     const { response, input } = record;
+    if (abandonedLaunches.has(record.launchId)) return null;
     if (
       !terminal(response?.receipt) &&
       (requestCancelled(record) || !requestSourceAvailable(record))
@@ -415,15 +418,17 @@ export function createWebLaunchBackground({
   }
   function notifyPanel(record) {
     const receipt = record.response?.receipt;
+    if (abandonedLaunches.has(record.launchId)) return;
     if (requestCancelled(record) && !terminal(receipt)) return;
     panelEvent(record.source, {
-      envelope: terminal(receipt) ? undefined : envelope(record),
+      envelope: holdsComposer(receipt) ? envelope(record) : undefined,
       receipt,
       internal: record.response?.internal,
     });
   }
   function cacheResponse(record, response, revisedInput) {
     if (!response?.receipt || !response.internal) throw { code: 'CONNECTION_UNAVAILABLE' };
+    if (abandonedLaunches.has(response.receipt.launchId)) throw { code: 'EXPIRED' };
     const saved = { ...(state.requests[record.requestId] ?? record) };
     const receipt = publicReceipt(response.receipt, false);
     if (
@@ -482,7 +487,7 @@ export function createWebLaunchBackground({
       throw { code: 'LEASE_REVOKED' };
     }
     const accepted = saved.response.receipt;
-    if (terminal(accepted)) releaseSlot(saved.source.windowId, saved.requestId);
+    if (!holdsComposer(accepted)) releaseSlot(saved.source.windowId, saved.requestId);
     notifyPanel(saved);
     return saved;
   }
@@ -495,6 +500,7 @@ export function createWebLaunchBackground({
       doc.documentLeaseId !== response.internal.documentLeaseId
     )
       return { ok: false, code: 'LEASE_REVOKED' };
+    if (abandonedLaunches.has(record.launchId)) return { ok: false, code: 'EXPIRED' };
     const receipt = publicReceipt(response.receipt, record.result === 'final');
     if (!receipt || receipt.requestId !== record.requestId || receipt.launchId !== record.launchId)
       throw { code: 'INVALID_REQUEST' };
@@ -615,8 +621,12 @@ export function createWebLaunchBackground({
       }
       const saved = await accept(record, response, { doc });
       const projected = await safeResponse(saved, response, doc, revision);
-      return projected.ok ? projected : { ...projected, prepareUncertain: true };
+      return projected.ok || abandonedLaunches.has(saved.launchId)
+        ? projected
+        : { ...projected, prepareUncertain: true };
     } catch (error) {
+      if (abandonedLaunches.has(response?.receipt?.launchId))
+        throw { code: 'EXPIRED', prepareUncertain: false };
       throw { code: publicErrorCode(error), prepareUncertain: error?.prepareUncertain !== false };
     }
   }
@@ -704,8 +714,19 @@ export function createWebLaunchBackground({
   }
   async function discardPreparation(record, response, doc) {
     const leaseId = response.internal.documentLeaseId;
-    if (doc.documentLeaseId === record.documentLeaseId) doc.documentLeaseId = leaseId;
-    await revoke(doc, 'navigation', leaseId);
+    if (doc.revoked) {
+      if (doc.documentLeaseId === record.documentLeaseId) doc.documentLeaseId = leaseId;
+      await revoke(doc, 'navigation', leaseId);
+    } else {
+      // An inconclusive probe should only close this unsent preparation.
+      await client.request(WebLaunchMethod.Cancel, {
+        source: doc.source,
+        documentLeaseId: leaseId,
+        launchId: response.receipt.launchId,
+      }).catch(error => {
+        if (publicErrorCode(error) !== 'EXPIRED') throw error;
+      });
+    }
     await transaction(() => {
       delete state.requests[record.requestId];
     });
@@ -830,13 +851,17 @@ export function createWebLaunchBackground({
       });
       panels.set(panel.tabId, panel);
       const eligible = record =>
+        record.response &&
+        !abandonedLaunches.has(record.launchId) &&
         !terminal(record.response?.receipt) &&
         !requestCancelled(record) &&
         requestSourceAvailable(record);
       const active =
         records.find(
           record => record.requestId === slots.get(panel.windowId) && eligible(record),
-        ) ?? records.find(eligible);
+        ) ??
+        records.findLast(record => eligible(record) && holdsComposer(record.response.receipt)) ??
+        records.findLast(eligible);
       return {
         ok: true,
         envelope: active ? envelope(active) : undefined,
@@ -912,27 +937,17 @@ export function createWebLaunchBackground({
         launchId: message.launchId,
         confirm: true,
       });
-      const abandoned = await transaction(() =>
-        Object.values(state.requests)
-          .filter(record => record.launchId === message.launchId)
-          .map(record => ({ source: record.source, documentNonce: record.documentNonce })),
-      );
-      await Promise.allSettled(abandoned.map(retireClient));
+      // A read or Prepare ACK already in flight can still carry this launch ID.
+      const now = Date.now();
+      for (const [id, expiresAt] of abandonedLaunches)
+        if (expiresAt <= now) abandonedLaunches.delete(id);
+      abandonedLaunches.set(message.launchId, now + WebLaunchLimits.confirmationMs);
       await transaction(() => {
         for (const record of Object.values(state.requests)) {
-          if (record.launchId !== message.launchId) continue;
+          const pending = !record.launchId && record.requestId === result?.requestId;
+          if (record.launchId !== message.launchId && !pending) continue;
           releaseSlot(record.source.windowId, record.requestId);
           delete state.requests[record.requestId];
-          if (state.documents[record.documentKey])
-            Object.assign(state.documents[record.documentKey], {
-              revoked: true,
-              revokeAcknowledged: true,
-            });
-          const doc = documents.get(record.documentKey);
-          if (doc) {
-            doc.revoked = true;
-            doc.deliveryRevision += 1;
-          }
         }
       });
       return { ok: true, ...result };
@@ -958,7 +973,7 @@ export function createWebLaunchBackground({
     if (method === WebLaunchMethod.Submit) {
       const document = await recoverDocument(record);
       if (!(await documentActive(document))) {
-        await revoke(document, 'navigation').catch(() => {});
+        if (document.revoked) await revoke(document, 'navigation').catch(() => {});
         throw { code: 'EXPIRED' };
       }
     }
@@ -1110,13 +1125,14 @@ export function createWebLaunchBackground({
     let current = slots.get(windowId);
     if (!current) {
       const records = windowOwners(windowId).filter(
-        record => record.source.windowInstanceId === source.windowInstanceId,
+        record => record.source.windowInstanceId === source.windowInstanceId &&
+          holdsComposer(record.response?.receipt),
       );
       const saved = records.find(record => record.launchId) ?? records[0];
       if (saved) {
         const recovered = await recoverWindowOwner(saved).catch(() => null);
         if (recovered === null) return;
-        if (recovered && !terminal(recovered.response?.receipt)) current = recovered.requestId;
+        if (recovered && holdsComposer(recovered.response?.receipt)) current = recovered.requestId;
       }
     }
     if (current) {
