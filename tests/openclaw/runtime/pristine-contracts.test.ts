@@ -99,6 +99,7 @@ const EXPECTED_PATCH_FILES = [
   '039-mcp-app-model-continuity.cjs',
   '040-plugin-recovery-missing-source.cjs',
   '041-mcp-app-view-keepalive.cjs',
+  '042-subagent-settle-deduplication.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

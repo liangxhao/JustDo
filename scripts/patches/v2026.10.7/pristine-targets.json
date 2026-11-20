@@ -387,6 +387,14 @@
       "targets": [
         "dist/mcp-app-DRRDUDxP.mjs"
       ]
+    },
+    {
+      "file": "042-subagent-settle-deduplication.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/subagent-announce.requester-settle-wake-CcIWWdU6.mjs"
+      ]
     }
   ],
   "targets": [
@@ -701,6 +709,10 @@
     {
       "file": "dist/state/openclaw-state-read.worker.js",
       "sha256": "95b606f91197936cbd97471fe09641b599a11ee37dd6deba4e083395c507f179"
+    },
+    {
+      "file": "dist/subagent-announce.requester-settle-wake-CcIWWdU6.mjs",
+      "sha256": "a92e6db270b276f24f03b365b45375d38023a22845418c17725f718cb149b034"
     },
     {
       "file": "dist/subagent-registry-ClP8932r.mjs",

@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038), MCP App continuity after a model change (039), online plugin removal, disable or update without a target rollback copy (040) and live MCP App view renewal (041). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 39 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 86 exact pristine patch target hashes bound to the locked npm archive.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038), MCP App continuity after a model change (039), online plugin removal, disable or update without a target rollback copy (040), live MCP App view renewal (041) and duplicate subagent settlement (042). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 40 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 87 exact pristine patch target hashes bound to the locked npm archive.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -72,6 +72,7 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [039-mcp-app-model-continuity.cjs](039-mcp-app-model-continuity.cjs) | — | retain the live MCP App view on compatible model changes within the same native MCP runtime. | remove at the next OpenClaw version upgrade and use native session model selection. |
 | [040-plugin-recovery-missing-source.cjs](040-plugin-recovery-missing-source.cjs) | — | skip exact uninstall/disable/update targets' extra old-runtime rollback copies while retaining native online replacement. | native online uninstall, disable and update can omit target rollback capture while preserving cleanup and explicit failure outcomes. |
 | [041-mcp-app-view-keepalive.cjs](041-mcp-app-view-keepalive.cjs) | — | renew the exact live MCP App view while its page remains open, without replaying tools. | native authenticated view retention or renewal supports equivalent lifetime and authorization checks. |
+| [042-subagent-settle-deduplication.cjs](042-subagent-settle-deduplication.cjs) | — | settle delivered batches before waiting for descendants and omit already-delivered ordinary results from a necessary continuation. | the locked native runtime passes both delivered-batch retirement and mixed/yielded result tests. |
 
 ## Locked target source owners
 
@@ -118,6 +119,7 @@ The following paths were returned by a clean application on the pristine target.
 | 039 | `dist/mcp-app-extensions-abaft4XG.mjs`<br>`dist/mcp-app-host-files-CYEqGNXR.mjs` |
 | 040 | `dist/server-plugin-reload-kLZrvRgz.mjs` |
 | 041 | `dist/mcp-app-DRRDUDxP.mjs` |
+| 042 | `dist/subagent-announce.requester-settle-wake-CcIWWdU6.mjs` |
 
 ## Test ownership
 
@@ -166,6 +168,7 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 039 | `mcp-app-model-continuity.test.ts`, `tests/mcp-apps/gateway-smoke.cjs --model-selection` |
 | 040 | `plugin-recovery-missing-source.test.ts`, `plugin-reload-recovery.fixture.js`, `plugin-reload-recovery-caller-prefix.fixture.js`, `plugin-runtime-generation.fixture.js` |
 | 041 | `mcp-app-view-keepalive.test.ts`, `mcp-app-view-keepalive.fixture.js`, Renderer `mcp-app-session.keepalive.test.ts` |
+| 042 | `subagent-settle-deduplication.test.ts` |
 
 ### 033: plugin directory publication and retained installed files
 
@@ -546,6 +549,14 @@ At the next OpenClaw upgrade, test native renewal/retention first. When it
 provides the same behavior, switch the host to that supported interface and
 delete 041, its inventory/hash entries and patch-specific tests. Do not carry
 the version-locked branch forward by changing only its anchors.
+
+### 042 Subagent settlement deduplication
+
+The locked npm chunk leaves already-delivered results pending when another child still runs. A group of two or more delivered children can also wake the requester again and include those results. The same decision and findings code was verified in the original npm archive and the packaged Gateway. The Gateway and plugin APIs expose session status and controls. Batch retirement and prompt contents are private to native settlement.
+
+The backport applies the behavior of [OpenClaw #176701](https://github.com/openclaw/openclaw/pull/176701) and [#178104](https://github.com/openclaw/openclaw/pull/178104). Native no-work retirement precedes both descendant waits in the locked runtime and rechecks refreshed batches. A continuation retains its original batch and identities. It reads undelivered findings and findings that still require restart reconciliation. Ordinary delivered children are identified by run ID without replaying their result or model-route notice. Changes in which results are still owed invalidate preparation at the existing native checks before dispatch. Explicit yield retains its continuation. Source and bundle verification bind the retirement order, filtering, and exact native chunk.
+
+Focused regression tests exercise the native settlement function with synthetic registry and delivery boundaries. They cover already-delivered batches, unfinished siblings, mixed findings, explicit yield, and restart-interrupted findings. Full model and Gateway transport behavior require a separate reproduction.
 
 ## Validation boundary
 
