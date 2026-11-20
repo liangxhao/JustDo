@@ -262,9 +262,9 @@ export function projectWaitingStatus(params: {
   // A running tool is observable work, not evidence that the model is stalled.
   // Resume model-wait notices only after the last running tool settles.
   if (activity.hasRunningTool) return null;
-  // Explicit queue/context preparation is not a stalled model request.
+  // Preserve the native stages that have their own progress.
   if (
-    ['queued', 'preparing', 'preparing-workspace', 'memory-flushing', 'compacting', 'waiting-continuation'].includes(
+    ['queued', 'preparing-workspace', 'memory-flushing', 'compacting', 'waiting-continuation'].includes(
       activity.stage,
     )
   )
@@ -300,6 +300,7 @@ export function projectWaitingStatus(params: {
   if (activity.probeState === 'failed') {
     return { kind: 'probe-failed', tone: 'neutral', quietMs };
   }
+  if (activity.stage === 'preparing') return null;
   if (quietMs >= RUN_LONG_NOTICE_MS && confirmationFresh) {
     return { kind: 'long-wait', tone: 'warning', quietMs };
   }

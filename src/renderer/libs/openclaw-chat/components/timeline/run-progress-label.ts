@@ -13,7 +13,7 @@ export const runProgressLabelKeys = {
   'receiving-model': 'coworkWorkingModelStream',
   'generating-tool-input': 'coworkWorkingToolInput',
   'preparing-tool': 'coworkWorkingToolReady',
-  compacting: 'coworkWorkingCompacting',
+  compacting: 'coworkCompactionInProgress',
   'waiting-model': 'coworkWorkingWaiting',
   'waiting-continuation': 'coworkWorkingWaitingContinuation',
   thinking: 'coworkWorkingThinking',

@@ -643,6 +643,11 @@ stateDiagram-v2
 
 停止成功回执通过 settleConfirmedRun 收敛当前 Renderer turn 的显示，不依赖 aborted stream 恰好送达。首个流事件尚未到达时只保存 fence，不制造空消息或结束别的 run。重复 receipt/abort/lifecycle 共用显示终态行及结束时间。这里的停止显示与 Main 的整轮执行结论分开：Stop ACK 不补造 execution outcome，后者仍要求匹配 run 的 `executionSettled:true` 生命周期证据。
 
+普通请求显示「正在准备上下文」，原生压缩使用「正在压缩上下文」。准备上下文时静默探测失败，
+显示进度暂时无法确认。`sessions.describe` 确认同一物理会话的当前 run 仍活跃时，可恢复停止控制。
+原生省略活动 ID 列表时，限时读取一条 `chat.history` 核对 `inFlightRun`，记录当前轮的原生活动证据。
+旧轮尚无实时内容且接收回执仍未确认时，同会话的活动 ID 列表和快照共同确认后继后，恢复后继展示并保留旧请求的身份。
+
 静默探测发现普通前台轮次的物理会话已空闲时，Renderer 用 `agent.wait({runId, timeoutMs:0})`
 补读该轮结果，并在读前、读后核对原生会话 key、sessionId、生命周期 revision 和本地活动归属。
 匹配且有明确结束时间的终态回执通过 `settleConfirmedRun` 解除发送占用并触发原生历史补读。

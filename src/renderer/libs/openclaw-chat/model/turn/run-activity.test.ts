@@ -203,6 +203,14 @@ describe('projectWaitingStatus', () => {
     },
   );
 
+  it('shows failed progress checks during context preparation', () => {
+    expect(projectWaitingStatus({
+      activity: activity({ stage: 'preparing', probeState: 'failed' }),
+      transportStatus: 'connected',
+      now: 1_000 + RUN_STALL_NOTICE_MS,
+    })).toMatchObject({ kind: 'probe-failed' });
+  });
+
   it('starts a fresh silence window when a tool finishes after a long run', () => {
     expect(
       projectWaitingStatus({

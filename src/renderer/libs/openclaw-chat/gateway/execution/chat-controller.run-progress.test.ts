@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { runProgressDetail } from '../../components/timeline/run-progress-label';
 import { createChatTranscriptState } from '../../model/chat-transcript-state';
 import { projectTurnItems } from '../../model/timeline/project-turn-items';
-import { projectWaitingStatus } from '../../model/turn/run-activity';
+import { projectWaitingStatus, RUN_PROBE_INTERVAL_MS, RUN_STALL_NOTICE_MS } from '../../model/turn/run-activity';
 import { readRunProgress } from '../../model/turn/run-progress';
 import { ChatController } from '../chat-controller';
 
@@ -96,6 +96,113 @@ describe('quiet foreground run recovery', () => {
     await controller.sendMessage('Next question');
     expect(request).toHaveBeenCalledWith('chat.send', expect.objectContaining({ message: 'Next question' }));
     expect(controller.state.chatRunId).toBe('next-run');
+  });
+
+  test.each([
+    { source: 'matching run ID', activeRunIds: ['continued-run'], confirmed: true },
+    { source: 'another run ID without a snapshot', activeRunIds: ['other-run'], confirmed: false },
+    { source: 'matching in-flight snapshot', snapshotRunId: 'continued-run', confirmed: true },
+    { source: 'another in-flight snapshot', snapshotRunId: 'other-run', confirmed: false },
+  ])('recovers Stop during context preparation with $source', async ({ activeRunIds, snapshotRunId, confirmed }) => {
+    const runId = 'continued-run';
+    const session = { ...nativeSession, hasActiveRun: true, activeRunIds };
+    const request = vi.fn(async (method: string) => {
+      if (method === 'chat.send') throw new Error('Lost acknowledgement');
+      if (method === 'sessions.describe') return { session };
+      return { sessionId: session.sessionId, sessionInfo: session,
+        ...(snapshotRunId ? { inFlightRun: { runId: snapshotRunId } } : {}),
+      };
+    });
+    controller.state.client!.request = request;
+    controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+    await expect(controller.sendMessage('Continue this conversation', [], undefined, {
+      clientTurnId: runId, onRequestUnknown: vi.fn(),
+    })).rejects.toThrow('Lost acknowledgement');
+    emit('run_status', { phase: 'preparing_context' }, { runId });
+    expect(controller.state.runActivity?.stage).toBe('preparing');
+    expect(controller.getActiveNativeChatRunId()).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(controller.getActiveNativeChatRunId()).toBe(confirmed ? runId : null);
+    expect(request.mock.calls.filter(([method]) => method === 'chat.history'))
+      .toHaveLength(activeRunIds?.includes(runId) ? 0 : 1);
+  });
+
+  test('recovers a finished run when the supplementary history request stalls', async () => {
+    const runId = 'continued-run';
+    let hasEnded = false;
+    const request = vi.fn(async (method: string, _params?: unknown, options?: { timeoutMs?: number }) => {
+      if (method === 'chat.send') {
+        if (!hasEnded) throw new Error('Lost acknowledgement');
+        return { status: 'started', runId: 'next-run' };
+      }
+      if (method === 'sessions.describe') return { session: { ...nativeSession, hasActiveRun: !hasEnded } };
+      if (method === 'agent.wait') return { runId, status: 'ok', endedAt: Date.now() };
+      if (!hasEnded) {
+        return new Promise((_resolve, reject) => {
+          setTimeout(() => reject(new Error('History unavailable')), options?.timeoutMs ?? 90_000);
+        });
+      }
+      return { sessionId: nativeSession.sessionId, messages: [] };
+    });
+    controller.state.client!.request = request;
+    controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+    await expect(controller.sendMessage('Continue this conversation', [], undefined, {
+      clientTurnId: runId, onRequestUnknown: vi.fn(),
+    })).rejects.toThrow('Lost acknowledgement');
+    emit('run_status', { phase: 'preparing_context' }, { runId });
+    await vi.advanceTimersByTimeAsync(RUN_STALL_NOTICE_MS);
+
+    hasEnded = true;
+    await vi.advanceTimersByTimeAsync(2 * RUN_PROBE_INTERVAL_MS);
+
+    await controller.sendMessage('New input');
+    expect(controller.state.chatRunId).toBe('next-run');
+  });
+
+  test.each([false, true])('checks for a verified successor without losing prior live output (output=%s)', async hasLiveOutput => {
+    const originalRun = 'continued-run';
+    let activeRun = originalRun;
+    let historyRun = originalRun;
+    const request = vi.fn(async (method: string) => {
+      if (method === 'chat.send') throw new Error('Lost acknowledgement');
+      const session = { ...nativeSession, hasActiveRun: true, activeRunIds: [activeRun] };
+      if (method === 'sessions.describe') return { session };
+      return {
+        sessionId: session.sessionId,
+        sessionInfo: { ...session, activeRunIds: [historyRun] },
+        inFlightRun: { runId: historyRun },
+      };
+    });
+    controller.state.client!.request = request;
+    controller.settleConfirmedRun(sessionKey, 'run-progress', 'aborted');
+    await expect(controller.sendMessage('Continue this conversation', [], undefined, {
+      clientTurnId: originalRun, onRequestUnknown: vi.fn(),
+    })).rejects.toThrow('Lost acknowledgement');
+    emit('run_status', { phase: 'preparing_context' }, { runId: originalRun });
+    await vi.advanceTimersByTimeAsync(RUN_STALL_NOTICE_MS);
+    expect(controller.getActiveNativeChatRunId()).toBe(originalRun);
+    if (hasLiveOutput) emit('assistant', { text: 'Visible original reply' }, { runId: originalRun });
+
+    activeRun = 'native-successor';
+    historyRun = 'other-run';
+    await vi.advanceTimersByTimeAsync(hasLiveOutput ? RUN_STALL_NOTICE_MS : RUN_PROBE_INTERVAL_MS);
+    expect(controller.getActiveNativeChatRunId()).toBe(originalRun);
+
+    historyRun = activeRun;
+    await vi.advanceTimersByTimeAsync(RUN_PROBE_INTERVAL_MS);
+
+    const expectedRun = hasLiveOutput ? originalRun : activeRun;
+    expect(controller.getActiveNativeChatRunId()).toBe(expectedRun);
+    expect(controller.state.runActivity?.runId).toBe(expectedRun);
+    if (hasLiveOutput) {
+      expect(controller.state.transcript.activeTurn?.items).toContainEqual(
+        expect.objectContaining({ type: 'content', text: 'Visible original reply' }),
+      );
+    }
+    expect(controller.state.transcript.terminalRunIds.has(originalRun)).toBe(false);
+    expect(controller.state.chatMessages).toContainEqual(expect.objectContaining({ content: 'Continue this conversation' }));
   });
 
   test.each([

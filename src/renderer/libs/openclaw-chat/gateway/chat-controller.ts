@@ -170,6 +170,15 @@ import { markNativeBoardRealtime } from '../pipeline/native-board';
 import { hasNativePendingFollowup, nativeQueuedInputRunId } from './input/chat-pending-inputs';
 import { hasUnconfirmedQueuedInput, matchInputForRecovery, sendQueuedInput } from './input/chat-queued-input';
 
+function matchesActiveHistoryRun(
+  info: ChatHistorySnapshot['sessionInfo'], sessionKey: string, sessionId: string, runId: string,
+): boolean {
+  const ids = info?.activeRunIds;
+  return info?.sessionId === sessionId &&
+    (info.key === undefined || normalizeTranscriptSessionKey(info.key) === normalizeTranscriptSessionKey(sessionKey)) &&
+    info.hasActiveRun === true && (ids === undefined || (Array.isArray(ids) && ids.includes(runId)));
+}
+
 // ─── ChatController ─────────────────────────────────────────────────────────
 
 export class ChatController {
@@ -777,18 +786,17 @@ export class ChatController {
       'sessions.describe', { key: sessionKey },
     ))?.session;
     this.runProbeToken = probeToken;
-    if (activity.probeState !== 'inactive') activity.probeState = 'checking';
+    if (activity.probeState === 'idle' || activity.probeState === 'active') activity.probeState = 'checking';
     this.notify();
     try {
       const session = await describe();
       if (!isCurrent()) return;
       const active = session?.hasActiveRun === true;
-      if (
+      const matchedRun =
         currentSessionId && session?.key === sessionKey && session.sessionId === currentSessionId &&
-        session.hasActiveRun === false && chatRunId === runId && activeTurn?.runId === runId &&
-        activeTurn.sessionId === currentSessionId && activeTurn.status === 'running' &&
-        !suspendedRunId && !compactionInFlight
-      ) {
+        chatRunId === runId && activeTurn?.runId === runId &&
+        activeTurn.sessionId === currentSessionId && activeTurn.status === 'running' && !suspendedRunId;
+      if (matchedRun && session.hasActiveRun === false && !compactionInFlight) {
         const receipt = asRecord(await client.request('agent.wait', { runId, timeoutMs: 0 }));
         if (!isCurrent()) return;
         const outcome = chatControllerRecovery.readRunWaitDisplayOutcome(receipt, {
@@ -830,8 +838,34 @@ export class ChatController {
         activity.probeState = outcome || (missingResult && admitted && !verifiedIdle) ? 'failed' : 'inactive';
         activity.activeRunConfirmedAt = null;
       } else {
-        if (session?.key !== sessionKey || session.sessionId !== currentSessionId ||
-          (Array.isArray(session.activeRunIds) && session.activeRunIds.includes(runId))) {
+        const activeRunIds = session?.activeRunIds;
+        let confirmedRun = Array.isArray(activeRunIds) && activeRunIds.includes(runId);
+        if (matchedRun && active && transcript.sessionId === currentSessionId) {
+          const needsConfirmation = this.getActiveNativeChatRunId() === null;
+          const mayHaveSuccessor = activeTurn.items.length === 0 && !confirmedRun &&
+            Array.isArray(activeRunIds) && activeRunIds.length > 0 &&
+            this.unconfirmedChatRunId(this.state) === runId;
+          // Read the scoped in-flight snapshot for an embedded run or a successor.
+          if (mayHaveSuccessor || (activeRunIds === undefined && needsConfirmation)) {
+            const history = await client.request<ChatHistorySnapshot>('chat.history', {
+              sessionKey, limit: 1,
+            }, { timeoutMs: RUN_PROBE_INTERVAL_MS });
+            if (!isCurrent()) return;
+            const snapshot = history?.inFlightRun;
+            if (history?.sessionId === currentSessionId && snapshot) {
+              if (mayHaveSuccessor && activeTurn.items.length === 0 && activeRunIds.includes(snapshot.runId)) {
+                this.applyInFlightRunSnapshot(snapshot, sessionKey, currentSessionId, runId, history.sessionInfo, true);
+                if (this.state.chatRunId !== runId) return;
+              }
+              confirmedRun = snapshot.runId === runId &&
+                matchesActiveHistoryRun(history.sessionInfo, sessionKey, currentSessionId, runId);
+            }
+          }
+          if (confirmedRun && needsConfirmation) {
+            this.acknowledgedChatTurns.set(activeTurn, { runId, sessionId: currentSessionId, client, generation });
+          }
+        }
+        if (session?.key !== sessionKey || session.sessionId !== currentSessionId || confirmedRun) {
           this.inactiveChatRuns.delete(transcript);
         }
         activity.probeState = active ? 'active' : 'idle';
@@ -2188,11 +2222,7 @@ export class ChatController {
     const activeRunIds = sessionInfo?.activeRunIds;
     const previousRunId = this.state.chatRunId;
     const exactActiveSnapshot = sessionId !== null && sessionId === this.state.currentSessionId &&
-      sessionId === this.state.transcript.sessionId && sessionInfo?.sessionId === sessionId &&
-      (sessionInfo.key === undefined ||
-        normalizeTranscriptSessionKey(sessionInfo.key) === normalizeTranscriptSessionKey(sessionKey)) &&
-      sessionInfo.hasActiveRun === true &&
-      (activeRunIds === undefined || (Array.isArray(activeRunIds) && activeRunIds.includes(runId)));
+      sessionId === this.state.transcript.sessionId && matchesActiveHistoryRun(sessionInfo, sessionKey, sessionId, runId);
     if (requireExactOwner && !exactActiveSnapshot) return;
     if (exactActiveSnapshot && previousRunId === requestRunId &&
         !(previousRunId && activeRunIds?.includes(previousRunId))) {
