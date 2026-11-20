@@ -9,6 +9,7 @@ import {
   nativeMcpDataDirectory, ownedNativeMcpDataServerNames, prepareNativeMcpData, projectNativeMcpData,
   publishNativeMcpDataReceipt, suspendNativeMcpDataServers,
 } from './nativeMcpData';
+import { inspectPluginData } from './pluginDataService';
 
 const roots: string[] = [];
 afterEach(() => {
@@ -47,6 +48,7 @@ test('uses SDK-owned data in both configs and stores only digests and durable ow
   const before = structuredClone(f.binding);
   const receipt = f.save()!;
   const directory = nativeMcpDataDirectory(f.state, 'sample');
+  await expect(inspectPluginData(f.state, ['sample'])).resolves.toMatchObject({ exists: true, canDelete: true });
   expect(f.config.plugins.entries.sample.config?.dataDirectory).toBe(directory);
   expect(f.config.mcp.servers.sample).toMatchObject({ command: 'node', env: { PLUGIN_DATA: directory, TOKEN: 'synthetic-secret' } });
   expect(receipt).not.toContain('synthetic-secret');

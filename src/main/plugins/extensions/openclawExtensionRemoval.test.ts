@@ -11,7 +11,8 @@ import { getOutboundHeaderPolicyConfig } from '../../core/network/outboundHeader
 import { OutboundHeaderPolicyService } from '../../core/network/outboundHeaderPolicyService';
 import type { OpenClawConfigMutationContext } from '../../openclaw/config/openclawConfigSyncService';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
-import type { PluginDataRemovalSnapshot } from '../data/pluginDataService';
+import { nativeMcpDataDirectory, prepareNativeMcpData } from '../data/nativeMcpData';
+import { type PluginDataRemovalSnapshot,preparePluginDataDirectory } from '../data/pluginDataService';
 import { removeExtensionPackage } from './extensionMutation';
 import {
   type ApplyExtensionPackageMutation,
@@ -212,7 +213,7 @@ describe('extension removal receipts and package lifecycle', () => {
     const info = await f.service.getDataInfo('network-child');
     expect(info).toEqual({ success: true, exists: true, bytes: 123, canDelete: true });
     expect(f.pluginData.inspect).toHaveBeenCalledWith(
-      path.join(fixtureRoot, 'state'), ['network-child', 'network-plugin', 'second-child'],
+      path.join(fixtureRoot, 'state'), ['network-child', 'network-plugin', 'second-child'], undefined,
     );
 
     const result = await f.service.delete('network-child', undefined, f.apply, { deleteData: true });
@@ -220,7 +221,7 @@ describe('extension removal receipts and package lifecycle', () => {
     expect(result).toEqual({ success: true });
     expect(f.order).toEqual(['snapshot', 'uninstall', 'cleanup', 'restore']);
     expect(f.pluginData.prepareRemoval).toHaveBeenCalledWith(
-      path.join(fixtureRoot, 'state'), ['network-child', 'network-plugin', 'second-child'],
+      path.join(fixtureRoot, 'state'), ['network-child', 'network-plugin', 'second-child'], undefined,
     );
     expect(f.runCommand).toHaveBeenCalledOnce();
   });
@@ -266,12 +267,12 @@ describe('extension removal receipts and package lifecycle', () => {
       success: true, exists: true, canDelete: true,
     });
     expect(f.pluginData.inspect).toHaveBeenCalledExactlyOnceWith(
-      path.join(fixtureRoot, 'state'), ['managed-child', 'second-child'],
+      path.join(fixtureRoot, 'state'), ['managed-child', 'second-child'], undefined,
     );
     await expect(f.service.delete('managed-child', undefined, f.apply, { deleteData: true }))
       .resolves.toEqual({ success: true });
     expect(f.pluginData.prepareRemoval).toHaveBeenCalledExactlyOnceWith(
-      path.join(fixtureRoot, 'state'), ['managed-child', 'second-child'],
+      path.join(fixtureRoot, 'state'), ['managed-child', 'second-child'], undefined,
     );
     expect(f.order).toEqual(['snapshot', 'uninstall', 'cleanup', 'restore']);
   });
@@ -285,6 +286,57 @@ describe('extension removal receipts and package lifecycle', () => {
     await expect(f.service.getDataInfo('network-plugin')).resolves.toEqual({
       success: true, exists: true, bytes: 123, canDelete: false, retained: true,
     });
+  });
+
+  async function legacyMcpFixture() {
+    const id = 'knowledge-wiki-app';
+    const f = fixture({ nativePluginId: id });
+    const stateDir = path.dirname(f.configPath);
+    fs.writeFileSync(f.configPath, JSON.stringify({ plugins: { entries: { [id]: { enabled: false } } } }));
+    fs.writeFileSync(path.join(f.installedDir, 'package.json'), JSON.stringify({
+      name: '@local-mcp/knowledge-wiki-app', openclaw: { extensions: ['./dist/extension.cjs'] },
+    }));
+    fs.writeFileSync(path.join(f.installedDir, 'openclaw.plugin.json'), JSON.stringify({
+      id, mcpServers: { 'knowledge-wiki': { command: 'node', args: ['./dist/server.cjs'],
+        env: { PLUGIN_DATA: '${PLUGIN_DATA}' } } },
+    }));
+    const data = await preparePluginDataDirectory(stateDir, id, { directory: 'managed-v1', retention: 'retain' });
+    fs.writeFileSync(path.join(data, 'knowledge.sqlite'), 'wiki records');
+    const apply: ApplyExtensionPackageMutation = async (target, operation) => {
+      expect(target.requireStopped).toBe(true);
+      f.state.leased = true;
+      try { return await operation(ExtensionPackageLifecycleMode.STOPPED); }
+      finally { f.state.leased = false; }
+    };
+    return { ...f, id, stateDir, data, apply };
+  }
+
+  it.each([false, true])('offers cleanup for a disabled legacy MCP library and honors the selection (%s)', async deleteData => {
+    const f = await legacyMcpFixture();
+    const marker = path.join(f.data, '.owner.json');
+    const owner = fs.readFileSync(marker, 'utf8');
+    await prepareNativeMcpData(f.stateDir, [f.id]);
+    expect(nativeMcpDataDirectory(f.stateDir, f.id)).toBe(f.data);
+    await expect(f.service.getDataInfo(f.id)).resolves.toMatchObject({ success: true, exists: true, canDelete: true });
+    expect(fs.readFileSync(marker, 'utf8')).toBe(owner);
+
+    const result = deleteData
+      ? await f.service.delete(f.id, undefined, f.apply, { deleteData: true })
+      : await f.service.delete(f.id);
+
+    expect(result.success).toBe(true);
+    expect(fs.existsSync(f.data)).toBe(!deleteData);
+  });
+
+  it('rechecks legacy cleanup eligibility if the exact package acquires an App companion', async () => {
+    const f = await legacyMcpFixture();
+    await expect(f.service.getDataInfo(f.id)).resolves.toMatchObject({ success: true, canDelete: true });
+    fs.writeFileSync(path.join(f.installedDir, 'app.plugin.json'), '{}');
+
+    await expect(f.service.getDataInfo(f.id)).resolves.toMatchObject({ success: true, canDelete: false });
+    await expect(f.service.delete(f.id, undefined, f.apply, { deleteData: true })).rejects.toThrow('must be retained');
+    expect(f.runCommand).not.toHaveBeenCalled();
+    expect(fs.readFileSync(path.join(f.data, 'knowledge.sqlite'), 'utf8')).toBe('wiki records');
   });
 
   it('rejects unsafe data before sending uninstall', async () => {

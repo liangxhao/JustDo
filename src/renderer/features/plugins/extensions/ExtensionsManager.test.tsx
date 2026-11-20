@@ -904,7 +904,7 @@ describe('ExtensionsManager extension toggle', () => {
     fireEvent.click(screen.getByRole('button', { name: 'extensionDelete' }));
     await waitFor(() => expect(dataInfo).toHaveBeenCalledExactlyOnceWith({ extensionId: extension.id }));
     expect(screen.queryByRole('checkbox', { name: 'extensionDeleteData' })).toBeNull();
-    expect(screen.queryByText('extensionDataPreserved')).toBeNull();
+    expect(screen.queryByText('extensionDataDeleteDescription')).toBeNull();
     vi.useFakeTimers();
     try {
       await act(async () => fireEvent.click(screen.getByRole('button', { name: 'delete' })));
@@ -930,7 +930,7 @@ describe('ExtensionsManager extension toggle', () => {
     }
   });
 
-  test('sends explicit plugin data cleanup only after the user selects it', async () => {
+  test.each([false, true])('sends explicit plugin data cleanup only after the user selects it (%s)', async deleteData => {
     let installed = true;
     const deleteExtension = vi.fn(async () => {
       installed = false;
@@ -951,12 +951,13 @@ describe('ExtensionsManager extension toggle', () => {
     const checkbox = await screen.findByRole('checkbox', { name: 'extensionDeleteData' });
     await waitFor(() => expect((checkbox as HTMLInputElement).disabled).toBe(false));
     expect((checkbox as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(checkbox);
+    expect(checkbox.getAttribute('aria-describedby')).toBe(screen.getByText('extensionDataDeleteDescription').id);
+    if (deleteData) fireEvent.click(checkbox);
     fireEvent.click(screen.getByRole('button', { name: 'delete' }));
 
     await screen.findByText('Extension "Sample Extension" deleted');
     expect(deleteExtension).toHaveBeenCalledExactlyOnceWith(
-      { extensionId: extension.id, deleteData: true }, { requestId: expect.any(String) },
+      { extensionId: extension.id, ...(deleteData ? { deleteData: true } : {}) }, { requestId: expect.any(String) },
     );
   });
 

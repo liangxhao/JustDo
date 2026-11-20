@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import * as tar from 'tar';
 
+import { APP_PLUGIN_MANIFEST } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
 import { assertPluginDataId } from '../../../../plugins/sdk/app-plugin-sdk/data';
 import { redactLogText } from '../../../shared/diagnostics/redaction';
 import {
@@ -512,6 +513,43 @@ const sameInstallPath = (left: string, right: string): boolean => {
   const normalize = (value: string) =>
     process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
   return normalize(left) === normalize(right);
+};
+
+// These native-only packages were shipped before native MCP storage became removable.
+const legacyNativeMcpServices = new Map([
+  ['knowledge-wiki-app', 'knowledge-wiki'],
+  ['perspective-app', 'perspective'],
+  ['univer-app', 'univer'],
+]);
+
+const legacyNativeMcpDataOwner = ({ installed, nativePluginIds }: {
+  installed?: InstalledOpenClawExtension;
+  nativePluginIds: readonly string[];
+}): string | undefined => {
+  if (!installed || nativePluginIds.length !== 1) return;
+  const { id, installPath } = installed;
+  const serviceName = legacyNativeMcpServices.get(id);
+  if (!serviceName || !installPath) return;
+  try {
+    if (fs.realpathSync(installPath) !== installPath ||
+        fs.lstatSync(path.join(installPath, APP_PLUGIN_MANIFEST), { throwIfNoEntry: false }) ||
+        fs.lstatSync(path.join(installPath, 'app'), { throwIfNoEntry: false })) return;
+    const packagePath = path.join(installPath, 'package.json');
+    const manifestPath = path.join(installPath, OPENCLAW_PLUGIN_MANIFEST);
+    if (!fs.lstatSync(packagePath).isFile() || !fs.lstatSync(manifestPath).isFile()) return;
+    const metadata = readJsonRecord(packagePath);
+    const entries = isRecord(metadata.openclaw) ? metadata.openclaw.extensions : undefined;
+    if (metadata.name !== `@local-mcp/${id}` || metadata.app || !Array.isArray(entries) ||
+        entries.length !== 1 || entries[0] !== './dist/extension.cjs') return;
+    const manifest = readJsonRecord(manifestPath);
+    const server = isRecord(manifest.mcpServers) ? manifest.mcpServers[serviceName] : undefined;
+    if (manifest.id === id && isRecord(server) && server.command === 'node' &&
+        (server.transport === undefined || server.transport === 'stdio') &&
+        Array.isArray(server.args) && server.args.length === 1 && server.args[0] === './dist/server.cjs' &&
+        isRecord(server.env) && server.env.PLUGIN_DATA === '${PLUGIN_DATA}') return id;
+  } catch {
+    // Missing or ambiguous metadata cannot establish eligibility for legacy cleanup.
+  }
 };
 
 const normalizeMetadataText = (value: unknown): string | undefined =>
@@ -1804,12 +1842,13 @@ export class OpenClawExtensionImportService {
   /** Read package-owned data without starting Gateway or executing plugin code. */
   async getDataInfo(extensionId: string): Promise<ExtensionDataInfoResult> {
     try {
-      const { installed, owner, dataPluginIds } = await this.resolveRemovalTarget(extensionId);
+      const target = await this.resolveRemovalTarget(extensionId);
+      const { installed, owner, dataPluginIds } = target;
       if (!installed && !owner) throw new Error(t('extensionPackageOwnershipUnconfirmed'));
       if (!dataPluginIds.length)
         return { success: true, exists: false, bytes: 0, canDelete: true };
       const info = await (this.deps.pluginData?.inspect ?? inspectPluginData)(
-        this.deps.getOpenClawEngineManager().getStateDir(), dataPluginIds,
+        this.deps.getOpenClawEngineManager().getStateDir(), dataPluginIds, legacyNativeMcpDataOwner(target),
       );
       return {
         success: true, exists: info.exists, bytes: info.bytes, canDelete: info.canDelete,
@@ -1853,7 +1892,7 @@ export class OpenClawExtensionImportService {
           // Unsafe or changed data prevents admission before uninstall is sent.
           const removal = options.deleteData
             ? await (this.deps.pluginData?.prepareRemoval ?? preparePluginDataRemoval)(
-                this.deps.getOpenClawEngineManager().getStateDir(), dataPluginIds,
+                this.deps.getOpenClawEngineManager().getStateDir(), dataPluginIds, legacyNativeMcpDataOwner(target),
               )
             : undefined;
           let restoreMcp: (() => Promise<boolean>) | undefined;

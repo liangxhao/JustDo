@@ -49,6 +49,7 @@ test.each([
   { success: false },
   { success: true, exists: false, canDelete: false, bytes: 0 },
   { success: true, exists: true, canDelete: false, bytes: 0 },
+  { success: true, exists: true, canDelete: false, bytes: 1024, retained: true as const },
 ])('hides the data section when optional cleanup is unavailable: %j', async result => {
   let finish!: (result: ExtensionDataInfoResult) => void;
   bridge(() => new Promise(resolve => { finish = resolve; }));
@@ -60,15 +61,6 @@ test.each([
   await act(async () => finish(result));
 
   expect(container.innerHTML).toBe('');
-  expect(onChange).not.toHaveBeenCalledWith(true);
-});
-
-test('retained execution records show their retention policy without offering cleanup', async () => {
-  bridge(async () => ({ success: true, exists: true, canDelete: false, bytes: 1024, retained: true }));
-  const onChange = vi.fn();
-  render(<ExtensionDataCleanup extensionId="sample" checked={false} disabled={false} onChange={onChange} />);
-  await screen.findByText('extensionDataRetained');
-  expect(screen.queryByRole('checkbox')).toBeNull();
   expect(onChange).not.toHaveBeenCalledWith(true);
 });
 

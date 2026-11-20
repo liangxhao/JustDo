@@ -1,5 +1,5 @@
 import type { ExtensionDataInfoResult } from '@shared/plugins/extensions';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 
 import { i18nService } from '@/services/i18n';
 
@@ -18,6 +18,7 @@ const ExtensionDataCleanup: React.FC<{
   onChange: (checked: boolean) => void;
 }> = ({ extensionId, checked, disabled, onChange }) => {
   const [info, setInfo] = useState<ExtensionDataInfoResult | null>(null);
+  const descriptionId = useId();
   useEffect(() => {
     let current = true;
     setInfo(null);
@@ -33,25 +34,16 @@ const ExtensionDataCleanup: React.FC<{
     return () => { current = false; };
   }, [extensionId, onChange]);
 
-  if (!info?.success || info.exists !== true) return null;
-
-  if (info.retained) {
-    return (
-      <p className="mt-4 rounded-lg border border-border p-3 text-xs text-secondary" aria-live="polite">
-        {i18nService.t('extensionDataRetained')}
-      </p>
-    );
-  }
-
+  if (!info?.success || info.exists !== true || info.canDelete !== true) return null;
   const { bytes } = info;
-  if (info.canDelete !== true || typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0)
-    return null;
+  if (typeof bytes !== 'number' || !Number.isSafeInteger(bytes) || bytes < 0) return null;
 
   return (
     <div className="mt-4 rounded-lg border border-border p-3">
       <label className="flex items-start gap-2 text-sm text-foreground">
         <input
           type="checkbox"
+          aria-describedby={descriptionId}
           checked={checked}
           disabled={disabled}
           onChange={event => onChange(event.target.checked)}
@@ -62,7 +54,9 @@ const ExtensionDataCleanup: React.FC<{
       <p className="mt-2 text-xs text-secondary" aria-live="polite">
         {i18nService.t('extensionDataSize').replace('{size}', formatDataSize(bytes))}
       </p>
-      <p className="mt-1 text-xs text-secondary">{i18nService.t('extensionDataPreserved')}</p>
+      <p id={descriptionId} className="mt-1 text-xs text-secondary">
+        {i18nService.t('extensionDataDeleteDescription')}
+      </p>
     </div>
   );
 };

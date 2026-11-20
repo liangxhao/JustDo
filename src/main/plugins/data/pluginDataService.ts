@@ -33,6 +33,7 @@ interface Removal {
   stateIdentity: string;
   rootIdentity?: string;
   pluginIds: string[];
+  legacyNativeMcpOwner?: string;
   inventories: Inventory[];
 }
 export interface PluginDataRemovalSnapshot { readonly token: string }
@@ -106,14 +107,14 @@ async function tree(directory: string): Promise<{ entries: Entry[]; bytes: numbe
   await visit(directory, 0);
   return { entries, bytes };
 }
-async function inventory(state: string, pluginId: string): Promise<Inventory> {
+async function inventory(state: string, pluginId: string, legacyNativeMcpOwner?: string): Promise<Inventory> {
   const directory = resolvePluginDataDirectory(state, pluginId);
   const owner = await readFile(path.join(directory, PLUGIN_DATA_OWNER_FILE), 'utf8');
   const inspected = await tree(directory);
   if (resolvePluginDataDirectory(state, pluginId) !== directory ||
       await readFile(path.join(directory, PLUGIN_DATA_OWNER_FILE), 'utf8') !== owner)
     throw new Error('Plugin data owner changed during inspection');
-  const retained = parsePluginDataOwner(JSON.parse(owner)).retention === 'retain';
+  const retained = parsePluginDataOwner(JSON.parse(owner)).retention === 'retain' && pluginId !== legacyNativeMcpOwner;
   return { directory, owner, ...inspected, ...(retained ? { retained: true as const } : {}) };
 }
 
@@ -251,7 +252,9 @@ export async function preparePluginDataDirectory(
 }
 
 /** Read only. Failure never means zero bytes or permission to remove an unowned tree. */
-export async function inspectPluginData(stateDirectory: string, pluginIds: readonly string[]): Promise<PluginDataInfo> {
+export async function inspectPluginData(
+  stateDirectory: string, pluginIds: readonly string[], legacyNativeMcpOwner?: string,
+): Promise<PluginDataInfo> {
   let exists = false;
   try {
     const { state, root, rootInfo } = await roots(stateDirectory);
@@ -262,7 +265,7 @@ export async function inspectPluginData(stateDirectory: string, pluginIds: reado
     for (const pluginId of owners) {
       if (!await stat(path.join(root, pluginId))) continue;
       exists = true;
-      const inspected = await inventory(state, pluginId);
+      const inspected = await inventory(state, pluginId, legacyNativeMcpOwner);
       bytes += inspected.bytes;
       retained ||= inspected.retained === true;
       if (!Number.isSafeInteger(bytes)) throw new Error('Plugin data size exceeds the safety limit');
@@ -272,20 +275,22 @@ export async function inspectPluginData(stateDirectory: string, pluginIds: reado
 }
 
 /** Capture every owner before any native uninstall begins, inside the stopped lease. */
-export async function preparePluginDataRemoval(stateDirectory: string, pluginIds: readonly string[]): Promise<PluginDataRemovalSnapshot> {
+export async function preparePluginDataRemoval(
+  stateDirectory: string, pluginIds: readonly string[], legacyNativeMcpOwner?: string,
+): Promise<PluginDataRemovalSnapshot> {
   const { state, root, stateInfo, rootInfo } = await roots(stateDirectory);
   const owners = ids(pluginIds);
   const inventories: Inventory[] = [];
   if (rootInfo) for (const pluginId of owners) {
     if (await stat(path.join(root, pluginId))) {
-      const inspected = await inventory(state, pluginId);
+      const inspected = await inventory(state, pluginId, legacyNativeMcpOwner);
       if (inspected.retained) throw new Error('Plugin data must be retained');
       inventories.push(inspected);
     }
   }
   const snapshot = Object.freeze({ token: randomUUID() });
   removals.set(snapshot, { state, root, stateIdentity: id(stateInfo), rootIdentity: rootInfo && id(rootInfo),
-    pluginIds: owners, inventories });
+    pluginIds: owners, legacyNativeMcpOwner, inventories });
   return snapshot;
 }
 
@@ -300,7 +305,7 @@ export async function removePluginData(snapshot: PluginDataRemovalSnapshot): Pro
   const current: Inventory[] = [];
   if (rootInfo) for (const pluginId of captured.pluginIds) {
     if (await stat(path.join(root, pluginId))) {
-      const inspected = await inventory(state, pluginId);
+      const inspected = await inventory(state, pluginId, captured.legacyNativeMcpOwner);
       if (inspected.retained) throw new Error('Plugin data must be retained');
       current.push(inspected);
     }

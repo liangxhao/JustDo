@@ -11,7 +11,7 @@ export interface NativeMcpDataBinding {
 }
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-const declaration = { directory: 'managed-v1', retention: 'retain' } as const;
+const declaration = { directory: 'managed-v1' } as const;
 const preparations = new Map<string, Promise<string>>();
 type Entry = { kind: 'server' | 'config'; owner: string; name: string; dataId: string; hash: string };
 type Receipt = { version: 1; stateDirectory: string; configPath: string; entries: Entry[] };
@@ -23,7 +23,7 @@ const suspendedServer = { enabled: false } as const;
 const suspendedServerHash = digest(suspendedServer);
 
 export function nativeMcpDataDirectory(stateDirectory: string, pluginId: string): string {
-  return resolvePluginDataDirectory(stateDirectory, pluginId, { retention: 'retain' });
+  return resolvePluginDataDirectory(stateDirectory, pluginId);
 }
 
 function dataIdentity(stateDirectory: string, pluginId: string): string {
