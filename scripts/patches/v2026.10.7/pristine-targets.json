@@ -302,6 +302,9 @@
         "dist/src-BaGOtYrI.mjs",
         "dist/agent-request-preflight-DayS66Ki.mjs",
         "dist/agent-turn-service-DTOXX_Sj.mjs",
+        "dist/embedded-agent-DAqZgJpR.mjs",
+        "dist/run-entry-B-niAsCj.mjs",
+        "dist/agent-command-C-J-Dya7.mjs",
         "dist/session-event-payload-Cq41wHZJ.mjs",
         "dist/session-lifecycle-admission-USS1EGbr.mjs",
         "dist/subagent-registry-ClP8932r.mjs",
@@ -387,6 +390,10 @@
     }
   ],
   "targets": [
+    {
+      "file": "dist/agent-command-C-J-Dya7.mjs",
+      "sha256": "7047567ac4d84f90e184c03af79f25956651810fee81a8f91fd72250d3cfd359"
+    },
     {
       "file": "dist/agent-core-_YGHB2FC.mjs",
       "sha256": "7377211e1fb3bdbf53df940a675e1683c6ce3d4d350657f3c362ace88c1c50db"
@@ -566,6 +573,10 @@
     {
       "file": "dist/registry-BwDJiK-z.mjs",
       "sha256": "37895af63f814f9bba2c24e20fdb910e27844717ccae69aab42aafe059f40489"
+    },
+    {
+      "file": "dist/run-entry-B-niAsCj.mjs",
+      "sha256": "4e7815ae4c54f404163c488b27a4bb40db9821939d69a0e9beaa20104f5d9465"
     },
     {
       "file": "dist/run-executor.runtime-B5UysGXT.mjs",

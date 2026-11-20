@@ -58,19 +58,23 @@ async function nativeOwners() {
     acceptance: turn.slice(declaration.getStart(turnAst), end) };
 }
 
-describe('published tool-timeout terminal to conditional Goal successor', () => {
+describe('published native failure terminals and conditional Goal successors', () => {
   it('requires the explicitly selected frozen graph in mandatory contract runs', () => {
     if (process.env.OPENCLAW_RUNTIME_CONTRACT_REQUIRED === '1' || runtime) expect(available).toBe(true);
   });
 
-  it.skipIf(!available).each(['settled', 'not-settled', 'missing-settlement', 'old-session'])(
+  it.skipIf(!available).each([
+    'settled', 'not-settled', 'missing-settlement', 'old-session',
+    'reply-exhausted', 'other-failure', 'paused-goal', 'unmanaged-goal',
+  ])(
     'composes actual native lifecycle and automatic admission for %s', async scenario => {
       const owners = await nativeOwners();
       const generation = owners.bindings.getAgentEventLifecycleGeneration();
       const scope = path.resolve('build/upgrade-audit/v2026.10.7', `goal-timeout-${randomUUID()}.sqlite`);
-      const key = 'agent:a:main';
+      const key = scenario === 'unmanaged-goal' ? 'agent:a:main' : 'agent:a:justdo:native-goal-test';
       let entry: any = { sessionId: 'session', lifecycleRevision: 'revision', lifecycleRunId: 'before',
-        startedAt: 10, goal: { id: 'goal', status: 'active', updatedAt: 1, continuationTurns: 0 } };
+        startedAt: 10, goal: { id: 'goal', status: scenario === 'paused-goal' ? 'paused' : 'active',
+          updatedAt: 1, continuationTurns: 0 } };
       const controller = new AbortController();
       const lease = await owners.lock.n({ scope, identities: [key, 'session'], assertAllowed: () => {} });
       const writes: any[] = [];
@@ -91,10 +95,13 @@ describe('published tool-timeout terminal to conditional Goal successor', () => 
         competingWork: owners.lock.h, pendingQueue: () => false, replyActive: () => false,
         nativeHandoff: () => false, withLifecycleLock: owners.lock.goalContinuationLifecycle, patchEntry: writer,
       });
+      const recordGatewaySessionRunFailure = vi.fn();
       const context = {
         ...owners.bindings, randomUUID, goalTerminal: goal,
         deriveGatewaySessionLifecycleSnapshot: owners.snapshot,
         patchSessionEntryTarget: writer, sessionChanges: { emit: vi.fn() },
+        withOwnedSessionTranscriptWrites: (_scope: unknown, write: () => unknown) => write(),
+        trackAsyncWork: vi.fn(), recordGatewaySessionRunFailure,
       };
       const helpers = ['isFiniteTimestamp', 'resolveLifecyclePhase', 'resolveTerminalOutcome',
         'resolveSettledLifecycleTerminalOutcome', 'derivePersistedSessionLifecyclePatch',
@@ -106,6 +113,12 @@ describe('published tool-timeout terminal to conditional Goal successor', () => 
         data: { phase: 'error', startedAt: 10, endedAt: 100, timeoutPhase: 'tool_execution',
           stopReason: 'timeout', aborted: true, executionSettled: scenario === 'settled' || scenario === 'old-session' } };
       if (scenario === 'missing-settlement') delete event.data.executionSettled;
+      const replyFailure = ['reply-exhausted', 'other-failure', 'paused-goal', 'unmanaged-goal'].includes(scenario);
+      if (replyFailure) {
+        event.data = { phase: 'error', startedAt: 10, endedAt: 100, stopReason: 'error',
+          executionSettled: true, error: 'Fixture run could not complete its reply.',
+          ...(scenario === 'other-failure' ? {} : { replyGenerationExhausted: true }) };
+      }
       const request = { sessionKey: key, event,
         expectedWriter: { runId: 'before', sessionId: 'session', lifecycleRevision: 'revision' } };
       const persistEvent = (includeExpectedWriter = true) => {
@@ -134,11 +147,15 @@ describe('published tool-timeout terminal to conditional Goal successor', () => 
       const dispatch = vm.runInNewContext(`(async () => { ${owners.acceptance}; return 'dispatch'; })`, dispatchContext);
       try {
         await persistEvent();
-        if (scenario === 'settled') {
-          expect(entry).toMatchObject({ status: 'interrupted', lastRunId: 'before',
-            goal: { status: 'active', continuationTurns: 0 }, mainRestartRecovery: { safeToolsRequired: true },
+        if (replyFailure) expect(recordGatewaySessionRunFailure).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ runId: 'before', error: event.data.error }),
+        );
+        if (scenario === 'settled' || scenario === 'reply-exhausted') {
+          expect(entry).toMatchObject({ status: replyFailure ? 'failed' : 'interrupted', lastRunId: 'before',
+            goal: { status: 'active', continuationTurns: 0 },
             goalContinuationTerminal: { runId: 'before', sessionId: 'session', lifecycleRevision: 'revision',
               lifecycleGeneration: generation, phase: 'error', executionSettled: true } });
+          if (!replyFailure) expect(entry.mainRestartRecovery).toMatchObject({ safeToolsRequired: true });
           expect(entry.lifecycleRunId).toBeUndefined();
           const terminal = structuredClone(entry.goalContinuationTerminal);
           // With no expected-writer precondition, this second call reaches 10.7's own
@@ -154,6 +171,15 @@ describe('published tool-timeout terminal to conditional Goal successor', () => 
           await expect(dispatch()).resolves.toBeUndefined();
           expect(entry.goal.continuationTurns).toBe(1);
           expect(dispatchContext.cleanupPreaccept).toHaveBeenCalledOnce();
+        } else if (replyFailure) {
+          expect(entry).toMatchObject({ status: 'failed', lastRunId: 'before', goal: { status: 'paused' },
+            goalContinuationTerminal: { runId: 'before', executionSettled: true } });
+          await expect(dispatch()).resolves.toBeUndefined();
+          expect(dispatchContext.rejectPreaccept).toHaveBeenCalledWith(expect.objectContaining({
+            details: { code: 'GOAL_CONTINUATION_DEFERRED', reason: 'goal-inactive' },
+          }));
+          expect(entry.goal.continuationTurns).toBe(0);
+          expect(params.io.emitAcceptance).not.toHaveBeenCalled();
         } else {
           expect(entry.goalContinuationTerminal).toBeUndefined();
           await expect(dispatch()).resolves.toBeUndefined();

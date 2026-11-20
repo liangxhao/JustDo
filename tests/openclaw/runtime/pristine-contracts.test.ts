@@ -403,9 +403,9 @@ describe('OpenClaw pristine artifact contracts', () => {
       // The same recovery capability also binds the native accepted nested
       // receipt and terminal-dispatch owners; projection stays in Runtime Services.
       '029-tool-call-format-recovery.cjs': 800,
-      // Eight native owners retain the Goal transaction, receipt/observation
-      // and cross-capability execution fences in the target native topology.
-      '031-goal-continuation-admission.cjs': 775,
+      // Also carry native reply-exhaustion evidence to the Goal transaction
+      // through the two execution paths and verify the bindings in the bundle.
+      '031-goal-continuation-admission.cjs': 905,
     };
     for (const name of patchFiles) {
       const content = fs.readFileSync(path.join(patchDir, name), 'utf8');

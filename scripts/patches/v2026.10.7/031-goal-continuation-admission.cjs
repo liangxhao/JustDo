@@ -40,6 +40,9 @@ const TARGETS = {
   schema: 'dist/src-BaGOtYrI.mjs',
   preflight: 'dist/agent-request-preflight-DayS66Ki.mjs',
   turn: 'dist/agent-turn-service-DTOXX_Sj.mjs',
+  replyResolution: 'dist/embedded-agent-DAqZgJpR.mjs',
+  replyMetadata: 'dist/run-entry-B-niAsCj.mjs',
+  backendTerminal: 'dist/agent-command-C-J-Dya7.mjs',
   terminal: 'dist/session-event-payload-Cq41wHZJ.mjs',
   lock: 'dist/session-lifecycle-admission-USS1EGbr.mjs',
   registry: 'dist/subagent-registry-ClP8932r.mjs',
@@ -50,12 +53,113 @@ const ANCHORS = {
   schema: 'const AgentParamsSchema = closedObject(',
   preflight: 'function prepareAgentRequestPreflight(',
   turn: 'function prepareAgentRunDispatch(',
+  replyResolution: 'function resolveEmbeddedRunTerminal(',
+  replyMetadata: 'function buildRunEntryTerminal(',
+  backendTerminal: 'function createAgentCommandLifecycle(',
   terminal: 'function persistPreparedGatewaySessionLifecycleEvent(',
   lock: 'function runExclusiveSessionLifecycle(',
   registry: 'const subagentLifecycleController = new SubagentLifecycleController(',
   describe: 'const sessionByKeyReadHandlers =',
   private: 'const PRIVATE_SESSION_ENTRY_KEYS =',
 };
+const REPLY_RECOVERY_EDITS = {
+  replyResolution: [
+    ['resolveEmbeddedRunTerminal', 'incompleteTurnText: incompletePayloadText',
+      `incompleteTurnText: incompletePayloadText,
+      replyGenerationExhausted: input.attemptAssistant?.stopReason === "stop" ||
+        input.attemptAssistant?.stopReason === "length"`],
+    ['resolveEmbeddedRunTerminal', 'incompleteTurnText, payloadCount, incompleteTurnFallbackSafe',
+      `incompleteTurnText, payloadCount, incompleteTurnFallbackSafe,
+      replyGenerationExhausted: Boolean(nextEmptyResponseRetryInstruction) &&
+        retryState.emptyResponseAttempts >= 1 && input.attemptAssistant?.stopReason === "stop"`],
+    ['completeEmbeddedRun', 'finalAssistantVisibleText: input.prepared.finalAssistantVisibleText',
+      `finalAssistantVisibleText: input.prepared.finalAssistantVisibleText,
+      ...(input.replyGenerationExhausted === true ? { replyGenerationExhausted: true } : {})`],
+    ['completeEmbeddedRun', 'fallbackSafe: input.incompleteTurnFallbackSafe ?? false',
+      `fallbackSafe: input.incompleteTurnFallbackSafe ?? false,
+      ...(input.replyGenerationExhausted === true ? { replyGenerationExhausted: true } : {})`],
+  ],
+  replyMetadata: [
+    ['buildRunEntryTerminal', 'const metadata = { terminalReply };',
+      `const metadata = { terminalReply,
+        ...(meta.replyGenerationExhausted === true && meta.error?.replyGenerationExhausted === true
+          ? { replyGenerationExhausted: true } : {}) };`],
+  ],
+  backendTerminal: [
+    ['createAgentCommandLifecycle', '...terminalReply ? { terminalReply } : {}',
+      `...terminalReply ? { terminalReply } : {},
+        ...(phase === "error" && terminal.metadata.replyGenerationExhausted === true
+          ? { replyGenerationExhausted: true } : {})`],
+  ],
+};
+const NATIVE_GOAL_PAUSE = '(patch.status === "failed" || patch.status === "timeout") && entry.goal?.status === "active" && entry.goal.updatedAt <= endedAt';
+const GOAL_REPLY_RECOVERY_CHECK = 'goalTerminal.shouldKeepGoalActive(sessionEntry.canonicalKey, params.event, patch)';
+const CLEAR_TERMINAL_STATE = 'reuse.canReuseSession && reuse.recoverableTerminalSession && !hasMainSessionRecoveryClaim(params.freshEntry) && !freshSessionRotatedSinceLoad && patchSessionId === params.freshEntry?.sessionId';
+const PRESERVE_GOAL_PREDECESSOR = 'preserveGoalPredecessor: request.goalContinuation !== undefined';
+
+function verifyReplyRecoveryBundle(source) {
+  const evidence = name => {
+    const tree = parse(functionRange(source, name).text);
+    const properties = collect(tree, node => ts.isPropertyAssignment(node) &&
+      node.name.getText(tree) === 'replyGenerationExhausted');
+    return { tree, properties };
+  };
+  const { tree, properties } = evidence('resolveEmbeddedRunTerminal');
+  const input = tree.statements[0].parameters[0].name.text;
+  const expected = [
+    `(${input}.attemptAssistant?.stopReason === "stop" || ${input}.attemptAssistant?.stopReason === "length")`,
+    `(Boolean(nextEmptyResponseRetryInstruction) && retryState.emptyResponseAttempts >= 1 && ${input}.attemptAssistant?.stopReason === "stop")`,
+  ];
+  if (properties.length !== expected.length || properties.some((prop, index) =>
+    !same(prop.initializer.getText(tree), expected[index]) ||
+    !ts.isCallExpression(prop.parent.parent) || prop.parent.parent.expression.getText(tree) !== 'completeEmbeddedRun'))
+    throw new Error('bundle native reply exhaustion producer changed');
+
+  for (const [name, count, guard] of [
+    ['completeEmbeddedRun', 2, owner => `${owner.statements[0].parameters[0].name.text}.replyGenerationExhausted === true`],
+    ['buildRunEntryTerminal', 1, owner => {
+      const params = owner.statements[0].parameters[0].name.text;
+      const meta = one(collect(owner, node => ts.isVariableDeclaration(node) &&
+        node.initializer?.getText(owner) === `${params}.result.meta`), 'bundle reply result owner').name.text;
+      return `${meta}.replyGenerationExhausted === true && ${meta}.error?.replyGenerationExhausted === true`;
+    }],
+    ['createAgentCommandLifecycle', 1, (_owner, entries) => {
+      let emitter = entries[0]?.parent;
+      while (emitter && !ts.isArrowFunction(emitter)) emitter = emitter.parent;
+      if (!emitter?.parameters[1]) throw new Error('bundle backend terminal emitter changed');
+      const [phase, terminal] = emitter.parameters.map(parameter => parameter.name.text);
+      return `${phase} === "error" && ${terminal}.metadata.replyGenerationExhausted === true`;
+    }],
+  ]) {
+    const { tree: owner, properties: entries } = evidence(name);
+    const expectedGuard = guard(owner, entries);
+    if (entries.length !== count || entries.some(prop => {
+      const branch = prop.parent.parent;
+      return !ts.isConditionalExpression(branch) || !ts.isSpreadAssignment(branch.parent) ||
+        !same(branch.getText(owner), `${expectedGuard} ? { replyGenerationExhausted: true } : {}`);
+    }))
+      throw new Error(`bundle ${name} reply exhaustion evidence changed`);
+  }
+
+  const writer = parse(functionRange(source, 'persistPreparedGatewaySessionLifecycleEvent').text);
+  const update = one(collect(writer, node => ts.isCallExpression(node) &&
+    node.expression.getText(writer) === 'buildUpdatedSessionGoalStatus'), 'bundle Goal pause writer');
+  const assignment = update.parent;
+  if (!ts.isBinaryExpression(assignment) || assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    assignment.right !== update || assignment.left.getText(writer) !== 'patch.goal')
+    throw new Error('bundle native Goal pause assignment changed');
+  let body = assignment;
+  while (ts.isParenthesizedExpression(body.parent) || ts.isExpressionStatement(body.parent) ||
+    (ts.isBlock(body.parent) && body.parent.statements.length === 1)) body = body.parent;
+  const owner = body.parent;
+  const condition = ts.isIfStatement(owner) && owner.thenStatement === body ? owner.expression
+    : ts.isBinaryExpression(owner) && owner.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      owner.right === body ? owner.left : undefined;
+  const params = writer.statements[0].parameters[0].name.text;
+  const pauseCondition = `${NATIVE_GOAL_PAUSE.replace(/\bentry\b/g, update.arguments[0].getText(writer))} && !${GOAL_REPLY_RECOVERY_CHECK.replace(/\bparams\b/g, params)}`;
+  if (!condition || !same(condition.getText(writer), pauseCondition))
+    throw new Error('bundle native Goal reply failure pause condition changed');
+}
 const BINDINGS = {
   preflight: 'const goalPreflight = createGoalContinuationRuntime(null);',
   turn: `const goalAdmission = createGoalContinuationRuntime({
@@ -284,7 +388,19 @@ function transformKind(input, kind, file) {
          { entry, event: params.event }, phase, eventClientRunId ?? eventRunId));`,
       'exact terminal receipt in the owned native writer',
     );
+    edit(
+      'persistPreparedGatewaySessionLifecycleEvent', NATIVE_GOAL_PAUSE,
+      `${NATIVE_GOAL_PAUSE} && !${GOAL_REPLY_RECOVERY_CHECK}`,
+      'native Goal pause after settled failure',
+    );
+  } else if (REPLY_RECOVERY_EDITS[kind]) {
+    for (const [scope, original, replacement] of REPLY_RECOVERY_EDITS[kind])
+      edit(scope, original, replacement, `${scope}: native reply exhaustion evidence`);
   } else if (kind === 'turn') {
+    edit('createAgentTurnService', 'freshEntry, initialEntry: entry',
+      `freshEntry, initialEntry: entry, ${PRESERVE_GOAL_PREDECESSOR}`, 'Goal predecessor custody during prepare');
+    edit('buildAgentSessionPatch', CLEAR_TERMINAL_STATE,
+      `!params.preserveGoalPredecessor && ${CLEAR_TERMINAL_STATE}`, 'predecessor survives terminal preparation');
     const range = functionRange(source, 'prepareAgentRunDispatch');
     const ast = parse(range.text);
     const starts = collect(
@@ -532,6 +648,23 @@ function verifyBundle(source) {
   const helper = functionRange(source, 'createGoalContinuationRuntime').text;
   if (canonical(helper) !== canonical(createGoalContinuationRuntime.toString()))
     throw new Error('Goal support implementation differs in final bundle');
+  verifyReplyRecoveryBundle(source);
+  const service = parse(functionRange(source, 'createAgentTurnService').text);
+  const buildPatch = one(collect(service, node => ts.isCallExpression(node) &&
+    node.expression.getText(service) === 'buildAgentSessionPatch'), 'bundle agent session preparation');
+  const preservation = one(buildPatch.arguments[0].properties.filter(node => ts.isPropertyAssignment(node) &&
+    node.name.getText(service) === 'preserveGoalPredecessor'), 'bundle Goal preparation intent');
+  const request = one(collect(service, node => ts.isBindingElement(node) &&
+    (node.propertyName ?? node.name).getText(service) === 'request'), 'bundle agent request').name.getText(service);
+  if (!same(`({${preservation.getText(service)}})`, `({${PRESERVE_GOAL_PREDECESSOR.replace(/\brequest\b/g, request)}})`))
+    throw new Error('bundle Goal preparation intent changed');
+  const sessionPatch = parse(functionRange(source, 'buildAgentSessionPatch').text);
+  const clearState = one(collect(sessionPatch, node => ts.isVariableDeclaration(node) &&
+    node.name.getText(sessionPatch) === 'shouldClearTerminalState'), 'bundle terminal preparation condition');
+  const patchParams = sessionPatch.statements[0].parameters[0].name.text;
+  if (!same(clearState.initializer.getText(sessionPatch),
+    `!params.preserveGoalPredecessor && ${CLEAR_TERMINAL_STATE}`.replace(/\bparams\b/g, patchParams)))
+    throw new Error('bundle terminal preparation condition changed');
   for (const [kind, expected] of Object.entries(BINDINGS)) {
     const name = expected.match(/const (\w+)/)[1];
     const expectedBundle = expected.replace(

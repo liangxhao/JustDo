@@ -73,6 +73,17 @@ export function createGoalContinuationRuntime(native) {
     return receipt;
   }
 
+  function shouldKeepGoalActive(sessionKey, event, patch) {
+    const predecessor = patch.goalContinuationTerminal;
+    return patch.status === 'failed' &&
+      event.data?.replyGenerationExhausted === true &&
+      event.data.stopReason === 'error' &&
+      event.data.aborted !== true && event.data.yielded !== true &&
+      predecessor?.phase === 'error' && predecessor.runId === patch.lastRunId &&
+      typeof predecessor.lifecycleRevision === 'string' && predecessor.lifecycleRevision.length > 0 &&
+      /^agent:[^:]+:justdo:[^:]+$/i.test(sessionKey);
+  }
+
   function nativeBlocked(params) {
     const key = params.resolvedSessionKey;
     const id = params.getAdmittedSessionId();
@@ -275,5 +286,5 @@ export function createGoalContinuationRuntime(native) {
     return false;
   }
 
-  return { validate, terminal, replay, assertAdmission, commit, describe, publicReceipt, hasNativeHandoff };
+  return { validate, terminal, shouldKeepGoalActive, replay, assertAdmission, commit, describe, publicReceipt, hasNativeHandoff };
 }

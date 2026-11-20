@@ -30,13 +30,49 @@ const sources: Record<string, string> = {
     if (!expectedSessionResult.ok) return rejectInvalidRequest(expectedSessionResult.error);
     return request;
   }`,
+  replyResolution: `async function resolveEmbeddedRunTerminal(input) {
+    if (reasoningOnlyRetriesExhausted && !input.prepared.finalAssistantVisibleText) {
+      return completeEmbeddedRun({ ...input, incompleteTurnText: incompletePayloadText });
+    }
+    if (incompleteTurnText) {
+      return completeEmbeddedRun({ ...input, incompleteTurnText, payloadCount, incompleteTurnFallbackSafe });
+    }
+  }
+  async function completeEmbeddedRun(input) {
+    const error = { fallbackSafe: input.incompleteTurnFallbackSafe ?? false };
+    return { meta: { error, finalAssistantVisibleText: input.prepared.finalAssistantVisibleText } };
+  }`,
+  replyMetadata: `function buildRunEntryTerminal(params) {
+    const meta = params.result.meta;
+    const metadata = { terminalReply };
+    return { metadata };
+  }`,
+  backendTerminal: `function createAgentCommandLifecycle(params) {
+    const emitTerminalPhase = (phase, terminal) => {
+      emitAgentEvent({ data: { ...terminalReply ? { terminalReply } : {} } });
+    };
+    return { emitTerminalPhase };
+  }`,
   terminal: `async function persistPreparedGatewaySessionLifecycleEvent(params) {
     const phase = params.event.data.phase, entry = params.entry;
+    const sessionEntry = params.sessionEntry;
     const eventClientRunId = params.event.clientRunId, eventRunId = params.event.runId;
     const patch = derivePersistedSessionLifecyclePatch({ entry, event: params.event });
+    const endedAt = patch.endedAt ?? params.event.ts;
+    if ((patch.status === "failed" || patch.status === "timeout") && entry.goal?.status === "active" && entry.goal.updatedAt <= endedAt) {
+      patch.goal = buildUpdatedSessionGoalStatus(entry, { status: 'paused' }, endedAt);
+    }
     return patch;
   }`,
-  turn: `async function prepareAgentRunDispatch(params) { try { ${NATIVE_ACCEPTED} } catch(error) { throw error; } }`,
+  turn: `async function prepareAgentRunDispatch(params) { try { ${NATIVE_ACCEPTED} } catch(error) { throw error; } }
+    function createAgentTurnService(preflight, freshEntry, entry) {
+      const { request } = preflight;
+      return buildAgentSessionPatch({ freshEntry, initialEntry: entry });
+    }
+    function buildAgentSessionPatch(params) {
+      const shouldClearTerminalState = reuse.canReuseSession && reuse.recoverableTerminalSession && !hasMainSessionRecoveryClaim(params.freshEntry) && !freshSessionRotatedSinceLoad && patchSessionId === params.freshEntry?.sessionId;
+      return { ...params.freshEntry, ...(shouldClearTerminalState ? { lastRunId: undefined } : {}) };
+    }`,
   lock: `async function runExclusiveSessionLifecycle(params) { return await params.run(); } export ${NATIVE_EXPORTS.lock};`,
   registry: `const subagentLifecycleController = new SubagentLifecycleController({}); export ${NATIVE_EXPORTS.registry};`,
   describe: `const sessionByKeyReadHandlers = { describe() { return { session: presentation.present(record, params) }; } };`,
@@ -438,19 +474,36 @@ describe('locked Goal runtime patch boundaries', () => {
     humanLease.release(); wakeLease.release(); h.params.admission.release();
   });
 
-  // Cold AST validation of eight owners can exceed the default budget under Windows load.
+  // Cold AST validation can exceed the default budget under Windows load.
   it('rejects pristine verification and is exactly idempotent after complete source application', () => {
     const root = fixture();
     expect(() => patch.verifyPatch(root)).toThrow('missing');
-    expect(patch.applyPatch(root)).toHaveLength(8);
+    expect(patch.applyPatch(root)).toHaveLength(Object.keys(TARGETS).length);
     expect(patch.applyPatch(root)).toEqual([]);
     expect(() => patch.verifyPatch(root)).not.toThrow();
   }, 30_000);
 
+  it('keeps the settled predecessor visible while preparing a conditional Goal request', () => {
+    const root = fixture();
+    patch.applyPatch(root);
+    const source = fs.readFileSync(path.join(root, TARGETS.turn), 'utf8');
+    const prepare = vm.runInNewContext([
+      ...['createAgentTurnService', 'buildAgentSessionPatch'].map(name => functionRange(source, name).text),
+      ';createAgentTurnService',
+    ].join('\n'), {
+      reuse: { canReuseSession: true, recoverableTerminalSession: true },
+      freshSessionRotatedSinceLoad: false, patchSessionId: 'session',
+      hasMainSessionRecoveryClaim: () => false,
+    });
+    const failed = { sessionId: 'session', lastRunId: 'settled', status: 'failed' };
+    expect(prepare({ request: { goalContinuation: {} } }, failed, failed).lastRunId).toBe('settled');
+    expect(prepare({ request: {} }, failed, failed).lastRunId).toBeUndefined();
+  });
+
   it('accepts only the exact 019 companion export block alongside the anchored original registry exports', () => {
     const root = fixture();
     fs.appendFileSync(path.join(root, TARGETS.registry), `\nexport ${PLUGIN_EXECUTION_EXPORTS};\n`);
-    expect(patch.applyPatch(root)).toHaveLength(8);
+    expect(patch.applyPatch(root)).toHaveLength(Object.keys(TARGETS).length);
     expect(patch.applyPatch(root)).toEqual([]);
     expect(() => patch.verifyPatch(root)).not.toThrow();
     fs.appendFileSync(path.join(root, TARGETS.registry), '\nexport { unknownOwner };\n');
@@ -515,7 +568,7 @@ describe('locked Goal runtime patch boundaries', () => {
   it.skipIf(!pristine)('applies the complete locked npm owner set, not synthetic owner names', () => {
     const root = fixture(true);
     expect(() => patch.verifyPatch(root)).toThrow();
-    expect(patch.applyPatch(root)).toHaveLength(8);
+    expect(patch.applyPatch(root)).toHaveLength(Object.keys(TARGETS).length);
     expect(patch.applyPatch(root)).toEqual([]);
     expect(() => patch.verifyPatch(root)).not.toThrow();
     for (const name of Object.values(TARGETS) as string[])
@@ -524,7 +577,7 @@ describe('locked Goal runtime patch boundaries', () => {
 
   it.skipIf(!previousRuntime)('composes with the actual 001..031 owner sources and preserves 019 verification', () => {
     const root = fixture(true, previousRuntime);
-    expect(patch.applyPatch(root)).toHaveLength(8);
+    expect(patch.applyPatch(root)).toHaveLength(Object.keys(TARGETS).length);
     expect(patch.applyPatch(root)).toEqual([]);
     patch.verifyPatch(root);
     const ownedExecution = require('../../../../scripts/patches/v2026.10.7/019-plugin-owned-execution.cjs');
