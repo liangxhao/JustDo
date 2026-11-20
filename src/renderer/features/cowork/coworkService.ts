@@ -797,6 +797,7 @@ export class CoworkService {
     error?: string;
     cancelled?: boolean;
     acceptedRunId?: string;
+    nativeTitleTarget?: import('@shared/cowork/sessionTitle').SessionTitleTarget;
     worktreeInitialCommit?: WorktreeInitialCommitOffer;
   }> {
     const cowork = window.electron?.cowork;
@@ -987,6 +988,7 @@ export class CoworkService {
         }
         return {
           session: runningSession,
+          nativeTitleTarget: result.nativeTitleTarget,
           acceptedRunId:
             result.timing?.rootRunId ?? result.timing?.clientTurnId ?? options.clientTurnId,
         };
@@ -1230,11 +1232,9 @@ export class CoworkService {
 
     const result = await cowork.renameSession({ sessionId, title: normalizedTitle });
     if (result.success) {
-      store.dispatch(updateSessionTitle({ sessionId, title: normalizedTitle }));
+      store.dispatch(updateSessionTitle({ sessionId, title: result.title }));
       return true;
     }
-
-    console.error('Failed to rename session:', result.error);
     return false;
   }
 
@@ -1680,11 +1680,9 @@ export class CoworkService {
     return result.status;
   }
 
-  async generateSessionTitle(prompt: string | null, sessionId: string): Promise<string | null> {
-    if (!window.electron?.generateSessionTitle) {
-      return null;
-    }
-    return window.electron.generateSessionTitle({ userInput: prompt, sessionId });
+  async generateSessionTitle(request: import('@shared/cowork/sessionTitle').GenerateSessionTitleRequest): Promise<void> {
+    const title = await window.electron?.generateSessionTitle?.(request);
+    if (title) store.dispatch(updateSessionTitle({ sessionId: request.sessionId, title }));
   }
 
   async patchSessionModel(options: {

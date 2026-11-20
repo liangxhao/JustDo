@@ -1527,6 +1527,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         error: startError,
         cancelled: startCancelled,
         acceptedRunId,
+        nativeTitleTarget,
       } = startResult;
 
       if (!startedSession && (startError || startCancelled)) {
@@ -1576,14 +1577,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       }
 
       // Generate title in the background and update when ready
-      if (startedSession && titleInput) {
-        coworkService
-          .generateSessionTitle(titleInput, startedSession.id)
-          .then(generatedTitle => {
-            const betterTitle = generatedTitle?.trim();
-            if (betterTitle && betterTitle !== fallbackTitle) {
-              coworkService.renameSession(startedSession.id, betterTitle);
-            }
+      if (startedSession && nativeTitleTarget && titleInput) {
+        void coworkService
+          .generateSessionTitle({
+            userInput: titleInput,
+            sessionId: startedSession.id,
+            expectedTitle: fallbackTitle.trim(),
+            nativeTarget: nativeTitleTarget,
           })
           .catch(error => {
             console.error('Failed to generate cowork session title:', error);

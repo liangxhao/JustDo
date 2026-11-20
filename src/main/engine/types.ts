@@ -188,7 +188,7 @@ export type CoworkStartOptions = {
   /** Trusted local transport metadata supplied to the model but omitted from transcript history. */
   untrustedContext?: string;
   /** Main-process admission receipt; never supplied across IPC. */
-  onAccepted?: () => void;
+  onAccepted?: (prepared?: CoworkPreparedSession) => void;
   /** Main-owned, one-shot delegate to the originating application Renderer. */
   dispatchChatSend?: (
     params: Record<string, unknown>,
@@ -219,6 +219,7 @@ export type CoworkPrepareSessionOptions = {
 export type CoworkPreparedSession = {
   sessionKey: string;
   gatewaySessionId: string;
+  lifecycleRevision?: string;
 };
 
 export interface CoworkGenerateTitleOptions {

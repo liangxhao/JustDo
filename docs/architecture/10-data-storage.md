@@ -409,6 +409,11 @@ yield 后唤醒运行的前驱关系时，保留 unknown，而不从 run-ID 后�
 
 cowork_sessions 保存 title、status、pinned、cwd、execution_mode、permission_mode、active_skill_ids、agent_id、model_ref、group_id 及时间。status 是产品快照，不能替代原生 runtime 查询。列表索引服务 pinned/updated_at 排序和 Agent 范围查询。
 
+应用直接管理的桌面会话通过 Gateway 保存原生 `displayName`，供 OpenClaw 会话工具读取。
+SQLite 的 `title` 保存侧栏使用的标题。自动标题保留首轮准备时的原生身份，改名按产品会话顺序写入，
+原生确认后才更新侧栏标题。未知回执只对同一原生身份读回一次，未确认时保留现有侧栏标题。
+完整交互规则见[会话标题](../features/app/navigation-and-session-list.md#会话标题)。
+
 普通已有会话更改工作目录复用 `cwd` 字段，不新增表或复制历史；原生确认空闲及
 产品身份复核后保存期望值，后续消息／新终端的准备负责应用原生权限根。修改目录
 不刷新活动时间，不迁移文件或助手角色目录。原生绑定、外部来源、插件托管及未处理

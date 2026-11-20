@@ -121,7 +121,7 @@ function setup(sendReceipt?: Record<string, unknown>) {
 const initialSelection = () => ({
   key: sessionKey, sessionId: gatewaySessionId,
   entry: { sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full',
-    providerOverride: 'fixture', modelOverride: 'new' },
+    lifecycleRevision: 'creation-revision', providerOverride: 'fixture', modelOverride: 'new' },
   resolved: { modelProvider: 'fixture', model: 'new' },
 });
 
@@ -169,6 +169,7 @@ describe('initial native storage preparation', () => {
     expect(s.request.mock.calls.filter(([method]) => method === 'chat.send')).toHaveLength(1);
     expect(s.request).toHaveBeenCalledWith('sessions.create', {
       key: sessionKey, cwd: process.cwd(), permissionMode: 'full', model: 'fixture/new',
+      displayName: 'Synthetic initial dispatch',
     });
     expect(s.request.mock.calls.filter(([method]) => method === 'sessions.describe')).toHaveLength(3);
     await s.finish(running);
@@ -291,8 +292,10 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
       clientTurnId, initialModelRef: 'fixture/new', dispatchChatSend: dispatch, onAccepted: accepted,
     });
     await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    expect(accepted).toHaveBeenCalledWith({ sessionKey, gatewaySessionId, lifecycleRevision: 'creation-revision' });
     expect(s.request).toHaveBeenCalledWith('sessions.create', {
       key: sessionKey, cwd: process.cwd(), permissionMode: 'full', model: 'fixture/new',
+      displayName: 'Synthetic initial dispatch',
     });
     expect(s.updateSession).toHaveBeenCalledWith(sessionId, { modelRef: 'fixture/new' });
     expect(dispatch).toHaveBeenCalledOnce();
@@ -501,6 +504,7 @@ describe('Main initial turn delegated to the presenting Renderer', () => {
       key: sessionKey,
       cwd: process.cwd(),
       permissionMode: 'full',
+      displayName: 'Synthetic initial dispatch',
     });
     expect(dispatch).toHaveBeenCalledExactlyOnceWith(
       {

@@ -56,6 +56,7 @@ type CoworkSubtaskChangedEvent =
   import('../../shared/cowork/subagentDetails').CoworkSubtaskChangedEvent;
 type GenerateSessionTitleRequest =
   import('../../shared/cowork/sessionTitle').GenerateSessionTitleRequest;
+type RenameSessionRequest = import('../../shared/cowork/sessionTitle').RenameSessionRequest;
 type SaveTextFileOptions = import('../../shared/app/dialogIpc').SaveTextFileOptions;
 type SaveTextFileResult = import('../../shared/app/dialogIpc').SaveTextFileResult;
 type TerminalActionResult = import('../../shared/app/terminal').TerminalActionResult;
@@ -808,7 +809,7 @@ interface IElectronAPI {
     probeModel?: boolean;
   }) => Promise<{ hasConfig: boolean; config: CoworkApiConfig | null; error?: string }>;
   saveApiConfig: (config: CoworkApiConfig) => Promise<{ success: boolean; error?: string }>;
-  generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string>;
+  generateSessionTitle: (request: GenerateSessionTitleRequest) => Promise<string | null>;
   getRecentCwds: (limit?: number) => Promise<string[]>;
   openclaw: {
     computerControl: {
@@ -1054,6 +1055,7 @@ interface IElectronAPI {
       code?: string;
       engineStatus?: OpenClawEngineStatus;
       timing?: SessionRunTiming;
+      nativeTitleTarget?: import('../../shared/cowork/sessionTitle').SessionTitleTarget;
       cancelled?: boolean;
       worktreeInitialCommit?: import('../../shared/cowork/worktreeInitialCommit').WorktreeInitialCommitOffer;
     }>;
@@ -1102,10 +1104,7 @@ interface IElectronAPI {
       sessionId: string;
       pinned: boolean;
     }) => Promise<{ success: boolean; error?: string }>;
-    renameSession: (options: {
-      sessionId: string;
-      title: string;
-    }) => Promise<{ success: boolean; error?: string }>;
+    renameSession: (options: RenameSessionRequest) => Promise<{ success: true; title: string } | { success: false }>;
     setSessionPermissionMode: (options: {
       sessionId: string;
       permissionMode: PermissionMode;

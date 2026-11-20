@@ -218,6 +218,7 @@ import {
   registerCoworkUtilityHandlers,
   registerDefaultModelHandlers,
   registerSessionGroupHandlers,
+  registerSessionTitleHandlers,
   registerWindowsSandboxHandlers,
   waitForCoworkConfigUpdates,
 } from './ipc/cowork';
@@ -2072,12 +2073,13 @@ if (agentBridgeArgv) {
       getCoworkEngineService().requestGateway<T>(method, params),
   });
 
+  const isAllowedCoworkWorkspaceSender = (event: Electron.IpcMainInvokeEvent) =>
+    !!mainWindow &&
+    !mainWindow.isDestroyed() &&
+    event.sender === mainWindow.webContents &&
+    event.senderFrame === event.sender.mainFrame;
   const { setSessionWorkspace, discoverNativeChildSessions, disposeMcpAppResourcePreviews } = registerCoworkSessionHandlers({
-    isAllowedWorkspaceSender: event =>
-      !!mainWindow &&
-      !mainWindow.isDestroyed() &&
-      event.sender === mainWindow.webContents &&
-      event.senderFrame === event.sender.mainFrame,
+    isAllowedWorkspaceSender: isAllowedCoworkWorkspaceSender,
     getStartupEngineNotReadyResponse,
     onSessionsChanged: notifyCoworkSessionsChanged,
     workspaceAppSessions,
@@ -2090,6 +2092,26 @@ if (agentBridgeArgv) {
       getCoworkEngineService().requestGateway<T>(method, params),
     setSessionPermissionMode: (sessionId, permissionMode, options) =>
       sessionPermissionModeCoordinator.setSessionMode(sessionId, permissionMode, options),
+  });
+
+  registerSessionTitleHandlers({
+    isAllowedSender: isAllowedCoworkWorkspaceSender,
+    getStore: getCoworkStore,
+    generateTitle: (userInput, sessionId) => getCoworkEngineRouter().generateTitle(userInput, { sessionId }),
+    onChanged: notifyCoworkSessionsChanged,
+    getGateway: () => {
+      const adapter = getOpenClawRuntimeAdapter();
+      const client = adapter?.getGatewayClient();
+      if (!adapter || !client) return null;
+      const generation = adapter.getGatewayClientGeneration();
+      return {
+        request: client.request.bind(client),
+        isCurrent: () =>
+          getOpenClawRuntimeAdapter() === adapter &&
+          adapter.getGatewayClient() === client &&
+          adapter.getGatewayClientGeneration() === generation,
+      };
+    },
   });
 
   registerCoworkSessionRuntimeHandlers({
@@ -2192,7 +2214,6 @@ if (agentBridgeArgv) {
   registerCalendarPermissionHandlers(isDev);
 
   registerCoworkUtilityHandlers({
-    getTitleGenerator: getCoworkEngineRouter,
     listRecentCwds: limit => getCoworkStore().listRecentCwds(limit),
   });
 

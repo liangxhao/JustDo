@@ -1,5 +1,13 @@
 # Runtime Services 通用运行能力
 
+## 会话展示名称
+
+`runtimeServices.sessionDisplayName` 仅处理当前获准的 `operator.admin` backend 请求，
+目标限于应用受管会话键。通过公开会话 SDK 更新 `displayName`，在原生事务中核对当前授权、
+精确会话 ID、生命周期版本及写入前的名称。返回仅含目标身份和已确认名称的回执。
+`confirmOnly` 只核对原生存储中的字段及身份，用于写入回执丢失时确认结果。
+展示名称可以重名，修改保留原生 `label`、会话活动时间和历史。
+
 ## 精确执行失败代码
 
 `runtimeServices.executionFailure` 是 `operator.read` 的窄只读接口。调用方提供精确的

@@ -10,6 +10,7 @@ export { registerCoworkSessionExecutionHandlers } from './sessionExecution';
 export { registerSessionGroupHandlers } from './sessionGroups';
 export { registerCoworkSessionRuntimeHandlers } from './sessionRuntime';
 export { registerCoworkSessionHandlers } from './sessions';
+export { registerSessionTitleHandlers } from './sessionTitles';
 export { registerCoworkSubtaskHandlers } from './subtasks';
 export { registerCoworkUtilityHandlers } from './utilities';
 export { registerWindowsSandboxHandlers } from './windowsSandbox';

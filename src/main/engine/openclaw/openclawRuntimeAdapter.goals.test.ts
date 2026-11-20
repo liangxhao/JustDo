@@ -232,6 +232,7 @@ test('cancels a goal turn stopped while its Gateway session is being prepared', 
       key: 'agent:main:justdo:session-1',
       cwd: process.cwd(),
       permissionMode: 'full',
+      displayName: 'Test Session',
     }),
   );
 

@@ -1,5 +1,6 @@
 import path from 'path';
 
+import { normalizeSessionDisplayName } from '../../../../plugins/extensions/runtime-services/contracts/session-display-name';
 import { toOpenClawSessionPermissionMode } from '../../../shared/security/approvals';
 import { createProjectGitRunner } from '../../core/filesystem/projectGit';
 import { t } from '../../core/i18n';
@@ -30,6 +31,7 @@ export async function createSessionWorktree(
   store.bindNativeSession(session.id, key, null);
   try {
     const permissionMode = toOpenClawSessionPermissionMode(session.permissionMode);
+    const displayName = normalizeSessionDisplayName(session.title);
     const created = await requestGateway<{
       key?: unknown;
       sessionId?: unknown;
@@ -40,6 +42,7 @@ export async function createSessionWorktree(
       agentId: session.agentId,
       cwd: session.cwd,
       permissionMode,
+      ...(displayName ? { displayName } : {}),
       worktree: true,
       ...(sourceCommit ? { worktreeBaseRef: sourceCommit } : {}),
     });

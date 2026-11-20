@@ -30,6 +30,7 @@ import { registerReplayAdmissionObservations } from './replay-admission-observat
 import { registerScheduledTaskHistory } from './scheduled-task-history';
 import { registerOwnerProvider } from './sdk/owner-provider';
 import { registerRuntimeServicesProvider } from './sdk/provider';
+import { registerSessionDisplayName } from './session-display-name';
 import { registerSessionNamespaces } from './session-namespaces';
 import { registerSpeechSynthesis } from './speech';
 
@@ -264,6 +265,7 @@ const plugin = {
       managedExecution: readPreparedManagedExecutionDescriptor(api),
     });
     registerSessionNamespaces(api);
+    registerSessionDisplayName(api);
     registerExternalMcp(api);
     registerScheduledTaskHistory(api);
     registerSpeechSynthesis(api);

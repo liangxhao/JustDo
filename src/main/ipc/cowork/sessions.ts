@@ -1166,23 +1166,6 @@ export const registerCoworkSessionHandlers = ({
   );
 
   ipcMain.handle(
-    'cowork:session:rename',
-    async (_event, options: { sessionId: string; title: string }) => {
-      try {
-        const title = options.title.trim();
-        if (!title) return { success: false, error: 'Title is required' };
-        getCoworkStore().updateSession(options.sessionId, { title });
-        return { success: true };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to rename session',
-        };
-      }
-    },
-  );
-
-  ipcMain.handle(
     'cowork:session:setPermissionMode',
     async (
       _event,

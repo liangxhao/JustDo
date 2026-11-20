@@ -140,7 +140,7 @@ import {
   type CoworkSessionSearchOptions,
 } from '../../shared/cowork/sessionSearch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../shared/cowork/sessionStart';
-import { type GenerateSessionTitleRequest, SessionTitleIpc } from '../../shared/cowork/sessionTitle';
+import { type GenerateSessionTitleRequest, type RenameSessionRequest, SessionTitleIpc } from '../../shared/cowork/sessionTitle';
 import {
   SessionWorkspaceIpc,
   type SetSessionWorkspaceInput,
@@ -918,8 +918,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('cowork:session:deleteBatch', sessionIds),
     setSessionPinned: (options: { sessionId: string; pinned: boolean }) =>
       ipcRenderer.invoke('cowork:session:pin', options),
-    renameSession: (options: { sessionId: string; title: string }) =>
-      ipcRenderer.invoke('cowork:session:rename', options),
+    renameSession: (options: RenameSessionRequest) =>
+      ipcRenderer.invoke(SessionTitleIpc.Rename, options),
     setSessionWorkspace: (input: SetSessionWorkspaceInput) =>
       ipcRenderer.invoke(SessionWorkspaceIpc.Set, input),
     setSessionPermissionMode: (options: {

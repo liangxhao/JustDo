@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import path from 'path';
 
+import { normalizeSessionDisplayName } from '../../../../plugins/extensions/runtime-services/contracts/session-display-name';
 import { createPropertyContext } from '../../../shared/app/propertyContext';
 import type { DiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
 import { ensureProjectGitRepository } from '../../core/filesystem/projectGit';
@@ -708,7 +709,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         throw new Error(t('sessionModelPreparationChanged'));
       this.rememberSessionKey(sessionId, sessionKey);
       this.preparedNativeSessionIds.set(sessionId, options.expectedSessionId);
-      return { sessionKey, gatewaySessionId: options.expectedSessionId };
+      return {
+        sessionKey, gatewaySessionId: options.expectedSessionId,
+        ...(typeof entry.lifecycleRevision === 'string' ? { lifecycleRevision: entry.lifecycleRevision } : {}),
+      };
     }
     if (session.nativeSessionKey && !session.historyBinding) {
       if (sessionKey !== session.nativeSessionKey) {
@@ -777,7 +781,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       assertPreparationCurrent();
       this.rememberSessionKey(sessionId, sessionKey);
       this.preparedNativeSessionIds.set(sessionId, entry.sessionId);
-      return { sessionKey, gatewaySessionId: entry.sessionId };
+      return {
+        sessionKey, gatewaySessionId: entry.sessionId,
+        ...(typeof lifecycleRevision === 'string' ? { lifecycleRevision } : {}),
+      };
     }
     const client = this.requireGatewayClient();
     const generation = this.gatewayClientGeneration;
@@ -807,6 +814,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     }
     assertPreparationCurrent();
     const preparationProcessGeneration = this.engineManager.getGatewayProcessGeneration?.();
+    const displayName =
+      !session.external && !session.historyBinding && !session.nativeParentSessionId &&
+      sessionKey === buildManagedSessionKey(session.id, session.agentId)
+        ? normalizeSessionDisplayName(this.store.getSession(session.id)?.title)
+        : undefined;
     const result = await client.request<{
       key?: unknown;
       sessionId?: unknown;
@@ -816,11 +828,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         permissionMode?: unknown;
         sessionRoot?: unknown;
         modelOverride?: unknown;
+        lifecycleRevision?: unknown;
       };
     }>('sessions.create', {
       key: sessionKey,
       cwd: workspaceRoot,
       permissionMode: nativePermissionMode,
+      ...(displayName ? { displayName } : {}),
       ...(options.modelRef ? { model: options.modelRef } : {}),
     }).catch(error => {
       // A transport timeout does not retire a dispatched native root mutation.
@@ -888,7 +902,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
     this.rememberSessionKey(sessionId, sessionKey);
     this.preparedNativeSessionIds.set(sessionId, gatewaySessionId);
-    return { sessionKey, gatewaySessionId };
+    return {
+      sessionKey, gatewaySessionId,
+      ...(typeof result.entry?.lifecycleRevision === 'string' ? { lifecycleRevision: result.entry.lifecycleRevision } : {}),
+    };
   }
 
   private assertPreparedSessionEntry(
@@ -1338,7 +1355,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       planMode?: boolean;
       untrustedContext?: string;
       hiddenUserMessage?: boolean;
-      onAccepted?: () => void;
+      onAccepted?: CoworkStartOptions['onAccepted'];
       dispatchChatSend?: CoworkStartOptions['dispatchChatSend'];
     },
   ): Promise<void> {
@@ -1656,7 +1673,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             console.warn(`[NativeInputAdmission] ${JSON.stringify({ code: 'ACK_OBSERVER_FAILED', sessionId })}`);
           }
         }
-        options.onAccepted?.();
+        options.onAccepted?.(preparedSession);
         let replayUnconfirmed = false;
         if ('replayed' in result && result.replayed) {
           const replayRunId = result.runId?.trim();

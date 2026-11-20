@@ -1,53 +1,16 @@
 import { ipcMain } from 'electron';
 
-import {
-  type GenerateSessionTitleRequest,
-  SessionTitleIpc,
-} from '../../../shared/cowork/sessionTitle';
 import { type CoworkApiConfig, saveCoworkApiConfig } from '../../cowork/coworkConfigStore';
-import type { CoworkGenerateTitleOptions } from '../../engine/types';
 import { probeCoworkModelReadiness } from '../../providers/modelReadiness';
 import { resolveRendererApiConfig } from '../../providers/providerApiConfig';
 
-interface TitleGenerator {
-  generateTitle?: (
-    userInput: string | null,
-    options?: CoworkGenerateTitleOptions,
-  ) => Promise<string>;
-}
-
 interface CoworkUtilitiesHandlerOptions {
-  getTitleGenerator: () => TitleGenerator;
   listRecentCwds: (limit: number) => unknown;
 }
 
 export const registerCoworkUtilityHandlers = ({
-  getTitleGenerator,
   listRecentCwds,
 }: CoworkUtilitiesHandlerOptions): void => {
-  ipcMain.handle(SessionTitleIpc.Generate, async (_event, request: GenerateSessionTitleRequest) => {
-    const userInput = request?.userInput ?? null;
-    const sessionId = typeof request?.sessionId === 'string' ? request.sessionId.trim() : '';
-    try {
-      const router = getTitleGenerator();
-      if (router.generateTitle) {
-        return await router.generateTitle(userInput, { sessionId });
-      }
-      console.warn('[CoworkUtilities] title generator unavailable; using fallback title');
-    } catch (error) {
-      console.warn('[CoworkUtilities] title generation failed:', error);
-    }
-    const fallback = 'New Session';
-    const normalizedInput = typeof userInput === 'string' ? userInput.trim() : '';
-    if (!normalizedInput) return fallback;
-    const firstLine =
-      normalizedInput
-        .split(/\r?\n/)
-        .map(l => l.trim())
-        .find(Boolean) || '';
-    return firstLine.slice(0, 50).trim() || fallback;
-  });
-
   ipcMain.handle('get-recent-cwds', async (_event, limit?: number) => {
     const boundedLimit = limit ? Math.min(Math.max(limit, 1), 20) : 8;
     return listRecentCwds(boundedLimit);

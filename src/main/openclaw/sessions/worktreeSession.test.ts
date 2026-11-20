@@ -9,7 +9,7 @@ const setup = () => {
   const sourceRoot = path.resolve('source-project');
   const worktreeRoot = path.resolve('native-worktrees', 'task');
   const session = {
-    id: 'task-1', agentId: 'main', cwd: sourceRoot, permissionMode: 'ask',
+    id: 'task-1', title: 'Worktree task', agentId: 'main', cwd: sourceRoot, permissionMode: 'ask',
   } as CoworkSession;
   const store = {
     bindNativeSession: vi.fn(() => { session.nativeSessionKey = 'agent:main:justdo:task-1'; }),
@@ -33,7 +33,7 @@ describe('native worktree conversation creation', () => {
       .resolves.toBe(worktreeRoot);
     expect(request).toHaveBeenCalledWith('sessions.create', {
       key: 'agent:main:justdo:task-1', agentId: 'main', cwd: sourceRoot,
-      permissionMode: 'guarded', worktree: true,
+      permissionMode: 'guarded', displayName: 'Worktree task', worktree: true,
     });
     expect(store.bindNativeSession).toHaveBeenCalledWith('task-1', 'agent:main:justdo:task-1', null);
     expect(store.updateSession).toHaveBeenCalledWith('task-1', { cwd: worktreeRoot });

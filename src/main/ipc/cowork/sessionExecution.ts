@@ -5,6 +5,7 @@ import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments
 import { hasMessageInput } from '../../../shared/cowork/messageInput';
 import { NativeSessionDispatchIpc } from '../../../shared/cowork/nativeSessionDispatch';
 import { type CancelSessionStartInput, SessionStartIpc } from '../../../shared/cowork/sessionStart';
+import type { SessionTitleTarget } from '../../../shared/cowork/sessionTitle';
 import { WorktreeInitialCommitIpc } from '../../../shared/cowork/worktreeInitialCommit';
 import type { McpAppWorkspaceBinding } from '../../../shared/plugins/mcpApps';
 import {
@@ -418,6 +419,7 @@ export const registerCoworkSessionExecutionHandlers = ({
       let resolveAdmission!: () => void;
       let rejectAdmission!: (error: unknown) => void;
       let admissionSettled = false;
+      let nativeTitleTarget: SessionTitleTarget | undefined;
       const admission = new Promise<void>((resolve, reject) => {
         resolveAdmission = resolve;
         rejectAdmission = reject;
@@ -483,7 +485,14 @@ export const registerCoworkSessionExecutionHandlers = ({
           ...(selectedModelRef && !pluginSubmission
             ? { beforeNativeSend: async () => assertInitialModelAvailable() }
             : {}),
-          onAccepted: () => {
+          onAccepted: prepared => {
+            if (prepared) {
+              nativeTitleTarget = {
+                sessionKey: prepared.sessionKey,
+                nativeSessionId: prepared.gatewaySessionId,
+                lifecycleRevision: prepared.lifecycleRevision ?? null,
+              };
+            }
             admissionSettled = true;
             resolveAdmission();
           },
@@ -537,6 +546,7 @@ export const registerCoworkSessionExecutionHandlers = ({
       return {
         success: true,
         session: store.getSession(session.id) || { ...session, status: 'running' as const },
+        ...(nativeTitleTarget ? { nativeTitleTarget } : {}),
         ...(timing
           ? { timing: store.getSessionRunByClientTurnId(timing.clientTurnId) ?? timing }
           : {}),

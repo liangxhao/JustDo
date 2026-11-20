@@ -165,7 +165,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const handleRenameSession = async (sessionId: string, title: string) => {
-    await coworkService.renameSession(sessionId, title);
+    const renamed = await coworkService.renameSession(sessionId, title).catch(() => false);
+    if (!renamed) {
+      window.dispatchEvent(
+        new CustomEvent('app:showToast', { detail: i18nService.t('coworkRenameFailed') }),
+      );
+    }
   };
 
   useSyncExternalStore(appBrowserRegistry.subscribe, appBrowserRegistry.getContextRevision);
