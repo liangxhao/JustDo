@@ -30,6 +30,7 @@ function HomeMediaWorkspace({ detached = false }: { detached?: boolean }) {
     <>
       <button onClick={() => setOpen(true)}>Reopen workspace</button>
       {renderCoworkHomeWorkspace({
+        chatPaneRef: null,
         homeConversationHeader: <div />,
         maximumBrowserTabs: 20,
         greetingKey: 'coworkGreetingMorning',

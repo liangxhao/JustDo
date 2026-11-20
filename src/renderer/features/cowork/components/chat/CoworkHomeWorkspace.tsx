@@ -38,6 +38,7 @@ import type { McpAppComposerMenu } from '../mcpApps/McpAppsControls';
 import type { FilePreview } from '../preview/FilePreviewDrawer';
 
 interface CoworkHomeWorkspaceProps {
+  chatPaneRef: React.Ref<HTMLDivElement>;
   homeConversationHeader: React.JSX.Element;
   chatController?: React.ReactNode;
   mcpAppMenu?: McpAppComposerMenu;
@@ -101,6 +102,7 @@ interface CoworkHomeWorkspaceProps {
 }
 
 export function renderCoworkHomeWorkspace({
+  chatPaneRef,
   homeConversationHeader,
   chatController,
   mcpAppMenu,
@@ -154,14 +156,14 @@ export function renderCoworkHomeWorkspace({
         />
       )}
       <div key="cowork-display-host" className="cowork-display-host relative flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div ref={chatPaneRef} className="flex min-w-0 flex-1 flex-col">
           {homeConversationHeader}
           {chatController}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto flex min-h-full max-w-5xl flex-col justify-center px-4 py-10">
+          <div className="cowork-home__scroll min-h-0 flex-1 overflow-y-auto">
+            <div className="flex min-h-full flex-col justify-center py-10">
               <div className="space-y-12">
                 {/* Welcome Section */}
-                <div className="text-center space-y-5">
+                <div className="space-y-5 px-4 text-center">
                   <img
                     src={logoUrl}
                     alt="logo"
@@ -176,7 +178,7 @@ export function renderCoworkHomeWorkspace({
                 </div>
 
                 {/* Prompt Input Area - Large version with folder selector */}
-                <div className="space-y-3">
+                <div className="cowork-content-width mx-auto min-w-0 space-y-3">
                   <CoworkPet running={false} waiting={false} placement="home" />
                   <div className={COMPOSER_FRAME_CLASS}>
                     <CoworkPromptInput

@@ -413,16 +413,18 @@ export const chatStyles = [
     .chat-shell {
       position: relative;
       min-height: 100%;
+      container-type: inline-size;
     }
 
     .chat-container {
+      /* Match .cowork-content-width so the composer aligns with message text. */
+      --chat-content-available-width: calc(100% - 2 * clamp(8px, (100% - 440px) / 4, 48px));
       width: calc(
         100% - (100% - var(--justdo-chat-content-width, 60%)) *
           var(--chat-content-width-progress, 0)
       );
-      /* Match the composer's continuous window-size adaptation. */
-      max-width: calc(100% - 96px);
-      min-width: min(320px, calc(100% - 96px));
+      max-width: var(--chat-content-available-width);
+      min-width: min(320px, var(--chat-content-available-width));
       box-sizing: border-box;
       margin: 0 auto;
       padding: 16px 0;
@@ -498,11 +500,16 @@ export const chatStyles = [
       background: var(--justdo-chat-border, rgba(148, 163, 184, 0.35));
     }
 
+    .chat-minimap-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      pointer-events: none;
+    }
+
     .chat-minimap {
       position: sticky;
       top: 50%;
-      z-index: 20;
-      float: left;
       display: flex;
       width: 20px;
       max-height: min(68vh, 560px);
@@ -510,6 +517,7 @@ export const chatStyles = [
       margin-left: 12px;
       transform: translateY(-50%);
       color: #a3a3a3;
+      pointer-events: auto;
       transition: width 120ms ease;
     }
 
@@ -586,7 +594,7 @@ export const chatStyles = [
       position: absolute;
       left: calc(100% + 8px);
       top: 0;
-      width: min(320px, calc(100vw - 96px));
+      width: min(320px, calc(100cqw - 48px));
       box-sizing: border-box;
       padding: 10px 12px;
       transform: translateY(-50%);
@@ -660,15 +668,10 @@ export const chatStyles = [
 
     :host(.full-width) .chat-container {
       width: 100%;
-      max-width: 100%;
-      padding-left: 8px;
-      padding-right: 8px;
     }
 
-    @media (min-width: 761px) {
-      :host(.full-width) .chat-shell:has(.chat-minimap) .chat-container {
-        max-width: calc(100% - 96px);
-      }
+    :host(.full-width) .chat-shell:not(:has(.chat-minimap)) .chat-container {
+      --chat-content-available-width: calc(100% - 16px);
     }
 
     /* ── Chat Group ─────────────────────────────────────────────────── */
@@ -854,6 +857,7 @@ export const chatStyles = [
     .user-message-actions {
       display: inline-flex;
       align-items: center;
+      flex-shrink: 0;
       gap: 2px;
       margin-right: 2px;
       position: relative;
@@ -999,9 +1003,19 @@ export const chatStyles = [
       font-weight: 400;
     }
 
-    .chat-group__footer-separator,
-    .active-turn__footer-separator {
+    .chat-footer-metadata {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .chat-group__footer-separator {
       opacity: 0.6;
+    }
+
+    .chat-footer-metadata .chat-group__footer-separator {
+      margin-inline: 3px;
     }
 
     /* ── Chat Bubble ────────────────────────────────────────────────── */
@@ -3768,10 +3782,6 @@ export const chatStyles = [
       }
     }
     @media (max-width: 760px) {
-      .chat-minimap {
-        display: none;
-      }
-
       .process-summary__items {
         margin-left: 8px;
       }

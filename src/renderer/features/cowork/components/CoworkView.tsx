@@ -4175,6 +4175,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
   // Home view - no current session
   return withMessageFileLinks(
     renderCoworkHomeWorkspace({
+      chatPaneRef: bindChatContentWidth,
       chatController:
         chatWrapperRef.current &&
         (mcpAppTabs.hasRetainedPanels ||

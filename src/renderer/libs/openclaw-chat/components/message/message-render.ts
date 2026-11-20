@@ -1127,6 +1127,30 @@ export function renderAssistantTimelineContent(
 
 // ─── Group Footer ───────────────────────────────────────────────────────────
 
+export function renderChatFooterMetadata(
+  label: string,
+  timestamp: { date: Date; text: string } | null,
+  durationLabel: string,
+): TemplateResult | typeof nothing {
+  const title = [label, timestamp?.text, durationLabel].filter(Boolean).join(' · ');
+  if (!title) return nothing;
+
+  const separator = html`<span class="chat-group__footer-separator" aria-hidden="true">·</span>`;
+  return html`
+    <div class="chat-footer-metadata" title=${title}>
+      ${label ? html`<span class="chat-group__sender">${label}</span>` : nothing}
+      ${label && timestamp ? separator : nothing}
+      ${timestamp
+        ? html`<time class="chat-group__timestamp" datetime=${timestamp.date.toISOString()}
+            >${timestamp.text}</time
+          >`
+        : nothing}
+      ${durationLabel && (label || timestamp) ? separator : nothing}
+      ${durationLabel ? html`<span>${durationLabel}</span>` : nothing}
+    </div>
+  `;
+}
+
 function renderGroupFooter(
   group: MessageGroup,
   opts?: MessageRenderOptions,
@@ -1150,16 +1174,13 @@ function renderGroupFooter(
     group.durationMs >= 0
       ? formatActiveTurnDuration(group.durationMs)
       : null;
+  const durationLabel = duration
+    ? i18nService.t('coworkRunWorkedDuration').replace('{duration}', duration)
+    : '';
   return html`
     <div class="chat-group__footer">
       ${userMessageActions ? renderUserMessageActions(userMessageActions) : nothing}
-      ${roleName ? html`<span class="chat-group__sender">${roleName}</span>` : nothing}
-      ${
-        roleName
-          ? html`<span class="chat-group__footer-separator" aria-hidden="true">·</span>`
-          : nothing
-      }
-      ${ts && showMetadata ? html`<time class="chat-group__timestamp" datetime=${date.toISOString()}>${time}</time>` : nothing}
+      ${renderChatFooterMetadata(roleName, time ? { date, text: time } : null, durationLabel)}
       ${
         userMessageStatus
           ? html`
@@ -1169,16 +1190,6 @@ function renderGroupFooter(
                 title=${userMessageStatus.description}
                 aria-label=${userMessageStatus.description}
               >${userMessageStatus.label}</span>
-            `
-          : nothing
-      }
-      ${
-        duration
-          ? html`
-              <span class="chat-group__footer-separator" aria-hidden="true">·</span>
-              <span
-                >${i18nService.t('coworkRunWorkedDuration').replace('{duration}', duration)}</span
-              >
             `
           : nothing
       }

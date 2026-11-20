@@ -28,6 +28,7 @@ import { repeat } from 'lit/directives/repeat.js';
 
 import { subscribeMessagePresentation } from '@/features/plugins/app/messagePresentation';
 import {
+  renderChatFooterMetadata,
   renderMessageBlock,
   renderMessageBlockWithTrailingStream,
   renderStreamingGroup,
@@ -2351,27 +2352,11 @@ export class JustDoChatElement extends LitElement {
         : '';
     if (!model && !completedDate && !durationLabel) return nothing;
     return html`
-      ${model ? html`<span>${model}</span>` : nothing}
-      ${
-        completedDate
-          ? html`
-              ${
-                model
-                  ? html`<span class="active-turn__footer-separator" aria-hidden="true">·</span>`
-                  : nothing
-              }
-              <time datetime=${completedDate.toISOString()}
-                >${formatActiveTurnTimestamp(completedDate)}</time
-              >
-            `
-          : nothing
-      }
-      ${
-        durationLabel && (model || completedDate)
-          ? html`<span class="active-turn__footer-separator" aria-hidden="true">·</span>`
-          : nothing
-      }
-      ${durationLabel ? html`<span>${durationLabel}</span>` : nothing}
+      ${renderChatFooterMetadata(
+        model,
+        completedDate ? { date: completedDate, text: formatActiveTurnTimestamp(completedDate) } : null,
+        durationLabel,
+      )}
       ${
         details.forkPoint
           ? html`
@@ -2798,46 +2783,48 @@ export class JustDoChatElement extends LitElement {
       center - Math.floor(MINIMAP_RENDER_LIMIT / 2)));
     const end = start + MINIMAP_RENDER_LIMIT;
     return html`
-      <nav
-        class="chat-minimap"
-        aria-label=${i18nService.t('coworkMinimapLabel')}
-        @mouseleave=${() => {
-          this.hoveredMinimapKey = null;
-        }}
-      >
-        <div class="chat-minimap__track">
-          ${repeat(
-            entries.slice(start, end),
-            entry => entry.key,
-            entry => this.renderMinimapEntry(entry),
-          )}
-          ${tail && entries.length < end ? this.renderMinimapEntry(tail) : nothing}
-        </div>
-        ${
-          hoveredEntry
-            ? html`
-                <div
-                  class="chat-minimap__preview"
-                  style=${`top: ${this.minimapPreviewTop}px`}
-                  aria-hidden="true"
-                >
-                  <div class="chat-minimap__preview-user">
-                    ${hoveredEntry.userText || i18nService.t('coworkMinimapUserMessage')}
+      <div class="chat-minimap-overlay">
+        <nav
+          class="chat-minimap"
+          aria-label=${i18nService.t('coworkMinimapLabel')}
+          @mouseleave=${() => {
+            this.hoveredMinimapKey = null;
+          }}
+        >
+          <div class="chat-minimap__track">
+            ${repeat(
+              entries.slice(start, end),
+              entry => entry.key,
+              entry => this.renderMinimapEntry(entry),
+            )}
+            ${tail && entries.length < end ? this.renderMinimapEntry(tail) : nothing}
+          </div>
+          ${
+            hoveredEntry
+              ? html`
+                  <div
+                    class="chat-minimap__preview"
+                    style=${`top: ${this.minimapPreviewTop}px`}
+                    aria-hidden="true"
+                  >
+                    <div class="chat-minimap__preview-user">
+                      ${hoveredEntry.userText || i18nService.t('coworkMinimapUserMessage')}
+                    </div>
+                    ${
+                      hoveredEntry.assistantText
+                        ? html`
+                            <div class="chat-minimap__preview-assistant">
+                              ${hoveredEntry.assistantText}
+                            </div>
+                          `
+                        : nothing
+                    }
                   </div>
-                  ${
-                    hoveredEntry.assistantText
-                      ? html`
-                          <div class="chat-minimap__preview-assistant">
-                            ${hoveredEntry.assistantText}
-                          </div>
-                        `
-                      : nothing
-                  }
-                </div>
-              `
-            : nothing
-        }
-      </nav>
+                `
+              : nothing
+          }
+        </nav>
+      </div>
     `;
   }
 
