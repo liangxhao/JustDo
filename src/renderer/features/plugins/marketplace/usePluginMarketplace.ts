@@ -1,3 +1,4 @@
+import { AuthOperation, AuthStatus } from '@shared/app/auth';
 import {
   type MarketplaceCategory,
   MarketplaceErrorCode,
@@ -185,6 +186,24 @@ export function usePluginMarketplace(options: MarketplaceOptions) {
       return next;
     });
   }, [recentlyUpdated, identities, operations, inventoryReady, identityReady]);
+
+  useEffect(() => {
+    let refreshedAccount: string | undefined;
+    return window.electron.auth?.onStateChanged(state => {
+      if (state.status !== AuthStatus.SignedIn) {
+        refreshedAccount = undefined;
+        return;
+      }
+      const account = state.profile?.account;
+      // The account is published before login finishes updating application services.
+      if (state.operation === AuthOperation.Idle && account && account !== refreshedAccount) {
+        refreshedAccount = account;
+        setSource(undefined);
+        setSourceError('');
+        setRevision(value => value + 1);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     let active = true;

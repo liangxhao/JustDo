@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { type AuthState, AuthStatus, INITIAL_AUTH_STATE } from '@shared/app/auth';
+import { AuthOperation, type AuthState, AuthStatus, INITIAL_AUTH_STATE } from '@shared/app/auth';
 import {
   MarketplaceErrorCode,
   type MarketplaceInstallResponse,
@@ -964,35 +964,51 @@ test('reports update check failures distinctly and allows a manual retry', async
   await waitFor(() => expect(api.checkUpdates).toHaveBeenCalledTimes(2));
 });
 
-test('updates the unconfigured marketplace notice with account state and keeps local controls available', async () => {
-  api.listSources.mockResolvedValue({ success: true, sources: [] });
+test('keeps local controls available and reloads the current plugin kind after login', async () => {
+  api.listSources.mockResolvedValueOnce({ success: true, sources: [] });
   const restored = { ...INITIAL_AUTH_STATE, status: AuthStatus.LocalCredentials, sdkAvailable: true };
   const signedOut = { ...INITIAL_AUTH_STATE, sdkAvailable: true, revision: 1 };
-  const signedIn = { ...signedOut, status: AuthStatus.SignedIn, revision: 2 };
-  const getState = vi.fn<() => Promise<AuthState>>().mockResolvedValue(restored);
-  let notifyAuthChange!: (state: AuthState) => void;
+  const signedIn: AuthState = {
+    ...signedOut,
+    status: AuthStatus.SignedIn,
+    profile: { account: 'user', displayName: 'User' },
+    revision: 3,
+  };
+  const listeners = new Set<(state: AuthState) => void>();
   Object.assign(window.electron, {
     auth: {
-      getState,
+      getState: async () => restored,
       onStateChanged: (listener: (state: AuthState) => void) => {
-        notifyAuthChange = listener;
-        return () => {};
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
       },
     },
   });
+  const notifyAuthChange = (state: AuthState) =>
+    act(() => {
+      for (const listener of listeners) listener(state);
+    });
   render(<Harness installed={INSTALLED} />);
 
   await screen.findByText('marketplaceNotConfigured');
-  expect(screen.queryByText('marketplaceSignInRequired')).toBeNull();
   expect(screen.getByRole('switch')).toBeTruthy();
-
   fireEvent.click(screen.getByRole('button', { name: 'marketplaceFilter.updates' }));
   await screen.findByText('marketplaceNotConfigured');
-  act(() => notifyAuthChange(signedOut));
+  notifyAuthChange(signedOut);
   expect(screen.getByText('marketplaceSignInRequired')).toBeTruthy();
-  act(() => notifyAuthChange(signedIn));
-  expect(screen.getByText('marketplaceNotConfigured')).toBeTruthy();
+
+  notifyAuthChange({ ...signedIn, operation: AuthOperation.Login, revision: 2 });
+  expect(screen.queryByText('marketplaceNotConfigured')).toBeNull();
+  expect(api.listSources).toHaveBeenCalledExactlyOnceWith(PluginKind.SKILL);
   expect(api.search).not.toHaveBeenCalled();
+
+  notifyAuthChange(signedIn);
+  expect(screen.queryByText('marketplaceNotConfigured')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'marketplaceFilter.all' }));
+  await screen.findByText(writer.name);
+  expect(api.listSources.mock.calls).toEqual([[PluginKind.SKILL], [PluginKind.SKILL]]);
 });
 
 test('keeps local results visible when market search fails and retries it', async () => {

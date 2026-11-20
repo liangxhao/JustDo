@@ -8,20 +8,7 @@
 
 在 `src/main/plugins/marketplace/` 下新增业务适配器，实现 `types.ts` 中的 `PluginMarketplaceProvider`。SDK 的认证、目录访问和下载全部在 Main 进程完成。Renderer 只通过显式 preload API 访问市场，不能直接使用 SDK、下载地址或认证对象。
 
-工厂 `createPluginMarketplaceService(installationService, getStore?, provider?)` 的第三个参数接受一个 Provider。生产装配点在 `src/main/application.ts` 创建 `PluginManager` 的位置：保留现有安装服务和持久化 store 回调，只注入一个业务 Provider。不要新建第二个市场服务实例，否则会丢失既有安装身份映射。
-
-```ts
-const marketplace = createPluginMarketplaceService(
-  pluginInstallationService,
-  getMarketplaceStore, // 沿用当前装配点的 store 回调
-  createEnterpriseMarketplaceProvider(companySdk),
-);
-const pluginManager = new PluginManager(marketplace);
-```
-
-上例中的 `companySdk`、`getMarketplaceStore`、`createEnterpriseMarketplaceProvider` 是接入方提供的变量/适配器示意，不是仓库内置 SDK。不要将示例另行粘贴成一套重复启动流程。
-
-`MarketplaceUnconfiguredNotice` 为尚未提供当前分类的市场显示提示。Provider 提供该分类后，现有页面自动使用其目录，接入代码集中在 Main 的 Provider 和装配点。
+业务 Provider 随宿主启动注入现有 `PluginManager`，通过 `source.supportedKinds` 声明市场覆盖的插件分类。适配器示例、装配位置、登录重读和默认提示开关见[下游插件市场接入指南](../../developer-integration/plugin-marketplace-integration-guide.md)。
 
 ### 应用代理与 SDK 网络接入
 
