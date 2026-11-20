@@ -888,63 +888,49 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('message-attachment__detail');
   });
 
-  test('renders an attachment failure as a non-actionable status card', () => {
-    const rendered = stringifyTemplate(
-      renderMessageBlock(
-        {
-          kind: 'group',
-          key: 'assistant-attachment-error-group',
-          role: 'assistant',
-          messages: [
-            {
-              key: 'assistant-attachment-error-msg',
-              message: {
-                role: 'assistant',
-                content: [
-                  { type: 'text', text: '5 个文件均已生成并验证通过。' },
-                  {
-                    type: 'attachment_error',
-                    attachment: {
-                      code: 'delivery-failed',
-                      kind: 'document',
-                      label: 'quicksort_v1.py',
-                      mimeType: 'application/octet-stream',
-                      url: 'quicksort_demo\\quicksort_v1.py',
-                      error: 'Managed media attachment has an unsupported content type',
-                    },
-                  },
-                ],
-                timestamp: 1,
-              },
-            },
-          ],
-          timestamp: 1,
-          isStreaming: false,
+  test('reports an unavailable attachment only after clicking its card', async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', { dispatchEvent });
+    const group = createGroup('assistant');
+    group.messages[0].message = {
+      role: 'assistant',
+      content: [{
+        type: 'attachment_error',
+        attachment: {
+          code: 'delivery-failed',
+          kind: 'document',
+          label: 'quicksort_v1.py',
+          mimeType: 'application/octet-stream',
+          url: 'quicksort_demo\\quicksort_v1.py',
+          error: 'Managed media attachment has an unsupported content type',
         },
-        { workingDirectory: 'C:\\workspace\\project' },
-      ),
-    );
+      }],
+    };
+    const template = renderMessageBlock(group, { workingDirectory: 'C:\\workspace\\project' });
+    const rendered = stringifyTemplate(template);
 
-    expect(rendered).toContain('5 个文件均已生成并验证通过。');
     expect(rendered).toContain('quicksort_v1.py');
     expect(rendered).not.toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
     expect(rendered).not.toContain('Managed media attachment has an unsupported content type');
-    expect(rendered).toContain('message-attachment__warning');
-    expect(rendered).toContain('附件交付失败');
-    expect(rendered).not.toContain('@contextmenu=');
-    expect(rendered).not.toContain('message-attachment__open');
-    expect(rendered).toContain('message-attachment--unavailable');
-    expect(rendered).not.toContain('message-attachment__detail');
-    expect(rendered).not.toContain('delete');
+    expect(rendered).not.toContain('附件交付失败');
+    expect(rendered).not.toContain('附件不可用');
+    expect(rendered).not.toContain('disabled');
+    expect(collectTemplateFunctions(template)).toHaveLength(1);
+    await collectTemplateFunctions(template)[0](new Event('click'));
+    expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      type: 'app:showToast', detail: '附件不可用：quicksort_v1.py',
+    }));
   });
 
-  test.each([true, false])('renders one visible failure for a missing MEDIA file (inline=%s)', inline => {
+  test.each([true, false])('keeps one clickable original for a file missing at delivery (inline=%s)', async inline => {
     const source = 'C:/workspace/project/missing.pdf';
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', { dispatchEvent });
     const group = createGroup('assistant');
     group.messages[0].message = {
       role: 'assistant',
       content: [
-        { type: 'text', text: inline ? `Report\nMEDIA:${source}\nMEDIA:${source}` : 'Report' },
+        { type: 'text', text: inline ? `MEDIA:${source}\nMEDIA:${source}` : '' },
         { type: 'attachment_error', attachment: {
           code: 'file-not-found', kind: 'document', label: 'missing.pdf',
         } },
@@ -952,13 +938,39 @@ describe('renderMessageBlock', () => {
       MediaPath: source,
     };
 
-    const rendered = stringifyTemplate(renderMessageBlock(group));
+    const template = renderMessageBlock(group);
+    const rendered = stringifyTemplate(template);
 
-    expect(rendered.match(/class="message-attachment /g)).toHaveLength(1);
+    expect(rendered.match(/class="message-attachment"/g)).toHaveLength(1);
     expect(rendered).toContain('missing.pdf');
-    expect(rendered).toContain('交付时找不到文件');
-    expect(rendered).not.toContain('message-attachment__open');
-    expect(rendered).not.toContain('@contextmenu=');
+    expect(rendered).not.toContain('交付时找不到文件');
+    expect(rendered).not.toContain('disabled');
+    await collectTemplateFunctions(template)[0](new Event('click'));
+    expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      type: 'cowork:preview-file', detail: { filePath: source, workingDirectory: undefined },
+    }));
+  });
+
+  test('opens the exact original HTML when the Gateway rejects the attachment copy', () => {
+    const source = 'C:/workspace/project/分析 报告#1%.html';
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', { dispatchEvent });
+    const group = createGroup('assistant');
+    group.messages[0].message = {
+      role: 'assistant',
+      openclawDelivery: { mediaUrls: [source] },
+      content: [{ type: 'attachment_error', attachment: {
+        code: 'unsupported-format', kind: 'document', label: '分析 报告#1%.html',
+      } }],
+    };
+
+    const template = renderMessageBlock(group);
+
+    expect(stringifyTemplate(template)).not.toContain('附件交付失败');
+    collectTemplateFunctions(template)[0](new Event('click'));
+    expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      type: 'cowork:open-local-html', detail: { filePath: source, workingDirectory: undefined },
+    }));
   });
 
   test.each([
@@ -1187,7 +1199,9 @@ describe('renderMessageBlock', () => {
     },
   );
 
-  test('does not infer a local path for an unbound managed attachment', () => {
+  test('does not infer a local path when an unbound managed attachment is clicked', async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', { dispatchEvent });
     const renderedTemplate = renderMessageBlock(
       {
         kind: 'group',
@@ -1219,9 +1233,48 @@ describe('renderMessageBlock', () => {
     );
     const rendered = stringifyTemplate(renderedTemplate);
 
-    expect(rendered).toContain('message-attachment--unavailable');
+    expect(rendered).not.toContain('disabled');
     expect(rendered).not.toContain('C:\\workspace\\project\\remote.pdf');
-    expect(collectTemplateFunctions(renderedTemplate)).toHaveLength(0);
+    await collectTemplateFunctions(renderedTemplate)[0](new Event('click'));
+    expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      type: 'app:showToast', detail: '附件不可用：remote.pdf',
+    }));
+  });
+
+  test('offers Save As only for the current session’s managed document', async () => {
+    const sessionKey = 'agent:main:fixture';
+    const source = '/api/chat/media/outgoing/agent%3Amain%3Afixture/11111111-1111-4111-8111-111111111111/full';
+    const saveAssistantDelivery = vi.fn().mockResolvedValue({ success: true, canceled: true });
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', {
+      electron: { openclaw: { engine: { saveAssistantDelivery } } }, dispatchEvent,
+    });
+    const group = createGroup('assistant');
+    group.messages[0].message = {
+      role: 'assistant',
+      content: [{ type: 'attachment', attachment: {
+        kind: 'document', label: 'result.pdf', url: source,
+      } }],
+    };
+
+    const mismatch = renderMessageBlock(group, { sessionKey: 'agent:main:other' });
+    expect(stringifyTemplate(mismatch)).not.toContain('disabled');
+    await collectTemplateFunctions(mismatch)[0](new Event('click'));
+    expect(saveAssistantDelivery).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      type: 'app:showToast', detail: '附件不可用：result.pdf',
+    }));
+    dispatchEvent.mockClear();
+
+    const template = renderMessageBlock(group, { sessionKey });
+    expect(stringifyTemplate(template)).toContain('另存附件');
+    expect(stringifyTemplate(template)).not.toContain('disabled');
+    expect(collectTemplateFunctions(template)).toHaveLength(1);
+    await collectTemplateFunctions(template)[0](new Event('click'));
+    expect(saveAssistantDelivery).toHaveBeenCalledExactlyOnceWith({
+      source, sessionKey, filename: 'result.pdf',
+    });
+    expect(dispatchEvent).not.toHaveBeenCalled();
   });
 
   test.each([
@@ -1401,7 +1454,7 @@ describe('renderMessageBlock', () => {
       }),
     );
 
-    expect(rendered.match(/class=message-attachment(?:\s|>)/g)).toHaveLength(5);
+    expect(rendered.match(/class="message-attachment"/g)).toHaveLength(5);
     expect(rendered.match(/class="message-attachment-list-item__marker"/g)).toHaveLength(5);
     expect(rendered.match(/•/g)).toHaveLength(5);
     expect(rendered).not.toContain('MEDIA:');

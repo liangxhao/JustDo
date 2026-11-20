@@ -16,11 +16,11 @@ import {
 } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { isAssistantHeartbeatAckForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import {
-  ATTACHMENT_FILE_NOT_FOUND,
   collapsedAssistantMediaFailures,
   normalizeMessage,
   readCollapsedAssistantMediaFailures,
   uniqueAssistantMediaUrlsByLabel,
+  withAssistantMediaFailureSource,
 } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import {
   splitMediaFromOutput,
@@ -369,7 +369,7 @@ function canonicalCompanionText(message: unknown): string {
 /**
  * OpenClaw persists a gateway-injected managed-media projection after the
  * producer assistant row. Keep the producer's original references and carry
- * any confirmed missing file into the same display row.
+ * delivery failures into the same display row.
  */
 function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
   const retained: T[] = [];
@@ -389,18 +389,18 @@ function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
     }
     const outcomes = managedAttachmentOutcomes(message);
     const hasFailures = outcomes.some(item => item.type === 'attachment_error');
-    const hasMissing = outcomes.some(item => item.type === 'attachment_error' &&
-      item.attachment.code === ATTACHMENT_FILE_NOT_FOUND);
     const deliveryUrls = assistantDeliveryMediaUrls(previous);
     const body = canonicalCompanionText(previous);
     const sourceRunId = messageRunId(previousOuter, previousRecord);
     const companionRunId = messageRunId(companionOuter, companionRecord);
-    const mediaUrls = deliveryUrls.length === 0 && hasMissing &&
-        (body || (sourceRunId && sourceRunId === companionRunId))
+    if (hasFailures && !body && (!sourceRunId || sourceRunId !== companionRunId)) {
+      retained.push(message);
+      continue;
+    }
+    const mediaUrls = deliveryUrls.length === 0 && hasFailures
       ? [...new Set(splitMediaFromOutput(messageText(messageDisplayContent(previous))).mediaUrls)]
       : deliveryUrls;
     if (
-      (hasFailures && !hasMissing) ||
       (sourceRunId && companionRunId && sourceRunId !== companionRunId) ||
       mediaUrls.length === 0 || mediaUrls.length !== outcomes.length ||
       body !== canonicalCompanionText(message)
@@ -443,11 +443,9 @@ function collapseAssistantMediaDeliveryCompanions<T>(messages: T[]): T[] {
         },
       ];
     });
-    const failures = matched.flatMap(({ item, path }) => {
-      if (item.type !== 'attachment_error') return [];
-      if (item.attachment.code !== ATTACHMENT_FILE_NOT_FOUND) return [item];
-      return [{ ...item, attachment: { ...item.attachment, sourceUrl: path } }];
-    });
+    const failures = matched.flatMap(({ item, path }) => item.type === 'attachment_error'
+      ? [withAssistantMediaFailureSource(item, path)]
+      : []);
     if (links.length || failures.length) {
       const producer = failures.length > 0 ? {
         ...previousRecord,

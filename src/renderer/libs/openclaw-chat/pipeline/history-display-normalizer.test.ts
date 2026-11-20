@@ -202,7 +202,11 @@ describe('projectGatewayHistoryForDisplay', () => {
     expect(projectGatewayHistoryForDisplay([source, distinct])).toEqual([source, distinct]);
   });
 
-  test.each([true, false])('combines a matched failed delivery with the original reply (metadata=%s)', hasMetadata => {
+  test.each([
+    [true, 'file-not-found'],
+    [false, 'file-not-found'],
+    [false, 'unsupported-format'],
+  ])('combines a matched failed delivery with the original reply (metadata=%s, code=%s)', (hasMetadata, code) => {
     const missing = 'C:/workspace/missing.py';
     const delivered = 'C:/workspace/success.py';
     const other = 'C:/workspace/other.py';
@@ -223,7 +227,7 @@ describe('projectGatewayHistoryForDisplay', () => {
           artifactId: 'delivered-file', kind: 'document', label: 'success.py',
         } },
         { type: 'attachment_error', attachment: {
-          code: 'file-not-found', kind: 'document', label: 'missing.py',
+          code, kind: 'document', label: 'missing.py',
         } },
         { type: 'attachment_error', attachment: {
           code: 'delivery-failed', kind: 'document', label: 'other.py',
@@ -241,10 +245,9 @@ describe('projectGatewayHistoryForDisplay', () => {
     const hydrated = retainCollapsedDeliveryProjection({ ...source }, projected[0]);
     expect(normalizeMessage(hydrated).content).toMatchObject([
       { type: 'text', text: 'Reports' },
-      { type: 'attachment_error', attachment: { code: 'file-not-found', label: 'missing.py' } },
+      { type: 'attachment', attachment: { label: 'missing.py', url: missing } },
       { type: 'attachment', attachment: { url: delivered } },
-      { type: 'attachment', attachment: { url: other } },
-      { type: 'attachment_error', attachment: { code: 'delivery-failed', label: 'other.py' } },
+      { type: 'attachment', attachment: { label: 'other.py', url: other } },
     ]);
     expect(projectGatewayHistoryForDisplay([source, {
       ...companion,
@@ -254,6 +257,29 @@ describe('projectGatewayHistoryForDisplay', () => {
       ...companion,
       __openclaw: { ...companion.__openclaw, runId: 'other-run' },
     }])).toHaveLength(2);
+  });
+
+  test('retains the original from wrapped history when only the envelope has delivery metadata', () => {
+    const url = 'C:/project/report.html';
+    const producer = {
+      message: { role: 'assistant', content: 'Report' },
+      openclawDelivery: { mediaUrls: [url] },
+    };
+    const companion = {
+      role: 'assistant', model: 'gateway-injected', content: [
+        { type: 'text', text: 'Report' },
+        { type: 'attachment_error', attachment: {
+          code: 'unsupported-format', kind: 'document', label: 'report.html',
+        } },
+      ],
+    };
+    const projected = projectGatewayHistoryForDisplay([producer, companion]);
+
+    expect(projected).toHaveLength(1);
+    expect(normalizeMessage((projected[0] as typeof producer).message).content).toMatchObject([
+      { type: 'text', text: 'Report' },
+      { type: 'attachment', attachment: { label: 'report.html', url } },
+    ]);
   });
 
   test('collapses a flat native audio companion only when its producer owns that same delivery', () => {

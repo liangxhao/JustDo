@@ -182,6 +182,7 @@ import {
 } from '../../shared/integrations/externalAgents';
 import { type ApiFetchOptions, NetworkIpc, type OutboundHeaderPolicyView } from '../../shared/network/network';
 import {
+  type OpenClawAssistantDeliverySaveRequest,
   OpenClawAssistantMediaIpc,
   type OpenClawAssistantMediaPlaybackRequest,
   type OpenClawAssistantMediaReleaseRequest,
@@ -755,6 +756,8 @@ contextBridge.exposeInMainWorld('electron', {
       getToken: () => ipcRenderer.invoke('openclaw:engine:getToken'),
       readAssistantMediaDataUrl: (request: OpenClawAssistantMediaRequest) =>
         ipcRenderer.invoke(OpenClawAssistantMediaIpc.ReadDataUrl, request),
+      saveAssistantDelivery: (request: OpenClawAssistantDeliverySaveRequest) =>
+        ipcRenderer.invoke(OpenClawAssistantMediaIpc.SaveDelivery, request),
       prepareAssistantMediaPlayback: (request: OpenClawAssistantMediaPlaybackRequest) =>
         ipcRenderer.invoke(OpenClawAssistantMediaIpc.PreparePlayback, request),
       releaseAssistantMediaPlayback: (request: OpenClawAssistantMediaReleaseRequest) =>

@@ -897,6 +897,9 @@ interface IElectronAPI {
       readAssistantMediaDataUrl: (
         request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaRequest,
       ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaResult>;
+      saveAssistantDelivery: (
+        request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantDeliverySaveRequest,
+      ) => Promise<import('../../shared/openclaw/assistantMedia').OpenClawAssistantDeliverySaveResult>;
       prepareAssistantMediaPlayback: (
         request: import('../../shared/openclaw/assistantMedia').OpenClawAssistantMediaPlaybackRequest,
       ) => Promise<

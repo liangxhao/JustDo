@@ -69,6 +69,10 @@ Main 的媒体 owner 持有原生会话、
 继续由各自策略管理。流式响应通过 Main 内部 Gateway 认证读取原始字节，Renderer 仅
 持有可撤销地址，不取得 token 或整个文件正文。
 
+桌面主窗口的「另存附件」通过独立 IPC 核对主 frame 和 canonical outgoing route 的
+会话参数。Main 限量读取 Gateway 原始字节，用户通过系统对话框选择目标后才写入；写入前
+复核窗口和 Gateway 代次。工作区媒体 preload 保持 prepare/release 的权限范围。
+
 生命周期、Range 与摘要复用规则见
 [聊天渲染](15-chat-rendering.md)。
 

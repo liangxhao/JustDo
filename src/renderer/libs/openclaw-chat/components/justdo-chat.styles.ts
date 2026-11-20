@@ -2013,7 +2013,7 @@ export const chatStyles = [
         background-color 150ms ease;
     }
 
-    .message-attachment:hover:not(:disabled):not(.message-attachment--unavailable) {
+    .message-attachment:hover {
       background: color-mix(
         in srgb,
         var(--justdo-chat-text, #1a1a1a) 7%,
@@ -2022,18 +2022,12 @@ export const chatStyles = [
       border-color: color-mix(in srgb, var(--justdo-chat-accent, #4f7cff) 40%, transparent);
     }
 
-    .message-attachment:active:not(:disabled):not(.message-attachment--unavailable) {
+    .message-attachment:active {
       background: color-mix(
         in srgb,
         var(--justdo-chat-text, #1a1a1a) 10%,
         var(--justdo-chat-bg, #ffffff)
       );
-    }
-
-    .message-attachment:disabled,
-    .message-attachment--unavailable {
-      cursor: default;
-      opacity: 0.7;
     }
 
     .message-attachment:focus-visible {
@@ -2092,21 +2086,6 @@ export const chatStyles = [
       white-space: nowrap;
     }
 
-    .message-attachment--delivery-failed {
-      opacity: 1;
-    }
-
-    .message-attachment__warning {
-      display: block;
-      color: var(--justdo-chat-error, #dc2626);
-      font-size: 12px;
-      line-height: 1.4;
-    }
-
-    :host(.dark) .message-attachment__warning {
-      color: var(--justdo-chat-error, #fca5a5);
-    }
-
     .message-attachment__open {
       display: grid;
       flex: 0 0 auto;
@@ -2121,7 +2100,7 @@ export const chatStyles = [
         opacity 150ms ease;
     }
 
-    .message-attachment:hover:not(:disabled) .message-attachment__open,
+    .message-attachment:hover .message-attachment__open,
     .message-attachment:focus-visible .message-attachment__open {
       color: var(--justdo-chat-accent, #4f7cff);
       opacity: 1;

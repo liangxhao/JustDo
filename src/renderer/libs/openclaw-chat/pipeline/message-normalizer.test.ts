@@ -301,14 +301,16 @@ describe('normalizeMessage assistant media', () => {
     ]);
   });
   test('preserves the artifact identity of a managed document attachment', () => {
+    const url = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
     const message = normalizeMessage({
       role: 'assistant',
+      openclawDelivery: { mediaUrls: [url] },
       content: [
         {
           type: 'attachment',
           attachment: {
             artifactId: 'artifact_managed_media_document',
-            url: '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession/file/full',
+            url,
             kind: 'document',
             label: 'result.py',
             mimeType: 'application/octet-stream',
@@ -322,7 +324,7 @@ describe('normalizeMessage assistant media', () => {
         type: 'attachment',
         attachment: {
           artifactId: 'artifact_managed_media_document',
-          url: '/api/chat/media/outgoing/agent%3Amain%3Ajustdo%3Asession/file/full',
+          url,
           kind: 'document',
           label: 'result.py',
           mimeType: 'application/octet-stream',
@@ -477,9 +479,9 @@ describe('normalizeMessage assistant media', () => {
         type: 'attachment',
         attachment: {
           url: 'missing\\report.txt',
+          mimeType: 'text/plain',
           kind: 'document',
           label: 'report.txt',
-          mimeType: 'text/plain',
         },
       },
       {
@@ -515,7 +517,7 @@ describe('normalizeMessage assistant media', () => {
     ]);
   });
 
-  test('shows one failure for an original delivery path with a native not-found result', () => {
+  test('retains one original delivery path with a native not-found result', () => {
     const source = 'C:/project/结果 1.pdf';
     const message = normalizeMessage({
       role: 'assistant',
@@ -533,12 +535,45 @@ describe('normalizeMessage assistant media', () => {
 
     expect(message.content).toEqual([
       { type: 'text', text: 'Reports' },
-      { type: 'attachment_error', attachment: {
-        code: 'file-not-found', kind: 'document', label: '结果 1.pdf', sourceUrl: source,
+      { type: 'attachment', attachment: {
+        url: source, kind: 'document', label: '结果 1.pdf', mimeType: 'application/pdf',
       } },
       { type: 'attachment', attachment: {
         url: 'C:/project/available.pdf', kind: 'document', label: 'available.pdf', mimeType: 'application/pdf',
       } },
+    ]);
+  });
+
+  test('retains only the original web link when delivery of its copy fails', () => {
+    const url = 'https://example.test/report.pdf?download=1#page=2';
+    const message = normalizeMessage({
+      role: 'assistant',
+      openclawDelivery: { mediaUrls: [url] },
+      content: [{ type: 'attachment_error', attachment: {
+        code: 'unsupported-format', kind: 'document', label: 'report.pdf',
+      } }],
+    });
+    expect(message.content).toEqual([{ type: 'attachment', attachment: {
+      url, kind: 'document', label: 'report.pdf', mimeType: 'application/pdf',
+    } }]);
+  });
+
+  test('keeps a legacy attachment in place when its original path is available', () => {
+    const url = 'C:/project/report.pdf';
+    const message = normalizeMessage({
+      role: 'assistant', MediaPath: url,
+      content: [
+        { type: 'text', text: 'Report:' },
+        { type: 'attachment_error', attachment: {
+          code: 'file-not-found', kind: 'document', label: 'report.pdf',
+        } },
+        { type: 'text', text: 'See page two.' },
+      ],
+    });
+    expect(message.content).toMatchObject([
+      { type: 'text', text: 'Report:' },
+      { type: 'attachment', attachment: { url, label: 'report.pdf' } },
+      { type: 'text', text: 'See page two.' },
     ]);
   });
 

@@ -7,7 +7,9 @@ const DELIVERY_TIMEOUT_MS = 30_000;
 export interface ManagedAssistantDeliveryRequest {
   source: string;
   sessionKey: string;
-  acceptedMimeTypes: readonly string[];
+  /** Omit only when saving opaque bytes to a user-selected destination. */
+  acceptedMimeTypes?: readonly string[];
+  maxBytes?: number;
 }
 
 export interface ManagedAssistantDelivery {
@@ -34,7 +36,7 @@ export async function readManagedAssistantDelivery(
   manager: OpenClawEngineManager,
   request: ManagedAssistantDeliveryRequest,
 ): Promise<ManagedAssistantDelivery> {
-  const { source, sessionKey, acceptedMimeTypes } = request;
+  const { source, sessionKey, acceptedMimeTypes, maxBytes = MAX_DELIVERY_BYTES } = request;
   if (!parseManagedOutgoingMediaSource(source, sessionKey)) {
     throw new Error('Delivery does not match the native conversation.');
   }
@@ -52,7 +54,7 @@ export async function readManagedAssistantDelivery(
   }
   const response = await fetch(new URL(source, 'http://127.0.0.1:' + port), {
     headers: {
-      Accept: acceptedMimeTypes.join(', '),
+      Accept: acceptedMimeTypes?.join(', ') ?? '*/*',
       Authorization: 'Bearer ' + token,
       'x-openclaw-requester-session-key': sessionKey,
     },
@@ -62,8 +64,9 @@ export async function readManagedAssistantDelivery(
   const mimeType =
     response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase() ?? '';
   const contentLength = Number(response.headers.get('content-length'));
-  if (!response.ok || !response.body || !acceptedMimeTypes.includes(mimeType) ||
-      contentLength > MAX_DELIVERY_BYTES) {
+  if (response.status !== 200 || !response.body || !mimeType ||
+      (acceptedMimeTypes && !acceptedMimeTypes.includes(mimeType)) ||
+      contentLength > maxBytes) {
     await response.body?.cancel().catch(() => {});
     throw new Error('Unsupported or unavailable Gateway delivery.');
   }
@@ -78,7 +81,7 @@ export async function readManagedAssistantDelivery(
       assertCurrent();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_DELIVERY_BYTES) throw new Error('Gateway delivery is too large.');
+      if (total > maxBytes) throw new Error('Gateway delivery is too large.');
       chunks.push(value);
     }
   } finally {

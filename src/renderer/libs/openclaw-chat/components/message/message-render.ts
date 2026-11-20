@@ -7,6 +7,8 @@ import '../webpage-embed/view';
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
  */
 import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
+import { unwrapAssistantDeliverableSource } from '@shared/openclaw/assistantDeliverables';
+import { AssistantDeliverySaveError, parseManagedOutgoingMediaSource } from '@shared/openclaw/assistantMedia';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 import { html, nothing, type TemplateResult } from 'lit';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
@@ -27,7 +29,7 @@ import { renderChatAvatar } from '@/libs/openclaw-chat/components/message/chat-a
 import type { OpenMessageFileLink } from '@/libs/openclaw-chat/message-actions';
 import { formatActiveTurnDuration } from '@/libs/openclaw-chat/model/timeline/active-turn-footer';
 import { extractTextCached } from '@/libs/openclaw-chat/pipeline/message-extract';
-import { ATTACHMENT_FILE_NOT_FOUND, normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import { normalizeRoleForGrouping } from '@/libs/openclaw-chat/pipeline/role-normalizer';
 import { partitionTaggedReasoning } from '@/libs/openclaw-chat/pipeline/tagged-reasoning';
 import { detectTextDirection } from '@/libs/openclaw-chat/pipeline/text-direction';
@@ -548,75 +550,76 @@ export function renderAssistantAttachments(
             ></justdo-message-media>`;
           }
         }
-        const managed = /^\/api\/chat\/media\/outgoing\//u.test(attachment.url.trim());
-        const source = managed ? undefined : attachment.url;
-        const canOpen = Boolean(source);
-        const url = source ? resolveAttachmentUrl(source, workingDirectory) : '';
-        const unavailable = i18nService
-          .t('coworkAttachmentUnavailable')
-          .replace('{filename}', attachment.label);
-        const openOptions: AttachmentOpenOptions = {
-          workingDirectory,
-        };
-        return html`
-          <button
-            type="button"
-            class=${`message-attachment${canOpen ? '' : ' message-attachment--unavailable'}`}
-            title=${canOpen ? url : unavailable}
-            aria-label=${`${i18nService.t('coworkOpenAttachment')}: ${attachment.label}`}
-            ?disabled=${!canOpen}
-            @click=${
-              canOpen ? (event: Event) => void openAttachment(event, source!, openOptions) : nothing
-            }
-            @contextmenu=${
-              canOpen
-                ? (event: Event) => void showAttachmentContextMenu(event, source!, openOptions)
-                : nothing
-            }
-          >
-            ${renderMessageFileIcon(attachment.label)}
-            <span class="message-attachment__content">
-              <span class="message-attachment__name">${attachment.label}</span>
-            </span>
-            <span class="message-attachment__open" aria-hidden="true">
-              <svg
-                viewBox="0 0 24 24"
-                width="14"
-                height="14"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.6"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M7 17 17 7M7 7h10v10"></path>
-              </svg>
-            </span>
-          </button>
-        `;
+        return renderAttachmentButton(attachment.label, attachment.url.trim(), workingDirectory, sessionKey);
       })}
     </div>
   `;
 }
 
-function renderAttachmentError(
-  item: Extract<MessageContentItem, { type: 'attachment_error' }>,
+function renderAttachmentButton(
+  label: string,
+  source?: string,
+  workingDirectory?: string,
+  sessionKey?: string,
 ): TemplateResult {
-  const { attachment } = item;
-  const reason = i18nService.t(attachment.code === ATTACHMENT_FILE_NOT_FOUND
-    ? 'coworkAttachmentMissingAtDelivery'
-    : 'coworkAttachmentDeliveryFailed');
+  const managed = source?.startsWith('/api/chat/media/outgoing/');
+  const engine = typeof window === 'undefined' ? undefined : window.electron?.openclaw?.engine;
+  const canSave = source && managed && sessionKey &&
+    parseManagedOutgoingMediaSource(source, sessionKey) && engine?.saveAssistantDelivery;
+  const canOpen = source && !managed;
+  const action = i18nService.t(canSave ? 'coworkSaveAttachment' : 'coworkOpenAttachment');
+  const title = canOpen ? resolveAttachmentUrl(source, workingDirectory) : action;
+  const openOptions = { workingDirectory };
+  const onClick = async (event: Event) => {
+    if (canOpen) {
+      await openAttachment(event, source, openOptions);
+      return;
+    }
+    event.stopPropagation();
+    let message = i18nService.t('coworkAttachmentUnavailable').replace('{filename}', label);
+    if (canSave) {
+      message = i18nService.t('coworkSaveAttachmentFailed');
+      try {
+        const result = await canSave({ source, sessionKey, filename: label });
+        if (result.success) return;
+        if (result.reason === AssistantDeliverySaveError.Busy) {
+          message = i18nService.t('coworkSaveAttachmentBusy');
+        }
+      } catch {
+        // Report a rejected bridge call in the same way as a failed save.
+      }
+    }
+    window.dispatchEvent(new CustomEvent('app:showToast', { detail: message }));
+  };
+
   return html`
-    <div
-      class="message-attachment message-attachment--unavailable message-attachment--delivery-failed"
-      title=${attachment.label}
+    <button
+      type="button"
+      class="message-attachment"
+      title=${title}
+      aria-label=${`${action}: ${label}`}
+      @click=${onClick}
+      @contextmenu=${canOpen ? (event: Event) => void showAttachmentContextMenu(event, source, openOptions) : nothing}
     >
-      ${renderMessageFileIcon(attachment.label)}
+      ${renderMessageFileIcon(label)}
       <span class="message-attachment__content">
-        <span class="message-attachment__name">${attachment.label}</span>
-        <span class="message-attachment__warning">${reason}</span>
+        <span class="message-attachment__name">${label}</span>
       </span>
-    </div>
+      <span class="message-attachment__open" aria-hidden="true">
+        <svg
+          viewBox="0 0 24 24"
+          width="14"
+          height="14"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d=${canSave ? 'M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4' : 'M7 17 17 7M7 7h10v10'}></path>
+        </svg>
+      </span>
+    </button>
   `;
 }
 
@@ -780,7 +783,7 @@ function renderOrderedBubble(
             `;
           }
           if (item.type === 'attachment_error') {
-            return renderListedAttachment(item.attachment, renderAttachmentError(item));
+            return renderListedAttachment(item.attachment, renderAttachmentButton(item.attachment.label));
           }
           if (item.type === 'browser_recording') {
             return renderBrowserRecording(item.recording);
@@ -1022,14 +1025,10 @@ function renderAssistantMessage(
   };
 
   const existingUrls = new Set(
-    msg.content.flatMap(item => {
-      if (item.type === 'attachment') return [item.attachment.url];
-      if (item.type === 'attachment_error' && item.attachment.sourceUrl) return [item.attachment.sourceUrl];
-      return [];
-    }),
+    msg.content.flatMap(item => item.type === 'attachment' ? [item.attachment.url] : []),
   );
   const media = extractTranscriptAttachments(rawMessage).filter(
-    item => !existingUrls.has(item.url),
+    item => !existingUrls.has(item.url) && !existingUrls.has(unwrapAssistantDeliverableSource(item.url)),
   );
   const content = [
     ...msg.content,

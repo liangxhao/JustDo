@@ -2,9 +2,14 @@
  * Message normalization utilities for chat rendering.
  */
 import { type BrowserAnnotationDisplay } from '@shared/browser/browserAnnotation';
+import { isWebBrowserLink } from '@shared/browser/browserLinkOpening';
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
 import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
+import {
+  isLocalAssistantDeliverableSource,
+  unwrapAssistantDeliverableSource,
+} from '@shared/openclaw/assistantDeliverables';
 import { modelRefFromIdentity, normalizeModelRef } from '@shared/providers/modelRef';
 
 import {
@@ -294,9 +299,35 @@ function mediaAttachment(url: string): Extract<MessageContentItem, { type: 'atta
   };
 }
 
-export const ATTACHMENT_FILE_NOT_FOUND = 'file-not-found';
+const ATTACHMENT_FILE_NOT_FOUND = 'file-not-found';
 type AttachmentError = Extract<MessageContentItem, { type: 'attachment_error' }>;
 export const collapsedAssistantMediaFailures = Symbol('collapsed-assistant-media-failures');
+
+export function withAssistantMediaFailureSource(item: AttachmentError, source: string): AttachmentError {
+  const { code } = item.attachment;
+  const target = unwrapAssistantDeliverableSource(source);
+  if (
+    (code !== ATTACHMENT_FILE_NOT_FOUND && code !== 'delivery-failed' && code !== 'unsupported-format') ||
+    !(isLocalAssistantDeliverableSource(source) || (/^https?:\/\//iu.test(target) && isWebBrowserLink(target)))
+  ) return item;
+  return {
+    ...item,
+    attachment: { ...item.attachment, sourceUrl: source, label: inferAttachmentKind(target).label },
+  };
+}
+
+function recoveredMediaAttachment(source: string, failure: AttachmentError): Extract<MessageContentItem, { type: 'attachment' }> {
+  const url = unwrapAssistantDeliverableSource(source);
+  return {
+    type: 'attachment',
+    attachment: {
+      url,
+      kind: 'document',
+      label: failure.attachment.label,
+      mimeType: failure.attachment.mimeType ?? mimeTypeFromUrl(url),
+    },
+  };
+}
 
 export function readCollapsedAssistantMediaFailures(message: unknown): readonly AttachmentError[] {
   return (
@@ -354,8 +385,8 @@ function applyAssistantMediaUrls(
   const urlsByLabel = uniqueAssistantMediaUrlsByLabel(originalUrls.length > 0
     ? originalUrls
     : getTranscriptMedia(message).map(item => item.path));
-  const failuresByUrl = new Map(companionFailures.flatMap(item => item.attachment.sourceUrl
-    ? [[item.attachment.sourceUrl, item] as const]
+  const recovered = new Map(companionFailures.flatMap(item => item.attachment.sourceUrl
+    ? [[item.attachment.sourceUrl, recoveredMediaAttachment(item.attachment.sourceUrl, item)] as const]
     : []));
   const managedLabels = new Set(content.flatMap(item =>
     item.type === 'attachment' && item.attachment.url.startsWith('/api/chat/media/outgoing/')
@@ -364,37 +395,48 @@ function applyAssistantMediaUrls(
   ));
   const matchedErrors = new Map<AttachmentError, string>();
   for (const item of content) {
-    if (item.type !== 'attachment_error' || item.attachment.code !== ATTACHMENT_FILE_NOT_FOUND) continue;
+    if (item.type !== 'attachment_error') continue;
     const sourceUrl = urlsByLabel.get(item.attachment.label);
     if (!sourceUrl || managedLabels.has(item.attachment.label)) continue;
+    const failure = withAssistantMediaFailureSource(item, sourceUrl);
+    if (failure === item) continue;
     matchedErrors.set(item, sourceUrl);
-    failuresByUrl.set(sourceUrl, {
-      ...item,
-      attachment: { ...item.attachment, sourceUrl, label: inferAttachmentKind(sourceUrl).label },
-    });
+    recovered.set(sourceUrl, recoveredMediaAttachment(sourceUrl, failure));
   }
 
-  const displayedFailures = new Set<string>();
+  const displayedRecoveredUrls = new Set<string>();
+  const managedAttachments = new Map<string, Extract<MessageContentItem, { type: 'attachment' }>>();
+  const displayRecovered = (url: string, item: Extract<MessageContentItem, { type: 'attachment' }>, listMarker?: string) => {
+    if (displayedRecoveredUrls.has(url)) return [];
+    displayedRecoveredUrls.add(url);
+    return [listMarker ? { ...item, attachment: { ...item.attachment, listMarker } } : item];
+  };
   const retained = content.flatMap<MessageContentItem>(item => {
     if (item.type === 'attachment_error') {
       const sourceUrl = matchedErrors.get(item);
-      if (sourceUrl && (mediaUrlSet.has(sourceUrl) || inlineUrls.has(sourceUrl))) return [];
-      if (mediaUrls.length > 0 && item.attachment.code !== ATTACHMENT_FILE_NOT_FOUND) return [];
-      return [sourceUrl ? failuresByUrl.get(sourceUrl)! : item];
+      if (!sourceUrl) return [item];
+      if (mediaUrlSet.has(sourceUrl) || inlineUrls.has(sourceUrl)) return [];
+      return displayRecovered(sourceUrl, recovered.get(sourceUrl)!);
     }
     if (item.type !== 'attachment') return [item];
     const { url, listMarker } = item.attachment;
+    if (item.attachment.kind !== 'image' && url.startsWith('/api/chat/media/outgoing/') && mediaUrlSet.has(url)) {
+      // A native content block can name the file and carry its identity. A
+      // copy inferred from a MEDIA line would only have the route's "full" leaf.
+      if (!managedAttachments.has(url) || item.attachment.label !== 'full' || item.attachment.artifactId) {
+        managedAttachments.set(url, item);
+      }
+      return [];
+    }
     if (mediaUrls.length > 0 && (mediaUrlSet.has(url) || url.startsWith('/api/chat/media/outgoing/'))) return [];
-    const failure = failuresByUrl.get(url);
-    if (!failure) return [item];
-    // An original MEDIA path can appear more than once in the body.
-    if (displayedFailures.has(url)) return [];
-    displayedFailures.add(url);
-    return [listMarker ? { ...failure, attachment: { ...failure.attachment, listMarker } } : failure];
+    const original = recovered.get(url);
+    if (!original) return [item];
+    return displayRecovered(url, original, listMarker);
   });
   return [
     ...retained,
-    ...mediaUrls.map(url => failuresByUrl.get(url) ?? mediaAttachment(url)),
+    ...mediaUrls.map(url => recovered.get(url) ?? managedAttachments.get(url) ?? mediaAttachment(url)),
+    ...[...recovered].flatMap(([url, item]) => mediaUrlSet.has(url) || displayedRecoveredUrls.has(url) ? [] : [item]),
     ...companionFailures.filter(item => !item.attachment.sourceUrl),
   ];
 }

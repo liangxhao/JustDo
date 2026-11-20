@@ -235,6 +235,7 @@ import {
 } from './ipc/openclaw';
 import { readOpenClawAssistantMedia } from './ipc/openclaw/engine';
 import { registerEngineDiagnosticsHandlers } from './ipc/openclaw/engineDiagnostics';
+import { registerManagedMediaDownloadHandler } from './ipc/openclaw/managedMediaDownload';
 import {
   authorizeManagedMediaPlaybackRequest,
   handleManagedMediaPlaybackRequest,
@@ -1921,6 +1922,10 @@ if (agentBridgeArgv) {
     }),
   });
   registerManagedMediaPlaybackHandlers({
+    getMainWindow: () => mainWindow,
+    getManager: getOpenClawEngineManager,
+  });
+  registerManagedMediaDownloadHandler({
     getMainWindow: () => mainWindow,
     getManager: getOpenClawEngineManager,
   });

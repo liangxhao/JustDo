@@ -26,6 +26,19 @@ const artifact: ArtifactSummary = {
   download: { mode: 'bytes' },
 };
 
+it('keeps a known local original in outputs when its Gateway copy was rejected', () => {
+  const source = 'C:/project/report.html';
+  const { outputs } = projectSessionSummaryResources([{
+    role: 'assistant',
+    openclawDelivery: { mediaUrls: [source] },
+    content: [{ type: 'attachment_error', attachment: {
+      kind: 'document', label: 'report.html', code: 'unsupported-format',
+    } }],
+  }], []);
+
+  expect(outputs).toMatchObject([{ title: 'report.html', target: { kind: 'file', path: source } }]);
+});
+
 it('resolves the native TTS artifact to the exact loaded audio attachment without a local path', () => {
   const url =
     '/api/chat/media/outgoing/agent%3Amain%3Asession/11111111-1111-4111-8111-111111111111/full';

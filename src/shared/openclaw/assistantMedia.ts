@@ -2,6 +2,7 @@ export const OpenClawAssistantMediaIpc = {
   ReadDataUrl: 'openclaw:assistantMedia:readDataUrl',
   PreparePlayback: 'openclaw:assistantMedia:preparePlayback',
   ReleasePlayback: 'openclaw:assistantMedia:releasePlayback',
+  SaveDelivery: 'openclaw:assistantMedia:saveDelivery',
 } as const;
 
 const MANAGED_OUTGOING_MEDIA_SOURCE =
@@ -62,3 +63,17 @@ export interface OpenClawAssistantMediaRequest {
 export type OpenClawAssistantMediaResult =
   | { success: true; dataUrl: string; mimeType: string }
   | { success: false; error: string };
+
+export interface OpenClawAssistantDeliverySaveRequest {
+  source: string;
+  sessionKey: string;
+  filename: string;
+}
+
+export const AssistantDeliverySaveError = {
+  Busy: 'busy',
+} as const;
+
+export type OpenClawAssistantDeliverySaveResult =
+  | { success: true; canceled: boolean }
+  | { success: false; reason?: (typeof AssistantDeliverySaveError)[keyof typeof AssistantDeliverySaveError] };
