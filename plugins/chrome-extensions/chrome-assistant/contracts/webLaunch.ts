@@ -94,6 +94,8 @@ export interface WebLaunchPrepare {
   connectionOnly?: true;
   /** Required with connectionOnly; compare the global policy revision atomically. */
   expectedPolicyRevision?: number;
+  /** Policy generation captured by the extension for the original queued click. */
+  expectedQueuedPolicyRevision?: number;
 }
 
 export interface WebLaunchReference {

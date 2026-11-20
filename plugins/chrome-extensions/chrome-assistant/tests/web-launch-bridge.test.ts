@@ -127,53 +127,58 @@ describe('webpage button bridge', () => {
     ).toBe(true);
   });
 
-  it.each([true, false])(
-    'reuses the prior handle only when the backend confirms reopen=%s',
-    async reopened => {
-      const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
-      const onRequest = vi.fn();
-      const onStatus = vi.fn();
-      const onError = vi.fn();
-      const original = runtime.sendMessage.getMockImplementation()!;
-      let finishReopen!: (response: unknown) => void;
-      runtime.sendMessage.mockImplementation(async message => {
-        if (message.reopenRequestId)
-          return new Promise(resolve => { finishReopen = resolve; });
-        return original(message);
-      });
-      const button = document.getElementById('business') as HTMLButtonElement;
-      await sdk.bind(button, { prompt: 'Restore the report request' }, { onRequest, onStatus, onError });
-      click();
-      await vi.waitFor(() => expect(onStatus).toHaveBeenCalledOnce());
-      const originalId = onRequest.mock.calls[0][0].requestId;
+  it('creates distinct handles for rapid clicks on the same button and promotes a queued receipt', async () => {
+    const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
+    const onRequest = vi.fn();
+    const onStatus = vi.fn();
+    const original = runtime.sendMessage.getMockImplementation()!;
+    const onQueue = vi.fn();
+    let releaseFirst!: (response: unknown) => void;
+    runtime.sendMessage.mockImplementation(async message => {
+      if (message.type.endsWith('launch') && message.clickSequence === 1)
+        return new Promise(resolve => {
+          releaseFirst = resolve;
+        });
+      if (message.type.endsWith('launch') && message.clickSequence === 2)
+        return { ok: true, queueStatus: 'queued', queueReason: 'composer' };
+      if (message.type.endsWith('read'))
+        return {
+          ok: true,
+          receipt: {
+            ...(await original({ ...message, type: 'launch' })).receipt,
+            launchId: 'launch-2',
+          },
+        };
+      return original(message);
+    });
+    const button = document.getElementById('business') as HTMLButtonElement;
+    await sdk.bind(
+      button,
+      { prompt: 'Create a new report conversation' },
+      { onRequest, onStatus, onQueue },
+    );
 
-      click();
-      const repeat = runtime.sendMessage.mock.lastCall![0];
-      expect(repeat).toMatchObject({ reopenRequestId: originalId, clickSequence: 2 });
-      expect(repeat.requestId).not.toBe(originalId);
-      await Promise.resolve();
-      expect(onRequest).toHaveBeenCalledOnce();
-      finishReopen(reopened ? { ok: true, reopened: true } : await original(repeat));
+    click();
+    const first = runtime.sendMessage.mock.lastCall![0];
+    click();
+    const second = runtime.sendMessage.mock.lastCall![0];
+    expect(second.clickSequence).toBe(2);
+    expect(second.requestId).not.toBe(first.requestId);
+    releaseFirst(await original(first));
+    await vi.waitFor(() => expect(onQueue).toHaveBeenCalledOnce());
+    const handles = onRequest.mock.calls.map(([handle]) => handle);
+    expect(handles.map(handle => handle.requestId)).toEqual([first.requestId, second.requestId]);
+    expect(handles[0].launchId).toBe('launch-1');
+    expect(handles[1].launchId).toBeUndefined();
+    expect(onQueue).toHaveBeenCalledWith({
+      requestId: second.requestId,
+      status: 'queued',
+      message: expect.stringMatching(/draft.*side panel/u),
+    });
 
-      if (reopened) {
-        // The original handle still reads its own receipt after the panel is reopened.
-        const handle = onRequest.mock.calls[0][0];
-        await handle.read();
-        expect(runtime.sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
-          type: 'web-launch:document:read', requestId: originalId,
-        }));
-        expect(onRequest).toHaveBeenCalledOnce();
-        expect(onStatus).toHaveBeenCalledOnce();
-      } else {
-        await vi.waitFor(() => expect(onStatus).toHaveBeenCalledTimes(2));
-        expect(onRequest.mock.calls.map(([handle]) => handle.requestId)).toEqual([
-          originalId,
-          repeat.requestId,
-        ]);
-      }
-      expect(onError).not.toHaveBeenCalled();
-    },
-  );
+    await handles[1].read();
+    expect(handles[1].launchId).toBe('launch-2');
+  });
 
   it('delivers an artifact-only exact result through the existing onResult callback', async () => {
     const onRequest = vi.fn();
@@ -196,15 +201,21 @@ describe('webpage button bridge', () => {
       };
     });
     const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
-    await sdk.bind(document.getElementById('business'), { prompt: 'Create a report' }, { onRequest, onResult });
+    await sdk.bind(
+      document.getElementById('business'),
+      { prompt: 'Create a report' },
+      { onRequest, onResult },
+    );
     click();
     await vi.waitFor(() => expect(onRequest).toHaveBeenCalledOnce());
     poll();
     await vi.waitFor(() => expect(onResult).toHaveBeenCalledOnce());
-    expect(onResult).toHaveBeenCalledWith(expect.objectContaining({
-      requestId: onRequest.mock.calls[0][0].requestId,
-      output: { status: 'available', artifacts },
-    }));
+    expect(onResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: onRequest.mock.calls[0][0].requestId,
+        output: { status: 'available', artifacts },
+      }),
+    );
   });
 
   it('times out without an installed bridge rather than queueing a later click', async () => {

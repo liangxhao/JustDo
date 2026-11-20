@@ -2,49 +2,58 @@ const copy = navigator.language.startsWith('zh')
   ? {
       lang: 'zh-CN',
       title: '网页调用 Chrome 扩展示例',
-      record: '示例记录有 12 个订单，其中 3 个待处理。每个按钮显示最近一次请求的状态。',
+      record: '示例记录有 12 个订单，其中 3 个待处理。每次接纳新任务时，页面会显示它的新编号。',
+      start: '点击 A。首次使用时先允许网站连接，再在侧栏发送草稿。',
+      keepOpen: 'A 发起后，保持侧栏打开并连续点击两次 B。A 尚未结束时，两次点击会分别排队。',
+      reopen:
+        '等待队列依次启动，每次点击都会显示新的任务编号。处理期间可关闭侧栏，再用 Chrome 工具栏的扩展图标打开。',
       context: '订单 12 个，其中 3 个待处理。',
-      prompt: '用一句话总结这条订单记录。',
-      draft: '请求打开草稿并返回结果',
-      draftHelp: '发送方式为「跟随网页」时，在侧栏点击发送。执行完成后，最终文本会显示在这里。',
-      send: '请求自动发送',
-      sendHelp:
-        '首次连接时，请在侧栏允许连接并发送草稿。发送方式为「跟随网页」时，后续点击会直接发送，最终文本会显示在这里。',
+      prompt: {
+        draft: '请用一行以 A 开头的文字回答订单总数。',
+        send: '请用一行以 B 开头的文字回答待处理订单数。',
+      },
+      draft: 'A · 打开草稿',
+      draftHelp: '在侧栏点击发送，最终文本会显示在这里。',
+      send: 'B · 自动发送',
+      sendHelp: 'A 发起后可用。扩展发送方式设为「跟随网页」时，B 会直接发送。',
       ready: '可以点击按钮。',
-      confirm: origin => `请在扩展侧栏确认连接 ${origin}。`,
-      connection: status => `连接状态 ${status}`,
       preparing: '正在准备请求。',
-      receipt: ({ request, execution, output }) =>
-        `请求 ${request.status} · 执行 ${execution.status} · 结果 ${output.status}`,
-      expired:
-        '此网页已无法查询这次请求。若可能已经发送，请先在侧栏核对原会话，再决定是否重新发起。',
-      error: code => `请求提示 ${code}。请查看扩展侧栏。`,
-      unavailable: code => `按钮无法绑定（${code}）。请检查扩展及网页 SDK 是否为同一版本。`,
+      queue: ({ requestId, status, message }) =>
+        `请求 ${requestId.slice(0, 8)} · ${message ?? (status === 'queued' ? '排队中' : '已取消')}`,
+      receipt: ({ launchId, request, execution, output }) =>
+        `任务 ${launchId.slice(0, 8)} · 请求 ${request.status} · ${execution.executionSettled ? '执行已结束' : '执行'} ${execution.status} · 结果 ${output.status}`,
+      inspectTask: '请打开扩展侧栏，核对这次请求的状态。',
+      unavailable: '请确认 Chrome 已加载扩展，并检查扩展与网页 SDK 是否配套。',
     }
   : {
       lang: 'en',
       title: 'Chrome extension website example',
       record:
-        'This sample has 12 orders, including 3 pending orders. Each button shows its latest request.',
+        'This sample has 12 orders, including 3 pending orders. Each accepted task gets a new ID.',
+      start:
+        'Click A. On first use, allow the website to connect, then send the draft in the side panel.',
+      keepOpen:
+        'After A starts, leave the side panel open and click B twice. If A is unfinished, both clicks queue independently.',
+      reopen:
+        'Watch each click receive a new task ID as the queue advances. Use the extension icon to reopen the side panel if you close it.',
       context: 'There are 12 orders, including 3 pending orders.',
-      prompt: 'Summarize this order record in one sentence.',
-      draft: 'Request a draft and its result',
-      draftHelp:
-        'With Follow website (default) selected, send the draft in the side panel. The final text will appear here.',
-      send: 'Request automatic sending',
-      sendHelp:
-        'On first use, allow the connection and send the draft in the side panel. With Follow website (default) selected, later clicks send directly and the final text appears here.',
+      prompt: {
+        draft: 'Answer with one line starting with A and give the total number of orders.',
+        send: 'Answer with one line starting with B and give the number of pending orders.',
+      },
+      draft: 'A · Open a draft',
+      draftHelp: 'Send the draft in the side panel. The final text will appear here.',
+      send: 'B · Send automatically',
+      sendHelp: 'Available after A starts. With Follow website selected, B sends directly.',
       ready: 'Ready to click.',
-      confirm: origin => `Confirm the connection to ${origin} in the extension side panel.`,
-      connection: status => `Connection status ${status}`,
       preparing: 'Preparing the request.',
-      receipt: ({ request, execution, output }) =>
-        `Request ${request.status} · Execution ${execution.status} · Result ${output.status}`,
-      expired:
-        'This page can no longer check this request. If it may have been sent, check the original conversation in the side panel before trying again.',
-      error: code => `Request notice ${code}. Check the extension side panel.`,
-      unavailable: code =>
-        `Could not bind the button (${code}). Check that the extension and website SDK versions match.`,
+      queue: ({ requestId, status, message }) =>
+        `Request ${requestId.slice(0, 8)} · ${message ?? (status === 'queued' ? 'Queued' : 'Cancelled')}`,
+      receipt: ({ launchId, request, execution, output }) =>
+        `Task ${launchId.slice(0, 8)} · Request ${request.status} · ${execution.executionSettled ? 'Execution settled' : 'Execution'} ${execution.status} · Result ${output.status}`,
+      inspectTask: 'Open the extension side panel to check this request.',
+      unavailable:
+        'Check that Chrome has loaded the extension and that it matches the website SDK.',
     };
 
 document.documentElement.lang = copy.lang;
@@ -53,29 +62,32 @@ for (const element of document.querySelectorAll('[data-copy]')) {
   element.textContent = copy[element.dataset.copy];
 }
 
-async function bindExample(section) {
+async function bindExample(section, onReceipt) {
   const button = section.querySelector('button');
   const status = section.querySelector('[data-status]');
-  const result = section.querySelector('[data-result]');
+  const list = section.querySelector('[data-requests]');
   const mode = section.dataset.mode;
+  const requests = new Map();
   let latestRequestId;
-  let latestRevision = -1;
 
   function showReceipt(receipt) {
-    if (receipt.requestId !== latestRequestId || receipt.receiptRevision < latestRevision) return;
-    latestRevision = receipt.receiptRevision;
-    status.textContent = copy.receipt(receipt);
-    if (receipt.error) status.textContent += ` · ${receipt.error.code}`;
+    const row = requests.get(receipt.requestId);
+    if (!row || receipt.receiptRevision < row.revision) return;
+    row.revision = receipt.receiptRevision;
+    row.label.textContent = copy.receipt(receipt);
+    if (receipt.error) row.label.textContent += ` · ${copy.inspectTask}`;
+    if (receipt.requestId === latestRequestId) status.textContent = '';
     const available =
       receipt.execution.executionSettled === true &&
       receipt.execution.status === 'completed' &&
       receipt.output.status === 'available';
-    result.textContent = available
+    row.result.textContent = available
       ? [receipt.output.text, ...(receipt.output.artifacts ?? []).map(artifact => artifact.name)]
           .filter(Boolean)
           .join('\n')
       : '';
-    result.hidden = !available;
+    row.result.hidden = !available;
+    onReceipt?.();
   }
 
   try {
@@ -83,41 +95,54 @@ async function bindExample(section) {
     await window.chromeAssistant.bind(
       button,
       {
-        prompt: copy.prompt,
+        prompt: copy.prompt[mode],
         context: { text: copy.context },
         mode,
       },
       {
         onConnection(connection) {
-          const waiting = connection.status === 'pending' || connection.status === 'granting';
-          button.disabled = waiting;
-          if (waiting) status.textContent = copy.confirm(connection.origin);
-          else if (connection.status !== 'connected')
-            status.textContent = copy.connection(connection.status);
+          button.disabled = ['waiting-for-window', 'pending', 'granting'].includes(
+            connection.status,
+          );
+          status.textContent = connection.message ?? copy.inspectTask;
         },
         onRequest(request) {
           latestRequestId = request.requestId;
-          latestRevision = -1;
-          status.textContent = copy.preparing;
-          result.textContent = '';
+          status.textContent = '';
+          const entry = document.createElement('li');
+          const label = document.createElement('span');
+          const result = document.createElement('pre');
+          label.textContent = copy.preparing;
           result.hidden = true;
+          entry.append(label, result);
+          list.append(entry);
+          requests.set(request.requestId, { label, result, revision: -1 });
+        },
+        onQueue(queue) {
+          const row = requests.get(queue.requestId);
+          if (row) row.label.textContent = copy.queue(queue);
         },
         onStatus: showReceipt,
         onResult: showReceipt,
-        onError(error) {
-          const requestUnavailable = error.code === 'EXPIRED' || error.code === 'LEASE_REVOKED';
-          status.textContent = requestUnavailable ? copy.expired : copy.error(error.code);
+        onError(error, requestId) {
+          const row = requests.get(requestId);
+          const label = row?.label ?? status;
+          label.textContent =
+            error.message && error.message !== error.code ? error.message : copy.inspectTask;
         },
       },
     );
     status.textContent = copy.ready;
     button.disabled = false;
-  } catch (error) {
-    status.textContent = copy.unavailable(error.code ?? 'BRIDGE_UNAVAILABLE');
+  } catch {
+    status.textContent = copy.unavailable;
   }
 }
 
-// Bind serially so each button finishes registration before another begins.
-void (async () => {
-  for (const section of document.querySelectorAll('[data-mode]')) await bindExample(section);
-})();
+const draftSection = document.querySelector('[data-mode="draft"]');
+const sendSection = document.querySelector('[data-mode="send"]');
+let sendBinding;
+// After A is admitted, the website grant and the content script are ready for B.
+void bindExample(draftSection, () => {
+  sendBinding ??= bindExample(sendSection);
+});

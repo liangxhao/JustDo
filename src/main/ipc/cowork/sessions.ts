@@ -1216,7 +1216,10 @@ export const registerCoworkSessionHandlers = ({
   ipcMain.handle('cowork:session:list', async (_event, agentId?: string) => {
     try {
       await discoverNativeChildSessions();
-      return { success: true, sessions: getCoworkStore().listSessions(agentId, { excludeNativeChildren: true }) };
+      return { success: true, sessions: getCoworkStore().listSessions(agentId, {
+        excludeNativeChildren: true,
+        excludePendingFirstSend: true,
+      }) };
     } catch (error) {
       return {
         success: false,
@@ -1234,6 +1237,7 @@ export const registerCoworkSessionHandlers = ({
         throw new Error('Agent ID must be a non-empty bounded string.');
       const entries = getCoworkStore().listSessionDirectory(rawAgentId as string | undefined, {
         excludeNativeChildren: true,
+        excludePendingFirstSend: true,
       });
       void discoverNativeChildSessions();
       return { success: true, entries };
@@ -1257,6 +1261,7 @@ export const registerCoworkSessionHandlers = ({
         );
       const sessions = getCoworkStore().readSessionSummaries([...new Set(rawIds as string[])], {
         excludeNativeChildren: true,
+        excludePendingFirstSend: true,
       });
       return { success: true, sessions };
     } catch (error) {

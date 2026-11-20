@@ -1,4 +1,4 @@
-import { WebLaunchMethod, WebLaunchSendMode } from '../../contracts/webLaunch.ts';
+import { WebLaunchLimits, WebLaunchMethod, WebLaunchSendMode } from '../../contracts/webLaunch.ts';
 import { AppServerClient } from './conversation-client.js';
 import { ensureAppServer } from './app-server-background.js';
 import { createWebLaunchConnections } from './web-launch-connections.js';
@@ -25,6 +25,25 @@ const grantedOriginsFrom = sites => sites.filter(hasWebsiteLaunchGrant).map(site
 const scriptId = origin =>
   `web-launch-${[...new TextEncoder().encode(origin)].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
 const PANEL_SUBMIT_REQUEST = 'web-launch:launch:submit';
+const MAX_QUEUED_PER_WINDOW = 10;
+const MAX_QUEUED_REQUESTS = 100;
+
+function queueResponse(item) {
+  if (item.error && item.error !== 'CANCELLED')
+    return { ok: false, code: item.error, queueClosed: true };
+  return {
+    ok: true,
+    queueStatus: item.error ? 'cancelled' : 'queued',
+    ...(!item.error && item.composerPending ? { queueReason: 'composer' } : {}),
+  };
+}
+
+function closeQueued(item, error) {
+  if (item.error) return;
+  item.error = error;
+  item.closedAt = Date.now();
+  delete item.input;
+}
 
 const terminal = receipt =>
   receipt?.execution.executionSettled === true ||
@@ -40,9 +59,12 @@ export function createWebLaunchBackground({
   const documents = new Map();
   const panels = new Map();
   const slots = new Map();
-  const checkingSlots = new Map();
+  const enqueuing = new Map();
+  const advancing = new Map();
   const restoredRequests = new Set();
   const cancelled = new Set();
+  const pendingClicks = new Set();
+  const missingWindowOwners = new Set();
   const preparing = new Set();
   const revising = new Map();
   const retirements = new Map();
@@ -91,6 +113,7 @@ export function createWebLaunchBackground({
         state.panels ??= {};
         state.channels ??= {};
         state.cancelled ??= {};
+        state.queue ??= [];
         for (const key of Object.keys(state.cancelled)) cancelled.add(key);
         // Anything recovered after a worker restart is an existing observation.
         for (const record of Object.values(state.requests))
@@ -121,11 +144,25 @@ export function createWebLaunchBackground({
     return next;
   }
   function collectMetadata() {
+    const now = Date.now();
+    for (const item of state.queue) {
+      if (item.expiresAt <= now) closeQueued(item, 'EXPIRED');
+      if (documents.get(item.documentKey)?.revoked || state.documents[item.documentKey]?.revoked)
+        closeQueued(item, 'LEASE_REVOKED');
+    }
+    const closed = state.queue.filter(item => item.error);
+    const retained = new Set(closed.slice(-MAX_QUEUED_REQUESTS));
+    state.queue = state.queue.filter(
+      item =>
+        !item.error || (retained.has(item) && now - item.closedAt < WebLaunchLimits.confirmationMs),
+    );
     const retired = Object.values(state.requests)
       .filter(record => terminal(record.response?.receipt))
       .sort((left, right) => (left.createdAt ?? 0) - (right.createdAt ?? 0));
     for (const record of retired.slice(0, Math.max(0, Object.keys(state.requests).length - 100)))
       delete state.requests[record.requestId];
+    for (const requestId of missingWindowOwners)
+      if (!state.requests[requestId]) missingWindowOwners.delete(requestId);
     for (const [key, value] of Object.entries(state.documents)) {
       if (!value.revoked || !value.revokeAcknowledged) continue;
       if (
@@ -145,10 +182,11 @@ export function createWebLaunchBackground({
     for (const key of Object.keys(state.channels))
       if (!liveChannels.has(key)) delete state.channels[key];
     for (const key of Object.keys(state.cancelled)) {
-      if (preparing.has(key)) continue;
+      if (pendingClicks.has(key) || preparing.has(key)) continue;
       const requestId = key.split('/').at(-1);
       const record = state.requests[requestId];
       if (record && !terminal(record.response?.receipt)) continue;
+      if (state.queue.some(item => item.requestId === requestId && !item.error)) continue;
       if ([...slots.values()].includes(requestId)) continue;
       delete state.cancelled[key];
       cancelled.delete(key);
@@ -274,6 +312,9 @@ export function createWebLaunchBackground({
         documentLeaseId: doc.documentLeaseId,
         revoked: doc.revoked,
       };
+      if (doc.revoked)
+        for (const item of state.queue)
+          if (item.documentKey === doc.key) closeQueued(item, 'LEASE_REVOKED');
     });
   }
   async function documentActive(doc) {
@@ -312,6 +353,11 @@ export function createWebLaunchBackground({
   }
   function requestCancelled(record) {
     return cancelled.has(`${record.source.documentId}/${record.documentNonce}/${record.requestId}`);
+  }
+  function findQueued(record) {
+    return state.queue.find(
+      item => item.requestId === record.requestId && item.documentKey === record.documentKey,
+    );
   }
   function requestSourceAvailable(record) {
     const live = documents.get(record.documentKey);
@@ -367,18 +413,13 @@ export function createWebLaunchBackground({
       })
       .catch(() => {});
   }
-  function notifyPanel(record, { resume = false } = {}) {
+  function notifyPanel(record) {
     const receipt = record.response?.receipt;
     if (requestCancelled(record) && !terminal(receipt)) return;
     panelEvent(record.source, {
-      envelope: ['cancelled', 'expired', 'rejected'].includes(
-        record.response?.receipt.request.status,
-      )
-        ? undefined
-        : envelope(record),
+      envelope: terminal(receipt) ? undefined : envelope(record),
       receipt,
       internal: record.response?.internal,
-      ...(resume ? { resume: true } : {}),
     });
   }
   function cacheResponse(record, response, revisedInput) {
@@ -490,8 +531,7 @@ export function createWebLaunchBackground({
         contexts.length > 0),
     );
   }
-  async function prepare(message, sender, opened, admission = {}) {
-    await opened;
+  async function prepare(message, sender, clicked) {
     await retirements.get(sender.tab.id);
     const doc = await getDocument(message.documentNonce, sender);
     await readSites();
@@ -499,7 +539,7 @@ export function createWebLaunchBackground({
     if (!hasWebsiteLaunchGrant(policy) || doc.revoked || !(await documentActive(doc)))
       throw { code: 'SITE_NOT_ALLOWED' };
     if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
-    if (await composerBusy(doc.source)) throw { code: 'COMPOSER_BUSY' };
+    if (await composerBusy(doc.source)) throw { code: 'COMPOSER_BUSY', composerPending: true };
     const input = normalizeInput(message.input);
     const record = {
       requestId: message.requestId,
@@ -514,6 +554,14 @@ export function createWebLaunchBackground({
       documentLeaseId: doc.documentLeaseId,
     };
     await transaction(() => {
+      const queued = findQueued(message);
+      if (
+        !queued ||
+        queued.error ||
+        queued.expiresAt <= Date.now() ||
+        cancelled.has(cancelKey(message, sender))
+      )
+        throw { code: 'EXPIRED' };
       const pendingBytes = Object.values(state.requests).reduce(
         (total, item) =>
           total +
@@ -526,6 +574,7 @@ export function createWebLaunchBackground({
       )
         throw { code: 'CAPACITY_EXCEEDED' };
       state.requests[record.requestId] = structuredClone(record);
+      state.queue = state.queue.filter(item => item !== queued);
     });
     const revision = doc.deliveryRevision;
     let response;
@@ -540,7 +589,8 @@ export function createWebLaunchBackground({
         clickSequence: message.clickSequence,
         payloadDigest: message.payloadDigest,
         input,
-        ...admission,
+        ...message.admission,
+        ...(!clicked ? { expectedQueuedPolicyRevision: message.policyRevision } : {}),
       });
     } catch (error) {
       const code = publicErrorCode(error);
@@ -571,11 +621,28 @@ export function createWebLaunchBackground({
     }
   }
   async function observe(message, sender) {
-    if (preparing.has(cancelKey(message, sender)) && !message.type.endsWith('cancel'))
+    const key = cancelKey(message, sender);
+    if ((pendingClicks.has(key) || preparing.has(key)) && !message.type.endsWith('cancel'))
       return { ok: true, pending: true };
     const doc = await getDocument(message.documentNonce, sender);
+    const queued = await transaction(() => {
+      const item = state.queue.find(
+        item => item.requestId === message.requestId && item.documentKey === doc.key,
+      );
+      if (item && message.type.endsWith('cancel')) closeQueued(item, 'CANCELLED');
+      return item;
+    });
+    if (queued) {
+      if (!queued.error) {
+        const response = await advanceWindow(doc.source.windowId, queued.requestId);
+        if (response) return response;
+      }
+      return queueResponse(queued);
+    }
     let record = await transaction(() => structuredClone(state.requests[message.requestId]));
-    if (!record && message.type.endsWith('cancel')) return { ok: true, pending: true };
+    if (!record && message.seenQueued === true)
+      return { ok: false, code: 'EXPIRED', queueClosed: true };
+    if (!record?.launchId && message.type.endsWith('cancel')) return { ok: true, pending: true };
     if (!record)
       record = {
         requestId: message.requestId,
@@ -667,6 +734,36 @@ export function createWebLaunchBackground({
     if (enabled.size) await chromeApi.scripting.registerContentScripts([...enabled.values()]);
     await chromeApi.storage.local.set({ [SITES_KEY]: grantedOriginsFrom(value.sites) });
   }
+  const windowOwners = windowId =>
+    Object.values(state?.requests ?? {}).filter(
+      record =>
+        record.source.windowId === windowId &&
+        record.source.windowInstanceId === state.windows[String(windowId)] &&
+        !terminal(record.response?.receipt),
+    );
+  const windowBusy = windowId =>
+    slots.has(windowId) ||
+    enqueuing.has(windowId) ||
+    state?.queue.some(item => item.source.windowId === windowId && !item.error) ||
+    windowOwners(windowId).some(
+      record => record.launchId || !missingWindowOwners.has(record.requestId),
+    );
+  async function reconcileWindowWork(windowId) {
+    const unknown = !slots.has(windowId)
+      ? windowOwners(windowId).find(
+          record => !record.launchId && !missingWindowOwners.has(record.requestId),
+        )
+      : undefined;
+    const result = await refreshObservations();
+    if (!unknown) return;
+    const observations = Array.isArray(result) ? result : result?.observations;
+    if (!Array.isArray(observations)) return;
+    const stillObserved = observations.some(
+      response => response?.receipt?.requestId === unknown.requestId && !terminal(response.receipt),
+    );
+    if (stillObserved) await recoverWindowOwner(unknown);
+    else missingWindowOwners.add(unknown.requestId);
+  }
   const connections = createWebLaunchConnections({
     chromeApi,
     cryptoApi,
@@ -676,7 +773,8 @@ export function createWebLaunchBackground({
     registerScripts,
     hasCachedWebsiteGrant,
     store: action => transaction(() => action((state.connections ??= {}))),
-    windowBusy: windowId => slots.has(windowId) || checkingSlots.has(windowId),
+    windowBusy,
+    reconcileWindowWork,
     notify: (source, connectionPending) => panelEvent(source, { connectionPending }),
   });
   function panelTab(message, sender) {
@@ -758,7 +856,9 @@ export function createWebLaunchBackground({
           if (record) record.presentedPanelId = panel.id;
         }
       });
-      void refreshObservations().catch(() => {});
+      void refreshObservations()
+        .then(() => advanceWindow(panel.windowId))
+        .catch(() => {});
       void connections.refresh(panel).catch(() => {});
       return { ok: true };
     }
@@ -892,65 +992,180 @@ export function createWebLaunchBackground({
       envelope: envelope(saved),
     };
   }
-  function matchesReopen(record, message, sender) {
-    return (
-      record?.response?.receipt &&
-      record.requestId === message.reopenRequestId &&
-      record.documentNonce === message.documentNonce &&
-      record.source.windowId === sender.tab.windowId &&
-      record.source.tabId === sender.tab.id &&
-      record.source.documentId === sender.documentId &&
-      record.source.origin === sender.origin
-    );
-  }
-  async function restoreOrPrepare(message, sender, opened, existing) {
-    const previousId = existing?.requestId ?? message.reopenRequestId;
-    if (!previousId) return prepare(message, sender, opened);
+  function enqueueLaunch(message, sender, opened, continuation) {
+    const { windowId } = sender.tab;
+    const expiresAt = Date.now() + WebLaunchLimits.confirmationMs;
     const didOpen = opened.then(
       () => true,
       () => false,
     );
-    const { windowId } = sender.tab;
-    const original = existing ?? (await transaction(() => state.requests[previousId]));
-    const wasReopening =
-      matchesReopen(original, message, sender) && !terminal(original.response.receipt);
-    if (!(await didOpen)) throw { code: 'PANEL_OPEN_FAILED' };
-    if (existing || wasReopening) {
-      // A notification or poll may have started before the prior run settled.
+    const previous = enqueuing.get(windowId);
+    const enqueue = (async () => {
+      await previous?.catch(() => {});
+      if (!(await didOpen)) throw { code: 'PANEL_OPEN_FAILED' };
+      const admission = continuation ? await connections.consume(message, sender) : {};
+      await retirements.get(sender.tab.id);
+      const doc = await getDocument(message.documentNonce, sender);
+      await readSites();
+      const policy = sites;
+      if (
+        !hasWebsiteLaunchGrant(policy.sites.find(site => site.origin === doc.source.origin)) ||
+        !(await documentActive(doc))
+      )
+        throw { code: 'SITE_NOT_ALLOWED' };
+      const input = normalizeInput(message.input);
+      const item = {
+        requestId: message.requestId,
+        clickSequence: message.clickSequence,
+        bindingRevision: message.bindingRevision,
+        payloadDigest: message.payloadDigest,
+        documentNonce: doc.documentNonce,
+        documentKey: doc.key,
+        source: doc.source,
+        input,
+        expiresAt,
+        admission,
+        policyRevision: policy.revision,
+      };
+      await transaction(() => {
+        if (
+          cancelled.has(cancelKey(message, sender)) ||
+          !requestSourceAvailable(item) ||
+          expiresAt <= Date.now()
+        )
+          throw { code: 'EXPIRED' };
+        if (
+          state.requests[item.requestId] ||
+          state.queue.some(other => other.requestId === item.requestId)
+        )
+          throw { code: 'REQUEST_CONFLICT' };
+        const waiting = state.queue.filter(other => !other.error && other.expiresAt > Date.now());
+        if (
+          waiting.length >= MAX_QUEUED_REQUESTS ||
+          waiting.filter(other => other.source.windowId === windowId).length >=
+            MAX_QUEUED_PER_WINDOW
+        )
+          throw { code: 'CAPACITY_EXCEEDED' };
+        state.queue.push(item);
+      });
+      return item;
+    })().finally(() => {
+      if (enqueuing.get(windowId) === enqueue) enqueuing.delete(windowId);
+    });
+    enqueuing.set(windowId, enqueue);
+    return enqueue;
+  }
+  async function panelAvailable(source) {
+    const panel = panelFor(source);
+    if (!panel) return false;
+    const documentId = panel.documentId ?? panel.contextDocumentId;
+    if (!documentId || !chromeApi.runtime.getContexts) return true;
+    const contexts = await chromeApi.runtime
+      .getContexts({
+        contextTypes: ['SIDE_PANEL'],
+        documentIds: [documentId],
+      })
+      .catch(() => []);
+    return panelFor(source) === panel && contexts.length > 0;
+  }
+  function advanceWindow(windowId, requestId, clicked = false) {
+    if (advancing.has(windowId)) return;
+    const operation = advanceWindowOnce(windowId, requestId, clicked).finally(() => {
+      advancing.delete(windowId);
+    });
+    advancing.set(windowId, operation);
+    return operation;
+  }
+  async function recoverWindowOwner(record) {
+    if (record.launchId) return record;
+    const doc = await recoverDocument(record);
+    if (!(await documentActive(doc))) return;
+    let response;
+    try {
+      response = await client.request(WebLaunchMethod.Read, {
+        source: doc.source,
+        requestId: record.requestId,
+      });
+    } catch (error) {
+      // A cold worker can recover a Prepare ACK, but must never replay the click.
+      if (publicErrorCode(error) !== 'EXPIRED') throw error;
+      return;
+    }
+    if (requestCancelled(record))
+      response = await client.request(WebLaunchMethod.Cancel, {
+        source: doc.source,
+        documentLeaseId: response.internal.documentLeaseId,
+        launchId: response.receipt.launchId,
+      });
+    return accept(record, response, { doc });
+  }
+  async function advanceWindowOnce(windowId, requestId, clicked) {
+    const head = await transaction(() =>
+      state.queue.find(
+        item => !item.error && item.expiresAt > Date.now() && item.source.windowId === windowId,
+      ),
+    );
+    if (!head || (requestId && head.requestId !== requestId)) return;
+    const { source } = head;
+    let current = slots.get(windowId);
+    if (!current) {
+      const records = windowOwners(windowId).filter(
+        record => record.source.windowInstanceId === source.windowInstanceId,
+      );
+      const saved = records.find(record => record.launchId) ?? records[0];
+      if (saved) {
+        const recovered = await recoverWindowOwner(saved).catch(() => null);
+        if (recovered === null) return;
+        if (recovered && !terminal(recovered.response?.receipt)) current = recovered.requestId;
+      }
+    }
+    if (current) {
+      slots.set(windowId, current);
       await observing?.catch(() => {});
-      const needsRefresh = existing
-        ? slots.get(windowId) === previousId
-        : !terminal(state.requests[previousId]?.response?.receipt);
-      if (needsRefresh) await refreshObservations().catch(() => {});
+      if (slots.has(windowId)) await refreshObservations().catch(() => {});
+      if (slots.has(windowId)) return;
     }
-    const owner = slots.get(windowId);
-    if (existing ? checkingSlots.get(windowId) !== message.requestId : owner !== message.requestId)
-      throw { code: 'EXPIRED' };
-    if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
-    if (existing && owner && owner !== previousId) throw { code: 'WINDOW_BUSY' };
-
-    const record = state.requests[previousId];
-    const sameLaunch =
-      matchesReopen(record, message, sender) && record.launchId === original?.launchId;
-    if (sameLaunch && !terminal(record.response.receipt) && (!existing || owner === previousId)) {
-      const available = !requestCancelled(record) && requestSourceAvailable(record);
-      if (!existing && !available) throw { code: 'EXPIRED' };
-      slots.set(windowId, record.requestId);
-      restoredRequests.add(record.requestId);
-      if (available) notifyPanel(record, { resume: true });
-      return { ok: true, reopened: true };
+    if (!clicked && !(await panelAvailable(source))) return;
+    const sender = {
+      origin: source.origin,
+      url: source.url,
+      documentId: source.documentId,
+      tab: { id: source.tabId, windowId, title: source.title },
+    };
+    if (head.error || !requestSourceAvailable(head) || requestCancelled(head)) {
+      return transaction(() => {
+        const item = findQueued(head);
+        if (!item) return;
+        closeQueued(item, 'EXPIRED');
+        return queueResponse(item);
+      });
     }
-    if (existing && owner === previousId) throw { code: 'WINDOW_BUSY' };
-    // Cancellation or retirement during a reopen must not turn it into another send.
-    if (
-      wasReopening &&
-      (!sameLaunch || record.response.receipt.execution.executionSettled !== true)
-    ) {
-      releaseSlot(windowId, message.requestId);
-      return { ok: true, reopened: true };
+    slots.set(windowId, head.requestId);
+    const pendingKey = cancelKey(head, sender);
+    preparing.add(pendingKey);
+    try {
+      return await prepare(head, sender, clicked);
+    } catch (error) {
+      const code = publicErrorCode(error);
+      if (error.prepareUncertain) return { ok: false, code, prepareUncertain: true };
+      releaseSlot(windowId, head.requestId);
+      if (error.composerPending === true) {
+        return transaction(() => {
+          const item = findQueued(head);
+          if (!item) return;
+          item.composerPending = true;
+          return queueResponse(item);
+        });
+      }
+      return transaction(() => {
+        const item = findQueued(head) ?? { ...head };
+        closeQueued(item, code);
+        if (!findQueued(head)) state.queue.push(item);
+        return queueResponse(item);
+      });
+    } finally {
+      preparing.delete(pendingKey);
     }
-    slots.set(windowId, message.requestId);
-    return prepare(message, sender, Promise.resolve());
   }
   function handleMessage(message, sender, reply) {
     if (typeof message?.type !== 'string' || !message.type.startsWith('web-launch:')) return false;
@@ -1028,8 +1243,6 @@ export function createWebLaunchBackground({
         message.bindingRevision < 1 ||
         !/^[0-9a-f]{64}$/u.test(message.payloadDigest ?? '') ||
         !normalizeInput(message.input) ||
-        (message.reopenRequestId !== undefined &&
-          (continuation || !validIdentifier(message.reopenRequestId))) ||
         (continuation &&
           (!validIdentifier(message.pendingId) || !validIdentifier(message.bindingId)))
       ) {
@@ -1037,63 +1250,24 @@ export function createWebLaunchBackground({
         return false;
       }
       const { windowId } = sender.tab;
-      const existingId = slots.get(windowId);
-      const existing = existingId ? state?.requests[existingId] : undefined;
-      const matchesSource = matchesReopen(existing, message, sender);
-      const reopening = matchesSource && !terminal(existing.response.receipt);
-      const invalidReopen =
-        existingId === message.reopenRequestId &&
-        (!matchesSource ||
-          (reopening && (requestCancelled(existing) || !requestSourceAvailable(existing))));
-      if (
-        checkingSlots.has(windowId) ||
-        (existingId &&
-          (continuation ||
-            existingId === message.requestId ||
-            !existing?.launchId ||
-            invalidReopen))
-      ) {
-        reply({ ok: false, code: 'WINDOW_BUSY' });
-        return false;
-      }
-      if (existing) {
-        checkingSlots.set(windowId, message.requestId);
-        // The replacement panel can register before Chrome resolves open().
-        if (reopening) restoredRequests.add(existingId);
-      } else slots.set(windowId, message.requestId);
       const pendingKey = cancelKey(message, sender);
-      preparing.add(pendingKey);
-      if (continuation)
-        return done(
-          connections
-            .consume(message, sender)
-            .then(admission => prepare(message, sender, Promise.resolve(), admission))
-            .catch(error => {
-              if (!error.prepareUncertain) releaseSlot(sender.tab.windowId, message.requestId);
-              throw error;
-            })
-            .finally(() => preparing.delete(pendingKey)),
-        );
-      let opened;
-      try {
-        opened = openTabSidePanel(chromeApi, sender.tab.id);
-      } catch (error) {
-        releaseSlot(sender.tab.windowId, message.requestId);
-        checkingSlots.delete(windowId);
-        preparing.delete(pendingKey);
-        reply({ ok: false, code: 'FORBIDDEN' });
+      if (pendingClicks.has(pendingKey) || preparing.has(pendingKey)) {
+        reply({ ok: false, code: 'REQUEST_CONFLICT' });
         return false;
       }
+      if (pendingClicks.size >= MAX_QUEUED_REQUESTS) {
+        reply({ ok: false, code: 'CAPACITY_EXCEEDED' });
+        return false;
+      }
+      pendingClicks.add(pendingKey);
+      const opened = continuation ? Promise.resolve() : openTabSidePanel(chromeApi, sender.tab.id);
       return done(
-        restoreOrPrepare(message, sender, opened, existing)
-          .catch(error => {
-            if (!error.prepareUncertain) releaseSlot(sender.tab.windowId, message.requestId);
-            throw error;
-          })
-          .finally(() => {
-            if (checkingSlots.get(windowId) === message.requestId) checkingSlots.delete(windowId);
-            preparing.delete(pendingKey);
-          }),
+        enqueueLaunch(message, sender, opened, continuation)
+          .then(
+            async item =>
+              (await advanceWindow(windowId, item.requestId, true)) ?? queueResponse(item),
+          )
+          .finally(() => pendingClicks.delete(pendingKey)),
       );
     }
     if (message.type === `${WEB_RUNTIME}cancel` && validIdentifier(message.requestId)) {
@@ -1166,9 +1340,10 @@ export function createWebLaunchBackground({
     for (const panel of panels.values())
       if (panel.windowId === windowId) panels.delete(panel.tabId);
     releaseSlot(windowId, slots.get(windowId));
-    checkingSlots.delete(windowId);
     void transaction(() => {
       delete state.windows[String(windowId)];
+      for (const item of state.queue)
+        if (item.source.windowId === windowId) closeQueued(item, 'EXPIRED');
       for (const [key, panel] of Object.entries(state.panels))
         if (panel.windowId === windowId) delete state.panels[key];
       return [

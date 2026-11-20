@@ -148,7 +148,7 @@ export const searchCoworkSessionMessages = async ({
   const includedIds = options.sessionIds ? new Set(options.sessionIds) : null;
   const excludedIds = new Set(options.excludeSessionIds);
   const sessions = store
-    .listSessions(undefined, { excludeNativeChildren: true })
+    .listSessions(undefined, { excludeNativeChildren: true, excludePendingFirstSend: true })
     .filter(
       session =>
         (!includedIds || includedIds.has(session.id)) &&

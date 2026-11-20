@@ -84,6 +84,16 @@ describe('first website connection', () => {
     click(event);
     content?.handleClick(event);
   };
+  const newSdk = () => {
+    click = undefined as any;
+    return createChromeAssistant({
+      window,
+      document,
+      cryptoApi: webcrypto,
+      extensionId,
+      runtimeApi: { sendMessage: (_id: string, message: any) => externalSend(message) },
+    });
+  };
 
   beforeEach(async () => {
     vi.stubGlobal('TextEncoder', TextEncoder);
@@ -223,14 +233,7 @@ describe('first website connection', () => {
       }),
     };
     controller = createWebLaunchBackground({ chromeApi: api, cryptoApi: webcrypto, client });
-    click = undefined as any;
-    sdk = createChromeAssistant({
-      window,
-      document,
-      cryptoApi: webcrypto,
-      extensionId,
-      runtimeApi: { sendMessage: (_id: string, message: any) => externalSend(message) },
-    });
+    sdk = newSdk();
     await registerPanel();
   });
   afterEach(() => {
@@ -345,7 +348,7 @@ describe('first website connection', () => {
     expect(policies[0]).toMatchObject({ allowSend: true, allowResult: true });
   });
 
-  it('keeps an already-authorized older document clickable without assuming its content bridge was injected', async () => {
+  it('repairs the bridge of an already granted document before the next real click', async () => {
     permitted = true;
     policies = [
       { origin: source.origin, enabled: true, allowSend: true, allowResult: true, revision: 1 },
@@ -355,22 +358,120 @@ describe('first website connection', () => {
     await sdk.bind(document.getElementById('launch'), input, {
       onRequest: () => events.push('request'),
     });
-    expect(api.scripting.executeScript).not.toHaveBeenCalled();
-    expect(client.request.mock.calls).toEqual([[WebLaunchMethod.SitesRead]]);
+    expect(api.scripting.executeScript).toHaveBeenCalledWith({
+      target: { tabId: source.tab.id, documentIds: [source.documentId] },
+      files: ['web-launch-content.js'],
+    });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Prepare, expect.anything());
     trustedClick();
-    await vi.waitFor(async () =>
-      expect((await registerPanel()).connectionPending?.requiresAction).toBe(true),
-    );
-    expect((await decision((await registerPanel()).connectionPending)).ok).toBe(true);
     await vi.waitFor(() => expect(events).toContain('request'));
+    await vi.waitFor(() =>
+      expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.Prepare, expect.anything()),
+    );
+    expect((await registerPanel()).connectionPending).toBeNull();
     expect(
       client.request.mock.calls.some(([method]) => method === WebLaunchMethod.SitesWrite),
     ).toBe(false);
     expect(policies[0]).toMatchObject({ allowSend: true, allowResult: true });
     expect(
       client.request.mock.calls.find(([method]) => method === WebLaunchMethod.Prepare)?.[1],
-    ).toMatchObject({ connectionOnly: true, expectedPolicyRevision: 1 });
+    ).not.toHaveProperty('connectionOnly');
   });
+
+  it('waits to offer consent while a task is active and guides a competing connection back to its existing prompt', async () => {
+    permitted = true;
+    policies = [
+      { origin: source.origin, enabled: true, allowSend: true, allowResult: true, revision: 1 },
+    ];
+    storage.chromeWebLaunchGrantedOrigins = [source.origin];
+    const handles: any[] = [];
+    await sdk.bind(document.getElementById('launch'), input, {
+      onRequest: handle => handles.push(handle),
+    });
+    trustedClick();
+    await vi.waitFor(() => expect(handles[0]?.launchId).toBe('launch-1'));
+
+    controller = createWebLaunchBackground({ chromeApi: api, cryptoApi: webcrypto, client });
+    const first = await request('waiting-connection');
+    expect(first.connectionPending).toMatchObject({
+      status: 'waiting-for-window',
+      requiresAction: false,
+    });
+    expect((await registerPanel()).connectionPending).toBeNull();
+    expect(await request('other-connection')).toEqual({
+      ok: false,
+      code: 'WINDOW_BUSY',
+      busyReason: 'connection',
+    });
+    const stored = storage.chromeWebLaunchSession.requests[handles[0].requestId].response;
+    const original = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) =>
+      method === WebLaunchMethod.Observations
+        ? {
+            observations: [
+              {
+                ...stored,
+                receipt: {
+                  ...stored.receipt,
+                  receiptRevision: stored.receipt.receiptRevision + 1,
+                  execution: { status: 'completed', executionSettled: true },
+                },
+              },
+            ],
+          }
+        : original(method, params),
+    );
+    const later = Date.now() + 6_000;
+    vi.spyOn(Date, 'now').mockReturnValue(later);
+    await vi.waitFor(async () => {
+      const ready = await external({ op: 'query', pendingId: first.connectionPending.pendingId });
+      expect(ready.connectionPending).toMatchObject({
+        status: 'awaiting-consent',
+        requiresAction: true,
+      });
+    });
+    expect((await registerPanel()).connectionPending.pendingId).toBe(
+      first.connectionPending.pendingId,
+    );
+    expect(
+      client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
+    ).toHaveLength(1);
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.SitesWrite, expect.anything());
+  });
+
+  it.each([
+    { code: 'WINDOW_BUSY', busyReason: 'connection', message: /先前发起连接的标签页/u },
+    { code: 'CAPACITY_EXCEEDED', message: /等待|等一笔完成/u },
+    { code: 'PANEL_OPEN_FAILED', message: /工具栏.*扩展图标/u },
+  ])(
+    'gives actionable guidance and accepts the next click after $code',
+    async ({ code, busyReason, message }) => {
+      vi.spyOn(window.navigator, 'language', 'get').mockReturnValue('zh-CN');
+      sdk = newSdk();
+      const attempts = vi.fn();
+      externalSend = async value => {
+        if (value.op !== 'request') return external(value);
+        attempts();
+        return { ok: false, code, busyReason };
+      };
+      const onError = vi.fn();
+      const onConnection = vi.fn();
+      await sdk.bind(document.getElementById('launch'), input, { onError, onConnection });
+
+      trustedClick();
+      await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+      expect(onError.mock.calls[0][0].code).toBe(code);
+      expect(onError.mock.calls[0][0].message).toMatch(message);
+      expect(onConnection).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          status: 'rejected',
+          message: expect.stringMatching(message),
+        }),
+      );
+      trustedClick();
+      await vi.waitFor(() => expect(attempts).toHaveBeenCalledTimes(2));
+    },
+  );
 
   it('falls back to inline connection while the desktop app is slow to check a legacy grant', async () => {
     storage.chromeWebLaunchSites = [source.origin];

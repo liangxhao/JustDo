@@ -26,10 +26,11 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 
 在 Chrome 加载本次组装的 `build/chrome-extension/chrome-extension/` 目录，启动与这份扩展匹配的桌面应用，再用 Chrome 打开[本地示例](http://127.0.0.1:4178)。Chrome 的开发者模式与加载步骤见[扩展概览](overview.md#安装或更新扩展)。
 
-在扩展设置的 **Website message sending mode** 保留 **Follow website (default)**，可以比较两个按钮的行为。
+在扩展设置的 **Website message sending mode** 保留 **Follow website (default)**，按下面的顺序验证连续发起任务。
 
-- **请求打开草稿并返回结果**使用 `draft + final`。在侧栏点击发送，最终文本和交付件名称会显示在网页上。
-- **请求自动发送**使用 `send + final`。如果这是本站首次连接，先在侧栏允许连接，再发送这次草稿。等当前请求结束后再次点击，即可体验直接发送和回传。
+1. 点击 **A · 打开草稿**（`draft + final`）。首次使用时在侧栏允许连接，再发送草稿。
+2. A 发起后保持侧栏打开，连续点击两次 **B · 自动发送**（`send + final`）。如果 A 仍在执行，每次点击都会显示独立的排队记录。
+3. 等两笔 B 依次创建各自的新对话。可以在 A 执行期间关闭侧栏，再用 Chrome 工具栏中的扩展图标打开，等待中的请求会继续处理。整个过程无需刷新网页。
 
 示例服务从组装目录读取 SDK。要把示例搬到自己的网站，把 `index.html`、`demo.js` 和组装后的 `chrome-assistant.js` 放在同一目录。[示例页面](examples/website-sdk/index.html) · [绑定与回调代码](examples/website-sdk/demo.js)
 
@@ -65,6 +66,15 @@ async function bindAssistant() {
         onRequest() {
           output.textContent = '';
         },
+        onConnection(state) {
+          status.textContent = state.message ?? '';
+        },
+        onQueue(state) {
+          status.textContent = state.message;
+        },
+        onError(error) {
+          status.textContent = error.message;
+        },
         onResult(receipt) {
           if (
             receipt.execution.executionSettled &&
@@ -82,8 +92,8 @@ async function bindAssistant() {
       },
     );
     button.disabled = false;
-  } catch (error) {
-    status.textContent = `无法使用扩展（${error.code ?? 'BRIDGE_UNAVAILABLE'}）。`;
+  } catch {
+    status.textContent = '请在 Chrome 工具栏打开扩展侧栏，检查扩展与网页 SDK 是否配套。';
   }
 }
 
@@ -139,10 +149,10 @@ void bindAssistant();
 | 绑定控制器 | `unbind(): Promise<void>`         | 停止新点击及本绑定回调，关闭其句柄，并请求取消未发送操作或撤回分享。 |
 | 请求句柄   | `requestId`、`bindingRevision`    | 本次操作的只读关联字段。                                             |
 | 请求句柄   | `launchId`                        | 接纳后可用的不透明关联 ID；不能作为跨页面访问凭据。                  |
-| 请求句柄   | `read(): Promise<{ receipt? }>`   | 查询原操作；准备仍在进行时可能暂缺 receipt。                         |
-| 请求句柄   | `cancel(): Promise<{ receipt? }>` | 撤回原操作或结果分享；响应也可能暂缺 receipt。                       |
+| 请求句柄   | `read(): Promise<{ receipt?, queueStatus? }>`   | 查询原操作，排队时返回 `queueStatus: 'queued'`。 |
+| 请求句柄   | `cancel(): Promise<{ receipt?, queueStatus? }>` | 撤回等待中的请求、尚未发出的输入或结果分享。 |
 
-`read()` 和 `cancel()` 的返回值里只使用 `receipt`，并交给处理 `onStatus` 的同一个函数。请求还在准备时，返回值可能暂时没有 `receipt`。
+`read()` 和 `cancel()` 返回 `queueStatus` 时，可按 `onQueue` 的方式显示 `queued` 或 `cancelled`。返回正式 `receipt` 后，交给处理 `onStatus` 的同一个函数。
 
 业务记录变化时，在用户下一次点击前调用 `update()`。逐次 `await`，每次传完整参数。省略 `mode` 或 `result` 会恢复该字段的默认值。首次连接等待确认时，原点击的内容已经固定，此时更新会返回 `REQUEST_CONFLICT`。等确认结束，或解绑撤回后再更新入口。
 
@@ -169,7 +179,7 @@ try {
 
 `onConnection` 可用来提示用户到侧栏授权。任务准备开始后，SDK 先调用 `onRequest`，再传回该请求的状态与结果。根据 `requestId` 关联回执，用 `receiptRevision` 忽略比当前显示更旧的回执。
 
-同一网页再次点击同一个已绑定按钮时，侧栏可以恢复仍有效的草稿或任务。网页继续通过原请求句柄接收状态和结果。
+每次真实点击都会得到新句柄。同一窗口已有未结束请求时，后续点击按顺序等待，包括连续点击同一个按钮。排队请求有自己的 requestId，在获准创建对话时才获得 launchId。
 
 下面的回执同时包含最终文本和一个 Excel 交付件。
 
@@ -199,13 +209,14 @@ try {
 
 | 回调                  | 何时使用                                                                               |
 | --------------------- | -------------------------------------------------------------------------------------- |
-| `onConnection(state)` | 首次连接的进度。包含 `status`、浏览器核验的 `origin` 和可选的公开 `code`。             |
+| `onConnection(state)` | 首次连接的进度。包含 `status`、浏览器核验的 `origin`、操作提示 `message` 和可选 `code`。 |
 | `onRequest(handle)`   | 保存本次真实点击的句柄，关联业务记录。                                                 |
+| `onQueue(state)`      | 根据 `requestId` 更新等待状态。使用 `message` 显示排队进度或处理侧栏草稿的说明。 |
 | `onStatus(receipt)`   | 更新请求、执行、结果及投递状态，同时检查可选的 receipt.error。                         |
 | `onResult(receipt)`   | 执行已结算，且输出为 available / empty / unsupported / unavailable；参数仍是整份回执。 |
-| `onError(error)`      | 处理点击或后续观察产生的异步桥接错误，根据公开 error.code 展示提示。                   |
+| `onError(error, requestId?)` | 用 `error.message` 显示下一步。 `error.code` 供业务判断和诊断。错误有对应请求时附上 requestId。 |
 
-连接状态为 `pending`、`granting`、`connected`、`rejected`、`expired`。`connected` 表示网站已连接。任务是否发送或完成要看对应请求的回执。
+连接状态为 `waiting-for-window`、`pending`、`granting`、`connected`、`rejected`、`expired`。`waiting-for-window` 表示先等同窗口任务和队列处理。窗口可用后，用户在原标签页侧栏确认连接。`connected` 表示网站已连接。任务是否发送或完成要看对应请求的回执。
 
 `bind`、`update`、`unbind`、`read` 和 `cancel` 的 Promise 拒绝在调用处捕获。回执内的 `error` 也要单独处理。收到 `onResult` 后，只有 `execution.status === 'completed'`、`executionSettled === true` 且 `output.status === 'available'` 时才读取 `output.text` 和 `output.artifacts`。用 `textContent` 显示结果。
 
@@ -247,7 +258,8 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 | SITE_NOT_ALLOWED / PERMISSION_REQUIRED                                                  | 在扩展侧栏确认实际网站和 Chrome 访问授权；已撤权的旧请求不能恢复。                               |
 | PANEL_OPEN_FAILED                                                                       | 浏览器未允许本次打开侧栏；用户可点击扩展图标检查状态，再主动发起新操作，不自动弹新标签或重试。   |
 | APP_NOT_RUNNING / NATIVE_HOST_UNAVAILABLE / CONNECTION_UNAVAILABLE / NATIVE_UNAVAILABLE | 检查桌面应用与扩展连接，再由用户确认下一步；已有句柄只读核对。                                   |
-| COMPOSER_BUSY / WINDOW_BUSY                                                             | 先保留或处理侧栏现有草稿/网页请求，不覆盖、夹带附件或自动排队发送。                              |
+| COMPOSER_BUSY                                                                          | 处理侧栏中占用输入框的草稿或当前任务，再重新点击。入队前识别到侧栏已有草稿时，`onQueue` 会提示原请求仍在队列。 |
+| WINDOW_BUSY                                                                            | 按 `error.message` 回到先前申请连接的标签页，在侧栏允许或拒绝，再回到当前网页点击。 |
 | CONFIRMATION_REQUIRED / RESULT_CONSENT_REQUIRED                                         | 查看侧栏提示，核对草稿后点击发送。                                                               |
 | CONTEXT_TOO_LARGE / REQUEST_TOO_LARGE / INVALID_REQUEST / UNSUPPORTED_INPUT             | 在下一次操作前缩短并修正完整参数，普通文本入口不支持斜杠命令或附件。                             |
 | EXPIRED / LEASE_REVOKED                                                                 | 连接申请、请求回执或网页访问权限已失效。按下方说明检查是否需要重新发起。                         |

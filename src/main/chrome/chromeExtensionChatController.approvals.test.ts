@@ -69,6 +69,7 @@ function fixture(knownUnsent = false, retry = false) {
       return timing;
     }),
     finishSessionRun: vi.fn(),
+    clearSessionPendingFirstSend: vi.fn(() => false),
   };
   const router = { isSessionActive: () => false,
     prepareSession: vi.fn(async () => ({ sessionKey: binding.sessionKey, gatewaySessionId: binding.nativeSessionId })),
@@ -87,16 +88,18 @@ function fixture(knownUnsent = false, retry = false) {
       options.onAccepted?.();
     }),
   };
+  const onSessionsChanged = vi.fn();
   const controller = new ChromeExtensionChatController({
     ensureEngineRunning: async () => ({ phase: 'running' }) as never,
     getStore: () => store as never, getRuntime: () => runtime as never, getRouter: () => router as never,
+    onSessionsChanged,
   });
   const request = vi.fn<NonNullable<AppServerConnectionContext['request']>>(async () => ({ decision: 'accept' }));
   const context = { notify: vi.fn(), isClosed: () => false, request, isExperimentalApiEnabled: () => true };
   const peer = new AbortController();
   const trusted = { assertCurrent: vi.fn(), approvals: { context, signal: peer.signal },
     ...(retry ? { automaticErrorRetry: true as const } : {}) };
-  return { controller, request, routing, nativeRequest, native, router, trusted, store,
+  return { controller, request, routing, nativeRequest, native, router, trusted, store, onSessionsChanged,
     waits, successor, launched, classify: () => classify(CONTEXT_OVERFLOW_ERROR_CODE),
     settle: () => { settled = true; } };
 }
@@ -123,6 +126,16 @@ describe('browser controller approval admission', () => {
     expect(h.routing.owns(h.native)).toBe(false);
     expect(h.request).not.toHaveBeenCalled();
     expect(h.store.finishSessionRun).toHaveBeenCalledWith('timing', 'failed', expect.any(Number));
+    expect(h.store.clearSessionPendingFirstSend).not.toHaveBeenCalled();
+    expect(h.onSessionsChanged).not.toHaveBeenCalled();
+  });
+
+  it('publishes a detached website draft only after ordinary Chrome chat receives its native ACK', async () => {
+    const h = fixture();
+    h.store.clearSessionPendingFirstSend.mockReturnValueOnce(true);
+    await h.controller.sendMessage({ sessionId: 'browser-thread', clientTurnId: logicalId, message: 'Detached draft' });
+    expect(h.store.clearSessionPendingFirstSend).toHaveBeenCalledExactlyOnceWith('browser-thread');
+    expect(h.onSessionsChanged).toHaveBeenCalledOnce();
   });
 
   it('keeps attachment-only input empty instead of inserting fabricated text', async () => {

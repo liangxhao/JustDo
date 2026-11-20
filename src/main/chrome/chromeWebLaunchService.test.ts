@@ -28,7 +28,9 @@ const tick = async () => { for (let count = 0; count < 20; count += 1) await Pro
 function fixture() {
   const db = new Database(':memory:'); databases.push(db);
   db.exec(`CREATE TABLE kv (key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at INTEGER NOT NULL);
-    CREATE TABLE cowork_sessions (id TEXT PRIMARY KEY,title TEXT,status TEXT,cwd TEXT,execution_mode TEXT,permission_mode TEXT,active_skill_ids TEXT,agent_id TEXT,model_ref TEXT,forked_from_session_id TEXT,forked_from_session_title TEXT,forked_from_entry_id TEXT,source TEXT,pinned INTEGER,created_at INTEGER,updated_at INTEGER);`);
+    CREATE TABLE cowork_sessions (id TEXT PRIMARY KEY,title TEXT,status TEXT,cwd TEXT,execution_mode TEXT,permission_mode TEXT,active_skill_ids TEXT,agent_id TEXT,model_ref TEXT,forked_from_session_id TEXT,forked_from_session_title TEXT,forked_from_entry_id TEXT,source TEXT,pinned INTEGER,created_at INTEGER,updated_at INTEGER,native_session_key TEXT,native_parent_session_id TEXT,group_id TEXT);
+    CREATE TABLE cowork_config (key TEXT PRIMARY KEY,value TEXT,updated_at INTEGER);
+    CREATE TABLE cowork_session_runs (session_id TEXT NOT NULL);`);
   const cowork = new CoworkStore(db);
   vi.spyOn(cowork, 'getConfig').mockReturnValue({ workingDirectory: path.resolve('.'), executionMode: 'local', permissionMode: 'full' } as never);
   vi.spyOn(cowork, 'getSession').mockImplementation(id => db.prepare('SELECT id,source FROM cowork_sessions WHERE id = ?').get(id) as never);
@@ -42,7 +44,7 @@ function fixture() {
   let beforeMessageRead: (() => Promise<void>) | undefined;
   const wire = vi.fn();
   const changed = vi.fn();
-  const threadCreated = vi.fn();
+  const sessionsChanged = vi.fn();
   const request = vi.fn(async (method: string, params?: unknown): Promise<unknown> => {
     if (method === 'sessions.describe') return { session: { key: binding.sessionKey, sessionId: binding.nativeSessionId, lifecycleRevision: binding.lifecycleRevision } };
     if (method === 'chat.message.get') {
@@ -73,16 +75,17 @@ function fixture() {
       return { sessionId: value.sessionId, runId: value.clientTurnId, nativeRunId: latestBinding.nativeRunId };
     }),
   };
-  const deps = { getDatabase: () => db, getStore: () => cowork, chat: chat as never, getRuntime: () => runtime as never, now: () => now, onChanged: changed, onThreadCreated: threadCreated };
+  const deps = { getDatabase: () => db, getStore: () => cowork, chat: chat as never, getRuntime: () => runtime as never, now: () => now, onChanged: changed, onSessionsChanged: sessionsChanged };
   const service = new ChromeWebLaunchService(deps);
   services.push(service);
   service.writeSite({ expectedRevision: 0, origin: source.origin, enabled: true, allowSend: true, allowResult: true });
-  const prepare = (options: { source?: WebLaunchSource; input?: WebLaunchInput; requestId?: string; clickSequence?: number; documentLeaseId?: string; connectionOnly?: true; expectedPolicyRevision?: number } = {}) => {
+  const prepare = (options: { source?: WebLaunchSource; input?: WebLaunchInput; requestId?: string; clickSequence?: number; documentLeaseId?: string; connectionOnly?: true; expectedPolicyRevision?: number; expectedQueuedPolicyRevision?: number } = {}) => {
     const value = options.input ?? input;
     return service.prepare({ source: options.source ?? source, requestId: options.requestId ?? 'request-1', clickSequence: options.clickSequence ?? 1, bindingRevision: 1,
       payloadDigest: webLaunchDigest(canonicalWebLaunchInput(value)), input: value, ...(options.documentLeaseId ? { documentLeaseId: options.documentLeaseId } : {}),
       ...(options.connectionOnly !== undefined ? { connectionOnly: options.connectionOnly } : {}),
-      ...(options.expectedPolicyRevision !== undefined ? { expectedPolicyRevision: options.expectedPolicyRevision } : {}) });
+      ...(options.expectedPolicyRevision !== undefined ? { expectedPolicyRevision: options.expectedPolicyRevision } : {}),
+      ...(options.expectedQueuedPolicyRevision !== undefined ? { expectedQueuedPolicyRevision: options.expectedQueuedPolicyRevision } : {}) });
   };
   const actual = { prompt: input.prompt, context: input.context, permissionMode: 'full' };
   const submit = (prepared: ReturnType<typeof prepare>, extra: Record<string, unknown> = {}) => service.submit({ launchId: prepared.receipt.launchId, composeRevision: prepared.internal.composeRevision, input: actual, submission: 'automatic', shareResult: true, ...extra });
@@ -94,7 +97,7 @@ function fixture() {
       ...(mediaUrls ? { openclawDelivery: { mediaUrls } } : {}) }];
     stream?.({ kind: 'agent', event: { ...binding, sessionId: binding.nativeSessionId, runId: accepted!.nativeRunId, agentSeq: 9, stream: 'lifecycle', data: { phase: status === 'completed' ? 'end' : 'error', executionSettled: true, terminalReply: { disposition: 'visible', text } } } } as never);
   };
-  return { db, cowork, service, deps, prepare, submit, ref, chat, wire, changed, threadCreated, runtime, request, finish,
+  return { db, cowork, service, deps, prepare, submit, ref, chat, wire, changed, sessionsChanged, runtime, request, finish,
     get hooks() { return latestHooks; },
     get accepted() { return latestBinding; },
     set beforeSend(value: (() => Promise<void>) | undefined) { beforeSend = value; },
@@ -120,7 +123,21 @@ describe('webpage launch admission and persistence', () => {
     expect(serialized).not.toContain(input.prompt);
     expect(serialized).not.toContain(input.context!.text);
     expect(Object.keys(f.state().receipts)).toHaveLength(1);
-    expect(f.threadCreated).toHaveBeenCalledTimes(1);
+    expect(f.cowork.listSessions()).toHaveLength(1);
+    expect(f.cowork.listSessions(undefined, { excludePendingFirstSend: true })).toEqual([]);
+    expect(f.sessionsChanged).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('recognizes a pre-upgrade draft without hiding a detached chat with run records (%s)', hasRuns => {
+    const f = fixture();
+    const { internal: { threadId } } = f.prepare();
+    f.cowork.clearSessionPendingFirstSend(threadId);
+    if (hasRuns) f.db.prepare('INSERT INTO cowork_session_runs (session_id) VALUES (?)').run(threadId);
+
+    services.push(new ChromeWebLaunchService(f.deps));
+
+    expect(f.cowork.listSessionSearchSummaries().map(row => row.id)).toEqual(hasRuns ? [threadId] : []);
+    expect(f.sessionsChanged).toHaveBeenCalledTimes(hasRuns ? 0 : 1);
   });
 
   it('requires manual sending for the connection request and honors the next click automatically', async () => {
@@ -255,8 +272,31 @@ describe('webpage launch admission and persistence', () => {
     expect(() => f.prepare({ connectionOnly: true, expectedPolicyRevision: captured })).toThrow('POLICY_CONFLICT');
     expect(f.state()).toEqual(state);
     expect(f.db.prepare('SELECT COUNT(*) AS count FROM cowork_sessions').get()).toEqual({ count: 0 });
-    expect(f.threadCreated).not.toHaveBeenCalled();
+    expect(f.sessionsChanged).not.toHaveBeenCalled();
     expect(f.chat.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('requires a fresh click after the queued task loses its policy generation', () => {
+    const f = fixture();
+    const captured = f.service.sites().revision;
+    f.service.setSendMode({ expectedRevision: captured, sendMode: 'send' });
+    expect(() => f.prepare({ expectedQueuedPolicyRevision: captured })).toThrow('POLICY_CONFLICT');
+    expect(f.sessionsChanged).not.toHaveBeenCalled();
+    expect(f.prepare({ requestId: 'fresh-click', clickSequence: 2,
+      expectedQueuedPolicyRevision: f.service.sites().revision })).toMatchObject({
+      receipt: { requestId: 'fresh-click' }, internal: { effectiveMode: 'send' },
+    });
+  });
+
+  it('releases an expired unsent draft when refreshing the window observations', async () => {
+    const f = fixture();
+    const waiting = f.prepare();
+    f.advance(16 * 60_000);
+    expect((await f.service.observations()).observations[0].receipt).toMatchObject({
+      launchId: waiting.receipt.launchId, request: { status: 'expired' },
+      execution: { executionSettled: false },
+    });
+    expect(f.prepare({ requestId: 'next', clickSequence: 2 }).receipt.requestId).toBe('next');
   });
 
   it('does not treat connection-only admission as permission to enable a revoked origin', () => {
@@ -266,7 +306,7 @@ describe('webpage launch admission and persistence', () => {
     expect(() => f.prepare({ connectionOnly: true, expectedPolicyRevision: state.policyRevision })).toThrow('SITE_NOT_ALLOWED');
     expect(f.state()).toEqual(state);
     expect(f.db.prepare('SELECT COUNT(*) AS count FROM cowork_sessions').get()).toEqual({ count: 0 });
-    expect(f.threadCreated).not.toHaveBeenCalled();
+    expect(f.sessionsChanged).not.toHaveBeenCalled();
     expect(f.wire).not.toHaveBeenCalled();
   });
 
@@ -288,7 +328,7 @@ describe('webpage launch admission and persistence', () => {
     expect(Object.keys(f.state().receipts)).toHaveLength(0);
     expect(Object.keys(f.state().leases)).toHaveLength(0);
     expect(f.changed).not.toHaveBeenCalled();
-    expect(f.threadCreated).not.toHaveBeenCalled();
+    expect(f.sessionsChanged).not.toHaveBeenCalled();
   });
 
   it('restores a lost prepare ACK by exact document/request ID without preparing again', async () => {

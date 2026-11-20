@@ -108,7 +108,7 @@ export function parseWebLaunchInput(raw: unknown): WebLaunchInput {
 
 export function parseWebLaunchPrepare(raw: unknown): WebLaunchPrepare {
   const value = webLaunchRecord(raw);
-  assertWebLaunchKeys(value, ['source', 'documentLeaseId', 'requestId', 'bindingRevision', 'clickSequence', 'payloadDigest', 'input', 'connectionOnly', 'expectedPolicyRevision']);
+  assertWebLaunchKeys(value, ['source', 'documentLeaseId', 'requestId', 'bindingRevision', 'clickSequence', 'payloadDigest', 'input', 'connectionOnly', 'expectedPolicyRevision', 'expectedQueuedPolicyRevision']);
   const connectionOnly = value.connectionOnly !== undefined || value.expectedPolicyRevision !== undefined;
   if (connectionOnly && value.connectionOnly !== true) return failWebLaunch('INVALID_REQUEST');
   const expectedPolicyRevision = connectionOnly ? webLaunchInteger(value.expectedPolicyRevision, 0) : undefined;
@@ -121,6 +121,8 @@ export function parseWebLaunchPrepare(raw: unknown): WebLaunchPrepare {
     payloadDigest, input,
     ...(value.documentLeaseId !== undefined ? { documentLeaseId: webLaunchString(value.documentLeaseId) } : {}),
     ...(connectionOnly ? { connectionOnly: true, expectedPolicyRevision } : {}),
+    ...(value.expectedQueuedPolicyRevision !== undefined
+      ? { expectedQueuedPolicyRevision: webLaunchInteger(value.expectedQueuedPolicyRevision, 0) } : {}),
   };
 }
 

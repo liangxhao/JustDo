@@ -105,7 +105,8 @@ export function installWebLaunchContent({
       return;
     if (!response?.ok) {
       const code = publicErrorCode(response);
-      if (phase === 'launch') {
+      if (response?.queueClosed === true) request.failure = code;
+      else if (phase === 'launch') {
         if (response?.ok === false && response.prepareUncertain !== true) request.failure = code;
       } else if (phase === 'read' && code === 'EXPIRED') {
         // A read may have overtaken Prepare without its ACK. Keep observing that same request.
@@ -128,10 +129,30 @@ export function installWebLaunchContent({
       }
       return;
     }
+    if (response.queueStatus && !request.launchId) {
+      const queueReason = response.queueReason === 'composer' ? response.queueReason : undefined;
+      if (
+        request.queueStatus === 'cancelled' ||
+        (request.queueStatus === response.queueStatus && request.queueReason === queueReason)
+      )
+        return;
+      request.queueStatus = response.queueStatus;
+      request.queueReason = queueReason;
+      post({
+        kind: 'queue',
+        bindingId: request.bindingId,
+        requestId: request.requestId,
+        status: response.queueStatus,
+        ...(queueReason ? { reason: queueReason } : {}),
+      });
+      return;
+    }
     if (response.receipt) {
       if (request.receipt && response.receipt.receiptRevision < request.receipt.receiptRevision)
         return;
       request.launchId = response.receipt.launchId;
+      request.queueStatus = undefined;
+      request.queueReason = undefined;
       request.receipt = response.receipt;
       post({
         kind: 'status',
@@ -149,6 +170,7 @@ export function installWebLaunchContent({
       requestId: request.requestId,
       launchId,
       result: request.result,
+      ...(request.queueStatus === 'queued' ? { seenQueued: true } : {}),
     });
     if (kind === 'read' && response?.code === 'EXPIRED' && !launchId && request.launchId)
       return { ok: true };
@@ -173,11 +195,11 @@ export function installWebLaunchContent({
   }
 
   function launchRequest(bindingId, binding, continuation) {
-    if (binding.reopening) return;
     if (requests.size >= 100) {
       const retired = [...requests.entries()].find(
         ([, request]) =>
           request.failure ||
+          request.queueStatus === 'cancelled' ||
           request.receipt?.execution.executionSettled === true ||
           CLOSED_REQUEST.has(request.receipt?.request.status),
       );
@@ -196,36 +218,19 @@ export function installWebLaunchContent({
       sequence >= Number.MAX_SAFE_INTEGER
     )
       return;
-    const prior = continuation
-      ? undefined
-      : [...requests.values()].reverse().find(
-          request =>
-            request.bindingId === bindingId &&
-            request.bindingRevision === binding.revision &&
-            !request.awaitingReopen &&
-            !request.failure &&
-            request.receipt?.delivery.status !== 'revoked' &&
-            request.receipt?.execution.executionSettled !== true &&
-            !CLOSED_REQUEST.has(request.receipt?.request.status),
-        );
     const requestId = randomIdentifier(cryptoApi);
     const request = {
       requestId,
       bindingId,
       bindingRevision: binding.revision,
       result: binding.input.result,
-      awaitingReopen: Boolean(prior),
     };
     requests.set(requestId, request);
-    const announce = () =>
-      post({ kind: 'request', bindingId, requestId, bindingRevision: request.bindingRevision });
-    if (prior) binding.reopening = true;
-    else announce();
+    post({ kind: 'request', bindingId, requestId, bindingRevision: request.bindingRevision });
     // Keep this call on the real click stack. No digest, storage or permission await here.
     const operation = send({
       type: `${WEB_RUNTIME}${continuation ? 'connection-launch' : 'launch'}`,
       ...(continuation ? { pendingId: continuation.pendingId, bindingId } : {}),
-      ...(prior ? { reopenRequestId: prior.requestId } : {}),
       requestId,
       bindingRevision: binding.revision,
       clickSequence: ++sequence,
@@ -233,22 +238,14 @@ export function installWebLaunchContent({
       input: binding.input,
       title: doc.title,
     });
-    const complete = response => {
-      if (prior) {
-        binding.reopening = false;
-        if (terminated || requests.get(requestId) !== request || !bindings.has(bindingId)) return;
-        if (response?.ok === true && response.reopened === true) {
-          requests.delete(requestId);
-          return;
-        }
-        request.awaitingReopen = false;
-        announce();
-      }
-      acceptResponse(request, response, 'launch');
-    };
     void Promise.resolve(operation).then(
-      complete,
-      error => complete({ ok: false, code: publicErrorCode(error), prepareUncertain: true }),
+      response => acceptResponse(request, response, 'launch'),
+      error =>
+        acceptResponse(
+          request,
+          { ok: false, code: publicErrorCode(error), prepareUncertain: true },
+          'launch',
+        ),
     );
     return operation;
   }
@@ -323,7 +320,12 @@ export function installWebLaunchContent({
       reply(
         message,
         response?.ok
-          ? { ok: true, receipt: response.receipt }
+          ? {
+              ok: true,
+              receipt: response.receipt,
+              ...(response.queueStatus ? { queueStatus: response.queueStatus } : {}),
+              ...(response.queueReason === 'composer' ? { queueReason: response.queueReason } : {}),
+            }
           : { ok: false, code: publicErrorCode(response) },
       );
     } catch (error) {
@@ -338,7 +340,7 @@ export function installWebLaunchContent({
       for (const request of requests.values()) {
         if (
           request.failure ||
-          request.awaitingReopen ||
+          request.queueStatus === 'cancelled' ||
           request.receipt?.delivery.status === 'revoked' ||
           CLOSED_REQUEST.has(request.receipt?.request.status)
         )
@@ -375,6 +377,10 @@ export function installWebLaunchContent({
     }
   }
   const probe = (message, sender, reply) => {
+    if (sender?.id === chromeApi.runtime.id && message?.type === `${WEB_RUNTIME}bridge-present`) {
+      reply({ active: !terminated && !doc.prerendering });
+      return false;
+    }
     if (sender?.id === chromeApi.runtime.id && message?.type === `${WEB_RUNTIME}connection-ready`) {
       if (
         terminated ||

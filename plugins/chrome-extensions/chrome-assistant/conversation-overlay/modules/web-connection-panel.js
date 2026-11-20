@@ -4,6 +4,7 @@ export const WebConnectionMessage = {
   Decide: 'web-launch:connection:decide',
 };
 const Status = {
+  Waiting: 'waiting-for-window',
   Awaiting: 'awaiting-consent',
   Granting: 'granting',
   Connected: 'connected',
@@ -103,7 +104,9 @@ export function createWebConnectionPanel({ document, chrome, request, onNotice }
     if (
       pending?.pendingId === value.pendingId &&
       (value.revision < pending.revision ||
-        (!ACTIVE.has(pending.status) && ACTIVE.has(value.status)))
+        (!ACTIVE.has(pending.status) &&
+          pending.status !== Status.Waiting &&
+          ACTIVE.has(value.status)))
     )
       return;
     const next =
@@ -124,7 +127,12 @@ export function createWebConnectionPanel({ document, chrome, request, onNotice }
         Math.max(0, next.expiresAt - Date.now()) + 1,
       );
     render();
-    if (statusChanged && !ACTIVE.has(next.status) && next.status !== Status.Connected)
+    if (
+      statusChanged &&
+      !ACTIVE.has(next.status) &&
+      next.status !== Status.Connected &&
+      next.status !== Status.Waiting
+    )
       onNotice?.(
         next.code && next.code !== 'CONNECTION_REJECTED'
           ? errorText(next.code)

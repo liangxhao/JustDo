@@ -8,6 +8,93 @@ import {
   publicErrorCode,
 } from './web-launch-security.js';
 
+const DEFINITE_CONNECTION_REJECTIONS = new Set([
+  'CAPACITY_EXCEEDED',
+  'EXPIRED',
+  'FORBIDDEN',
+  'INVALID_REQUEST',
+  'PANEL_OPEN_FAILED',
+  'WINDOW_BUSY',
+]);
+
+const messages = {
+  en: {
+    generic: 'Open the extension side panel in this tab and check the request before trying again.',
+    opening: 'Opening the extension side panel.',
+    waiting:
+      'Your connection request is waiting for this window’s tasks to finish. Then confirm it in this tab’s side panel.',
+    confirm: 'Open the extension side panel in this tab and select Allow connection.',
+    checking: 'Checking this website’s Chrome permissions.',
+    connectionExpired:
+      'This connection request expired. Click the webpage button to request the connection again.',
+    connected:
+      'Website connected. Review the draft in the side panel and select Send when it is ready.',
+    queued:
+      'The request is queued. Keep its tab open so the side panel can start it when it is next.',
+    composer:
+      'The request is queued. Send or clear the current draft and attachments in the side panel to continue. Copy any text you want to keep first.',
+    cancelled: 'This request was cancelled.',
+    errors: {
+      APP_NOT_RUNNING: 'Open the desktop app, then return to this tab and click the button again.',
+      CAPACITY_EXCEEDED:
+        'There are too many pending requests. Wait for one to finish or cancel a queued request, then click again.',
+      COMPOSER_BUSY:
+        'Finish the current task or send, save, or clear the current draft in the side panel, then click this button again.',
+      CONNECTION_PENDING:
+        'Return to the tab where you started the existing connection. Allow or decline it in the side panel, then come back and click this button again.',
+      CONNECTION_REJECTED:
+        'The connection was declined. Click the webpage button again if you want to connect this website.',
+      EXPIRED:
+        'This request has expired. Check the side panel for the original request before clicking again.',
+      FORBIDDEN:
+        'Use the website button in the main tab. If it still cannot open the side panel, ask the website administrator to check the integration.',
+      INVALID_REQUEST: 'Ask the website administrator to check this button’s configuration.',
+      LEASE_REVOKED:
+        'This page’s connection ended. Return to the webpage and click the button to reconnect.',
+      PANEL_OPEN_FAILED:
+        'Open the extension side panel from the Chrome toolbar in this tab, then click the webpage button again.',
+      PERMISSION_REQUIRED:
+        'Click the webpage button again and allow Chrome to access this website when prompted.',
+      POLICY_CONFLICT:
+        'Website permissions or settings changed. Check the extension settings, then click the webpage button again.',
+      SITE_NOT_ALLOWED:
+        'Click the webpage button again and confirm this website in the extension side panel.',
+      WINDOW_BUSY:
+        'Finish the work or connection already open in this Chrome window, then return to this tab and click the button again.',
+    },
+  },
+  zh: {
+    generic: '请打开此标签页的扩展侧栏核对请求状态，再决定是否重新点击。',
+    opening: '正在打开扩展侧栏。',
+    waiting: '连接请求正在等待本窗口的任务处理完毕。届时请在此标签页的侧栏确认连接。',
+    confirm: '请打开此标签页的扩展侧栏，点击「允许连接」。',
+    checking: '正在核对 Chrome 的网站访问权限。',
+    connectionExpired: '这次连接申请已过期，请点击网页按钮重新申请。',
+    connected: '网站已连接。草稿就绪后，请在侧栏核对并点击发送。',
+    queued: '请求已排队。请保留此标签页，轮到时会在侧栏处理。',
+    composer:
+      '请求已排队。请先发送或清空侧栏里的草稿和附件，队列会继续处理。如需保留文字，可以先复制。',
+    cancelled: '本次请求已取消。',
+    errors: {
+      APP_NOT_RUNNING: '请先打开桌面应用，再回到此标签页点击按钮。',
+      CAPACITY_EXCEEDED: '待处理请求已满。请等一笔完成或取消一笔排队请求，再点击按钮。',
+      COMPOSER_BUSY: '请先在侧栏处理当前任务，或发送、保存、清空当前草稿，再回到此页点击按钮。',
+      CONNECTION_PENDING:
+        '请回到先前发起连接的标签页，在侧栏允许或拒绝该连接，再回到此页点击按钮。',
+      CONNECTION_REJECTED: '网站连接已拒绝。如果仍想连接此网站，请再次点击网页按钮。',
+      EXPIRED: '这次请求已过期。请先在侧栏核对原请求，再决定是否重新点击。',
+      FORBIDDEN: '请在网站的主标签页使用此按钮。若仍无法打开侧栏，请联系网站管理员检查接入。',
+      INVALID_REQUEST: '请联系网站管理员检查这个按钮的配置。',
+      LEASE_REVOKED: '此页的连接已结束，请回到网页点击按钮重新连接。',
+      PANEL_OPEN_FAILED: '请在此标签页点击 Chrome 工具栏的扩展图标打开侧栏，再点击网页按钮。',
+      PERMISSION_REQUIRED: '请再次点击网页按钮，并按 Chrome 的提示允许访问此网站。',
+      POLICY_CONFLICT: '站点授权或发送设置已更改。请核对扩展设置，再从网页点击按钮。',
+      SITE_NOT_ALLOWED: '请再次点击网页按钮，在扩展侧栏确认此网站的连接权限。',
+      WINDOW_BUSY: '请先处理这个 Chrome 窗口中已有的任务或连接申请，再回到此页点击按钮。',
+    },
+  },
+};
+
 export function createChromeAssistant({
   window: view = window,
   document: doc = document,
@@ -20,7 +107,13 @@ export function createChromeAssistant({
   const pending = new Map();
   const bindings = new Map();
   const origin = view.location.origin;
-  const failure = code => Object.assign(new Error(code), { code });
+  const copy = view.navigator?.language?.startsWith('zh') ? messages.zh : messages.en;
+  const errorMessage = (code, busyReason) => {
+    const key = code === 'WINDOW_BUSY' && busyReason === 'connection' ? 'CONNECTION_PENDING' : code;
+    return Object.hasOwn(copy.errors, key) ? copy.errors[key] : copy.generic;
+  };
+  const failure = (code, busyReason) =>
+    Object.assign(new Error(errorMessage(code, busyReason)), { code });
   const externalAvailable = Boolean(extensionId && runtimeApi?.sendMessage);
   function external(op, extra = {}) {
     return new Promise((resolve, reject) => {
@@ -30,14 +123,19 @@ export function createChromeAssistant({
         response = runtimeApi.sendMessage(extensionId, { type: WEB_CONNECTION, op, ...extra });
       } catch (error) {
         view.clearTimeout(timer);
-        reject(error);
+        reject(failure(publicErrorCode(error)));
         return;
       }
       Promise.resolve(response).then(
         value => {
           view.clearTimeout(timer);
           if (value?.ok) resolve(value);
-          else reject(failure(publicErrorCode(value)));
+          else {
+            const error = failure(publicErrorCode(value), value?.busyReason);
+            error.definitive =
+              value?.ok === false && DEFINITE_CONNECTION_REJECTIONS.has(error.code);
+            reject(error);
+          }
         },
         error => {
           view.clearTimeout(timer);
@@ -46,12 +144,29 @@ export function createChromeAssistant({
       );
     });
   }
-  function connectionEvent(binding, value) {
-    if (binding.closed) return;
+  function connectionEvent(binding, value, guidance) {
+    if (binding.closed || !value) return;
     if (value?.pendingId) binding.connectionId = value.pendingId;
     const status =
       { 'awaiting-consent': 'pending', cancelled: 'rejected' }[value.status] ?? value.status;
-    const event = { status, origin, ...(value.code ? { code: value.code } : {}) };
+    const message =
+      guidance ??
+      (value.code
+        ? errorMessage(value.code)
+        : {
+            'waiting-for-window': copy.waiting,
+            pending: value.requiresAction ? copy.confirm : copy.opening,
+            granting: copy.checking,
+            connected: copy.connected,
+            rejected: copy.cancelled,
+            expired: copy.connectionExpired,
+          }[status]);
+    const event = {
+      status,
+      origin,
+      ...(value.code ? { code: value.code } : {}),
+      ...(message ? { message } : {}),
+    };
     const key = JSON.stringify(event);
     if (binding.connectionEvent !== key) {
       binding.connectionEvent = key;
@@ -224,9 +339,27 @@ export function createChromeAssistant({
     }
     const state = binding.requests.get(message.requestId);
     if (!state) return;
+    if (
+      message.kind === 'queue' &&
+      !state.launchId &&
+      !state.terminal &&
+      ['queued', 'cancelled'].includes(message.status)
+    ) {
+      state.terminal = message.status === 'cancelled';
+      binding.callbacks.onQueue?.({
+        requestId: message.requestId,
+        status: message.status,
+        message: state.terminal
+          ? copy.cancelled
+          : message.reason === 'composer'
+            ? copy.composer
+            : copy.queued,
+      });
+      return;
+    }
     if (message.kind === 'error') {
       if (message.terminal === true) state.terminal = true;
-      binding.callbacks.onError?.(failure(publicErrorCode(message)));
+      binding.callbacks.onError?.(failure(publicErrorCode(message)), message.requestId);
       return;
     }
     if (
@@ -303,11 +436,11 @@ export function createChromeAssistant({
       error => {
         if (binding.closed || !binding.bootstrapPending || binding.generation !== generation)
           return;
-        if (error.code === 'PANEL_OPEN_FAILED' || error.code === 'WINDOW_BUSY') {
+        if (error.definitive) {
           binding.bootstrapPending = false;
-          connectionEvent(binding, { status: 'rejected', code: error.code });
+          connectionEvent(binding, { status: 'rejected', code: error.code }, error.message);
         } else pollConnection(binding);
-        binding.callbacks.onError?.(failure(publicErrorCode(error)));
+        binding.callbacks.onError?.(error);
       },
     );
   }

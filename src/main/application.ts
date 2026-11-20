@@ -2866,7 +2866,7 @@ if (agentBridgeArgv) {
           getRuntime: getOpenClawRuntimeAdapter,
           getDefaultModelRef: resolveDefaultAgentModelRef,
           onChanged: () => extensionChatServer?.notifyWebLaunchChanged(),
-          onThreadCreated: notifyCoworkSessionsChanged,
+          onSessionsChanged: notifyCoworkSessionsChanged,
         });
         extensionChatServer = new ChromeExtensionChatServer(
           extensionChatController,

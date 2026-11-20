@@ -57,7 +57,12 @@ import {
   resolvePermissionMode,
 } from '../../shared/security/approvals';
 import { isCustodySessionKey } from '../openclaw/sessions/openclawSessionKeys';
-import { readSessionDirectory, readSessionSummaryProjection } from './coworkSessionDirectory';
+import {
+  readSessionDirectory,
+  readSessionSummaryProjection,
+  SESSION_PENDING_FIRST_SEND_KEY_PREFIX,
+  type SessionProjectionFilters,
+} from './coworkSessionDirectory';
 
 // Default working directory for new users
 export const getDefaultWorkingDirectory = (): string => {
@@ -973,6 +978,7 @@ export class CoworkStore {
       this.db.prepare('DELETE FROM cowork_sessions WHERE id = ?').run(id);
       this.clearGoalExecutionSnapshot(id);
       this.clearSessionBranchPending(id);
+      this.clearSessionPendingFirstSend(id);
     })();
   }
 
@@ -987,6 +993,8 @@ export class CoworkStore {
       this.db
         .prepare(`DELETE FROM cowork_config WHERE key IN (${placeholders})`)
         .run(...branchKeys);
+      const firstSendKeys = ids.map(id => `${SESSION_PENDING_FIRST_SEND_KEY_PREFIX}${id}`);
+      this.db.prepare(`DELETE FROM cowork_config WHERE key IN (${placeholders})`).run(...firstSendKeys);
     })();
   }
 
@@ -994,7 +1002,7 @@ export class CoworkStore {
     this.db.prepare('UPDATE cowork_sessions SET pinned = ? WHERE id = ?').run(pinned ? 1 : 0, id);
   }
 
-  listSessions(agentId?: string, options?: { excludeNativeChildren?: boolean }): CoworkSessionSummary[] {
+  listSessions(agentId?: string, options?: SessionProjectionFilters): CoworkSessionSummary[] {
     return readSessionSummaryProjection(this.db, { agentId, ...options });
   }
 
@@ -1008,13 +1016,13 @@ export class CoworkStore {
     return [...new Set([this.getConfig().workingDirectory, ...rows.map(row => row.directory)])];
   }
 
-  listSessionDirectory(agentId?: string, options?: { excludeNativeChildren?: boolean }): SessionDirectoryEntry[] {
+  listSessionDirectory(agentId?: string, options?: SessionProjectionFilters): SessionDirectoryEntry[] {
     return readSessionDirectory(this.db, agentId, options);
   }
 
   readSessionSummaries(
     sessionIds: string[],
-    options?: { excludeNativeChildren?: boolean },
+    options?: SessionProjectionFilters,
   ): CoworkSessionSummary[] {
     if (sessionIds.length > SESSION_SUMMARY_BATCH_LIMIT) {
       throw new Error(
@@ -1025,7 +1033,10 @@ export class CoworkStore {
   }
 
   listSessionSearchSummaries(): CoworkSessionSummary[] {
-    return readSessionSummaryProjection(this.db, { excludeNativeChildren: true });
+    return readSessionSummaryProjection(this.db, {
+      excludeNativeChildren: true,
+      excludePendingFirstSend: true,
+    });
   }
 
   /** Adopt the same current defaults as a new conversation once, before first use. */
@@ -1184,6 +1195,20 @@ export class CoworkStore {
   }
 
   // Config operations
+  markSessionPendingFirstSend(sessionId: string): boolean {
+    return this.db.prepare(`INSERT OR IGNORE INTO cowork_config (key, value, updated_at)
+      SELECT ?, 'true', ? FROM cowork_sessions AS session
+      WHERE session.id = ? AND session.source = ? AND session.native_session_key IS NULL
+        AND NOT EXISTS (SELECT 1 FROM cowork_session_runs AS run WHERE run.session_id = session.id)`)
+      .run(`${SESSION_PENDING_FIRST_SEND_KEY_PREFIX}${sessionId}`, Date.now(), sessionId, CoworkSessionSource.ChromeExtension)
+      .changes > 0;
+  }
+
+  clearSessionPendingFirstSend(sessionId: string): boolean {
+    return this.db.prepare('DELETE FROM cowork_config WHERE key = ?')
+      .run(`${SESSION_PENDING_FIRST_SEND_KEY_PREFIX}${sessionId}`).changes > 0;
+  }
+
   markSessionBranchPending(sessionId: string): void {
     this.db
       .prepare(

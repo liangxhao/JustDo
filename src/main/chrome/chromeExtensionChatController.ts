@@ -1876,14 +1876,22 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
           tracked.physicalRunId = runId;
           approvals?.prepare(binding);
         },
-        ...(approvals || trusted?.onNativeAccepted ? { onNativeAccepted: binding => {
+        onNativeAccepted: binding => {
           if (this.activeTurns.get(session.id) === tracked) {
             tracked.physicalRunId = binding.nativeRunId;
             tracked.lifecycleRevision = binding.lifecycleRevision;
           }
-          approvals?.accepted(binding);
-          trusted?.onNativeAccepted?.(binding);
-        } } : {}),
+          try {
+            approvals?.accepted(binding);
+            trusted?.onNativeAccepted?.(binding);
+          } finally {
+            try {
+              if (store.clearSessionPendingFirstSend(session.id)) this.deps.onSessionsChanged?.();
+            } catch {
+              console.warn('[ChromeExtensionChat] Failed to publish the accepted conversation to the desktop list.');
+            }
+          }
+        },
         onAccepted: () => {
           accepted = true;
           const current = this.activeTurns.get(session.id);

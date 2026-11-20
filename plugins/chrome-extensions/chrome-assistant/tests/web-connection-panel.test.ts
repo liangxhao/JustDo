@@ -63,6 +63,19 @@ function mount() {
 }
 
 describe('website connection consent', () => {
+  it('leaves the composer available while consent is waiting and shows the prompt when it is ready', () => {
+    const { panel, permission, request, onNotice } = mount();
+    panel.accept(pending({ revision: 2, status: 'waiting-for-window', requiresAction: false }));
+    expect(card().classList.contains('hidden')).toBe(true);
+    expect(onNotice).not.toHaveBeenCalled();
+
+    panel.accept(pending({ revision: 3, requiresAction: true }));
+    expect(card().classList.contains('hidden')).toBe(false);
+    expect(button('Allow connection').disabled).toBe(false);
+    expect(permission).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('discloses the exact origin, first draft, and later click scope before approval', () => {
     const { request } = mount();
     const copy = document.getElementById('webConnectionCard')?.textContent;

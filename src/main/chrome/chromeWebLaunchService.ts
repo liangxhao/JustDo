@@ -45,7 +45,7 @@ interface Dependencies {
   getRuntime: () => OpenClawRuntimeAdapter | null;
   getDefaultModelRef?: () => string | undefined;
   onChanged?: () => void;
-  onThreadCreated?: () => void;
+  onSessionsChanged?: () => void;
   now?: () => number;
   uuid?: () => string;
 }
@@ -91,8 +91,18 @@ export class ChromeWebLaunchService {
     this.uuid = deps.uuid ?? randomUUID;
     this.epoch = this.uuid();
     this.store = new ChromeWebLaunchStore(deps.getDatabase, this.now);
+    let draftVisibilityChanged = false;
     this.store.mutate(state => {
       for (const receipt of Object.values(state.receipts)) {
+        // Old prepares left the shell in the desktop list. A detached draft may
+        // already have been sent as ordinary Chrome chat; preserve that history.
+        if (receipt.executionStatus === 'not-started' && !receipt.executionSettled &&
+            !receipt.dispatchAttempted && !receipt.nativeBinding) {
+          const store = deps.getStore();
+          const thread = store.getSession(receipt.threadId);
+          if (thread && !thread.historyBinding && store.markSessionPendingFirstSend(thread.id))
+            draftVisibilityChanged = true;
+        }
         if (receipt.processEpoch === this.epoch || settled(receipt) || closedRequestStatuses.has(receipt.requestStatus)) continue;
         receipt.autoAllowed = false;
         receipt.composeRevision += 1;
@@ -104,6 +114,9 @@ export class ChromeWebLaunchService {
         receipt.receiptRevision += 1;
       }
     });
+    if (draftVisibilityChanged) {
+      try { deps.onSessionsChanged?.(); } catch { /* The markers are already committed. */ }
+    }
   }
 
   getOperations(): Partial<Record<WebLaunchMethod, AppServerOperation>> {
@@ -296,14 +309,17 @@ export class ChromeWebLaunchService {
     const value = parseWebLaunchPrepare(raw);
     buildStrictWebLaunchContext(value.source.origin, value.input.context?.text);
     this.policy(this.store.read(), value.source.origin);
-    const config = this.deps.getStore().getConfig();
+    const productStore = this.deps.getStore();
+    const config = productStore.getConfig();
     const cwd = resolveTaskWorkingDirectory(config.workingDirectory.trim());
     if (!cwd) return failWebLaunch('NATIVE_UNAVAILABLE');
     let error: string | undefined;
-    let created = false;
     let prepared!: WebLaunchStoredReceipt;
     this.store.mutate(state => {
       this.prune(state);
+      if (value.expectedQueuedPolicyRevision !== undefined &&
+          value.expectedQueuedPolicyRevision !== state.policyRevision)
+        return failWebLaunch('POLICY_CONFLICT');
       if (value.connectionOnly) {
         this.policy(state, value.source.origin);
         if (value.expectedPolicyRevision !== state.policyRevision) return failWebLaunch('POLICY_CONFLICT');
@@ -345,8 +361,8 @@ export class ChromeWebLaunchService {
       }
       const title = value.input.prompt.trim().split(/\r?\n/u, 1)[0].trim().slice(0, 50);
       const permissionMode = PermissionMode.Full;
-      const thread = this.deps.getStore().createSession(title, cwd, config.executionMode || 'local', [], 'main', permissionMode, this.deps.getDefaultModelRef?.(), undefined, CoworkSessionSource.ChromeExtension);
-      created = true;
+      const thread = productStore.createSession(title, cwd, config.executionMode || 'local', [], 'main', permissionMode, this.deps.getDefaultModelRef?.(), undefined, CoworkSessionSource.ChromeExtension);
+      productStore.markSessionPendingFirstSend(thread.id);
       const requiresUnknownConfirmation = state.unknownOrigins.includes(value.source.origin);
       const preference = state.sendMode ?? WebLaunchSendMode.Website;
       const mode = value.connectionOnly || preference === WebLaunchSendMode.Website ? value.input.mode : preference;
@@ -371,7 +387,6 @@ export class ChromeWebLaunchService {
     });
     this.retireMemory();
     if (error) return failWebLaunch(error);
-    if (created) { try { this.deps.onThreadCreated?.(); } catch { /* The product row is already committed. */ } }
     this.changed();
     return this.metadata(prepared);
   }
@@ -599,7 +614,7 @@ export class ChromeWebLaunchService {
     if (owner) {
       owner.closedReason = reason;
       owner.active = false;
-      if (!owner.delegated) this.markNotSent(id, owner);
+      if (!owner.delegated || this.get(this.store.read(), id).notSent) this.markNotSent(id, owner);
     } else this.store.mutate(state => {
       const item = this.get(state, id);
       if (item.dispatchAttempted || item.clientTurnId && !item.notSent) return;
@@ -609,6 +624,12 @@ export class ChromeWebLaunchService {
       this.bump(item);
     });
     return true;
+  }
+
+  private expireUnsent(receipt: WebLaunchStoredReceipt): void {
+    if (!receipt.executionSettled && !closedRequestStatuses.has(receipt.requestStatus)
+        && !receipt.dispatchAttempted && (!receipt.clientTurnId || receipt.notSent)
+        && receipt.deadlineAt <= this.now()) this.closeUnsent(receipt.launchId, 'EXPIRED');
   }
 
   private capture(launchId: string, owner: Owner, event: ReturnType<typeof normalizeAgentEvent>['event']): void {
@@ -741,11 +762,8 @@ export class ChromeWebLaunchService {
   async read(raw: unknown): Promise<WebLaunchResponse> {
     const reference = this.reference(raw);
     await this.refresh(reference.receipt.launchId);
+    this.expireUnsent(this.get(this.store.read(), reference.receipt.launchId));
     let receipt = this.get(this.store.read(), reference.receipt.launchId);
-    if (!receipt.dispatchAttempted && !receipt.clientTurnId && receipt.deadlineAt <= this.now()) {
-      this.closeUnsent(receipt.launchId, 'EXPIRED');
-      receipt = this.get(this.store.read(), receipt.launchId);
-    }
     let output: WebLaunchFinalOutput | undefined;
     if (receipt.executionStatus === 'completed' && receipt.result === 'final' && receipt.shareResult && !receipt.shareRevoked && !receipt.deliveryRevoked
       && !['unavailable', 'unsupported', 'empty', 'withheld'].includes(receipt.outputStatus)) output = await this.readResult(receipt.launchId);
@@ -874,7 +892,9 @@ export class ChromeWebLaunchService {
   }
 
   async observations() {
-    const ids = Object.values(this.store.read().receipts).filter(item => item.observed && !item.executionSettled).map(item => item.launchId);
+    const active = Object.values(this.store.read().receipts).filter(item => item.observed && !item.executionSettled);
+    for (const item of active) this.expireUnsent(item);
+    const ids = active.map(item => item.launchId);
     for (let offset = 0; offset < ids.length; offset += 4) await Promise.allSettled(ids.slice(offset, offset + 4).map(id => this.refresh(id)));
     return { observations: Object.values(this.store.read().receipts).filter(item => item.observed).map(item => ({
       ...this.metadata(item), origin: item.source.origin, createdAt: item.createdAt,

@@ -750,6 +750,28 @@ test('excludes existing child bindings from desktop lists and keeps them address
   expect(reloaded.listNativeChildBindings(parent.id)).toEqual([{ id: child.id, sessionKey: childKey }]);
 });
 
+test('keeps the prepared Chrome draft out of desktop lists and search until it is published', () => {
+  insertSession('chrome-draft', 2);
+  insertSession('desktop', 1);
+  db.prepare("UPDATE cowork_sessions SET source = 'chrome-extension' WHERE id = ?").run('chrome-draft');
+  expect(store.markSessionPendingFirstSend('chrome-draft')).toBe(true);
+  store.beginSessionRun({ sessionId: 'chrome-draft', clientTurnId: 'turn-1', startedAt: 3 });
+  const reloaded = new CoworkStore(db);
+  const desktop = { excludePendingFirstSend: true };
+  const ids = ['chrome-draft', 'desktop'];
+
+  expect(reloaded.getSession('chrome-draft')).toMatchObject({ source: 'chrome-extension' });
+  expect(reloaded.listSessions().map(row => row.id)).toEqual(ids);
+  expect(reloaded.listSessions('main', desktop).map(row => row.id)).toEqual(['desktop']);
+  expect(reloaded.listSessionDirectory('main', desktop).map(row => row.id)).toEqual(['desktop']);
+  expect(reloaded.readSessionSummaries(ids, desktop).map(row => row.id)).toEqual(['desktop']);
+  expect(reloaded.listSessionSearchSummaries().map(row => row.id)).toEqual(['desktop']);
+
+  expect(reloaded.clearSessionPendingFirstSend('chrome-draft')).toBe(true);
+  expect(reloaded.listSessionDirectory('main', desktop).map(row => row.id)).toEqual(ids);
+  expect(reloaded.listSessionSearchSummaries().map(row => row.id)).toEqual(ids);
+});
+
 test('hides the worktree checkbox by default and persists only its visibility preference', () => {
   expect(store.getConfig().showWorktreeCheckbox).toBe(false);
   store.setConfig({ showWorktreeCheckbox: true });

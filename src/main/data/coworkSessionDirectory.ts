@@ -31,17 +31,23 @@ interface SessionProjectionRow {
   branch_pending?: number;
 }
 
-interface ProjectionOptions {
+export const SESSION_PENDING_FIRST_SEND_KEY_PREFIX = 'sessionPendingFirstSend:';
+
+export interface SessionProjectionFilters {
+  excludeNativeChildren?: boolean;
+  excludePendingFirstSend?: boolean;
+}
+
+interface ProjectionOptions extends SessionProjectionFilters {
   agentId?: string;
   sessionIds?: string[];
   summaries?: boolean;
-  excludeNativeChildren?: boolean;
 }
 
 /** A bounded number of SQL queries, independent of the number of sessions returned. */
 const readProjection = (
   db: Database.Database,
-  { agentId, sessionIds, summaries = false, excludeNativeChildren = false }: ProjectionOptions,
+  { agentId, sessionIds, summaries = false, excludeNativeChildren, excludePendingFirstSend }: ProjectionOptions,
 ): SessionProjectionRow[] => {
   if (sessionIds?.length === 0) return [];
   // The production schema owns both tables. Small store fixtures may omit them.
@@ -60,6 +66,9 @@ const readProjection = (
   const predicates: string[] = [];
   const parameters: string[] = [];
   if (excludeNativeChildren) predicates.push('session.native_parent_session_id IS NULL');
+  if (excludePendingFirstSend)
+    predicates.push(`NOT EXISTS (SELECT 1 FROM cowork_config AS config
+      WHERE config.key = '${SESSION_PENDING_FIRST_SEND_KEY_PREFIX}' || session.id)`);
   if (agentId) {
     predicates.push('session.agent_id = ?');
     parameters.push(agentId);
@@ -135,7 +144,7 @@ const mapDirectoryEntry = (row: SessionProjectionRow): SessionDirectoryEntry => 
 export const readSessionDirectory = (
   db: Database.Database,
   agentId?: string,
-  options?: Pick<ProjectionOptions, 'excludeNativeChildren'>,
+  options?: SessionProjectionFilters,
 ): SessionDirectoryEntry[] =>
   readProjection(db, { agentId, ...options }).filter(isVisible).map(mapDirectoryEntry);
 

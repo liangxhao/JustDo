@@ -290,12 +290,18 @@ test('validates directory and summary inputs before reading product metadata', a
   expect(store.listSessionDirectory).not.toHaveBeenCalled();
   expect(store.readSessionSummaries).not.toHaveBeenCalled();
   await expect(directory(null, 'main')).resolves.toEqual({ success: true, entries: [] });
-  expect(store.listSessionDirectory).toHaveBeenCalledExactlyOnceWith('main', { excludeNativeChildren: true });
+  expect(store.listSessionDirectory).toHaveBeenCalledExactlyOnceWith('main', {
+    excludeNativeChildren: true,
+    excludePendingFirstSend: true,
+  });
   await expect(summaries(null, ['one', 'one', 'two'])).resolves.toEqual({
     success: true,
     sessions: [],
   });
-  expect(store.readSessionSummaries).toHaveBeenCalledExactlyOnceWith(['one', 'two'], { excludeNativeChildren: true });
+  expect(store.readSessionSummaries).toHaveBeenCalledExactlyOnceWith(['one', 'two'], {
+    excludeNativeChildren: true,
+    excludePendingFirstSend: true,
+  });
   await expect(search(null)).resolves.toEqual({ success: true, sessions: [] });
 });
 

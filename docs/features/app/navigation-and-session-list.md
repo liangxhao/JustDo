@@ -29,6 +29,7 @@ Agent 可用 `sessions_list` 读取或搜索可见会话的标题。`displayName
 `source: chrome-extension`，`External` 汇总 `external.origin: cli` 的 CLI、ACP 和通用 app-server 会话。
 历史外部映射保留原来源，按常规目录展示，不自动归入 External 或新增专用来源组。
 内部来源标识不随显示名改变，会话标题旁不再重复显示外部来源小标签。
+网页发起的 Chrome 草稿只在侧栏可用。桌面目录和搜索在原生确认接收首条消息后显示该会话。
 
 外部会话的运行指示来自 Gateway 活动观测和当前进程仍在处理的外部执行请求。连接暂不可用时保留最近确认的活动。
 引擎确认空闲且外部客户端没有正在准备或执行的任务时，旧回执仍未结算的会话停止转圈。

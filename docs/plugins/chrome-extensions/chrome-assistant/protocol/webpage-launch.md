@@ -56,6 +56,7 @@ type Prepare = {
   };
   connectionOnly?: true;
   expectedPolicyRevision?: number;
+  expectedQueuedPolicyRevision?: number;
 };
 ```
 
@@ -63,6 +64,7 @@ type Prepare = {
 
 - 后台以浏览器 `MessageSender` 为来源，网页字段不能覆盖。`payloadDigest` 是 `canonicalWebLaunchInput` 的 UTF-8 SHA-256。
 - 后台为原文档的新真实点击发送 `prepare`，由 Main 按当前文档来源选择有效租约或创建新租约。成功接纳的回执各自保留租约 ID，站点授权和已消费的点击序号跨租约生效。
+- `prepare` 在同一事务内为预留的产品会话记录待首发标记。侧栏可以恢复该草稿。Chrome 聊天 Controller 在核验首条原生发送 ACK 后清除标记，桌面目录和搜索此时才展示该会话。
 - 相同文档请求身份与摘要返回原回执。同 ID 换内容返回 `REQUEST_CONFLICT`。
 - 已消费的序号若缺少完整回执，返回 `EXPIRED`，不重新创建会话。
 
@@ -79,14 +81,18 @@ type Prepare = {
 3. 受限 `prepare` 成对传入 `connectionOnly:true` 和确认连接时的全局 `expectedPolicyRevision`。`false`、缺失 revision 或单独 revision 均拒绝。Main 在同一同步事务内比较全局 revision，保留原 `input` 和 `payloadDigest`，强制原请求等待侧栏手动发送。已存在的较高授权回执不能重新解释为受限续接。
 4. 用户在可信侧栏点击发送时确认该次操作。请求为 `final` 时，这一点击同时确认本轮回传。
 
+每个窗口可保留一笔等待中的连接申请。窗口仍有已接纳任务或任务队列时，初始状态为 `waiting-for-window`，保留原浏览器文档、绑定和两分钟期限，侧栏不弹出授权模态框。队列可用后重新读取策略，进入 `awaiting-consent`。其他连接申请保留兼容错误码 `WINDOW_BUSY`，并附有限原因 `busyReason: 'connection'`，供 SDK 提示回原标签页处理已有授权。
+
+已具备当前站点授权和 Chrome host permission 的页面可由 `probe` 按精确浏览器文档修复内容桥。修复只注入内容脚本，后续发送仍需要新真实点击。
+
 ### ACK 丢失与只读恢复
 
 `prepare` 或 `submit` 的 ACK 丢失后只调用 `read`。尚未收到本次 `prepare` 的 ACK 时用 `source + requestId` 找回回执，已知回执时用 `source + documentLeaseId + launchId`。后台只从新接纳或找回的本次请求更新文档租约；迟到的旧请求响应不能改写当前租约。
 同一仍 active 的文档可用新 `channelGeneration` 只读重连。文档租约终止撤销后不可恢复。
 
-同一按钮再次被真实点击时，内容脚本可以在内部请求中附上 `reopenRequestId`。后台校验原请求的窗口、标签页、文档 ID、origin 和隔离通道身份后，打开原侧栏，返回 `reopened: true`。网页继续使用原回执。重开的草稿等待用户确认发送。
+每次真实点击都分配新的 requestId 和点击序号。后台在点击链上调用 `sidePanel.open()`，再按 Chrome 窗口保存有界 FIFO。队首在前一请求精确结算或已明确关闭、原标签页与侧栏可用后，使用原点击快照进入 `prepare`。Main 继续原子限制每窗口一个未结束请求。
 
-后续真实点击遇到已登记的窗口占用或需要恢复的旧请求时，后台先在点击链上调用 `sidePanel.open()`，再向 Main 核对旧请求的元数据回执。匹配的回执确认执行已结算或请求已关闭后，本次点击可创建新请求，即使网页仍拿着旧状态或侧栏已经关闭。仍在执行或状态未知的旧请求继续占用窗口，只有符合上述身份条件的同按钮点击可以恢复它。核对期间，同一窗口的其他点击不会排队发送。
+等待中可以用原句柄查询或取消。网页得到 `queueStatus`，Main 接纳后才得到正式回执和 launchId。排队输入最长保留 15 分钟。提升队首时重新检查原文档、站点权限、输入框和绝对期限，并由 Main 在准入事务里用 `expectedQueuedPolicyRevision` 比较入队时的全局策略版本。直接点击后立即准入的路径沿用当前策略。未知 Prepare 保留只读恢复，队列不会重放原点击。
 
 ## 回执与内部字段
 

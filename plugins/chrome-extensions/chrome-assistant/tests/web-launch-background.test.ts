@@ -198,7 +198,7 @@ describe('web launch background', () => {
           tab: { ...sender.tab, id: 8 },
         },
       ),
-    ).toEqual({ ok: false, code: 'WINDOW_BUSY' });
+    ).toMatchObject({ ok: true, queueStatus: 'queued' });
 
     api.tabs.onRemoved.addListener.mock.calls[0][0](7);
     expect(await invoke(controller, { ...stop, ...panelScope }, panelSender(7))).toEqual({
@@ -253,7 +253,7 @@ describe('web launch background', () => {
     );
   });
 
-  it('rejects iframes before opening and denies a second window request without queueing it', async () => {
+  it('rejects iframes before opening and queues an independent request while the window is occupied', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     expect(await invoke(controller, launch, { ...sender, frameId: 1 })).toEqual({
       ok: false,
@@ -263,22 +263,19 @@ describe('web launch background', () => {
     await invoke(controller, launch);
     expect(
       await invoke(controller, { ...launch, requestId: 'request-2', clickSequence: 2 }),
-    ).toEqual({ ok: false, code: 'WINDOW_BUSY' });
+    ).toMatchObject({ ok: true, queueStatus: 'queued' });
     expect(
       client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
     ).toHaveLength(1);
   });
 
   it.each([
-    { panelOpen: true, sameButton: true, restart: false },
-    { panelOpen: true, sameButton: false, restart: false },
-    { panelOpen: false, sameButton: true, restart: false },
-    { panelOpen: false, sameButton: false, restart: false },
-    { panelOpen: false, sameButton: true, restart: true },
-    { panelOpen: false, sameButton: false, restart: true },
+    { panelOpen: true, restart: false },
+    { panelOpen: false, restart: false },
+    { panelOpen: false, restart: true },
   ])(
-    'starts a fresh request after an unobserved terminal (panelOpen=$panelOpen, sameButton=$sameButton, restart=$restart)',
-    async ({ panelOpen, sameButton, restart }) => {
+    'starts a fresh request after an unobserved terminal (panelOpen=$panelOpen, restart=$restart)',
+    async ({ panelOpen, restart }) => {
       let controller = createWebLaunchBackground({ chromeApi: api, client });
       const panel = { ...panelSender(7), documentId: 'panel-document' };
       const draft = structuredClone(reply);
@@ -324,7 +321,6 @@ describe('web launch background', () => {
         ...launch,
         requestId: 'request-2',
         clickSequence: 2,
-        ...(sameButton ? { reopenRequestId: launch.requestId } : {}),
       });
       expect(order[0]).toBe('open');
       expect(await next).toMatchObject({ ok: true, receipt: { launchId: 'launch-2' } });
@@ -338,7 +334,7 @@ describe('web launch background', () => {
     },
   );
 
-  it('cancels an incoming click during reconciliation and declines concurrent clicks', async () => {
+  it('cancels a queued click during reconciliation and keeps the next click queued', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     await invoke(controller, launch);
     const original = client.request.getMockImplementation()!;
@@ -354,7 +350,7 @@ describe('web launch background', () => {
     await vi.waitFor(() => expect(finishObservations).toBeDefined());
     expect(
       await invoke(controller, { ...launch, requestId: 'request-3', clickSequence: 3 }),
-    ).toEqual({ ok: false, code: 'WINDOW_BUSY' });
+    ).toMatchObject({ ok: true, queueStatus: 'queued' });
     await invoke(controller, {
       type: 'web-launch:document:cancel',
       documentNonce: launch.documentNonce,
@@ -374,138 +370,88 @@ describe('web launch background', () => {
       ],
     });
 
-    expect(await next).toEqual({ ok: false, code: 'EXPIRED' });
+    expect(await next).toEqual({ ok: true, queueStatus: 'cancelled' });
     expect(
       client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
     ).toHaveLength(1);
   });
 
   it.each([false, true])(
-    'reopens and restores the same draft without another Prepare after restart=%s',
+    'starts each queued click once and in order after a closed panel returns (restart=%s)',
     async restart => {
       let controller = createWebLaunchBackground({ chromeApi: api, client });
-      await invoke(
-        controller,
-        { type: 'web-launch:panel:register', ...panelScope },
-        panelSender(7),
-      );
-      await invoke(controller, launch);
-      if (restart) controller = createWebLaunchBackground({ chromeApi: api, client });
-
-      api.sidePanel.open.mockClear();
-      order.length = 0;
-      const click = {
-        ...launch,
-        requestId: 'request-2',
-        clickSequence: 2,
-        reopenRequestId: launch.requestId,
-      };
-      if (!restart) {
-        expect(
-          await invoke(controller, click, { ...sender, documentId: 'other-document' }),
-        ).toEqual({ ok: false, code: 'WINDOW_BUSY' });
-        expect(await invoke(controller, { ...click, documentNonce: 'other-nonce' })).toEqual({
-          ok: false,
-          code: 'WINDOW_BUSY',
-        });
-        expect(api.sidePanel.open).not.toHaveBeenCalled();
-      }
-      const reopening = invoke(controller, click);
-      expect(order).toEqual(['open']);
-      expect(await reopening).toEqual({ ok: true, reopened: true });
-      const registration = await invoke(
-        controller,
-        { type: 'web-launch:panel:register', ...panelScope, panelInstanceId: 'replacement-panel' },
-        panelSender(7),
-      );
-      expect(registration.envelope).toMatchObject({
-        requestId: 'request-1',
-        launchId: 'launch-1',
-        restored: true,
-        prompt: 'hello',
-      });
-      expect(
-        client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
-      ).toHaveLength(1);
-    },
-  );
-
-  it.each([
-    { confirmed: false, restart: false },
-    { confirmed: true, restart: false },
-    { confirmed: true, restart: true },
-  ])(
-    'does not restore or resend a draft cancelled while opening (confirmed=$confirmed, restart=$restart)',
-    async ({ confirmed, restart }) => {
-      let controller = createWebLaunchBackground({ chromeApi: api, client });
-      await invoke(controller, launch);
-      if (restart) controller = createWebLaunchBackground({ chromeApi: api, client });
-      let finishOpen!: () => void;
-      api.sidePanel.open.mockImplementationOnce(
-        () =>
-          new Promise<void>(resolve => {
-            finishOpen = resolve;
-          }),
-      );
-      const reopening = invoke(controller, {
-        ...launch,
-        requestId: 'request-2',
-        clickSequence: 2,
-        reopenRequestId: launch.requestId,
-      });
-
+      const panel = { ...panelSender(7), documentId: 'panel-document' };
+      api.runtime.getContexts = vi.fn().mockResolvedValue([{ documentId: panel.documentId }]);
+      const register = { type: 'web-launch:panel:register', ...panelScope };
+      await invoke(controller, register, panel);
       const original = client.request.getMockImplementation()!;
-      let finishCancel!: (value: unknown) => void;
-      client.request.mockImplementation(async (method, params) =>
-        method === WebLaunchMethod.Cancel
-          ? new Promise(resolve => {
-              finishCancel = resolve;
-            })
-          : original(method, params),
-      );
-      const cancelling = invoke(controller, {
-        type: 'web-launch:document:cancel',
-        documentNonce: launch.documentNonce,
-        requestId: launch.requestId,
-        launchId: 'launch-1',
+      let settled: any;
+      client.request.mockImplementation(async (method, params) => {
+        if (method === WebLaunchMethod.Observations)
+          return { observations: settled ? [settled] : [] };
+        if (method === WebLaunchMethod.Prepare)
+          return {
+            ...reply,
+            receipt: {
+              ...reply.receipt,
+              requestId: params.requestId,
+              launchId: `launch-${params.clickSequence}`,
+            },
+          };
+        return original(method, params);
       });
-      await vi.waitFor(() => expect(finishCancel).toBeDefined());
-      const replacement = await invoke(
-        controller,
-        { type: 'web-launch:panel:register', ...panelScope, panelInstanceId: 'replacement-panel' },
-        panelSender(7),
-      );
-      expect(replacement.envelope).toBeUndefined();
-      const cancelled = {
-        ...reply,
-        receipt: { ...reply.receipt, request: { status: 'cancelled' } },
+      const click = (sequence: number) =>
+        invoke(controller, {
+          ...launch,
+          requestId: `request-${sequence}`,
+          clickSequence: sequence,
+        });
+      const read = (sequence: number) =>
+        invoke(controller, {
+          type: 'web-launch:document:read',
+          requestId: `request-${sequence}`,
+          documentNonce: launch.documentNonce,
+        });
+      const finish = (sequence: number) => {
+        settled = {
+          ...reply,
+          receipt: {
+            ...reply.receipt,
+            requestId: `request-${sequence}`,
+            launchId: `launch-${sequence}`,
+            receiptRevision: 2,
+            request: { status: 'submitted' },
+            execution: { status: 'completed', executionSettled: true },
+          },
+        };
       };
-      if (confirmed) {
-        finishCancel(cancelled);
-        await cancelling;
-      }
-      finishOpen();
-      expect(await reopening).toEqual({ ok: true, reopened: true });
-      expect(api.runtime.sendMessage.mock.calls.some(([message]) => message.resume)).toBe(false);
+      expect(await click(1)).toMatchObject({ ok: true, receipt: { launchId: 'launch-1' } });
+      const queued = await Promise.all([click(2), click(3)]);
+      expect(queued).toEqual([
+        { ok: true, queueStatus: 'queued' },
+        { ok: true, queueStatus: 'queued' },
+      ]);
+
+      api.runtime.getContexts.mockResolvedValue([]);
+      if (restart) controller = createWebLaunchBackground({ chromeApi: api, client });
+      finish(1);
+      expect(await read(2)).toMatchObject({ ok: true, queueStatus: 'queued' });
+      await invoke(controller, register, panel);
+      api.runtime.getContexts.mockResolvedValue([{ documentId: panel.documentId }]);
+      expect(await read(3)).toMatchObject({ ok: true, queueStatus: 'queued' });
+      expect(await read(2)).toMatchObject({ ok: true, receipt: { launchId: 'launch-2' } });
+      expect(await read(3)).toMatchObject({ ok: true, queueStatus: 'queued' });
+      finish(2);
+      expect(await read(3)).toMatchObject({ ok: true, receipt: { launchId: 'launch-3' } });
       expect(
-        client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
-      ).toHaveLength(1);
-      if (!confirmed) {
-        finishCancel(cancelled);
-        await cancelling;
-      }
-      client.request.mockImplementation(async (method, params) =>
-        method === WebLaunchMethod.Prepare
-          ? { ...reply, receipt: { ...reply.receipt, requestId: params.requestId } }
-          : original(method, params),
-      );
-      expect(
-        await invoke(controller, { ...launch, requestId: 'request-3', clickSequence: 3 }),
-      ).toMatchObject({ ok: true, receipt: { requestId: 'request-3' } });
+        client.request.mock.calls
+          .filter(([method]) => method === WebLaunchMethod.Prepare)
+          .map(([, params]) => params.clickSequence),
+      ).toEqual([1, 2, 3]);
     },
   );
 
-  it('ignores only a busy composer whose exact Chrome side-panel context has closed', async () => {
+  it('keeps the same request queued behind a local draft until its panel can receive it', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     const oldContext = { documentId: 'old-panel-context' };
     api.runtime.getContexts = vi.fn().mockResolvedValue([oldContext]);
@@ -520,14 +466,86 @@ describe('web launch background', () => {
       documentUrls: [panel.url],
     });
 
-    expect(await invoke(controller, launch)).toEqual({ ok: false, code: 'COMPOSER_BUSY' });
+    expect(await invoke(controller, launch)).toEqual({
+      ok: true,
+      queueStatus: 'queued',
+      queueReason: 'composer',
+    });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Prepare, expect.anything());
+    const read = {
+      type: 'web-launch:document:read',
+      documentNonce: launch.documentNonce,
+      requestId: launch.requestId,
+    };
     api.runtime.getContexts.mockResolvedValue([]);
-    expect(await invoke(controller, launch)).toMatchObject({ ok: true });
+    expect(await invoke(controller, read)).toMatchObject({ ok: true, queueStatus: 'queued' });
     expect(api.runtime.getContexts).toHaveBeenLastCalledWith({
       contextTypes: ['SIDE_PANEL'],
       documentIds: ['old-panel-context'],
     });
+    api.runtime.getContexts.mockResolvedValue([{ documentId: 'new-panel-context' }]);
+    await invoke(
+      controller,
+      {
+        type: 'web-launch:panel:register',
+        ...panelScope,
+        panelInstanceId: 'new-panel',
+        composerBusy: false,
+      },
+      panel,
+    );
+    expect(await invoke(controller, read)).toMatchObject({
+      ok: true,
+      receipt: { requestId: launch.requestId, launchId: 'launch-1' },
+    });
   });
+
+  it.each([false, true])(
+    'reconciles a lost Prepare ACK after restart without replaying the old click (found=%s)',
+    async found => {
+      const original = client.request.getMockImplementation()!;
+      client.request.mockImplementation(async (method, params) => {
+        if (method === WebLaunchMethod.Prepare) {
+          if (params.requestId === launch.requestId)
+            throw { code: 'REQUEST_TIMEOUT', requestSent: true };
+          return {
+            ...reply,
+            receipt: { ...reply.receipt, requestId: params.requestId, launchId: 'launch-2' },
+          };
+        }
+        if (method === WebLaunchMethod.Read && !found) throw { code: 'EXPIRED' };
+        return original(method, params);
+      });
+      const first = createWebLaunchBackground({ chromeApi: api, client });
+      expect(await invoke(first, launch)).toMatchObject({ prepareUncertain: true });
+      const restarted = createWebLaunchBackground({ chromeApi: api, client });
+      const replacement = await invoke(restarted, {
+        ...launch,
+        requestId: 'request-2',
+        clickSequence: 2,
+      });
+      expect(replacement).toMatchObject(
+        found
+          ? { ok: true, queueStatus: 'queued' }
+          : { ok: true, receipt: { launchId: 'launch-2' } },
+      );
+      expect(client.request).toHaveBeenCalledWith(
+        WebLaunchMethod.Read,
+        expect.objectContaining({ requestId: launch.requestId }),
+      );
+      if (!found) {
+        const nextWorker = createWebLaunchBackground({ chromeApi: api, client });
+        expect(
+          await invoke(nextWorker, { ...launch, requestId: 'request-3', clickSequence: 3 }),
+        ).toEqual({ ok: true, queueStatus: 'queued' });
+      }
+      expect(
+        client.request.mock.calls
+          .filter(([method]) => method === WebLaunchMethod.Prepare)
+          .map(([, params]) => params.requestId),
+      ).toEqual(found ? ['request-1'] : ['request-1', 'request-2']);
+    },
+  );
 
   it('restores only observation after a worker restart, advancing its persisted document channel', async () => {
     const first = createWebLaunchBackground({ chromeApi: api, client });
@@ -729,7 +747,7 @@ describe('web launch background', () => {
       return original(method, params);
     });
     const controller = createWebLaunchBackground({ chromeApi: api, client });
-    expect(await invoke(controller, launch)).toEqual({ ok: false, code: 'COMPOSER_BUSY' });
+    expect(await invoke(controller, launch)).toMatchObject({ ok: false, code: 'COMPOSER_BUSY' });
     expect(storage.chromeWebLaunchSession.requests[launch.requestId]).toBeUndefined();
 
     const next = { ...launch, requestId: 'request-2', clickSequence: 2 };
@@ -776,7 +794,7 @@ describe('web launch background', () => {
       }),
     ).toEqual({ ok: true });
     releaseProbe();
-    expect(await pending).toEqual({ ok: false, code: 'LEASE_REVOKED' });
+    expect(await pending).toMatchObject({ ok: false, code: 'LEASE_REVOKED' });
     expect(revokeLease).toHaveBeenCalledTimes(2);
     expect(storage.chromeWebLaunchSession.requests[next.requestId]).toBeUndefined();
 

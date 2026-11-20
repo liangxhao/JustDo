@@ -13,7 +13,9 @@ import {
 } from './web-launch-security.js';
 
 const LIFETIME = 120_000;
+const WINDOW_CHECK_INTERVAL = 5_000;
 const Status = Object.freeze({
+  Waiting: 'waiting-for-window',
   Awaiting: 'awaiting-consent',
   Granting: 'granting',
   Connected: 'connected',
@@ -22,9 +24,14 @@ const Status = Object.freeze({
   Expired: 'expired',
 });
 const pendingDecision = value => [Status.Awaiting, Status.Granting].includes(value.status);
-const needsPolicy = value => value.status === Status.Awaiting && value.sitesRevision === undefined;
+const needsPolicy = value =>
+  [Status.Waiting, Status.Awaiting].includes(value.status) && value.sitesRevision === undefined;
 const live = value =>
-  (pendingDecision(value) || value.status === Status.Connected) && !value.claimed;
+  (value.status === Status.Waiting ||
+    pendingDecision(value) ||
+    value.status === Status.Connected) &&
+  !value.claimed;
+const competingConnection = () => ({ code: 'WINDOW_BUSY', busyReason: 'connection' });
 const sameSource = (value, sender) =>
   value.source.origin === sender.origin &&
   value.source.documentId === sender.documentId &&
@@ -57,12 +64,14 @@ export function createWebLaunchConnections({
   hasCachedWebsiteGrant,
   notify,
   windowBusy,
+  reconcileWindowWork,
   now = () => Date.now(),
 }) {
   const provisional = new Set();
   const tabEpoch = new Map();
   const retired = new Set();
   const refreshes = new Map();
+  const windowChecks = new Map();
   const expired = value => value.expiresAt <= now();
   const retire = id => {
     retired.add(id);
@@ -104,10 +113,48 @@ export function createWebLaunchConnections({
       return metadata(value);
     });
   }
-  async function completePolicyLookup(pendingId) {
-    const policies = await readSites();
-    return change(pendingId, item => {
+  function deferConsent(item) {
+    if (item.status === Status.Waiting) return false;
+    item.status = Status.Waiting;
+    item.requiresAction = false;
+    item.revision += 1;
+    delete item.sitesRevision;
+    delete item.code;
+  }
+  function checkWindowWork(windowId) {
+    const checked = windowChecks.get(windowId);
+    if (checked !== undefined && now() - checked < WINDOW_CHECK_INTERVAL) return;
+    windowChecks.set(windowId, now());
+    if (windowChecks.size > 128) windowChecks.delete(windowChecks.keys().next().value);
+    void reconcileWindowWork(windowId).catch(() => {});
+  }
+  async function refreshConsent(value) {
+    if (![Status.Waiting, Status.Awaiting].includes(value.status)) return value;
+    const { windowId } = value.source;
+    if (windowBusy(windowId)) {
+      checkWindowWork(windowId);
+      return value.status === Status.Waiting
+        ? value
+        : change(value.pendingId, item =>
+            item.status === Status.Awaiting && windowBusy(windowId) ? deferConsent(item) : false,
+          );
+    }
+    if (!needsPolicy(value)) return value;
+    let policies;
+    try {
+      policies = await readSites();
+    } catch (error) {
+      return change(value.pendingId, item => {
+        const code = publicErrorCode(error);
+        if (!needsPolicy(item) || item.code === code) return false;
+        item.code = code;
+        item.revision += 1;
+      });
+    }
+    return change(value.pendingId, item => {
       if (!needsPolicy(item)) return false;
+      if (windowBusy(item.source.windowId)) return deferConsent(item);
+      item.status = Status.Awaiting;
       item.sitesRevision = policies.revision;
       item.requiresAction = true;
       item.revision += 1;
@@ -145,6 +192,43 @@ export function createWebLaunchConnections({
     )
       throw { code: 'EXPIRED' };
   }
+  function injectBridge(source) {
+    return chromeApi.scripting.executeScript({
+      target: { tabId: source.tabId, documentIds: [source.documentId] },
+      files: ['web-launch-content.js'],
+    });
+  }
+  async function probeConnection(sender) {
+    const origin = new URL(sender.origin);
+    if (
+      !(await hasCachedWebsiteGrant(sender.origin)) ||
+      !(await chromeApi.permissions.contains({
+        origins: [`${origin.protocol}//${origin.hostname}/*`],
+      }))
+    )
+      return false;
+    const source = {
+      tabId: sender.tab.id,
+      windowId: sender.tab.windowId,
+      documentId: sender.documentId,
+      origin: sender.origin,
+    };
+    const current = await chromeApi.tabs
+      .sendMessage(
+        source.tabId,
+        { type: `${WEB_RUNTIME}bridge-present` },
+        { documentId: source.documentId },
+      )
+      .catch(() => null);
+    if (current?.active === true) return true;
+    // Repair an already granted document without replaying a click or granting access.
+    const policies = await readSites();
+    if (!hasWebsiteLaunchGrant(policies.sites.find(site => site.origin === source.origin)))
+      return false;
+    await sourceActive({ source });
+    await injectBridge(source);
+    return true;
+  }
   async function assertGrant(value) {
     return store(values => {
       collect(values);
@@ -165,19 +249,22 @@ export function createWebLaunchConnections({
   async function refresh(panel) {
     const key = `${panel.windowId}/${panel.tabId}`;
     const prior = refreshes.get(key);
-    if (prior && now() - prior.at < 5000) return;
+    if (prior && now() - prior.at < WINDOW_CHECK_INTERVAL) return;
     refreshes.set(key, { at: now() });
     if (refreshes.size > 128) refreshes.delete(refreshes.keys().next().value);
     const value = await store(values =>
       structuredClone(
         Object.values(values).find(
-          item => inPanelTab(item, panel) && needsPolicy(item) && !expired(item),
+          item =>
+            inPanelTab(item, panel) &&
+            !expired(item) &&
+            (needsPolicy(item) || (item.status === Status.Awaiting && windowBusy(panel.windowId))),
         ),
       ),
     );
     if (!value) return;
     try {
-      await completePolicyLookup(value.pendingId);
+      await refreshConsent(value);
     } catch {
       /* The trusted panel heartbeat can retry discovery without granting anything. */
     }
@@ -211,6 +298,8 @@ export function createWebLaunchConnections({
         throw { code: 'EXPIRED' };
       if (message.decision === 'allow' && (item.status !== Status.Awaiting || !item.requiresAction))
         throw { code: 'EXPIRED' };
+      if (message.decision === 'allow' && windowBusy(item.source.windowId))
+        return deferConsent(item);
       item.status = message.decision === 'deny' ? Status.Rejected : Status.Granting;
       item.requiresAction = false;
       item.revision += 1;
@@ -221,7 +310,8 @@ export function createWebLaunchConnections({
         delete item.input;
       }
     });
-    if (message.decision === 'deny') return { ok: true, connectionPending: metadata(value) };
+    if (message.decision === 'deny' || value.status === Status.Waiting)
+      return { ok: true, connectionPending: metadata(value) };
     try {
       const origin = new URL(value.source.origin);
       if (
@@ -252,10 +342,7 @@ export function createWebLaunchConnections({
       await registerScripts(policies);
       await sourceActive(value);
       await assertGrant(value);
-      await chromeApi.scripting.executeScript({
-        target: { tabId: value.source.tabId, documentIds: [value.source.documentId] },
-        files: ['web-launch-content.js'],
-      });
+      await injectBridge(value.source);
       await assertGrant(value);
       value = await change(value.pendingId, item => {
         if (item.status !== Status.Granting || item.revision !== value.revision)
@@ -313,24 +400,34 @@ export function createWebLaunchConnections({
       return false;
     }
     const done = operation => {
-      void operation.then(reply, error => reply({ ok: false, code: publicErrorCode(error) }));
+      void operation.then(reply, error =>
+        reply({
+          ok: false,
+          code: publicErrorCode(error),
+          ...(error?.busyReason === 'connection' ? { busyReason: 'connection' } : {}),
+        }),
+      );
       return true;
     };
     if (message.op === 'probe')
       return done(
-        (async () => {
-          const origin = new URL(sender.origin);
-          const connected =
-            (await hasCachedWebsiteGrant(sender.origin)) &&
-            (await chromeApi.permissions.contains({
-              origins: [`${origin.protocol}//${origin.hostname}/*`],
-            }));
-          return { ok: true, connected };
-        })(),
+        probeConnection(sender).then(
+          connected => ({ ok: true, connected }),
+          () => ({ ok: true, connected: false }),
+        ),
       );
     if (message.op === 'query')
       return done(
-        find(message, sender).then(value => ({ ok: true, connectionPending: metadata(value) })),
+        find(message, sender).then(async value => {
+          const busy = windowBusy(sender.tab.windowId);
+          const shouldRefresh =
+            (value.status === Status.Waiting && (busy || !value.code)) ||
+            (value.status === Status.Awaiting && busy);
+          return {
+            ok: true,
+            connectionPending: metadata(shouldRefresh ? await refreshConsent(value) : value),
+          };
+        }),
       );
     if (message.op === 'cancel')
       return done(
@@ -358,8 +455,8 @@ export function createWebLaunchConnections({
       reply({ ok: false, code: 'INVALID_REQUEST' });
       return false;
     }
-    if (provisional.has(sender.tab.windowId) || windowBusy(sender.tab.windowId)) {
-      reply({ ok: false, code: 'WINDOW_BUSY' });
+    if (provisional.has(sender.tab.windowId)) {
+      reply({ ok: false, ...competingConnection() });
       return false;
     }
     provisional.add(sender.tab.windowId);
@@ -396,7 +493,7 @@ export function createWebLaunchConnections({
                 existing.bindingRevision !== message.bindingRevision ||
                 existing.payloadDigest !== message.payloadDigest
               )
-                throw { code: 'WINDOW_BUSY' };
+                throw competingConnection();
               return structuredClone(existing);
             }
             const bytes = Object.values(values).reduce(
@@ -416,7 +513,7 @@ export function createWebLaunchConnections({
               revision: 1,
               createdAt: now(),
               expiresAt: now() + LIFETIME,
-              status: Status.Awaiting,
+              status: windowBusy(sender.tab.windowId) ? Status.Waiting : Status.Awaiting,
               requiresAction: false,
               epoch,
               source: {
@@ -435,16 +532,7 @@ export function createWebLaunchConnections({
           });
           if ((tabEpoch.get(sender.tab.id) ?? 0) !== epoch) throw { code: 'EXPIRED' };
           notify(value.source, metadata(value));
-          if (needsPolicy(value)) {
-            try {
-              value = await completePolicyLookup(value.pendingId);
-            } catch (error) {
-              value = await change(value.pendingId, item => {
-                if (!needsPolicy(item)) return false;
-                item.code = publicErrorCode(error);
-              });
-            }
-          }
+          value = await refreshConsent(value);
           return { ok: true, connectionPending: metadata(value) };
         })
         .finally(() => provisional.delete(sender.tab.windowId)),
