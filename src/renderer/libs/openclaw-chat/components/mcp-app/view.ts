@@ -9,6 +9,7 @@ import type {
 import type { McpAppStagedResourcePreview } from '@shared/plugins/mcpAppResourcePreview';
 import {
   MCP_APP_SHARED_HEADER,
+  MCP_APP_VIEW_READ_ONLY,
   McpAppEvent,
   McpAppMethod,
   type McpAppModelContext,
@@ -465,15 +466,17 @@ export class McpAppView extends LitElement {
       this.mode = this.modes.includes('inline') ? 'inline' : 'fullscreen';
       this.expanded = this.mode === 'fullscreen' && !this.fillContainer;
       const nativeContext = mcpAppRecord(payload.hostContext);
+      const readOnly = payload.messageSupported !== true;
       const buildContext = () => ({
         ...nativeContext,
         ...this.hostContext(frame),
         'openai/modelContext': this.selection,
         [MCP_APP_SHARED_HEADER]: this.headerLayout(frame),
+        [MCP_APP_VIEW_READ_ONLY]: readOnly,
       });
       this.selection =
         (mcpAppRecord(nativeContext?.['openai/modelContext']) as McpAppModelContext | null) ?? null;
-      this.inactive = payload.messageSupported !== true;
+      this.inactive = readOnly;
       this.mountKey++;
       this.requestUpdate();
       await this.updateComplete;

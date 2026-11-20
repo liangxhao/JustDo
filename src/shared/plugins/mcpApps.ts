@@ -199,6 +199,9 @@ export interface McpAppDiscovery {
 /** Optional presentation extension, negotiated through App capabilities and host context. */
 export const MCP_APP_SHARED_HEADER = 'ui/shared-header';
 
+/** Display hint for views whose live App operations are disabled. */
+export const MCP_APP_VIEW_READ_ONLY = 'ui/view-read-only';
+
 export interface McpAppResourceLink {
   type: 'resource_link';
   uri: string;
