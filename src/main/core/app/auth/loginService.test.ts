@@ -11,7 +11,14 @@ import {
   getOutboundHeaderUserInfo,
   publishOutboundHeaderUserInfoCache,
 } from '../../network/outboundHeaderPolicyConfig';
-import type { AuthenticatedLogin, CredentialUpdate, LoginSdkAdapter, LoginSdkResult } from './loginSdkAdapter';
+import {
+  type AuthenticatedLogin,
+  type CredentialUpdate,
+  type LoginSdkAdapter,
+  type LoginSdkRestoreResult,
+  LoginSdkRestoreStatus,
+  type LoginSdkResult,
+} from './loginSdkAdapter';
 import { LoginService } from './loginService';
 import { LoginUserInfoStore } from './loginUserInfoStore';
 
@@ -353,10 +360,11 @@ test('renews on the configured interval and checks a missed renewal on wake', as
 test.each([false, true])('only resumes automatic renewal after verified SDK restore (%s)', async confirmed => {
   vi.useFakeTimers();
   const response = Promise.withResolvers<CredentialUpdate>();
+  const restore = vi.fn(async () => confirmed);
   const refresh = vi.fn((_options: { signal: AbortSignal }) => response.promise);
   const context = setup({
     seedStore: seedLogin,
-    restoreSession: async () => confirmed,
+    restoreSession: restore,
     refreshCredentials: refresh,
   });
 
@@ -364,7 +372,8 @@ test.each([false, true])('only resumes automatic renewal after verified SDK rest
   await vi.advanceTimersByTimeAsync(0);
   expect(refresh).toHaveBeenCalledTimes(confirmed ? 1 : 0);
   context.service.onSystemResume();
-  await vi.advanceTimersByTimeAsync(1_000);
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(restore).toHaveBeenCalledOnce();
   expect(refresh).toHaveBeenCalledTimes(confirmed ? 1 : 0);
   expect(context.onLoginCommitted).not.toHaveBeenCalled();
 
@@ -373,6 +382,168 @@ test.each([false, true])('only resumes automatic renewal after verified SDK rest
   response.resolve({ headerValues: { 'X-Cookie': 'too-late' } });
   await vi.advanceTimersByTimeAsync(0);
   expect(context.store.read()?.values['X-Cookie']).toBe('synthetic-cookie');
+});
+
+test('temporary startup verification failures back off before restoring Cookie renewal', async () => {
+  vi.useFakeTimers();
+  const restore = vi.fn<NonNullable<LoginSdkAdapter['restoreSession']>>()
+    .mockResolvedValueOnce({ status: LoginSdkRestoreStatus.Retryable })
+    .mockResolvedValueOnce({ status: LoginSdkRestoreStatus.Retryable })
+    .mockResolvedValue(true);
+  const refresh = vi.fn(async () => ({ headerValues: { 'X-Cookie': 'renewed-after-restart' } }));
+  const context = setup({ seedStore: seedLogin, restoreSession: restore, refreshCredentials: refresh });
+
+  const restoration = context.service.restoreSdkSession();
+  void context.service.restoreSdkSession();
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(restore).toHaveBeenCalledOnce();
+  expect(refresh).not.toHaveBeenCalled();
+  expect(context.service.getState().status).toBe(AuthStatus.LocalCredentials);
+
+  await vi.advanceTimersByTimeAsync(1);
+  expect(restore).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(9_999);
+  expect(restore).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);
+  await restoration;
+  await vi.advanceTimersByTimeAsync(1);
+
+  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(context.store.read()?.values['X-Cookie']).toBe('renewed-after-restart');
+  expect(context.onLoginCommitted).not.toHaveBeenCalled();
+  context.service.dispose();
+});
+
+test('logout cancels the scheduled startup verification retry', async () => {
+  vi.useFakeTimers();
+  const restore = vi.fn<NonNullable<LoginSdkAdapter['restoreSession']>>()
+    .mockResolvedValue({ status: LoginSdkRestoreStatus.Retryable });
+  const context = setup({ seedStore: seedLogin, restoreSession: restore });
+
+  const restoration = context.service.restoreSdkSession();
+  await vi.advanceTimersByTimeAsync(1_000);
+  await context.service.logout();
+  await restoration;
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+  expect(restore).toHaveBeenCalledOnce();
+  expect(context.service.getState().status).toBe(AuthStatus.SignedOut);
+  expect(context.store.read()).toBeNull();
+});
+
+test('a timed-out startup attempt cannot save a late recovered Cookie', async () => {
+  vi.useFakeTimers();
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, 'timeout').mockReturnValueOnce(deadline.signal);
+  const verification = Promise.withResolvers<LoginSdkRestoreResult>();
+  const restore = vi.fn<NonNullable<LoginSdkAdapter['restoreSession']>>()
+    .mockReturnValueOnce(verification.promise)
+    .mockResolvedValue(true);
+  const context = setup({ seedStore: seedLogin, restoreSession: restore });
+
+  const restoration = context.service.restoreSdkSession();
+  deadline.abort();
+  verification.resolve({ status: LoginSdkRestoreStatus.Recovered, account: session.account, cookie: 'late-cookie' });
+  await vi.advanceTimersByTimeAsync(4_999);
+
+  expect(context.store.read()?.values['X-Cookie']).toBe(session.headerValues?.['X-Cookie']);
+  expect(context.service.getState().status).toBe(AuthStatus.LocalCredentials);
+  await vi.advanceTimersByTimeAsync(1);
+  await restoration;
+  expect(restore).toHaveBeenCalledTimes(2);
+  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
+});
+
+test('failed logout resumes the saved session recovery interrupted by manual login', async () => {
+  vi.useFakeTimers();
+  const restore = vi.fn<NonNullable<LoginSdkAdapter['restoreSession']>>()
+    .mockResolvedValueOnce({ status: LoginSdkRestoreStatus.Retryable })
+    .mockResolvedValue(true);
+  const popup = Promise.withResolvers<LoginSdkResult>();
+  const context = setup({ seedStore: seedLogin, restoreSession: restore, login: () => popup.promise });
+  vi.spyOn(context.store, 'clear').mockImplementationOnce(() => { throw new Error('file in use'); });
+
+  const restoration = context.service.restoreSdkSession();
+  await vi.advanceTimersByTimeAsync(1_000);
+  const manualLogin = context.service.login();
+  const logout = await context.service.logout();
+  popup.resolve({ status: 'canceled' });
+  await Promise.all([restoration, manualLogin]);
+
+  expect(logout.errorCode).toBe(AuthErrorCode.StorageFailed);
+  expect(restore).toHaveBeenCalledTimes(2);
+  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
+  expect(context.onLogoutCommitted).not.toHaveBeenCalled();
+});
+
+test('restoring with a verified replacement Cookie publishes it before the next renewal interval', async () => {
+  vi.useFakeTimers();
+  const restore = vi.fn<NonNullable<LoginSdkAdapter['restoreSession']>>().mockResolvedValue({
+    status: LoginSdkRestoreStatus.Recovered,
+    account: session.account,
+    cookie: 'recovered-cookie',
+  });
+  const publish = vi.fn();
+  const refresh = vi.fn(async () => ({ headerValues: { 'X-Cookie': 'next-renewal' } }));
+  const context = setup({ seedStore: seedLogin, restoreSession: restore, refreshCredentials: refresh }, publish);
+
+  await context.service.restoreSdkSession();
+
+  expect(restore).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+    profile: expect.objectContaining({ account: session.account }),
+    mtoken: session.mtoken,
+    cookie: session.headerValues?.['X-Cookie'],
+  }));
+  const expected = { ...session.headerValues, 'X-Cookie': 'recovered-cookie', mtoken: session.mtoken };
+  expect(context.store.read()?.values).toMatchObject(expected);
+  expect(publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(expected));
+  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
+  expect(context.onLoginCommitted).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs - 1);
+  expect(refresh).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(refresh).toHaveBeenCalledOnce();
+  context.service.dispose();
+});
+
+test('a recovered Cookie for a different account leaves the saved session untouched', async () => {
+  const publish = vi.fn();
+  const context = setup({
+    seedStore: seedLogin,
+    restoreSession: async () => ({ status: LoginSdkRestoreStatus.Recovered, account: 'bob', cookie: 'different-account' }),
+  }, publish);
+
+  await context.service.restoreSdkSession();
+
+  expect(context.store.read()?.values['X-Cookie']).toBe(session.headerValues?.['X-Cookie']);
+  expect(context.service.getState().status).toBe(AuthStatus.LocalCredentials);
+  expect(publish).not.toHaveBeenCalled();
+});
+
+test('a stale recovered Cookie is discarded and verification retries with the latest saved Cookie', async () => {
+  vi.useFakeTimers();
+  const verification = Promise.withResolvers<LoginSdkRestoreResult>();
+  const restore = vi.fn<NonNullable<LoginSdkAdapter['restoreSession']>>()
+    .mockReturnValueOnce(verification.promise)
+    .mockResolvedValue(true);
+  const publish = vi.fn();
+  const context = setup({ seedStore: seedLogin, restoreSession: restore }, publish);
+
+  const restoration = context.service.restoreSdkSession();
+  const latest = 'updated-while-recovering';
+  context.store.writeLogin({ ...session, headerValues: { 'X-Cookie': latest } });
+  verification.resolve({ status: LoginSdkRestoreStatus.Recovered, account: session.account, cookie: 'recovered-cookie' });
+  await vi.advanceTimersByTimeAsync(4_999);
+
+  expect(context.store.read()?.values['X-Cookie']).toBe(latest);
+  expect(context.service.getState().status).toBe(AuthStatus.LocalCredentials);
+  expect(publish).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  await restoration;
+  expect(restore).toHaveBeenLastCalledWith(expect.objectContaining({ cookie: latest }));
+  expect(publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ 'X-Cookie': latest }));
+  expect(context.service.getState().status).toBe(AuthStatus.SignedIn);
 });
 
 test('aborts a pending Cookie renewal on logout and discards its late result after signing in again', async () => {

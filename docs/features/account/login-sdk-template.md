@@ -86,8 +86,13 @@ Main 注入现有 `refreshAfterLogin`、`refreshAfterLogout` 和请求头值刷�
   用户确认提交、弹窗实际隐藏后调用 `onDialogSubmitted()`，即使身份验证仍在等待也应立即通知。
   用户取消或关闭弹窗时返回 canceled。完成可信身份验证后返回 authenticated 与 Main-only session。
   abort 时关闭弹窗、清除监听器，并拒绝后续回调。
-- `restoreSession({ signal, profile })`：可选；使用 SDK 自己的会话验证能力确认身份。
-  不可仅根据传入的显示资料返回 true。
+- `restoreSession({ signal, profile, mtoken, cookie })` 为可选接口。Main 从同一份登录文件读取账号、mtoken 和已有 Cookie。
+  SDK 使用身份服务验证该账号，并在 `signal` 取消时结束请求。已有布尔返回值继续有效。
+  - `true` 表示 SDK 已确认当前账号的会话。
+  - `{ status: 'retryable' }` 表示暂时无法确认，例如 421、暂时性 5xx 或网络断连。Main 会重试。
+  - `false` 结束本轮恢复，保留本地账号与凭据。用于已明确无法恢复的会话。
+  - `{ status: 'recovered', account, cookie }` 表示 SDK 用 mtoken 换得 Cookie，并确认它属于 `profile.account`。
+    `account` 来自可信换证结果，或使用新 Cookie 查询并核验的身份。Main 复核账号和请求前的文件版本后原子提交。
 - `logout({ signal })`：可选；清理 SDK 自己的会话/远端会话。本地凭据清理由产品负责。
 - `refreshCredentials({ signal })`：可选；提供后由 Main 调度。调用 SDK 的续期能力，在 `headerValues` 中返回 `X-Cookie`，
   取消时应结束请求，凭据提交由 Main 负责。SDK 自行调度时不提供此方法，使用下文的租约接口提交。
@@ -126,10 +131,22 @@ mtoken 改变则重新执行完整登录刷新以换取新 JWT。lease 同时绑
 SDK 确认会话失效时可调用 `expireSession(lease)`；队列执行时会重新检查 lease 和磁盘版本后才删除
 凭据，避免清理等待期间替换的文件。不能把一次网络失败当成退出。
 
+### 启动恢复
+
+恢复请求有 15 秒取消期限。请求超时或 SDK 返回 `retryable` 时，Main 从 5 秒开始退避，间隔上限为 5 分钟。
+同一会话只维护一个恢复流程。重试前重新读取当前账号的凭据，手动登录、退出及应用关闭会取消恢复和待执行的重试。
+手动登录取消或失败、退出清理失败且仍保留原账号时，Main 继续已中断的恢复。
+
+旧 Cookie 失效时，支持 mtoken 兑换的 SDK 可在恢复请求内换取新 Cookie 并核验账号。Main 只更新已核验账号的
+`X-Cookie`，保留 mtoken 和其他工具字段。提交成功后刷新出站请求头值，按正常周期安排下次续期。
+同一账号的凭据在 `recovered` 请求完成前更新时，Main 丢弃迟到的 Cookie，并按退避计划重新验证最新文件。
+恢复等待期间，账号仍处于 `local-credentials`，直到 SDK 返回已验证结果。
+
 ### Main 自动续期
 
 SDK 确认登录或恢复会话，且已保存 Cookie 并提供 `refreshCredentials` 时，Main 使用 `src/config/loginStorage.ts` 中的
-`cookieRefreshIntervalMs` 固定周期续期。默认半小时，启动恢复确认后立即补查一次。续期结果包含非空的
+`cookieRefreshIntervalMs` 固定周期续期，默认半小时。启动时 SDK 返回 `true` 后立即补查一次，
+返回 `recovered` 并完成提交后从正常间隔开始。续期结果包含非空的
 `headerValues['X-Cookie']` 即可，Cookie 字符串可以与上次相同。
 
 系统唤醒时按当前时间核对计划。账号切换和退出会取消旧请求，退出清理失败后恢复原账号的调度，应用销毁时停止。
@@ -165,7 +182,7 @@ SDK 未确认的手工导入会话仅恢复显示，应用不自行获取 Cookie
 ## 验收
 
 自动测试覆盖 SDK 缺失、手工导入、取消、原子写入失败、登录后刷新失败与重试、退出清理失败、
-账号替换、重复点击、迟到回调、Cookie 固定周期续期、唤醒补查、退出失败后的续期恢复、
+账号替换、重复点击、迟到回调、启动恢复退避与取消、同账号 Cookie 恢复、Cookie 固定周期续期、唤醒补查、退出失败后的续期恢复、
 Cookie 保留 mtoken、mtoken 轮换、过时 lease、应用销毁、
 状态脱敏、IPC 来源限制、界面 revision 竞态和登录阶段切换。真实 SDK 接入后另验弹窗父子关系、
 提交并隐藏弹窗时的阶段通知、远端身份验证、

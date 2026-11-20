@@ -55,6 +55,11 @@ const pluginManager = new PluginManager(
 
 需要登录的 SDK 在业务请求发起时读取当前会话。启动时先注册来源能力，账号提交由现有 `LoginService` 负责。登录完成或恢复已认证会话后，已打开的插件页会自动重读市场。真实空目录返回 `{ items: [] }`，认证、网络或代理故障通过请求失败报告。[登录 SDK 接入模板](../features/account/login-sdk-template.md)
 
+企业 SDK 如需从市场令牌接口的 401 恢复，可在 Main 注入登录 SDK 的续期调用，并合并同一账号的并发恢复请求。
+只有登录 SDK 验证续期成功且账号仍一致时，才重读已提交的 Cookie，并重试一次市场令牌或目录查询。
+续期结果通过 `LoginService` 提交，账号失效由身份服务确认。已发起的安装和更新沿用现有结果确认流程。
+[凭据提交接口](outbound-header-user-info-refresh-api.md#sdk-续期应使用现有账号租约)
+
 ## 3. 关闭登录后的市场占位提示
 
 下游在应用启动时注册唯一的市场。页面沿用 `listSources(kind)`，由 Main 按当前插件类型返回该市场的来源。市场是否接入由下游的注册决定，来源查询用于当前分类。

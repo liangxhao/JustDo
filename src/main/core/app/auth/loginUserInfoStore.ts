@@ -29,6 +29,8 @@ export type StoredLogin = Readonly<{
   identity: string;
   credentialVersion: string;
   profile: AuthProfile;
+  mtoken: string;
+  cookie?: string;
   values: Record<string, unknown>;
 }>;
 
@@ -62,12 +64,16 @@ function inspect(values: Record<string, unknown>): StoredLogin {
           .slice(0, 512)
       : account;
   const avatar = avatarUrl(values.avatarUrl);
+  const rawCookie = values['X-Cookie'];
+  const cookie = typeof rawCookie === 'string' && !UNSAFE_VALUE.test(rawCookie) ? rawCookie.trim() : '';
   return {
     identity: createHash('sha256')
       .update(JSON.stringify([mtoken, account]))
       .digest('hex'),
     credentialVersion: createHash('sha256').update(JSON.stringify(values)).digest('hex'),
     profile: { account, displayName, ...(avatar ? { avatarUrl: avatar } : {}) },
+    mtoken,
+    ...(cookie ? { cookie } : {}),
     values,
   };
 }

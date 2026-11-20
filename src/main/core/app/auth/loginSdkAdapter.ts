@@ -25,12 +25,27 @@ export type CredentialUpdate = Readonly<{
   headerValues?: Readonly<Record<string, string>>;
 }>;
 
+export const LoginSdkRestoreStatus = {
+  Retryable: 'retryable',
+  Recovered: 'recovered',
+} as const;
+
+export type LoginSdkRestoreResult =
+  | boolean
+  | Readonly<{ status: typeof LoginSdkRestoreStatus.Retryable }>
+  | Readonly<{ status: typeof LoginSdkRestoreStatus.Recovered; account: string; cookie: string }>;
+
 export interface LoginSdkAdapter {
   readonly available: boolean;
   /** Own the popup. Notify after submission actually hides it, before authentication settles. Abort closes it and removes listeners. */
   login: (options: { signal: AbortSignal; onDialogSubmitted: () => void }) => Promise<LoginSdkResult>;
-  /** Optional SDK session restoration; must verify, not infer login from file presence. */
-  restoreSession?: (options: { signal: AbortSignal; profile: AuthProfile }) => Promise<boolean>;
+  /** Verify the saved identity and settle on abort. Recovered requires a new Cookie verified for that account. */
+  restoreSession?: (options: {
+    signal: AbortSignal;
+    profile: AuthProfile;
+    mtoken: string;
+    cookie?: string;
+  }) => Promise<LoginSdkRestoreResult>;
   logout?: (options: { signal: AbortSignal }) => Promise<void>;
   /** Opt into Main scheduling. Settle on abort and return X-Cookie in headerValues. */
   refreshCredentials?: (options: { signal: AbortSignal }) => Promise<CredentialUpdate>;

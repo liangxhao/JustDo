@@ -9,13 +9,19 @@ import {
   AuthSyncStatus,
   INITIAL_AUTH_STATE,
 } from '../../../../shared/app/auth';
-import { type CredentialUpdate, type LoginSdkAdapter, LoginSdkStatus } from './loginSdkAdapter';
+import {
+  type CredentialUpdate,
+  type LoginSdkAdapter,
+  type LoginSdkRestoreResult,
+  LoginSdkRestoreStatus,
+  LoginSdkStatus,
+} from './loginSdkAdapter';
 import { LoginStorageError, LoginUserInfoStore, type StoredLogin } from './loginUserInfoStore';
 
 const COOKIE_REFRESH_MIN_INTERVAL_MS = 1_000;
-const COOKIE_REFRESH_TIMEOUT_MS = 15_000;
-const COOKIE_REFRESH_RETRY_MS = 5_000;
-const COOKIE_REFRESH_MAX_RETRY_MS = 5 * 60_000;
+const SDK_REQUEST_TIMEOUT_MS = 15_000;
+const SDK_RETRY_INITIAL_MS = 5_000;
+const SDK_RETRY_MAX_MS = 5 * 60_000;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 type Dependencies = {
@@ -50,6 +56,8 @@ export class LoginService {
   private queue: Promise<unknown> = Promise.resolve();
   private loginAttempt: { controller: AbortController; promise: Promise<AuthActionResult> } | null =
     null;
+  private sessionRestore: AbortController | null = null;
+  private sessionRestoreInterrupted = false;
   private cookieRenewal: CookieRenewal | null = null;
   private cookieRenewalPaused = true;
   private cookieRenewalTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,33 +84,94 @@ export class LoginService {
   /** Only an SDK-confirmed session can renew its Cookie. */
   async restoreSdkSession(): Promise<void> {
     const { adapter, store } = this.dependencies;
-    const { operation, profile, status } = this.state;
+    const { operation, status } = this.state;
     if (
       this.disposed ||
+      this.sessionRestore ||
       status !== AuthStatus.LocalCredentials ||
       operation !== AuthOperation.Idle ||
-      !profile ||
       !adapter.available ||
       !adapter.restoreSession
     )
       return;
 
+    const controller = new AbortController();
+    this.sessionRestore = controller;
+    this.sessionRestoreInterrupted = false;
     const generation = this.generation;
     const identity = this.identity;
     try {
-      const confirmed = await adapter.restoreSession({
-        signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)]),
-        profile,
-      });
-      if (!confirmed || this.disposed || generation !== this.generation) return;
-      const current = store.read();
-      if (!current || current.identity !== identity) return;
-      this.applyLogin(current, AuthStatus.SignedIn);
-      this.scheduleCookieRenewal(current, { restored: true });
-      this.publishHeaders(current);
+      let retryDelayMs = SDK_RETRY_INITIAL_MS;
+      while (!controller.signal.aborted && generation === this.generation) {
+        const before = store.read();
+        if (!before || before.identity !== identity) return;
+        const signal = AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(SDK_REQUEST_TIMEOUT_MS),
+        ]);
+        let result: LoginSdkRestoreResult = false;
+        try {
+          result = await adapter.restoreSession({
+            signal,
+            profile: before.profile,
+            mtoken: before.mtoken,
+            cookie: before.cookie,
+          });
+        } catch (error) {
+          if (!signal.aborted) throw error;
+        }
+        if (controller.signal.aborted || generation !== this.generation) return;
+        const retryable = signal.aborted ||
+          (typeof result === 'object' && result?.status === LoginSdkRestoreStatus.Retryable);
+        if (!retryable) {
+          const confirmed = result;
+          if (!confirmed || (confirmed !== true && confirmed.status !== LoginSdkRestoreStatus.Recovered)) return;
+          const retryWithLatestCredentials = await this.enqueue(async () => {
+            if (controller.signal.aborted || generation !== this.generation) return false;
+            const current = store.read();
+            if (!current || current.identity !== identity) return false;
+            let login = current;
+            if (confirmed !== true) {
+              if (
+                confirmed.account !== current.profile.account ||
+                typeof confirmed.cookie !== 'string' || !confirmed.cookie.trim()
+              ) return false;
+              if (current.credentialVersion !== before.credentialVersion) return true;
+              login = store.update(current, { headerValues: { 'X-Cookie': confirmed.cookie } });
+            }
+            this.applyLogin(login, AuthStatus.SignedIn);
+            this.scheduleCookieRenewal(login, { restored: confirmed === true });
+            this.publishHeaders(login);
+            return false;
+          });
+          if (!retryWithLatestCredentials || controller.signal.aborted) return;
+        }
+        console.warn(`[LoginService] Session restore retry scheduled ${JSON.stringify({ delayMs: retryDelayMs })}`);
+        await new Promise<void>(resolve => {
+          const resume = () => {
+            clearTimeout(timer);
+            controller.signal.removeEventListener('abort', resume);
+            resolve();
+          };
+          const timer = setTimeout(resume, retryDelayMs);
+          timer.unref();
+          controller.signal.addEventListener('abort', resume, { once: true });
+        });
+        retryDelayMs = Math.min(SDK_RETRY_MAX_MS, retryDelayMs * 2);
+      }
     } catch {
-      // Local credentials can still drive native model recovery while SDK restoration is unavailable.
+      if (!controller.signal.aborted) console.warn('[LoginService] SDK session restoration did not complete.');
+    } finally {
+      if (this.sessionRestore === controller) this.sessionRestore = null;
     }
+  }
+
+  private cancelSessionRestore(): void {
+    const controller = this.sessionRestore;
+    if (!controller) return;
+    this.sessionRestore = null;
+    this.sessionRestoreInterrupted = true;
+    controller.abort();
   }
 
   login(): Promise<AuthActionResult> {
@@ -116,6 +185,7 @@ export class LoginService {
     }
     this.pauseCookieRenewal();
     const generation = ++this.generation;
+    this.cancelSessionRestore();
     const controller = new AbortController();
     this.setState({
       operation: AuthOperation.Login,
@@ -126,6 +196,7 @@ export class LoginService {
       if (this.loginAttempt?.controller === controller) {
         this.loginAttempt = null;
         this.scheduleCookieRenewal(this.dependencies.store.read());
+        if (this.sessionRestoreInterrupted) void this.restoreSdkSession();
       }
     });
     this.loginAttempt = { controller, promise };
@@ -139,6 +210,7 @@ export class LoginService {
 
   private beginLogout(): number {
     const generation = ++this.generation;
+    this.cancelSessionRestore();
     this.pauseCookieRenewal();
     this.loginAttempt?.controller.abort();
     this.loginAttempt = null;
@@ -154,6 +226,7 @@ export class LoginService {
     } catch {
       this.setState({ operation: AuthOperation.Idle });
       this.scheduleCookieRenewal(this.dependencies.store.read());
+      if (this.sessionRestoreInterrupted) void this.restoreSdkSession();
       return this.failure(AuthErrorCode.StorageFailed);
     }
     this.applyLogin(null, AuthStatus.SignedOut);
@@ -161,7 +234,7 @@ export class LoginService {
     let sdkCleared = true;
     try {
       await this.dependencies.adapter.logout?.({
-        signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(15_000)]),
+        signal: AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(SDK_REQUEST_TIMEOUT_MS)]),
       });
     } catch {
       sdkCleared = false;
@@ -284,6 +357,7 @@ export class LoginService {
     if (this.disposed) return;
     this.disposed = true;
     this.generation += 1;
+    this.cancelSessionRestore();
     this.cookieRenewal = null;
     this.pauseCookieRenewal();
     this.loginAttempt?.controller.abort();
@@ -320,15 +394,14 @@ export class LoginService {
       !adapter.available || !adapter.refreshCredentials || !lease || !this.matchesCredentialLease(lease, login)
     ) return;
 
-    const cookie = login.values['X-Cookie'];
-    if (typeof cookie !== 'string' || !cookie.trim()) return;
+    if (!login.cookie) return;
     const intervalMs = LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs;
     if (!Number.isSafeInteger(intervalMs) || intervalMs < COOKIE_REFRESH_MIN_INTERVAL_MS) return;
     const now = Date.now();
     this.cookieRenewal = {
       lease,
       refreshAt: previous?.refreshAt ?? (restored ? now : now + intervalMs),
-      retryDelayMs: previous?.retryDelayMs ?? COOKIE_REFRESH_RETRY_MS,
+      retryDelayMs: previous?.retryDelayMs ?? SDK_RETRY_INITIAL_MS,
     };
     this.cookieRenewalPaused = false;
     this.armCookieRenewal();
@@ -359,7 +432,7 @@ export class LoginService {
     const controller = new AbortController();
     const request: { controller: AbortController | null } = { controller };
     this.cookieRenewalRequest = request;
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(COOKIE_REFRESH_TIMEOUT_MS)]);
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(SDK_REQUEST_TIMEOUT_MS)]);
     try {
       const update = await adapter.refreshCredentials({ signal });
       request.controller = null;
@@ -378,7 +451,7 @@ export class LoginService {
         if (!this.cookieRenewalPaused && this.cookieRenewal === renewal) {
           const delayMs = renewal.retryDelayMs;
           renewal.refreshAt = Date.now() + delayMs;
-          renewal.retryDelayMs = Math.min(COOKIE_REFRESH_MAX_RETRY_MS, delayMs * 2);
+          renewal.retryDelayMs = Math.min(SDK_RETRY_MAX_MS, delayMs * 2);
           console.warn(`[LoginService] Cookie renewal retry scheduled ${JSON.stringify({ delayMs })}`);
         }
         this.armCookieRenewal();
@@ -473,6 +546,7 @@ export class LoginService {
   }
 
   private applyLogin(login: StoredLogin | null, status: AuthState['status']): void {
+    this.sessionRestoreInterrupted = false;
     // A cleared identity releases a canceled SDK request even if it never settles.
     if (!login) {
       this.cookieRenewal = null;
