@@ -46,7 +46,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     appServerImageModelChanged: '图片准备期间会话或模型发生变化，本次消息尚未发送，请重新确认模型后重试。',
     externalAgentTool: '工具',
     externalAgentTaskCancelled: '任务已取消。',
-    mcpAppsContextPrepareFailed: '图表内容暂时无法同步，请检查应用状态后重新发送。画布修改已保留。',
     localSpeechModelServerNotConfigured: '尚未配置内网语音模型服务，请联系管理员配置后再安装模型。',
     localSpeechModelRangeIgnored: '模型服务未按请求返回文件分段，请联系管理员检查分段下载支持。',
     localSpeechModelRangeInvalid: '模型服务返回的文件分段与请求不符，请联系管理员检查模型服务。',
@@ -284,8 +283,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     appServerImageModelChanged: 'The conversation or model changed while preparing the image. This message was not sent; check the selected model and try again.',
     externalAgentTool: 'Tool',
     externalAgentTaskCancelled: 'Task cancelled.',
-    mcpAppsContextPrepareFailed:
-      'Could not sync the diagram. Check the app and send again. Your edits are preserved.',
     localSpeechModelRangeIgnored:
       'The model server ignored the requested download range. Contact your administrator to check range support.',
     localSpeechModelRangeInvalid:

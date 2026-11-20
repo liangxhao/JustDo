@@ -398,12 +398,16 @@ export class WorkspaceAppSessions {
     const entries = this.owners.get(owner);
     const entry = entries?.get(scope.requestId);
     if (!entry || entry.released || entry.signature !== scope.signature)
-      throw new Error('App workspace is no longer available');
-    const { binding, productSessionId } = await entry.task;
+      throw new WorkspaceAppAdoptionUnavailable('App workspace is no longer available');
+    const { binding, productSessionId } = await entry.task.catch(cause => {
+      throw new WorkspaceAppAdoptionUnavailable('App workspace is no longer available', { cause });
+    });
     const { session } = await this.deps.request<{ session?: Record<string, unknown> }>(
       'sessions.describe',
       { key: binding.sessionKey, agentId: binding.agentId },
-    );
+    ).catch(cause => {
+      throw new WorkspaceAppAdoptionUnavailable('App workspace could not be verified', { cause });
+    });
     if (
       entry.released ||
       owner.isDestroyed() ||
@@ -414,7 +418,7 @@ export class WorkspaceAppSessions {
       session.sessionRoot !== scope.cwd ||
       session.permissionMode !== scope.permissionMode
     )
-      throw new Error('Native App workspace changed before first send');
+      throw new WorkspaceAppAdoptionUnavailable('Native App workspace changed before first send');
     // No await between product creation and retiring preview ownership. A window
     // cleanup must never delete the newly adopted conversation.
     const value = create(productSessionId, binding);
@@ -425,3 +429,6 @@ export class WorkspaceAppSessions {
     return { value, binding };
   }
 }
+
+/** Raised only during read-only validation, before a product session could be created. */
+export class WorkspaceAppAdoptionUnavailable extends Error {}

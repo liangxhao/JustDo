@@ -94,6 +94,50 @@ describe('prepared initial turn dispatch', () => {
     }
   });
 
+  it.each(['times out', 'closes'])(
+    'sends one ordinary first message when the current canvas %s during preparation',
+    async unavailable => {
+      vi.useFakeTimers();
+      const request = vi.fn().mockResolvedValue({ runId: 'turn' });
+      const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1:1', request };
+      const state = { connected: true, sessionKey: 'agent:main:one', currentSessionId: 'physical', client };
+      const apps = new McpAppSession(() => ({
+        client: client as unknown as GatewayClient,
+        generation: 1,
+        sessionKey: state.sessionKey,
+        sessionId: state.currentSessionId,
+        agentId: 'main',
+        isCurrent: () => true,
+      }));
+      const retainRun = vi.fn();
+      const unregisterReady = apps.registerCanvasPreparation('mcp-app-other', async () => ({
+        token: 'other', viewId: 'mcp-app-other', selected: false, priority: 1,
+      }), () => true, retainRun);
+      const unregisterIdle = apps.registerCanvasPreparation('mcp-app-idle', signal =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        }), () => true, retainRun);
+      const params = {
+        sessionKey: state.sessionKey, sessionId: state.currentSessionId, idempotencyKey: 'turn',
+        message: 'Continue the conversation',
+      };
+      try {
+        const sending = dispatchInitialTurn(
+          state, params, undefined, undefined,
+          unavailable === 'closes' ? async () => { unregisterIdle(); } : undefined,
+        );
+        await vi.advanceTimersByTimeAsync(12_000);
+        await expect(sending).resolves.toEqual({ runId: 'turn' });
+        expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
+        expect(retainRun).not.toHaveBeenCalled();
+      } finally {
+        unregisterIdle();
+        unregisterReady();
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it('uses only chat.send on the current rendering client and does not retry an uncertain failure', async () => {
     const request = vi.fn().mockRejectedValue(new Error('lost response'));
     const state = {
@@ -106,6 +150,25 @@ describe('prepared initial turn dispatch', () => {
       message: 'lost response',
       requestSent: true,
     });
+    expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
+  });
+
+  it('sends the first message if a sidebar App cannot prepare its native model context', async () => {
+    const request = vi.fn().mockResolvedValue({ runId: 'turn' });
+    const state = {
+      connected: true,
+      sessionKey: 'agent:main:one',
+      currentSessionId: 'physical',
+      client: { generation: 1, gatewayUrl: 'ws://127.0.0.1:1', request },
+    };
+    const params = {
+      sessionKey: state.sessionKey, sessionId: state.currentSessionId, idempotencyKey: 'turn',
+      message: 'Continue the conversation',
+    };
+    const prepareAppContext = vi.fn().mockRejectedValue(new Error('App context unavailable'));
+    await expect(dispatchInitialTurn(state, params, undefined, undefined, prepareAppContext))
+      .resolves.toEqual({ runId: 'turn' });
+    expect(prepareAppContext).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
   });
 

@@ -3,6 +3,8 @@ import type { McpAppDiscovery } from '@shared/plugins/mcpApps';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import type { McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
+
 import { useHomeFileApps } from './useHomeFileApps';
 import type { McpAppWorkspaceFileEntry } from './workspaceApps';
 
@@ -14,6 +16,7 @@ interface TestHost {
 interface TestConnection {
   connected: boolean;
   listeners: Set<() => void>;
+  apps: unknown;
 }
 const f = vi.hoisted(() => ({
   engine: { ready: false, pending: false, failed: false },
@@ -139,6 +142,13 @@ function setup(running = false, prepare?: (host: TestHost) => Promise<TestHost>)
   const hook = renderHook((props = options) => useHomeFileApps(props), { initialProps: options });
   const request = { filePath: 'E:/workspace/预算.xlsx', isCurrent: () => true };
   return { ...hook, options, request };
+}
+
+function homeContext() {
+  return {
+    apps: f.connections[0].apps,
+    isCurrent: f.hosts[0].isCurrent,
+  } as McpAppViewContext;
 }
 
 test('waits through Running without execution admission and discovers once after preparation', async () => {
@@ -590,7 +600,7 @@ test('first-send promotion keeps the same canvas and adopts its owner without a 
   let requestId: string | undefined;
   expect(host.getWorkingDirectory?.()).toBe(h.options.cwd);
   act(() => {
-    requestId = h.result.current.beginStart('temp-first');
+    requestId = h.result.current.beginStart('temp-first', homeContext());
   });
   expect(requestId).toMatch(/^[a-f0-9-]{36}$/);
   h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-first' });
@@ -622,7 +632,7 @@ test.each(['temp-failed', 'other-chat'])(
     });
     const originalHost = f.hosts[0];
     act(() => {
-      h.result.current.beginStart('temp-failed');
+      h.result.current.beginStart('temp-failed', homeContext());
     });
     h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-failed' });
     await act(async () => {});
@@ -640,7 +650,7 @@ test('a pending first send prevents another home App source from replacing the r
   const h = setup(true);
   await act(async () => h.result.current.openFile(h.request));
   const original = f.hosts[0];
-  act(() => h.result.current.beginStart('temp-pending'));
+  act(() => { h.result.current.beginStart('temp-pending', homeContext()); });
   h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-pending' });
   h.rerender(h.options);
   await act(async () => {});
@@ -656,7 +666,7 @@ test('a pending first send prevents another home App source from replacing the r
 test('rollback refreshes the App catalog when the user has already returned home', async () => {
   const h = setup(true);
   await act(async () => h.result.current.discover());
-  act(() => h.result.current.beginStart('temp-pending'));
+  act(() => { h.result.current.beginStart('temp-pending', homeContext()); });
   h.rerender({ ...h.options, enabled: false, currentSessionId: 'temp-pending' });
   h.rerender(h.options);
   await act(async () => {});
@@ -671,7 +681,7 @@ test('a failed first send releases its preview when the homepage configuration c
   const h = setup();
   await act(async () => h.result.current.openFile(h.request));
   const original = f.hosts[0];
-  act(() => h.result.current.beginStart('temp-old-config'));
+  act(() => { h.result.current.beginStart('temp-old-config', homeContext()); });
   h.rerender({ ...h.options, cwd: 'E:/another-workspace' });
 
   act(() => h.result.current.rollback('temp-old-config'));
@@ -686,7 +696,7 @@ test('opening the same file on a new homepage keeps the adopted canvas in a diff
   const originalEntry = f.open.mock.lastCall![0] as McpAppWorkspaceFileEntry;
   const originalHost = f.hosts[0];
   act(() => {
-    h.result.current.beginStart('temp-first');
+    h.result.current.beginStart('temp-first', homeContext());
     h.result.current.promote('temp-first', 'canonical-chat');
   });
   h.rerender({ ...h.options, enabled: false, currentSessionId: 'canonical-chat' });
@@ -707,7 +717,7 @@ test('an adopted canvas pauses during a transcript mutation in its own conversat
   });
   const originalHost = f.hosts[0];
   act(() => {
-    h.result.current.beginStart('temp-first');
+    h.result.current.beginStart('temp-first', homeContext());
     h.result.current.promote('temp-first', 'conversation');
   });
   h.rerender({ ...h.options, enabled: false, currentSessionId: 'conversation' });

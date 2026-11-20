@@ -1920,6 +1920,7 @@ test.each([false, true])(
           startSession: vi.fn().mockResolvedValue({
             success: false,
             session: canonical,
+            appWorkspaceAdopted: true,
             error: 'Could not prepare context',
           }),
         },
@@ -1932,7 +1933,7 @@ test.each([false, true])(
       );
       if (navigated) store.dispatch(setCurrentSession(selected));
       expect(await starting).toMatchObject({ session: null });
-      expect(promotion).toHaveBeenCalledExactlyOnceWith(canonical);
+      expect(promotion).toHaveBeenCalledExactlyOnceWith(canonical, true);
       expect(store.getState().cowork.currentSessionId).toBe(navigated ? selected.id : canonical.id);
       expect(store.getState().cowork.sessions.some(session => session.id === canonical.id)).toBe(
         true,

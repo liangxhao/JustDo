@@ -1032,7 +1032,10 @@ describe('homepage App adoption at first-message admission', () => {
     });
     const row = session('auto');
     row.cwd = cwd;
-    const createSession = vi.fn((...args: unknown[]) => ({ ...row, id: args[9] as string }));
+    const createSession = vi.fn((...args: unknown[]) => ({
+      ...row,
+      id: (args[9] as string | undefined) ?? 'standalone-chat',
+    }));
     let persisted = row;
     const store = {
       getConfig: () => ({ workingDirectory: cwd, permissionMode: 'auto' }),
@@ -1079,7 +1082,6 @@ describe('homepage App adoption at first-message admission', () => {
         _prompt: string,
         options: { expectedInitialSessionId?: string; onAccepted: () => void },
       ) => {
-        expect(options.expectedInitialSessionId).toBe(native.sessionId);
         if (fails) throw new Error('initial sender unavailable');
         options.onAccepted();
       },
@@ -1109,11 +1111,15 @@ describe('homepage App adoption at first-message admission', () => {
   test('uses the preview reserved identity and checks its native incarnation before sending', async () => {
     const f = await setup();
     const result = await f.start();
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: true, appWorkspaceAdopted: true });
     const created = result.session as CoworkSession;
     expect(f.binding.sessionKey).toBe(`agent:main:justdo:${created.id}`);
     expect(f.createSession).toHaveBeenCalledOnce();
-    expect(f.startSession).toHaveBeenCalledOnce();
+    expect(f.startSession).toHaveBeenCalledExactlyOnceWith(
+      created.id,
+      input.prompt,
+      expect.objectContaining({ expectedInitialSessionId: f.native.sessionId }),
+    );
     await f.workspaces.release(f.owner as never, input.appWorkspaceRequestId);
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
   });
@@ -1124,18 +1130,26 @@ describe('homepage App adoption at first-message admission', () => {
     expect(result).toMatchObject({
       success: false,
       error: 'initial sender unavailable',
+      appWorkspaceAdopted: true,
       session: { id: expect.any(String) },
     });
     f.owner.emit('destroyed');
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
   });
 
-  test('does not adopt an App workspace whose native generation changed', async () => {
+  test('starts a separate chat when the preview native incarnation has changed', async () => {
     const f = await setup();
     f.native.sessionId = 'changed';
-    expect(await f.start()).toMatchObject({ success: false });
-    expect(f.createSession).not.toHaveBeenCalled();
-    expect(f.startSession).not.toHaveBeenCalled();
+    const result = await f.start();
+    expect(result).toMatchObject({ success: true, session: { id: 'standalone-chat' } });
+    expect(result).not.toHaveProperty('appWorkspaceAdopted');
+    expect(f.createSession).toHaveBeenCalledOnce();
+    expect(f.startSession).toHaveBeenCalledExactlyOnceWith(
+      'standalone-chat',
+      input.prompt,
+      expect.not.objectContaining({ expectedInitialSessionId: expect.anything() }),
+    );
+    expect(f.request.mock.calls.filter(([method]) => method === 'sessions.create')).toHaveLength(1);
   });
 
   test('returns the adopted conversation when plugin preparation is cancelled', async () => {

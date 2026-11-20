@@ -33,7 +33,7 @@ export function useHomeFileApps(options: Options): {
   openFile: OpenMcpAppFile;
   discover: () => Promise<void>;
   menu: McpAppComposerMenu;
-  beginStart: (temporarySessionId: string) => string;
+  beginStart: (temporarySessionId: string, context: McpAppViewContext) => string | undefined;
   promote: (from: string, to: string) => void;
   rollback: (temporarySessionId: string) => void;
 } {
@@ -399,16 +399,18 @@ export function useHomeFileApps(options: Options): {
       : undefined;
   const state = requestState?.key === key ? requestState : undefined;
   return {
-    beginStart: temporarySessionId => {
+    beginStart: (temporarySessionId, context) => {
       const scope = owned.current;
       if (
         !scope ||
         !scope.valid ||
         !scope.session.connected ||
+        scope.session.apps !== context.apps ||
+        !context.isCurrent() ||
         scope.key !== latest.current.key ||
         hasPendingStart()
       )
-        throw new Error('App workspace is unavailable');
+        return;
       scope.targetSessionId = temporarySessionId;
       retained.current.add(scope);
       owned.current = undefined;
@@ -445,7 +447,7 @@ export function useHomeFileApps(options: Options): {
       pending.current = undefined;
       catalogRef.current = undefined;
       setCatalog(undefined);
-      void discover();
+      if (latest.current.enabled) void discover();
     },
     openFile,
     discover,

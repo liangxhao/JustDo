@@ -87,7 +87,7 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
   bridge: McpAppHostBridge;
   dispose: () => void;
   refreshContext: (clearedUpdateId?: string) => Promise<void>;
-  prepareContext: () => Promise<void>;
+  prepareContext: (signal?: AbortSignal) => Promise<void>;
 } {
   const { session, payload } = host;
   const interactive = payload.messageSupported === true;
@@ -372,7 +372,7 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
   return {
     bridge,
     refreshContext,
-    async prepareContext() {
+    async prepareContext(signal) {
       if (disposed || !session.isCurrent() || !(host.canPrepareContext?.() ?? host.canInteract()))
         throw new Error('MCP App context is unavailable');
       if (!payload.updateModelContextSupported || !bridge.getAppCapabilities()?.tools) return;
@@ -380,7 +380,8 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
       const cursors = new Set<string>();
       let cursor: string | undefined;
       do {
-        const page = await bridge.listTools(cursor ? { cursor } : {});
+        signal?.throwIfAborted();
+        const page = await bridge.listTools(cursor ? { cursor } : {}, { signal });
         preparation.push(
           ...page.tools.filter(tool => tool._meta?.[MCP_APP_PREPARE_CONTEXT_META] === true),
         );
@@ -395,9 +396,10 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
       )
         throw new Error('Invalid App context preparation');
       if (!preparation.length) return;
+      signal?.throwIfAborted();
       preparingContext = true;
       try {
-        const result = await bridge.callTool({ name: preparation[0].name, arguments: {} });
+        const result = await bridge.callTool({ name: preparation[0].name, arguments: {} }, { signal });
         if (result.isError || disposed || !session.isCurrent())
           throw new Error('Could not prepare App context');
       } finally {

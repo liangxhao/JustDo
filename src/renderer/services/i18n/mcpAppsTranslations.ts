@@ -8,7 +8,6 @@ export const mcpAppsTranslations = {
     mcpAppsViewReference: '查看',
     mcpAppsUpdated: '已在原图更新',
     mcpAppsDiagramLocal: '本地图表 · 可继续修改',
-    mcpAppsContextPrepareFailed: '图表内容暂时无法同步，请等待应用就绪后重新发送。画布修改已保留。',
     mcpAppsWorkspaceStartUnavailable: '当前画布属于已选文件夹，请关闭工作树选项后发送。',
     mcpAppsTitle: '应用',
     mcpAppsAlreadyOpen: '应用已打开',
@@ -62,8 +61,6 @@ export const mcpAppsTranslations = {
     mcpAppsViewReference: 'View',
     mcpAppsUpdated: 'Original diagram updated',
     mcpAppsDiagramLocal: 'Local diagram · continue editing',
-    mcpAppsContextPrepareFailed:
-      'Could not sync the diagram. Wait for the app to be ready and send again. Your edits are preserved.',
     mcpAppsWorkspaceStartUnavailable:
       'The current canvas belongs to the selected folder. Turn off the worktree option before sending.',
     mcpAppsTitle: 'Apps',

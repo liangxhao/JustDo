@@ -73,7 +73,7 @@ import { store } from '@/store';
 import { listenInitialSessionDispatch } from './nativeSessionDispatch';
 
 type StartSessionHooks = {
-  beforeSessionSelected?: (session: CoworkSession) => void;
+  beforeSessionSelected?: (session: CoworkSession, appWorkspaceAdopted?: true) => void;
   isCurrent?: () => boolean;
   dispatchInitialTurn?: (
     request: NativeSessionDispatchRequest,
@@ -811,7 +811,11 @@ export class CoworkService {
     const pendingTemporarySessionId = temporarySessionId?.startsWith('temp-')
       ? temporarySessionId
       : undefined;
-    const publishPromotedSession = (session: CoworkSession, publish: () => void): void => {
+    const publishPromotedSession = (
+      session: CoworkSession,
+      publish: () => void,
+      appWorkspaceAdopted?: true,
+    ): void => {
       const beforeSessionSelected = hooks.beforeSessionSelected;
       if (!beforeSessionSelected) {
         publish();
@@ -820,7 +824,7 @@ export class CoworkService {
       // A Redux selection can commit before queued local workspace state.
       // Publish both together so the native surface never observes an empty owner.
       flushSync(() => {
-        beforeSessionSelected(session);
+        beforeSessionSelected(session, appWorkspaceAdopted);
         publish();
       });
     };
@@ -888,7 +892,7 @@ export class CoworkService {
                   ...(pendingTemporarySessionId ? { promoteFrom: pendingTemporarySessionId } : {}),
                 }),
               );
-            });
+            }, request.appWorkspaceAdopted);
             try {
               return await hooks.dispatchInitialTurn!(request, () => nativeStart.cancelled);
             } catch (error) {
@@ -919,7 +923,7 @@ export class CoworkService {
       if (nativeStart.deleted || (nativeStart.deletion && (await nativeStart.deletion))) {
         return { session: null, cancelled: true };
       }
-      if (result.session && options.appWorkspaceRequestId && !dispatchedSessionId) {
+      if (result.session && result.appWorkspaceAdopted && !dispatchedSessionId) {
         // Adoption can finish before dispatch or after navigation. Move the
         // retained canvas to its canonical owner without changing navigation.
         const select = store.getState().cowork.currentSession?.id === temporarySessionId;
@@ -927,7 +931,7 @@ export class CoworkService {
         publishPromotedSession(adoptedSession, () => {
           dispatchedSessionId = adoptedSession.id;
           store.dispatch(addSession({ session: adoptedSession, select }));
-        });
+        }, result.appWorkspaceAdopted);
       }
       if (result.success && result.session) {
         const planModeEnabled = pendingTemporarySessionId
@@ -958,8 +962,9 @@ export class CoworkService {
             (dispatchedSessionId ?? temporarySessionId) &&
           (!waitsOnHome || dispatchedSessionId !== undefined || isStartCurrent());
         const publishSession = () => store.dispatch(addSession({ session: runningSession, select }));
-        if (select && !dispatchedSessionId) {
-          publishPromotedSession(runningSession, publishSession);
+        // Resolve the temporary App owner even when an undispatched start settles in the background.
+        if (!dispatchedSessionId && (select || options.appWorkspaceRequestId)) {
+          publishPromotedSession(runningSession, publishSession, result.appWorkspaceAdopted);
         } else {
           publishSession();
         }

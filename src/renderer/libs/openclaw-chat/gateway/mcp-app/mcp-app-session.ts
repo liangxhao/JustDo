@@ -45,9 +45,11 @@ const scopedFields = ['sessionKey', 'sessionId', 'agentId', 'viewId', 'requester
 const canvasSessions = new Set<McpAppSession>();
 const VIEW_KEEPALIVE_INTERVAL_MS = 60_000;
 const VIEW_KEEPALIVE_MAX_FAILURES = 3;
+const SEND_PREPARATION_TIMEOUT_MS = 12_000;
 type RetainCanvasRun = (runId: string) => (() => void) | void;
-type CanvasPreparation = PreparedDiagramCanvas & {
-  priority: number;
+type CanvasPreparation = PreparedDiagramCanvas & { priority: number };
+type ReadyCanvas = CanvasPreparation & {
+  isCurrent: () => boolean;
   retainRun?: RetainCanvasRun;
 };
 type SendTarget = Pick<
@@ -57,7 +59,7 @@ type SendTarget = Pick<
 type CanvasRegistration = {
   identity: Omit<SendTarget, 'isCurrent'>;
   available: () => boolean;
-  prepare: () => Promise<CanvasPreparation>;
+  prepare: (signal: AbortSignal) => Promise<CanvasPreparation>;
   retainRun?: RetainCanvasRun;
 };
 
@@ -75,17 +77,32 @@ interface PreparedCanvasSend {
 export async function prepareMcpAppChatSend(
   target: SendTarget,
   send: Record<string, unknown>,
+  prepareContext?: (signal: AbortSignal) => Promise<void>,
 ): Promise<PreparedCanvasSend> {
-  const canvases: CanvasPreparation[] = [];
-  for (const apps of canvasSessions) canvases.push(...(await apps.prepareCanvases(target)));
-  if (!canvases.length) return { method: 'chat.send', params: send };
+  const pendingCanvases = [...canvasSessions].flatMap(apps => apps.captureCanvasPreparations(target));
+  const canvases: ReadyCanvas[] = [];
+  const preparation = new AbortController();
+  const deadline = setTimeout(() => preparation.abort(), SEND_PREPARATION_TIMEOUT_MS);
+  try {
+    if (prepareContext) await prepareContext(preparation.signal);
+    for (const prepare of pendingCanvases) {
+      canvases.push(await prepare(preparation.signal));
+    }
+  } catch {
+    // A failed snapshot must not block chat or silently select a different canvas.
+    canvases.length = 0;
+  } finally {
+    clearTimeout(deadline);
+  }
   if (
     !target.isCurrent() ||
     target.client.generation !== target.generation ||
     send.sessionKey !== target.sessionKey ||
-    send.sessionId !== target.sessionId
+    (send.sessionId ?? null) !== target.sessionId
   )
-    throw new Error('Diagram send context changed');
+    throw new Error('Message send context changed during App preparation');
+  if (!canvases.length || canvases.some(canvas => !canvas.isCurrent()))
+    return { method: 'chat.send', params: send };
   const priority = Math.max(...canvases.map(item => item.priority));
   const releaseRuns: Array<() => void> = [];
   return {
@@ -120,8 +137,9 @@ export async function prepareMcpAppChatSend(
       sessionId: target.sessionId,
       agentId: target.agentId,
       send,
-      canvases: canvases.map(({ priority: value, retainRun: _retainRun, ...item }) => ({
-        ...item,
+      canvases: canvases.map(({ viewId, token, priority: value }) => ({
+        viewId,
+        token,
         selected: priority > 0 && value === priority,
       })),
     },
@@ -159,7 +177,7 @@ export class McpAppSession {
 
   registerCanvasPreparation(
     viewId: string,
-    prepare: () => Promise<CanvasPreparation>,
+    prepare: CanvasRegistration['prepare'],
     available: () => boolean,
     retainRun?: RetainCanvasRun,
   ) {
@@ -201,17 +219,19 @@ export class McpAppSession {
     return Boolean(binding?.isCurrent() && hasMcpAppCanvasPreparations(binding));
   }
 
-  async prepareCanvases(target: SendTarget): Promise<CanvasPreparation[]> {
-    const callbacks = [...this.canvasPreparations.values()].filter(item =>
-      this.matchesCanvas(item, target),
-    );
-    const prepared: CanvasPreparation[] = [];
-    for (const item of callbacks) {
-      prepared.push({ ...(await item.prepare()), retainRun: item.retainRun });
-      if (!this.matchesCanvas(item, target))
-        throw new Error('Diagram binding changed during preparation');
-    }
-    return prepared;
+  captureCanvasPreparations(target: SendTarget): Array<(signal: AbortSignal) => Promise<ReadyCanvas>> {
+    return [...this.canvasPreparations]
+      .filter(([, item]) => this.matchesCanvas(item, target))
+      .map(([viewId, item]) => async signal => {
+        const isCurrent = () =>
+          this.canvasPreparations.get(viewId) === item && this.matchesCanvas(item, target);
+        signal.throwIfAborted();
+        if (!isCurrent()) throw new Error('Diagram binding changed during preparation');
+        const canvas = await item.prepare(signal);
+        signal.throwIfAborted();
+        if (!isCurrent()) throw new Error('Diagram binding changed during preparation');
+        return { ...canvas, isCurrent, retainRun: item.retainRun };
+      });
   }
 
   async prepareChatSend(send: Record<string, unknown>): Promise<PreparedCanvasSend> {
@@ -538,11 +558,11 @@ export class McpAppSessionView {
     this.changed();
   }
 
-  diagramRequest<T = unknown>(input: Record<string, unknown>) {
+  diagramRequest<T = unknown>(input: Record<string, unknown>, signal?: AbortSignal) {
     return this.dispatch<T>(
       DRAWIO_CANVAS_METHOD,
       input,
-      undefined,
+      signal,
       true,
       input.action === 'next' || input.action === 'ack',
     );

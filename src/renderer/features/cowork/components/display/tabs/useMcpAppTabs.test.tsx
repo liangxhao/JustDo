@@ -19,8 +19,12 @@ import { useMcpAppTabs } from './useMcpAppTabs';
 
 vi.mock('@/libs/openclaw-chat/components/mcp-app/view', () => {
   class TestAppView extends HTMLElement {
+    declare context?: McpAppViewContext;
     resume = vi.fn();
     prepareContext = vi.fn().mockResolvedValue(undefined);
+    get workspaceContext() {
+      return this.context?.isCurrent() ? this.context : undefined;
+    }
   }
   customElements.define('test-mcp-app-view', TestAppView);
   return { McpAppView: TestAppView };
@@ -517,13 +521,24 @@ test('promotes the App panel to the new conversation without replacing its eleme
     return <div>{controller.panels(entry.id)}</div>;
   }
   const rendered = render(<Fixture sessionId="__home__" />);
+  let staleCurrent = true;
+  const stale = {
+    ...entry,
+    id: 'idle-drawing',
+    preview: { ...entry.preview, title: 'Idle App', viewId: 'idle-drawing' },
+    context: { ...entry.context, apps: { ...entry.context.apps }, isCurrent: () => staleCurrent },
+  };
+  await act(async () => openWorkspaceApp(stale));
+  staleCurrent = false;
+  expect(controller.readWorkspaceContext()).toBeUndefined();
+  expect(controller.tabs.map(tab => tab.id)).toEqual([stale.id]);
   await act(async () => openWorkspaceApp(entry));
-  const element = document.querySelector('test-mcp-app-view')!;
+  const element = [...document.querySelectorAll('test-mcp-app-view')][1];
   element.append(document.createTextNode('unsaved node text'));
-  await act(async () => expect(await controller.prepareContext()).toBe(true));
-  act(() => controller.promote('__home__', 'conversation'));
+  expect(controller.readWorkspaceContext()).toBe(entry.context);
+  act(() => controller.promote('__home__', 'conversation', entry.context));
   rendered.rerender(<Fixture sessionId="conversation" />);
-  expect(document.querySelector('test-mcp-app-view')).toBe(element);
+  expect([...document.querySelectorAll('test-mcp-app-view')]).toContain(element);
   expect(element.textContent).toBe('unsaved node text');
   expect(controller.tabs.map(tab => tab.id)).toEqual([entry.id]);
 });

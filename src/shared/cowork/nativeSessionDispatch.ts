@@ -9,6 +9,7 @@ export interface NativeSessionDispatchRequest {
   clientTurnId: string;
   sessionId: string;
   sessionKey: string;
+  appWorkspaceAdopted?: true;
   params: Record<string, unknown>;
 }
 

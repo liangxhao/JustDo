@@ -1203,21 +1203,22 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     };
 
     const workingDirectory = config.workingDirectory;
+    const isHomeStartCurrent = () => {
+      const state = store.getState();
+      const homeAgentId = state.cowork.config.allowMainAgentSwitch
+        ? state.agent.currentAgentId
+        : MAIN_USER_AGENT_ID;
+      return !state.cowork.currentSession &&
+        state.cowork.config.workingDirectory === workingDirectory &&
+        state.cowork.config.permissionMode === config.permissionMode &&
+        homeAgentId === currentAgentId;
+    };
     const stopWatchingHome = worktree
       ? store.subscribe(() => {
           const pending = pendingStartRef.current;
           if (pending?.requestId !== requestId || pending.canonicalSessionId || pending.cancelled)
             return;
-          const state = store.getState();
-          const homeAgentId = state.cowork.config.allowMainAgentSwitch
-            ? state.agent.currentAgentId
-            : MAIN_USER_AGENT_ID;
-          if (
-            !state.cowork.currentSession &&
-            state.cowork.config.workingDirectory === workingDirectory &&
-            homeAgentId === currentAgentId
-          )
-            return;
+          if (isHomeStartCurrent()) return;
           pending.cancelled = true;
           finishWorktreeInitialCommit(false);
           if (pending.clientTurnId) void coworkService.cancelSessionStart(pending.clientTurnId);
@@ -1239,19 +1240,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         console.error('Failed to check cowork API config:', error);
       }
 
-      let hasHomeApps = false;
-      try {
-        hasHomeApps = await mcpAppTabs.prepareContext();
-      } catch {
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', {
-            detail: i18nService.t('mcpAppsContextPrepareFailed'),
-          }),
-        );
-        return false;
-      }
-      if (isPendingStartCancelled()) return false;
-      if (hasHomeApps && worktree) {
+      if (isPendingStartCancelled() || !isHomeStartCurrent()) return false;
+      const homeAppContext = mcpAppTabs.readWorkspaceContext();
+      if (homeAppContext?.isCurrent() && worktree) {
         window.dispatchEvent(
           new CustomEvent('app:showToast', {
             detail: i18nService.t('mcpAppsWorkspaceStartUnavailable'),
@@ -1264,17 +1255,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // start waits on Home for the canonical checkout and renderer handoff.
       const startInPlanMode = store.getState().cowork.newSessionPlanMode;
       const tempSessionId = `temp-${Date.now()}`;
-      let appWorkspaceRequestId: string | undefined;
-      try {
-        appWorkspaceRequestId = hasHomeApps ? homeApps.beginStart(tempSessionId) : undefined;
-      } catch {
-        window.dispatchEvent(
-          new CustomEvent('app:showToast', {
-            detail: i18nService.t('mcpAppsContextPrepareFailed'),
-          }),
-        );
-        return false;
-      }
+      const appWorkspaceRequestId = homeAppContext
+        ? homeApps.beginStart(tempSessionId, homeAppContext)
+        : undefined;
       if (!worktree && pendingStartRef.current?.requestId === requestId)
         pendingStartRef.current.temporarySessionId = tempSessionId;
       const titleInput = getMessageTitleInput(prompt, attachments, gatewayPrompt);
@@ -1312,7 +1295,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
           ? { sessionId: targetSessionId, objective: initialGoal }
           : null;
         promoteDisplaySession(HOME_DISPLAY_SESSION_KEY, targetSessionId);
-        mcpAppTabs.promote(HOME_DISPLAY_SESSION_KEY, targetSessionId);
+        if (appWorkspaceRequestId)
+          mcpAppTabs.promote(HOME_DISPLAY_SESSION_KEY, targetSessionId, homeAppContext);
         promoteBrowserPanelTabs(HOME_DISPLAY_SESSION_KEY, targetSessionId);
         browserPanelRefs.current.forEach(panel =>
           panel.promoteRecordingSession(HOME_DISPLAY_SESSION_KEY, targetSessionId),
@@ -1377,26 +1361,6 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       },
                     );
                   if (chatWrapperRef.current?.isInitialDispatchReady(request.sessionKey)) {
-                    if (appWorkspaceRequestId) {
-                      try {
-                        if (!(await mcpAppTabs.prepareContext()))
-                          throw new Error('App context is unavailable');
-                      } catch {
-                        throw Object.assign(
-                          new Error(i18nService.t('mcpAppsContextPrepareFailed')),
-                          {
-                            requestSent: false,
-                          },
-                        );
-                      }
-                      if (isPendingStartCancelled() || isTransportCancelled())
-                        throw Object.assign(
-                          new Error(i18nService.t('coworkInitialDispatchCancelled')),
-                          {
-                            requestSent: false,
-                          },
-                        );
-                    }
                     const originalDraftIsCurrent = submission?.isDraftCurrent;
                     const canonicalDraftIsCurrent = originalDraftIsCurrent && captureComposerDraftLifetime(request.sessionId);
                     return chatWrapperRef.current!.dispatchInitialTurn(
@@ -1458,6 +1422,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                           }
                         });
                       },
+                      request.appWorkspaceAdopted
+                        ? signal => mcpAppTabs.prepareContext(request.sessionId, signal)
+                        : undefined,
                     );
                   }
                   await new Promise(resolve => setTimeout(resolve, 30));
@@ -1466,7 +1433,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   requestSent: false,
                 });
               },
-              beforeSessionSelected: session => {
+              beforeSessionSelected: (session, appWorkspaceAdopted) => {
                 if (pendingStartRef.current?.requestId === requestId)
                   pendingStartRef.current.canonicalSessionId = session.id;
                 if (worktree) {
@@ -1475,8 +1442,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   return;
                 }
                 promoteDisplaySession(tempSessionId, session.id);
-                homeApps.promote(tempSessionId, session.id);
-                mcpAppTabs.promote(tempSessionId, session.id);
+                if (appWorkspaceAdopted) {
+                  homeApps.promote(tempSessionId, session.id);
+                  mcpAppTabs.promote(tempSessionId, session.id);
+                } else if (appWorkspaceRequestId) {
+                  homeApps.rollback(tempSessionId);
+                  mcpAppTabs.promote(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+                }
                 summaryVisibility.promote(tempSessionId, session.id);
                 promoteBrowserPanelTabs(tempSessionId, session.id);
                 browserPanelRefs.current.forEach(panel =>

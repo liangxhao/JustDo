@@ -75,7 +75,7 @@ type Resources = {
   teardown?: () => Promise<void>;
   update?: () => void;
   refreshContext?: () => Promise<void>;
-  prepareContext?: () => Promise<void>;
+  prepareContext?: (signal?: AbortSignal) => Promise<void>;
   preparingContext?: boolean;
   content?: Readonly<McpAppContentIdentity>;
   localNotice?: string;
@@ -560,9 +560,11 @@ export class McpAppView extends LitElement {
         stopContext();
         host.dispose();
       };
-      resources.prepareContext = host.prepareContext;
       const { bridge } = host;
-      if (payload.updateModelContextSupported) resources.refreshContext = host.refreshContext;
+      if (payload.updateModelContextSupported) {
+        resources.prepareContext = host.prepareContext;
+        resources.refreshContext = host.refreshContext;
+      }
       bridge.ondownloadfile = async ({ contents }) => {
         if (
           this.closed ||
@@ -743,20 +745,22 @@ export class McpAppView extends LitElement {
     this.requestUpdate();
   }
 
-  async prepareContext(): Promise<void> {
+  get workspaceContext(): McpAppViewContext | undefined {
     if (
-      this.loading ||
-      this.error ||
-      this.closed ||
-      !this.resources?.session.isCurrent() ||
-      !this.context?.isCurrent()
-    )
-      throw new Error('App context is not ready');
+      this.isConnected && !this.loading && !this.error && !this.closed &&
+      this.resources?.session.isCurrent() && this.context?.isCurrent()
+    ) return this.context;
+    return undefined;
+  }
+
+  async prepareContext(signal?: AbortSignal): Promise<void> {
     const resources = this.resources;
-    if (resources.preparingContext) throw new Error('App context preparation is already pending');
+    if (!this.workspaceContext || !resources?.prepareContext || this.inactive ||
+      resources.preparingContext || signal?.aborted) return;
     resources.preparingContext = true;
     try {
-      await resources.prepareContext?.();
+      const frame = resources.controller.signal;
+      await resources.prepareContext(signal ? AbortSignal.any([signal, frame]) : frame);
     } finally {
       resources.preparingContext = false;
     }

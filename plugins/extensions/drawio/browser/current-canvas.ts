@@ -22,11 +22,13 @@ interface CanvasHost {
   current: () => boolean;
   canPrepare?: () => boolean;
   priority: () => number;
-  request: <T>(input: Record<string, unknown>) => Promise<T>;
+  request: <T>(input: Record<string, unknown>, signal?: AbortSignal) => Promise<T>;
   release: (token: string, forgetSource?: boolean) => Promise<unknown>;
   subscribe: (listener: (event: { event: string }) => void) => () => void;
   onSuspend: (listener: () => void) => () => void;
-  register: (prepare: () => Promise<PreparedDiagramCanvas & { priority: number }>) => () => void;
+  register: (
+    prepare: (signal?: AbortSignal) => Promise<PreparedDiagramCanvas & { priority: number }>,
+  ) => () => void;
 }
 const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -70,19 +72,26 @@ export function connectCurrentDiagram(host: CanvasHost) {
     if (!current() || !token) retire();
     else preparationEpoch++;
   });
-  const unregister = host.register(async () => {
+  const unregister = host.register(async signal => {
     const revision = preparationEpoch;
-    const unchanged = () => canPrepare() && revision === preparationEpoch;
-    if (!canPrepare()) throw new Error('Diagram editor unavailable');
-    const result = await host.bridge.callTool({ name: DRAWIO_SNAPSHOT_TOOL, arguments: {} });
+    const unchanged = () => canPrepare() && revision === preparationEpoch && !signal?.aborted;
+    if (!unchanged()) throw new Error('Diagram editor unavailable');
+    const result = await host.bridge.callTool({ name: DRAWIO_SNAPSHOT_TOOL, arguments: {} }, { signal });
     if (!unchanged() || result.isError) throw new Error('Could not prepare diagram');
     const snapshot = readSnapshot(result.structuredContent, host.diagramId);
-    const prepared = await host.request<{ token: string }>({
-      action: 'prepare',
-      source: host.source,
-      snapshot,
-      token: token || retiredToken,
-      retire: retireOnPrepare,
+    const prepared = await host.request<{ token: string }>(
+      {
+        action: 'prepare',
+        source: host.source,
+        snapshot,
+        token: token || retiredToken,
+        retire: retireOnPrepare,
+      },
+      signal,
+    ).catch(error => {
+      // A lost first response may leave a token on this exact editor owner.
+      if (!token && revision === preparationEpoch && canPrepare()) retireOnPrepare = true;
+      throw error;
     });
     if (!unchanged() || typeof prepared.token !== 'string') {
       if (typeof prepared.token === 'string' && prepared.token !== token)

@@ -4,6 +4,7 @@ import type {
   NativeSessionDispatchRequest,
   NativeSessionDispatchResponse,
 } from '@shared/cowork/nativeSessionDispatch';
+import type { SessionRunTiming } from '@shared/cowork/sessionRun';
 import { useLayoutEffect } from 'react';
 import { flushSync } from 'react-dom';
 import { createRoot, type Root } from 'react-dom/client';
@@ -229,7 +230,7 @@ it.each([
   { label: 'normal first send', appWorkspaceRequestId: undefined },
   { label: 'workspace App adoption', appWorkspaceRequestId: 'workspace-adoption' },
 ])('keeps every committed workspace visible during $label', async ({ appWorkspaceRequestId }) => {
-  const result = deferred<{ success: boolean; session: CoworkSession }>();
+  const result = deferred<{ success: boolean; session: CoworkSession; appWorkspaceAdopted?: true }>();
   Object.defineProperty(window, 'electron', {
     configurable: true,
     value: { cowork: { startSession: vi.fn(() => result.promise) } },
@@ -240,9 +241,39 @@ it.each([
     { prompt: 'Synthetic', appWorkspaceRequestId },
     { beforeSessionSelected: workspace.beforeSessionSelected },
   );
-  result.resolve({ success: true, session: canonical });
+  result.resolve({
+    success: true,
+    session: canonical,
+    ...(appWorkspaceRequestId ? { appWorkspaceAdopted: true } : {}),
+  });
   await expect(pending).resolves.toMatchObject({ session: { id: canonical.id } });
 
   await workspace.expectContinuousVisibility();
   expect(workspace.beforeSessionSelected).toHaveBeenCalledOnce();
+});
+
+it('releases the temporary App owner when a standalone start stops before handoff in the background', async () => {
+  const result = deferred<{ success: boolean; session: CoworkSession; timing: SessionRunTiming }>();
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { cowork: { startSession: vi.fn(() => result.promise) } },
+  });
+  store.dispatch(setCurrentSession(temporary));
+  const beforeSessionSelected = vi.fn();
+  const clientTurnId = 'stopped-standalone-start';
+  const pending = new CoworkService().startSession(
+    { prompt: 'Synthetic', clientTurnId, appWorkspaceRequestId: 'unavailable-preview' },
+    { beforeSessionSelected },
+  );
+  store.dispatch(clearCurrentSession());
+  const stopped = { ...canonical, status: 'idle' as const };
+  result.resolve({
+    success: true,
+    session: stopped,
+    timing: { id: clientTurnId, sessionId: stopped.id, clientTurnId, startedAt: 1, state: 'aborted' },
+  });
+
+  await expect(pending).resolves.toMatchObject({ session: stopped });
+  expect(beforeSessionSelected).toHaveBeenCalledExactlyOnceWith(stopped, undefined);
+  expect(store.getState().cowork.currentSession).toBeNull();
 });

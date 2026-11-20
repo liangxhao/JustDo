@@ -111,7 +111,7 @@ export function connectAppContent(input: {
           current: input.operationCurrent ?? current,
           canPrepare: current,
           priority,
-          request: value => session.diagramRequest(value),
+          request: (value, signal) => session.diagramRequest(value, signal),
           release: (token, forgetSource) => session.releaseDiagram(token, forgetSource),
           subscribe: listener => session.subscribeDiagram(listener),
           onSuspend: listener => session.onSuspend(listener),

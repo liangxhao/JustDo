@@ -135,6 +135,7 @@ export interface JustDoChatWrapperRef {
     params: Record<string, unknown>,
     isCancelled?: () => boolean,
     onUnconfirmed?: (nativeSessionId: string) => void,
+    prepareAppContext?: (signal: AbortSignal) => Promise<void>,
   ) => Promise<unknown>;
   isInitialDispatchReady: (sessionKey: string) => boolean;
   getQueuedInputDetail: (inputId: string, expectedSessionKey: string) => QueuedInputDetail | null;
@@ -615,7 +616,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
         isInitialDispatchReady: sessionKey =>
           !branchCreationPendingRef.current &&
           (controllerRef.current?.isInitialDispatchReady(sessionKey) ?? false),
-        dispatchInitialTurn: async (params, isCancelled, onUnconfirmed) => {
+        dispatchInitialTurn: async (params, isCancelled, onUnconfirmed, prepareAppContext) => {
           assertSessionMutationAllowed();
           const controller = controllerRef.current;
           if (!controller)
@@ -633,6 +634,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
               params,
               () => controller.beginInitialDispatch(sessionKey, dispatchRunId),
               isCancelled,
+              prepareAppContext,
             );
             if ((receipt as { status?: string } | null)?.status === 'in_flight') {
               throw Object.assign(new Error(i18nService.t('coworkSendOutcomeUnknown')), { requestSent: true });

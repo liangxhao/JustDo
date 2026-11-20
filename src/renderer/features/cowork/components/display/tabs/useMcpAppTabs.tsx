@@ -1,7 +1,7 @@
 import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
-import { McpAppView } from '@/libs/openclaw-chat/components/mcp-app/view';
+import { McpAppView, type McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { isNativeMcpAppPreview } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
 import { i18nService } from '@/services/i18n';
 
@@ -258,25 +258,32 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
       },
     }));
   return {
-    async prepareContext(): Promise<boolean> {
-      const source = latest.current.sessionId;
-      const current = entriesRef.current.filter(
-        entry => entry.sessionId === source && !('attach' in entry),
-      );
-      if (!current.length) return false;
-      for (const entry of current) {
-        const view = views.current.get(entry.id);
-        if ('load' in entry || !view) throw new Error('App is still loading');
-        await view.prepareContext();
-        if (latest.current.sessionId !== source || !entriesRef.current.includes(entry))
-          throw new Error('App workspace changed during preparation');
+    readWorkspaceContext(): McpAppViewContext | undefined {
+      for (const entry of entriesRef.current) {
+        if (entry.sessionId !== latest.current.sessionId || !('preview' in entry)) continue;
+        const context = views.current.get(entry.id)?.workspaceContext;
+        if (context) return context;
       }
-      return true;
     },
-    promote: (from: string, to: string) => {
+    async prepareContext(sessionId: string, signal: AbortSignal): Promise<void> {
+      const entries = entriesRef.current.filter(
+        entry => entry.sessionId === sessionId && 'preview' in entry,
+      );
+      for (const entry of entries) {
+        if (latest.current.sessionId !== sessionId || signal.aborted) return;
+        if (!entriesRef.current.includes(entry)) continue;
+        const view = views.current.get(entry.id);
+        await view?.prepareContext(signal).catch(() => undefined);
+      }
+    },
+    promote: (from: string, to: string, workspace?: McpAppViewContext) => {
       update(current =>
         current.map(entry =>
-          entry.sessionId === from && 'preview' in entry ? { ...entry, sessionId: to } : entry,
+          entry.sessionId === from && 'preview' in entry &&
+          (!workspace || (entry.context.apps === workspace.apps &&
+            entry.context.sessionKey === workspace.sessionKey))
+            ? { ...entry, sessionId: to }
+            : entry,
         ),
       );
     },

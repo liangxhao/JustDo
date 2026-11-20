@@ -15,6 +15,7 @@ export async function dispatchInitialTurn(
   params: Record<string, unknown>,
   beforeRequest?: () => void,
   isCancelled: () => boolean = () => false,
+  prepareAppContext?: (signal: AbortSignal) => Promise<void>,
 ): Promise<unknown> {
   if (
     isCancelled() ||
@@ -50,8 +51,8 @@ export async function dispatchInitialTurn(
           !state.currentSessionId ||
           state.currentSessionId === params.sessionId),
     };
-    prepared = hasMcpAppCanvasPreparations(target)
-      ? await prepareMcpAppChatSend(target, params)
+    prepared = prepareAppContext || hasMcpAppCanvasPreparations(target)
+      ? await prepareMcpAppChatSend(target, params, prepareAppContext)
       : { method: 'chat.send', params };
     if (!target.isCurrent()) throw new Error(i18nService.t('coworkInitialDispatchCancelled'));
   } catch (error) {

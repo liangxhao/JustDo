@@ -152,12 +152,16 @@ describe('diagram navigation lifecycle', () => {
     expect(release).toHaveBeenCalledWith('');
     finish({ operation });
     await vi.advanceTimersByTimeAsync(3000);
-    expect(callTool).toHaveBeenCalledExactlyOnceWith({ name: DRAWIO_SNAPSHOT_TOOL, arguments: {} });
+    expect(callTool).toHaveBeenCalledExactlyOnceWith(
+      { name: DRAWIO_SNAPSHOT_TOOL, arguments: {} },
+      { signal: undefined },
+    );
     expect(request).toHaveBeenCalledTimes(2);
     request.mockResolvedValueOnce({ token: 'second' });
     await prepare();
     expect(request).toHaveBeenLastCalledWith(
       expect.objectContaining({ action: 'prepare', token: 'first', retire: true }),
+      undefined,
     );
     request.mockResolvedValueOnce({ operation: { ...operation, operationId: 'new-operation' } });
     callTool.mockResolvedValueOnce({

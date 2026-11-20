@@ -2825,8 +2825,7 @@ export class ChatController {
     };
     const generation = client.generation;
     const nativeSessionId = this.state.currentSessionId;
-    // Preparation precedes optimistic insertion and the actual send. A failed
-    // editor read therefore leaves the composer's draft available to retry.
+    // Prepare optional canvas context before optimistic insertion or native dispatch.
     const preparedSend =
       (commandMessage.startsWith('/') && goalStartObjective === null) ||
       !this.mcpApps.hasCanvasPreparations

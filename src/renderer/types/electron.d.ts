@@ -1054,6 +1054,7 @@ interface IElectronAPI {
     }) => Promise<{
       success: boolean;
       session?: CoworkSession;
+      appWorkspaceAdopted?: true;
       error?: string;
       code?: string;
       engineStatus?: OpenClawEngineStatus;
