@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMessageRenderer } from '../conversation-overlay/modules/sidepanel-messages.js';
 import { messageCopyText } from '../conversation-overlay/modules/sidepanel-rich-content.js';
 import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
+import { messagesFromThread } from '../conversation-overlay/modules/sidepanel-state.js';
 
 const answer = (text: string, key = 'answer') => ({ role: 'assistant', key, text });
 const deferred = () => {
@@ -76,6 +77,54 @@ describe('side panel answer and code copying', () => {
     expect(feedback.textContent).toBe('');
     button.click();
     await vi.waitFor(() => expect(writeText).toHaveBeenLastCalledWith('First continues'));
+  });
+
+  it('keeps only the last text copy action in each turn, including after expanding the process', async () => {
+    const display = { modelName: 'native-model', timestampMs: Date.parse('2026-11-10T10:30:45Z') };
+    const previous = { id: 'previous-answer', type: 'agentMessage', text: 'Previous answer' };
+    const progress = { id: 'progress', type: 'agentMessage', text: 'Checking the result', display };
+    const final = { id: 'final', type: 'agentMessage', text: '**Final answer**', display };
+    const media = { id: 'media', type: 'agentMessage', text: '', rawMessage: {
+      role: 'assistant', content: [
+        { type: 'attachment', attachment: { kind: 'image', url: 'data:image/png;base64,AA==' } },
+      ],
+    } };
+    const render = (items: Array<typeof progress>, protectTrailingTurn: boolean) => {
+      renderer.render(messagesFromThread({ id: 'one', turns: [
+        { id: 'previous', items: [previous] },
+        { id: 'current', items: [
+          { type: 'userMessage', content: [{ type: 'text', text: 'Next question' }] },
+          ...items,
+          media,
+        ] },
+      ] }, { protectTrailingTurn }), 'one');
+    };
+    const visibleCopies = () => [...messages.querySelectorAll<HTMLButtonElement>('.message-copy:not([hidden])')];
+
+    render([progress], true);
+    expect(visibleCopies()).toHaveLength(2);
+    const progressCopy = visibleCopies()[1];
+    progressCopy.click();
+    await vi.waitFor(() => expect(progressCopy.dataset.copyState).toBe('copied'));
+
+    render([progress, final], true);
+    expect(progressCopy.hidden).toBe(true);
+    expect(progressCopy.dataset.copyState).toBeUndefined();
+    expect(visibleCopies()).toHaveLength(2);
+
+    render([progress, final], false);
+    const history = messages.querySelector<HTMLDetailsElement>('.completed-process')!;
+    history.querySelector('summary')!.click();
+    await vi.waitFor(() => expect(history.querySelector('.assistant-content')?.textContent?.trim()).toBe(progress.text));
+    expect(history.querySelector('.message-copy:not([hidden])')).toBeNull();
+    expect(history.querySelector('.message-model')?.textContent).toBe(display.modelName);
+    expect(history.querySelector('time')?.dateTime).toBe('2026-11-10T10:30:45.000Z');
+    expect(visibleCopies()).toHaveLength(2);
+    const finalCopy = visibleCopies()[1];
+    expect(finalCopy.nextElementSibling?.querySelector('.message-model')?.textContent).toBe(display.modelName);
+    expect(finalCopy.nextElementSibling?.querySelector('time')?.dateTime).toBe('2026-11-10T10:30:45.000Z');
+    finalCopy.click();
+    expect(writeText).toHaveBeenLastCalledWith(final.text);
   });
 
   it('shows an actionable failure and does not let earlier requests overwrite the latest result', async () => {

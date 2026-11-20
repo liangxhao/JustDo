@@ -539,7 +539,7 @@ export function createMessageRenderer(
     } else label?.remove();
   }
 
-  function patchAssistantMessage(node, entry) {
+  function patchAssistantMessage(node, entry, showAnswerCopy) {
     node.className = 'message assistant';
     let content = node.querySelector(':scope > .assistant-content');
     if (!content) {
@@ -567,6 +567,7 @@ export function createMessageRenderer(
       actions.append(copy, metadata, status);
       node.append(content, actions);
     }
+    const copy = node.querySelector(':scope > .message-actions > .message-copy');
     // Footer enrichment must preserve body selection and in-flight copy feedback.
     const signature = JSON.stringify({
       text: entry.text,
@@ -577,11 +578,12 @@ export function createMessageRenderer(
       copyController.invalidate(node);
       content.replaceChildren();
       renderContent(content, entry);
-      const copy = node.querySelector(':scope > .message-actions > .message-copy');
       copy.copyText = messageCopyText(entry);
-      copy.hidden = !copy.copyText.trim();
       node.renderSignature = signature;
     } else retryRichImages(content);
+    const hideCopy = !showAnswerCopy || !copy.copyText.trim();
+    if (hideCopy && !copy.hidden) copyController.invalidate(copy);
+    copy.hidden = hideCopy;
     patchMessageMetadata(node, entry.display);
   }
 
@@ -620,7 +622,7 @@ export function createMessageRenderer(
     actions.hidden = actions.querySelector('.message-copy').hidden && metadata.hidden;
   }
 
-  function renderEntry(entry, index) {
+  function renderEntry(entry, index, showAnswerCopy = false) {
     const key = entryKey(entry, index);
     let node = entryNodes.get(key);
     if (!node || node.entryRole !== entry.role) {
@@ -637,7 +639,7 @@ export function createMessageRenderer(
     if (entry.role === 'completed-process') patchCompletedProcess(node, entry, key);
     else if (entry.role === 'process') patchProcessSummary(node, entry, key);
     else if (entry.role === 'user') patchUserMessage(node, entry);
-    else if (entry.role === 'assistant') patchAssistantMessage(node, entry);
+    else if (entry.role === 'assistant') patchAssistantMessage(node, entry, showAnswerCopy);
     else if (entry.role === 'live-process') {
       node.className = `message process-live process-live-${entry.item.type}`;
       let list = node.firstElementChild;
@@ -702,6 +704,14 @@ export function createMessageRenderer(
       const previousScrollTop = container.scrollTop;
       const previousKeys = new Set(entryNodes.keys());
       const nodes = [];
+      const lastAnswers = new Map();
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const entry = entries[index];
+        if (entry.role === 'assistant' && entry.turnIndex !== undefined &&
+          !lastAnswers.has(entry.turnIndex) && messageCopyText(entry).trim()) {
+          lastAnswers.set(entry.turnIndex, entry);
+        }
+      }
       if (!entries.length) {
         const empty = document.createElement('div');
         empty.className = 'empty';
@@ -714,7 +724,8 @@ export function createMessageRenderer(
         nodes.push(empty);
       }
       for (const [index, entry] of entries.entries()) {
-        const node = renderEntry(entry, index);
+        const showAnswerCopy = entry.turnIndex === undefined || lastAnswers.get(entry.turnIndex) === entry;
+        const node = renderEntry(entry, index, showAnswerCopy);
         // Play an entrance once for new live rows. Existing streaming rows keep
         // their identity and do not restart animations on every token.
         if (!previousKeys.has(node.dataset.renderKey) && !changedScope && previousKeys.size)

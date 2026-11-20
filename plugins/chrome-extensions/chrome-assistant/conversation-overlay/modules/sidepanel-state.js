@@ -271,6 +271,7 @@ export function messagesFromThread(thread, options = {}) {
         entries.push({
           role: 'assistant',
           key: itemKey(item, itemIndex, 'assistant'),
+          turnIndex,
           text: item.text,
           ...(typeof item.status === 'string' ? { status: item.status } : {}),
           ...(item.id ? { id: item.id } : {}),
