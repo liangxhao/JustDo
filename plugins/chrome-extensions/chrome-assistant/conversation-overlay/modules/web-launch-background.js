@@ -35,6 +35,7 @@ function queueResponse(item) {
     ok: true,
     queueStatus: item.error ? 'cancelled' : 'queued',
     ...(!item.error && item.composerPending ? { queueReason: 'composer' } : {}),
+    ...(!item.error && !item.composerPending && item.panelPending ? { queueReason: 'panel' } : {}),
   };
 }
 
@@ -545,7 +546,12 @@ export function createWebLaunchBackground({
     if (!hasWebsiteLaunchGrant(policy) || doc.revoked || !(await documentActive(doc)))
       throw { code: 'SITE_NOT_ALLOWED' };
     if (cancelled.has(cancelKey(message, sender))) throw { code: 'EXPIRED' };
-    if (await composerBusy(doc.source)) throw { code: 'COMPOSER_BUSY', composerPending: true };
+    if (await composerBusy(doc.source)) return transaction(() => {
+      const item = findQueued(message);
+      if (!item) return;
+      item.composerPending = true;
+      return queueResponse(item);
+    });
     const input = normalizeInput(message.input);
     const record = {
       requestId: message.requestId,
@@ -767,7 +773,8 @@ export function createWebLaunchBackground({
     enqueuing.has(windowId) ||
     state?.queue.some(item => item.source.windowId === windowId && !item.error) ||
     windowOwners(windowId).some(
-      record => record.launchId || !missingWindowOwners.has(record.requestId),
+      record => holdsComposer(record.response?.receipt) &&
+        (record.launchId || !missingWindowOwners.has(record.requestId)),
     );
   async function reconcileWindowWork(windowId) {
     const unknown = !slots.has(windowId)
@@ -872,6 +879,9 @@ export function createWebLaunchBackground({
     if (message.type === 'web-launch:panel:state') {
       const panel = registeredPanel(message, sender);
       panel.busy = message.composerBusy === true;
+      panel.replaceableDraftLaunchId = validIdentifier(message.replaceableDraftLaunchId)
+        ? message.replaceableDraftLaunchId
+        : undefined;
       await transaction(() => {
         state.panels[String(panel.tabId)] = panel;
         if (message.launchId) {
@@ -942,14 +952,18 @@ export function createWebLaunchBackground({
       for (const [id, expiresAt] of abandonedLaunches)
         if (expiresAt <= now) abandonedLaunches.delete(id);
       abandonedLaunches.set(message.launchId, now + WebLaunchLimits.confirmationMs);
-      await transaction(() => {
+      const removed = await transaction(() => {
+        const records = [];
         for (const record of Object.values(state.requests)) {
           const pending = !record.launchId && record.requestId === result?.requestId;
           if (record.launchId !== message.launchId && !pending) continue;
           releaseSlot(record.source.windowId, record.requestId);
           delete state.requests[record.requestId];
+          if (record.launchId) records.push(record);
         }
+        return records;
       });
+      for (const record of removed) panelEvent(record.source, { abandonedLaunchId: record.launchId });
       return { ok: true, ...result };
     }
     const methods = {
@@ -1017,7 +1031,7 @@ export function createWebLaunchBackground({
     const previous = enqueuing.get(windowId);
     const enqueue = (async () => {
       await previous?.catch(() => {});
-      if (!(await didOpen)) throw { code: 'PANEL_OPEN_FAILED' };
+      const panelPending = !(await didOpen);
       const admission = continuation ? await connections.consume(message, sender) : {};
       await retirements.get(sender.tab.id);
       const doc = await getDocument(message.documentNonce, sender);
@@ -1041,6 +1055,7 @@ export function createWebLaunchBackground({
         expiresAt,
         admission,
         policyRevision: policy.revision,
+        ...(panelPending ? { panelPending: true } : {}),
       };
       await transaction(() => {
         if (
@@ -1114,6 +1129,29 @@ export function createWebLaunchBackground({
       });
     return accept(record, response, { doc });
   }
+  async function replaceWindowDraft(head, current, clicked) {
+    const record = state.requests[current];
+    if (
+      !record?.launchId ||
+      record.documentKey !== head.documentKey ||
+      head.admission?.connectionOnly ||
+      panelFor(head.source)?.replaceableDraftLaunchId !== record.launchId
+    ) return;
+    if (!clicked && !(await panelAvailable(head.source))) return;
+    const doc = await recoverDocument(record);
+    if (!(await documentActive(doc))) return;
+    const queued = findQueued(head);
+    if (!queued || queued.error || requestCancelled(queued) || queued.expiresAt <= Date.now() ||
+        slots.get(head.source.windowId) !== current ||
+        panelFor(head.source)?.replaceableDraftLaunchId !== record.launchId) return;
+    const response = await client.request(WebLaunchMethod.Cancel, {
+      source: doc.source,
+      documentLeaseId: record.documentLeaseId,
+      launchId: record.launchId,
+      replacement: { clickSequence: head.clickSequence, expectedPolicyRevision: head.policyRevision },
+    });
+    await accept(record, response);
+  }
   async function advanceWindowOnce(windowId, requestId, clicked) {
     const head = await transaction(() =>
       state.queue.find(
@@ -1122,6 +1160,13 @@ export function createWebLaunchBackground({
     );
     if (!head || (requestId && head.requestId !== requestId)) return;
     const { source } = head;
+    if (head.panelPending) {
+      if (!(await panelAvailable(source))) return;
+      await transaction(() => {
+        const item = findQueued(head);
+        if (item) delete item.panelPending;
+      });
+    }
     let current = slots.get(windowId);
     if (!current) {
       const records = windowOwners(windowId).filter(
@@ -1139,6 +1184,19 @@ export function createWebLaunchBackground({
       slots.set(windowId, current);
       await observing?.catch(() => {});
       if (slots.has(windowId)) await refreshObservations().catch(() => {});
+      if (slots.has(windowId)) {
+        try {
+          await replaceWindowDraft(head, current, clicked);
+        } catch (error) {
+          if (publicErrorCode(error) !== 'POLICY_CONFLICT') return;
+          return transaction(() => {
+            const item = findQueued(head);
+            if (!item) return;
+            closeQueued(item, 'POLICY_CONFLICT');
+            return queueResponse(item);
+          });
+        }
+      }
       if (slots.has(windowId)) return;
     }
     if (!clicked && !(await panelAvailable(source))) return;
@@ -1160,19 +1218,13 @@ export function createWebLaunchBackground({
     const pendingKey = cancelKey(head, sender);
     preparing.add(pendingKey);
     try {
-      return await prepare(head, sender, clicked);
+      const result = await prepare(head, sender, clicked);
+      if (!result?.receipt && !result?.prepareUncertain) releaseSlot(windowId, head.requestId);
+      return result;
     } catch (error) {
       const code = publicErrorCode(error);
       if (error.prepareUncertain) return { ok: false, code, prepareUncertain: true };
       releaseSlot(windowId, head.requestId);
-      if (error.composerPending === true) {
-        return transaction(() => {
-          const item = findQueued(head);
-          if (!item) return;
-          item.composerPending = true;
-          return queueResponse(item);
-        });
-      }
       return transaction(() => {
         const item = findQueued(head) ?? { ...head };
         closeQueued(item, code);
@@ -1281,7 +1333,7 @@ export function createWebLaunchBackground({
         enqueueLaunch(message, sender, opened, continuation)
           .then(
             async item =>
-              (await advanceWindow(windowId, item.requestId, true)) ?? queueResponse(item),
+              (await advanceWindow(windowId, item.requestId, !item.panelPending)) ?? queueResponse(item),
           )
           .finally(() => pendingClicks.delete(pendingKey)),
       );

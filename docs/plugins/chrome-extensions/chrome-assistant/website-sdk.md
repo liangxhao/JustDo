@@ -72,8 +72,8 @@ async function bindAssistant() {
         onQueue(state) {
           status.textContent = state.message;
         },
-        onError(error) {
-          status.textContent = error.message;
+        onActionRequired(action) {
+          status.textContent = action.message;
         },
         onResult(receipt) {
           if (
@@ -149,10 +149,10 @@ void bindAssistant();
 | 绑定控制器 | `unbind(): Promise<void>`         | 停止新点击及本绑定回调，关闭其句柄，并请求取消未发送操作或撤回分享。 |
 | 请求句柄   | `requestId`、`bindingRevision`    | 本次操作的只读关联字段。                                             |
 | 请求句柄   | `launchId`                        | 接纳后可用的不透明关联 ID；不能作为跨页面访问凭据。                  |
-| 请求句柄   | `read(): Promise<{ receipt?, queueStatus? }>`   | 查询原操作，排队时返回 `queueStatus: 'queued'`。 |
-| 请求句柄   | `cancel(): Promise<{ receipt?, queueStatus? }>` | 撤回等待中的请求、尚未发出的输入或结果分享。 |
+| 请求句柄   | `read(): Promise<{ receipt?, queueStatus?, actionRequired? }>`   | 查询原操作，排队时返回 `queueStatus: 'queued'`。 |
+| 请求句柄   | `cancel(): Promise<{ receipt?, queueStatus?, actionRequired? }>` | 撤回等待中的请求、尚未发出的输入或结果分享。 |
 
-`read()` 和 `cancel()` 返回 `queueStatus` 时，可按 `onQueue` 的方式显示 `queued` 或 `cancelled`。返回正式 `receipt` 后，交给处理 `onStatus` 的同一个函数。
+`read()` 和 `cancel()` 返回 `queueStatus` 时，可按 `onQueue` 的方式显示 `queued` 或 `cancelled`。返回正式 `receipt` 后，交给处理 `onStatus` 的同一个函数。提供 `onActionRequired` 的接入会在需要操作时收到 `{ actionRequired: { code, message, requestId } }`。原有接入可继续捕获这两项操作的 Promise 拒绝并显示本地化提示。
 
 业务记录变化时，在用户下一次点击前调用 `update()`。逐次 `await`，每次传完整参数。省略 `mode` 或 `result` 会恢复该字段的默认值。首次连接等待确认时，原点击的内容已经固定，此时更新会返回 `REQUEST_CONFLICT`。等确认结束，或解绑撤回后再更新入口。
 
@@ -179,7 +179,7 @@ try {
 
 `onConnection` 可用来提示用户到侧栏授权。任务准备开始后，SDK 先调用 `onRequest`，再传回该请求的状态与结果。根据 `requestId` 关联回执，用 `receiptRevision` 忽略比当前显示更旧的回执。
 
-每次真实点击都会得到新句柄，包括连续点击同一个按钮。侧栏输入框被占用或正在确认发送时，后续点击按顺序等待。上一笔消息确认发送后，侧栏可切到下一笔新对话，已发送的请求继续独立执行。排队请求有自己的 requestId，在获准创建对话时才获得 launchId。
+每次真实点击都会得到新句柄，包括连续点击同一个按钮。若侧栏正在等待手动发送同一网页发起的草稿，新请求可以替换它，原请求通过 `onStatus` 收到 `request.status: 'cancelled'`。侧栏有普通草稿或正在确认发送时，后续点击按顺序等待。上一笔消息确认发送后，侧栏可切到下一笔新对话，已发送的请求继续独立执行。排队请求有自己的 requestId，在获准创建对话时才获得 launchId。
 
 下面的回执同时包含最终文本和一个 Excel 交付件。
 
@@ -211,18 +211,18 @@ try {
 | --------------------- | -------------------------------------------------------------------------------------- |
 | `onConnection(state)` | 首次连接的进度。包含 `status`、浏览器核验的 `origin`、操作提示 `message` 和可选 `code`。 |
 | `onRequest(handle)`   | 保存本次真实点击的句柄，关联业务记录。                                                 |
-| `onQueue(state)`      | 根据 `requestId` 更新等待状态。使用 `message` 显示排队进度或处理侧栏草稿的说明。 |
+| `onQueue(state)`      | 根据 `requestId` 更新等待状态。`reason` 为 `composer` 时提示处理当前输入，为 `panel` 时提示手动打开侧栏。 |
 | `onStatus(receipt)`   | 更新请求、执行、结果及投递状态，同时检查可选的 receipt.error。                         |
 | `onResult(receipt)`   | 执行已结算，且输出为 available / empty / unsupported / unavailable；参数仍是整份回执。 |
-| `onError(error, requestId?)` | 用 `error.message` 显示下一步。 `error.code` 供业务判断和诊断。错误有对应请求时附上 requestId。 |
+| `onActionRequired({ code, message, requestId? })` | 用 `message` 显示下一步，用 `code` 做业务判断。有对应请求时按 `requestId` 更新。 |
 
-连接状态为 `waiting-for-window`、`pending`、`granting`、`connected`、`rejected`、`expired`。`waiting-for-window` 表示先等同窗口任务和队列处理。窗口可用后，用户在原标签页侧栏确认连接。`connected` 表示网站已连接。任务是否发送或完成要看对应请求的回执。
+连接状态为 `waiting-for-window`、`waiting-for-connection`、`pending`、`granting`、`connected`、`rejected`、`expired`。`waiting-for-window` 表示先处理同窗口的输入或队列。收到 `waiting-for-connection` 时，用户应回到先前申请连接的标签页处理，然后再点击。`connected` 表示网站已连接。任务的发送与执行进度以对应请求的回执为准。
 
 `bind`、`update`、`unbind`、`read` 和 `cancel` 的 Promise 拒绝在调用处捕获。回执内的 `error` 也要单独处理。收到 `onResult` 后，只有 `execution.status === 'completed'`、`executionSettled === true` 且 `output.status === 'available'` 时才读取 `output.text` 和 `output.artifacts`。用 `textContent` 显示结果。
 
 `output.artifacts` 为可选数组，最多包含 32 项。每项包含文件名 `name`、类别 `kind`（`image`、`audio`、`video` 或 `document`）和可选的 `mimeType`。数组只提供文件描述。本地路径、下载地址和文件内容均不会作为交付件字段提供。仅有交付件时，`output.text` 和 `output.format` 可以省略。
 
-`onError` 是绑定级提示，不能单凭它将某个业务请求判为执行失败。各请求以回执中的 requestId 关联，read/cancel 的直接响应也需按 receiptRevision 防止覆盖已收到的新状态。
+新版 SDK 优先调用 `onActionRequired`。现有接入只提供 `onError` 时，仍可收到本地化操作提示。执行结果以对应请求的回执为准。处理 `read` 或 `cancel` 的回执时按 `receiptRevision` 防止覆盖较新的状态。
 
 | 状态层    | 常见值与处理                                                                                                                                                                 |
 | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -239,7 +239,7 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 
 - **按钮绑定**的检查阈值为 64。多个按钮要逐次 `await bind()`，因为异步登记不保证原子配额。达到 SDK 阈值可收到 `CAPACITY_EXCEEDED`，达到内容桥登记阈值可收到 `INVALID_REQUEST`。
 - **请求句柄**每个绑定最多保留 100 个，内容桥另有全页 100 条请求记录的上限。达到上限时可回收已结束的记录。被回收句柄的 `read()` 或 `cancel()` 会以 `EXPIRED` 拒绝。
-- **没有可回收记录时**，`onError` 会收到 `CAPACITY_EXCEEDED`。减少在途操作，移除按钮时解除绑定，先核对该次请求再决定是否发起新的点击。
+- **没有可回收记录时**，`onActionRequired` 会收到 `CAPACITY_EXCEEDED`。等一笔完成或取消一笔排队请求，再点击按钮。
 
 ## 7. 撤回、超时与页面生命周期
 
@@ -258,8 +258,9 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 | SITE_NOT_ALLOWED / PERMISSION_REQUIRED                                                  | 在扩展侧栏确认实际网站和 Chrome 访问授权；已撤权的旧请求不能恢复。                               |
 | PANEL_OPEN_FAILED                                                                       | 浏览器未允许本次打开侧栏；用户可点击扩展图标检查状态，再主动发起新操作，不自动弹新标签或重试。   |
 | APP_NOT_RUNNING / NATIVE_HOST_UNAVAILABLE / CONNECTION_UNAVAILABLE / NATIVE_UNAVAILABLE | 检查桌面应用与扩展连接，再由用户确认下一步；已有句柄只读核对。                                   |
-| COMPOSER_BUSY                                                                          | 处理侧栏中占用输入框的草稿或当前任务，再重新点击。入队前识别到侧栏已有草稿时，`onQueue` 会提示原请求仍在队列。 |
-| WINDOW_BUSY                                                                            | 按 `error.message` 回到先前申请连接的标签页，在侧栏允许或拒绝，再回到当前网页点击。 |
+| `onQueue` 的 `reason: 'composer'`                                                       | 发送或清空侧栏当前输入。队列会自动继续。 |
+| `onQueue` 的 `reason: 'panel'`                                                          | 点击 Chrome 工具栏的扩展图标，在当前标签页打开侧栏。队列会自动继续。 |
+| `onConnection` 的 `waiting-for-connection`                                               | 回到先前申请连接的标签页，在侧栏允许或拒绝，再回到当前网页点击。 |
 | CONFIRMATION_REQUIRED / RESULT_CONSENT_REQUIRED                                         | 查看侧栏提示，核对草稿后点击发送。                                                               |
 | CONTEXT_TOO_LARGE / REQUEST_TOO_LARGE / INVALID_REQUEST / UNSUPPORTED_INPUT             | 在下一次操作前缩短并修正完整参数，普通文本入口不支持斜杠命令或附件。                             |
 | EXPIRED / LEASE_REVOKED                                                                 | 连接申请、请求回执或网页访问权限已失效。按下方说明检查是否需要重新发起。                         |
@@ -269,7 +270,7 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 
 连接申请或未发送的草稿超时后，用户可以从原网页再次发起。请求已发送或发送状态未知时，请先在扩展侧栏核对原会话，再决定是否重新发起。已发送任务的执行状态以原会话为准。
 
-错误码和回执中的安全键用于业务映射，不能将其理解为成功与失败的唯一判据。未识别的码显示通用提示，不展示底层连接地址、堆栈或凭据。
+用结构化状态和 `code` 做业务判断。`message` 提供本地化提示，回执记录实际执行状态。
 
 ## 9. 接入验收
 

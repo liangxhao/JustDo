@@ -456,11 +456,47 @@ describe('website launch panel', () => {
     { attachments: 1 },
     { attachmentReads: 1 },
     { busy: true },
-  ])('rejects a conflicting ordinary composer without changing it: %j', async initial => {
-    const { composer, input, sendMessage, installComposer } = await mount({}, initial);
+  ])('waits for the ordinary composer and then installs the same website draft: %j', async initial => {
+    const { composer, input, panel, emit, sendMessage, installComposer } = await mount({}, initial);
     expect(installComposer).not.toHaveBeenCalled();
-    expect(calls(sendMessage, Message.Cancel)[0].launchId).toBe(input.launchId);
+    expect(calls(sendMessage, Message.Cancel)).toHaveLength(0);
     expect(composer).toEqual(expect.objectContaining(initial));
+    Object.assign(composer, { prompt: '', attachments: 0, attachmentReads: 0, busy: false });
+    await panel.publishState();
+    expect(installComposer).not.toHaveBeenCalled();
+    expect(calls(sendMessage, Message.State).at(-1)?.composerBusy).toBe(false);
+    emit({ envelope: input, receipt: input.receipt });
+    expect(installComposer).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ threadId: input.threadId }));
+    expect(composer.prompt).toBe(input.prompt);
+  });
+
+  it('drops a deferred draft when the settings page abandons it', async () => {
+    const { composer, input, panel, emit, installComposer } = await mount({}, { prompt: 'Ordinary draft' });
+    emit({ abandonedLaunchId: input.launchId });
+    composer.prompt = '';
+    await panel.publishState();
+    emit({ envelope: input });
+    expect(installComposer).not.toHaveBeenCalled();
+    expect(document.querySelector('.web-launch-waiting')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('releases an abandoned draft delivered just before the side panel finished opening it', async () => {
+    const { composer, input, panel, emit, refreshThread, sendMessage } = await mount(
+      { mode: 'send', automaticSendAllowed: true }, { prompt: 'Ordinary draft' },
+    );
+    let finishRefresh!: () => void;
+    refreshThread.mockImplementationOnce(async () => new Promise<void>(resolve => { finishRefresh = resolve; }));
+    composer.prompt = '';
+    await panel.publishState();
+    emit({ envelope: input, receipt: input.receipt });
+    expect(panel.inputAssociated()).toBe(true);
+
+    emit({ abandonedLaunchId: input.launchId });
+    finishRefresh();
+    await panel.publishState();
+    expect(panel.inputAssociated()).toBe(false);
+    expect(composer.prompt).toBe('');
+    expect(calls(sendMessage, Message.Submit)).toHaveLength(0);
   });
 
   it.each(['none', 'final'])(
@@ -507,7 +543,7 @@ describe('website launch panel', () => {
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
     const controls = document.getElementById('webLaunchControls')!;
     expect(controls.hidden).toBe(true);
-    expect(controls.querySelector('p')).toBeNull();
+    expect(controls.querySelector('p:not([hidden])')).toBeNull();
     expect(panel.composerAction('external-thread')).toEqual({
       type: 'send',
       disabled: false,
@@ -956,19 +992,18 @@ describe('website launch panel', () => {
   });
 
   it('keeps a restored web draft pending when the ordinary composer contains work', async () => {
-    const { composer, input, emit, sendMessage, installComposer } = await mount(
+    const { composer, input, panel, emit, sendMessage, installComposer } = await mount(
       { restored: true, mode: 'send', automaticSendAllowed: true },
       { prompt: 'Unrelated ordinary draft', attachments: 1 },
     );
     expect(composer.prompt).toBe('Unrelated ordinary draft');
     expect(installComposer).not.toHaveBeenCalled();
     expect(calls(sendMessage, Message.Cancel)).toEqual([]);
+    expect(document.querySelector('[role="status"]')?.hasAttribute('hidden')).toBe(false);
     composer.prompt = '';
     composer.attachments = 0;
-    emit({ envelope: input });
-    expect(installComposer).not.toHaveBeenCalled();
-
-    emit({ envelope: input, resume: true });
+    await panel.publishState();
+    emit({ envelope: input, receipt: input.receipt });
     expect(composer.prompt).toBe('Website prompt');
     await vi.waitFor(() => expect(calls(sendMessage, Message.Revise)).toHaveLength(1));
     expect(calls(sendMessage, Message.Submit)).toEqual([]);
@@ -1069,6 +1104,94 @@ describe('website launch panel', () => {
     emit({ receipt: { ...input.receipt, receiptRevision: 3, request: { status: 'cancelled' } } });
     expect(panel.inputAssociated()).toBe(false);
     expect(composer.prompt).toBe('');
+  });
+
+  it('releases a cleared website draft for the next click without sending it', async () => {
+    const { panel, composer, sendMessage, input, emit } = await mount();
+
+    composer.prompt = '';
+    panel.edit('prompt');
+
+    expect(calls(sendMessage, Message.Cancel)).toEqual([
+      expect.objectContaining({ launchId: input.launchId }),
+    ]);
+    await vi.waitFor(() => expect(calls(sendMessage, Message.State).at(-1)?.composerBusy).toBe(false));
+    expect(calls(sendMessage, Message.Revise)).toEqual([]);
+    expect(calls(sendMessage, Message.Submit)).toEqual([]);
+    const nextReceipt = { ...input.receipt, launchId: 'launch-two', requestId: 'request-two' };
+    const next = envelope({
+      launchId: nextReceipt.launchId,
+      requestId: nextReceipt.requestId,
+      receipt: nextReceipt,
+      threadId: 'second-thread',
+      prompt: 'Second click',
+    });
+    emit({ envelope: next, receipt: nextReceipt });
+    expect(composer).toMatchObject({ threadId: next.threadId, prompt: next.prompt });
+  });
+
+  it('clears its own manual draft when a newer website click replaces it', async () => {
+    const { panel, composer, sendMessage, input, emit } = await mount();
+    expect(calls(sendMessage, Message.State).at(-1)).toMatchObject({
+      composerBusy: true, replaceableDraftLaunchId: input.launchId,
+    });
+    emit({
+      receipt: { ...input.receipt, receiptRevision: 2, request: { status: 'cancelled' } },
+      internal: { threadId: input.threadId, notSent: true, replacedDraft: true },
+    });
+    expect(composer.prompt).toBe('');
+    expect(panel.inputAssociated()).toBe(false);
+    expect(calls(sendMessage, Message.State).at(-1)).toMatchObject({ composerBusy: false });
+    expect(calls(sendMessage, Message.Submit)).toHaveLength(0);
+  });
+
+  it('preserves text typed after a manual clear when the replacement receipt arrives first', async () => {
+    const { panel, composer, sendMessage, input, emit } = await mount();
+    const original = sendMessage.getMockImplementation()!;
+    let acknowledge!: (response: unknown) => void;
+    sendMessage.mockImplementation(async message =>
+      message.type === Message.Cancel
+        ? new Promise(resolve => { acknowledge = resolve; })
+        : original(message),
+    );
+    composer.prompt = '';
+    panel.edit('prompt');
+    composer.prompt = 'New text in the input box';
+    panel.edit('prompt');
+
+    const replaced = {
+      receipt: { ...input.receipt, receiptRevision: 2, request: { status: 'cancelled' } },
+      internal: { threadId: input.threadId, notSent: true, replacedDraft: true },
+    };
+    emit(replaced);
+    acknowledge({ ok: true, ...replaced });
+    expect(panel.inputAssociated()).toBe(false);
+    expect(composer.prompt).toBe('New text in the input box');
+  });
+
+  it('does not cancel or revise a cleared input while its send is unconfirmed', async () => {
+    const { panel, composer, sendMessage, input } = await mount();
+    const original = sendMessage.getMockImplementation()!;
+    let acknowledge!: (response: unknown) => void;
+    sendMessage.mockImplementation(async message =>
+      message.type === Message.Submit
+        ? new Promise(resolve => { acknowledge = resolve; })
+        : original(message),
+    );
+    const sending = panel.submit('confirmed');
+
+    composer.prompt = '';
+    panel.edit('prompt');
+
+    expect(calls(sendMessage, Message.Cancel)).toEqual([]);
+    expect(calls(sendMessage, Message.Revise)).toEqual([]);
+    expect(panel.inputAssociated()).toBe(true);
+    acknowledge({
+      ok: true,
+      receipt: { ...input.receipt, receiptRevision: 2, request: { status: 'submitted' } },
+    });
+    await sending;
+    expect(panel.inputAssociated()).toBe(false);
   });
 
   it('does not send an expired request or expose a raw transport error', async () => {

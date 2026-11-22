@@ -32,7 +32,7 @@ export const WebLaunchErrorCode = {
   InvalidRequest: 'INVALID_REQUEST', InvalidSource: 'INVALID_SOURCE', InvalidOrigin: 'INVALID_ORIGIN',
   RequestTooLarge: 'REQUEST_TOO_LARGE', ContextTooLarge: 'CONTEXT_TOO_LARGE', UnsupportedInput: 'UNSUPPORTED_INPUT',
   RequestConflict: 'REQUEST_CONFLICT', SiteNotAllowed: 'SITE_NOT_ALLOWED', PolicyConflict: 'POLICY_CONFLICT',
-  Expired: 'EXPIRED', ComposerBusy: 'COMPOSER_BUSY', CapacityExceeded: 'CAPACITY_EXCEEDED',
+  Expired: 'EXPIRED', CapacityExceeded: 'CAPACITY_EXCEEDED',
   ConfirmationRequired: 'CONFIRMATION_REQUIRED', ResultConsentRequired: 'RESULT_CONSENT_REQUIRED',
   ComposeChanged: 'COMPOSE_CHANGED', TooLate: 'TOO_LATE', UnknownExecution: 'UNKNOWN_EXECUTION',
   ExecutionFailed: 'EXECUTION_FAILED', ExecutionInterrupted: 'EXECUTION_INTERRUPTED',
@@ -166,6 +166,8 @@ export interface WebLaunchInternal {
   nativeRunId?: string;
   /** The current launch attempt was definitively not sent to the native runtime. */
   notSent?: true;
+  /** A newer click from the same document replaced this unsent draft. */
+  replacedDraft?: true;
 }
 
 export interface WebLaunchResponse {

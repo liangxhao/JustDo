@@ -29,10 +29,6 @@ const translations = {
       'The browser connection helper is unavailable. Check the desktop application and extension.',
     webConnectionError_CONNECTION_UNAVAILABLE:
       'Connection approval could not be confirmed. Check the desktop application before trying again.',
-    webConnectionError_COMPOSER_BUSY:
-      'Your existing draft and attachments have been kept. Finish or save them, then click the website button again.',
-    webConnectionError_WINDOW_BUSY:
-      'Handle the current website request first, then click the website button again.',
     webConnectionError_PERMISSION_REQUIRED:
       'Chrome access was not granted. Website access has not been approved.',
     webConnectionError_PERMISSION_DENIED:
@@ -77,8 +73,7 @@ const translations = {
       'Unlink this website request and stop observing it? Its execution may still be running. This does not stop or repeat the task.',
     webLaunchError_GENERIC:
       'The website request could not be confirmed. Check its status before trying again.',
-    webLaunchError_COMPOSER_BUSY:
-      'Keep or send your current draft before opening a website request.',
+    webLaunchWaitingComposer: 'A website request is waiting. Send or clear the current input to continue.',
     webLaunchError_TOO_LATE:
       'The message may already have been sent. Result sharing is off; use Stop to request cancellation.',
     webLaunchError_COMPOSE_CHANGED:
@@ -231,8 +226,6 @@ const translations = {
     webConnectionError_NATIVE_UNAVAILABLE: '桌面应用暂不可用，请检查连接后重试。',
     webConnectionError_NATIVE_HOST_UNAVAILABLE: '浏览器连接助手不可用，请检查桌面应用和扩展。',
     webConnectionError_CONNECTION_UNAVAILABLE: '尚未确认连接授权，请检查桌面应用后重试。',
-    webConnectionError_COMPOSER_BUSY: '已保留原有草稿和附件，请先处理或保存，再回到网页点击按钮。',
-    webConnectionError_WINDOW_BUSY: '请先处理当前网页请求，再回到网页点击按钮。',
     webConnectionError_PERMISSION_REQUIRED: '未授予 Chrome 访问权限，尚未批准网站连接。',
     webConnectionError_PERMISSION_DENIED: '未授予 Chrome 访问权限，尚未批准网站连接。',
     webConnectionError_POLICY_CONFLICT: '授权期间网站设置已改变，请核对当前设置后重试。',
@@ -269,7 +262,7 @@ const translations = {
     webLaunchAbandonConfirm:
       '解除此网页请求的关联并放弃观察？任务可能仍在执行，此操作不会停止或重复任务。',
     webLaunchError_GENERIC: '无法确认网页请求，请先核对状态再重试。',
-    webLaunchError_COMPOSER_BUSY: '请先保留或发送当前草稿，再打开网页请求。',
+    webLaunchWaitingComposer: '有网页请求正在等待。请发送或清空当前输入后继续。',
     webLaunchError_TOO_LATE: '消息可能已经发送。结果分享已关闭，可通过停止按钮请求中止。',
     webLaunchError_COMPOSE_CHANGED: '输入已改变，请核对并在确认完成后重新发送。',
     webLaunchError_SITE_NOT_ALLOWED: '此网站未获准发起对话。',

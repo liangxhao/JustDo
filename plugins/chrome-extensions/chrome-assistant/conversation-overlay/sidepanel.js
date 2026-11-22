@@ -1142,8 +1142,8 @@ prompt.addEventListener('keydown', event => {
     void submit();
   }
 });
-prompt.addEventListener('input', () => {
-  webLaunchPanel?.edit();
+prompt.addEventListener('input', event => {
+  webLaunchPanel?.edit(event.isComposing ? undefined : 'prompt');
   prompt.style.height = 'auto';
   prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`;
   updateComposerDisabledState();

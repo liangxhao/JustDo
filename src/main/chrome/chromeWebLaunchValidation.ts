@@ -157,9 +157,6 @@ export const webLaunchSourceKey = (source: WebLaunchSource): string => JSON.stri
   source.chromeInstanceId, source.windowInstanceId, source.windowId, source.tabId,
   source.documentId, source.origin,
 ]);
-export const webLaunchWindowKey = (source: WebLaunchSource): string => JSON.stringify([
-  source.chromeInstanceId, source.windowInstanceId, source.windowId,
-]);
 export const webLaunchActualDigest = (input: WebLaunchActualInput): string => webLaunchDigest(JSON.stringify({
   prompt: input.prompt, ...(input.context?.text ? { context: input.context } : {}),
   ...(input.modelRef ? { modelRef: input.modelRef } : {}), permissionMode: input.permissionMode ?? 'ask',

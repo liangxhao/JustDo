@@ -269,6 +269,64 @@ describe('web launch background', () => {
     ).toHaveLength(1);
   });
 
+  it('keeps a click queued until the user opens the side panel from the toolbar', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    api.sidePanel.open.mockRejectedValueOnce(new Error('Chrome did not open the panel'));
+    expect(await invoke(controller, launch)).toMatchObject({
+      ok: true, queueStatus: 'queued', queueReason: 'panel',
+    });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Prepare, expect.anything());
+
+    const panel = panelSender(7);
+    await invoke(controller, { type: 'web-launch:panel:register', ...panelScope }, panel);
+    await invoke(controller, { type: 'web-launch:panel:state', ...panelScope, composerBusy: false }, panel);
+    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(
+      WebLaunchMethod.Prepare, expect.objectContaining({ requestId: launch.requestId }),
+    ));
+    expect(api.sidePanel.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('replaces the visible manual draft on a newer click from the same document', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const panel = panelSender(7);
+    const panelState = { type: 'web-launch:panel:state', ...panelScope };
+    await invoke(controller, { type: 'web-launch:panel:register', ...panelScope }, panel);
+    await invoke(controller, launch);
+    await invoke(controller, {
+      ...panelState, composerBusy: true, replaceableDraftLaunchId: 'launch-1',
+    }, panel);
+    const original = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Cancel) return {
+        receipt: { ...reply.receipt, receiptRevision: 2, request: { status: 'cancelled' } },
+        internal: { ...reply.internal, replacedDraft: true },
+      };
+      if (method === WebLaunchMethod.Prepare) return {
+        ...reply, receipt: { ...reply.receipt, requestId: params.requestId, launchId: 'launch-2' },
+      };
+      return original(method, params);
+    });
+    const otherPage = { ...sender, documentId: 'other-document' };
+    const otherClick = { ...launch, requestId: 'other-request', documentNonce: 'other-nonce' };
+    expect(await invoke(controller, otherClick, otherPage)).toMatchObject({ queueStatus: 'queued' });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Cancel, expect.anything());
+    await invoke(controller, { ...otherClick, type: 'web-launch:document:cancel' }, otherPage);
+
+    expect(await invoke(controller, { ...launch, requestId: 'request-2', clickSequence: 2 }))
+      .toMatchObject({ ok: true, queueStatus: 'queued' });
+    expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.Cancel, expect.objectContaining({
+      launchId: 'launch-1', replacement: { clickSequence: 2, expectedPolicyRevision: 1 },
+    }));
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      receipt: expect.objectContaining({ request: { status: 'cancelled' } }),
+      internal: expect.objectContaining({ replacedDraft: true }),
+    }));
+    await invoke(controller, { ...panelState, composerBusy: false }, panel);
+    await vi.waitFor(() => expect(client.request).toHaveBeenCalledWith(
+      WebLaunchMethod.Prepare, expect.objectContaining({ requestId: 'request-2' }),
+    ));
+  });
+
   it.each([
     { panelOpen: true, restart: false },
     { panelOpen: false, restart: false },
@@ -774,11 +832,11 @@ describe('web launch background', () => {
     const original = client.request.getMockImplementation()!;
     client.request.mockImplementation(async (method, params) => {
       if (method === WebLaunchMethod.Prepare && params.requestId === launch.requestId)
-        throw { code: 'COMPOSER_BUSY', requestSent: true, responseReceived: true };
+        throw { code: 'CAPACITY_EXCEEDED', requestSent: true, responseReceived: true };
       return original(method, params);
     });
     const controller = createWebLaunchBackground({ chromeApi: api, client });
-    expect(await invoke(controller, launch)).toMatchObject({ ok: false, code: 'COMPOSER_BUSY' });
+    expect(await invoke(controller, launch)).toMatchObject({ ok: false, code: 'CAPACITY_EXCEEDED' });
     expect(storage.chromeWebLaunchSession.requests[launch.requestId]).toBeUndefined();
 
     const next = { ...launch, requestId: 'request-2', clickSequence: 2 };

@@ -38,7 +38,6 @@ export interface WebLaunchStoredReceipt {
   leaseId: string;
   source: WebLaunchSource;
   sourceKey: string;
-  windowKey: string;
   clickSequence: number;
   bindingRevision: number;
   payloadDigest: string;
@@ -67,6 +66,7 @@ export interface WebLaunchStoredReceipt {
   clientTurnId?: string;
   dispatchAttempted?: boolean;
   notSent?: boolean;
+  replacedDraft?: true;
   nativeBinding?: WebLaunchNativeBinding;
   terminal?: { status: 'completed' | 'failed' | 'interrupted'; endedAt: number; agentSeq: number };
   resultRef?: WebLaunchResultReference;

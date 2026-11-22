@@ -1282,6 +1282,9 @@ button.chrome-delivery-card:disabled {
   color: var(--chat-muted);
   font-size: 12px;
 }
+.web-launch-waiting {
+  margin: 0;
+}
 .web-launch-context-trigger {
   width: fit-content;
   max-width: 100%;

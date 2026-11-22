@@ -124,11 +124,10 @@ async function bindExample(section, onReceipt) {
         },
         onStatus: showReceipt,
         onResult: showReceipt,
-        onError(error, requestId) {
+        onActionRequired({ requestId, message }) {
           const row = requests.get(requestId);
           const label = row?.label ?? status;
-          label.textContent =
-            error.message && error.message !== error.code ? error.message : copy.inspectTask;
+          label.textContent = message;
         },
       },
     );

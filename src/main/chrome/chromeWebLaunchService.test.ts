@@ -338,14 +338,54 @@ describe('webpage launch admission and persistence', () => {
     await expect(f.service.read({ source: { ...source, documentId: 'another' }, requestId: 'request-1' })).rejects.toMatchObject({ code: 'EXPIRED' });
   });
 
-  it('consumes rejected clicks, and rejects stale sequences after abandoned receipt/lease cleanup', () => {
+  it('keeps separate click identities and rejects stale sequences after abandoned receipt cleanup', () => {
     const f = fixture();
     const prepared = f.prepare();
-    expect(() => f.prepare({ requestId: 'busy', clickSequence: 2 })).toThrow('COMPOSER_BUSY');
+    const next = f.prepare({ requestId: 'request-2', clickSequence: 2 });
+    expect(next.internal.threadId).not.toBe(prepared.internal.threadId);
     f.service.abandon({ launchId: prepared.receipt.launchId, confirm: true });
-    expect(() => f.prepare({ requestId: 'busy', clickSequence: 2 })).toThrow('EXPIRED');
+    expect(() => f.prepare({ requestId: 'stale', clickSequence: 2 })).toThrow('EXPIRED');
     expect(() => f.prepare()).toThrow('EXPIRED');
     expect(f.prepare({ requestId: 'fresh', clickSequence: 3 }).receipt.request.status).toBe('drafted');
+  });
+
+  it('replaces only an older manual draft from the same document under the current policy', () => {
+    const f = fixture();
+    const first = f.prepare({ input: { ...input, mode: 'draft' } });
+    const expectedPolicyRevision = f.service.sites().revision;
+    const replacement = { clickSequence: 2, expectedPolicyRevision };
+
+    expect(() => f.service.cancel({ ...f.ref(first, { ...source, documentId: 'other-doc' }), replacement }))
+      .toThrow('EXPIRED');
+    expect(() => f.service.cancel({ ...f.ref(first), replacement: { ...replacement, expectedPolicyRevision: 0 } }))
+      .toThrow('POLICY_CONFLICT');
+    expect(f.service.cancel({ ...f.ref(first), replacement })).toMatchObject({
+      receipt: { request: { status: 'cancelled' }, execution: { status: 'not-started' } },
+      internal: { replacedDraft: true, notSent: true },
+    });
+    expect(() => f.submit(first, { submission: 'confirmed' })).toThrow('EXPIRED');
+    const next = f.prepare({ requestId: 'request-2', clickSequence: 2 });
+    expect(next.internal.threadId).not.toBe(first.internal.threadId);
+    expect(next.internal.requiresSendConfirmation).toBe(false);
+    expect(f.service.cancel({ ...f.ref(next), replacement: { clickSequence: 3, expectedPolicyRevision } }))
+      .toMatchObject({ receipt: { request: { status: 'drafted' }, output: { status: 'pending' } } });
+  });
+
+  it('keeps result sharing when a draft starts sending before a later click can replace it', async () => {
+    const f = fixture();
+    const first = f.prepare({ input: { ...input, mode: 'draft' } });
+    let resumeSend!: () => void;
+    f.beforeSend = () => new Promise(resolve => { resumeSend = resolve; });
+    f.submit(first, { submission: 'confirmed' });
+    await tick();
+
+    expect(f.service.cancel({
+      ...f.ref(first), replacement: { clickSequence: 2, expectedPolicyRevision: f.service.sites().revision },
+    })).toMatchObject({ receipt: { request: { status: 'submitting' }, output: { status: 'pending' } } });
+    resumeSend();
+    await tick();
+    f.finish('FIRST_REPLY');
+    expect((await f.service.read(f.ref(first))).receipt.output.text).toBe('FIRST_REPLY');
   });
 
   it('submits a second native conversation in the same window and keeps its observation after abandoning the first', async () => {
@@ -398,14 +438,10 @@ describe('webpage launch admission and persistence', () => {
     const otherSource = { ...source, tabId: 11, documentId: 'other-document' };
     const other = f.prepare({ source: otherSource });
     expect(f.state().leases[first.internal.documentLeaseId]).toBeUndefined();
-    const busyClick = { requestId: 'busy-click', clickSequence: 2 };
-    expect(() => f.prepare(busyClick)).toThrow('COMPOSER_BUSY');
     expect(Object.keys(f.state().leases)).toEqual([other.internal.documentLeaseId]);
-    f.service.cancel(f.ref(other, otherSource));
     expect(() => f.prepare()).toThrow('EXPIRED');
-    expect(() => f.prepare(busyClick)).toThrow('EXPIRED');
 
-    const next = f.prepare({ requestId: 'new-click', clickSequence: 3 });
+    const next = f.prepare({ requestId: 'new-click', clickSequence: 2 });
     expect(next.internal.documentLeaseId).not.toBe(first.internal.documentLeaseId);
     expect(next.internal.threadId).not.toBe(first.internal.threadId);
     await expect(f.service.read(f.ref(first))).rejects.toThrow('EXPIRED');

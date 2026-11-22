@@ -85,7 +85,7 @@ export function createWebLaunchPanel({
   let connectionVersion = 0;
   let visibleLaunch = '';
   let refreshedReceipt = '';
-  let blockedRestoration = '';
+  let deferredDraft = null;
   const make = (tag, key, parent = root) => {
     const node = document.createElement(tag);
     if (key) node.textContent = t(key);
@@ -98,6 +98,9 @@ export function createWebLaunchPanel({
     canOpen: () => selected() && !draftUnavailable() && !readComposer().busy,
   });
   root.append(context.trigger);
+  const waiting = make('p', 'webLaunchWaitingComposer');
+  waiting.className = 'web-launch-waiting';
+  waiting.setAttribute('role', 'status');
   const actions = make('div');
   actions.className = 'web-launch-actions';
   const button = (key, action) => {
@@ -202,7 +205,8 @@ export function createWebLaunchPanel({
     const launch = show ? current.launchId : '';
     if (launch !== visibleLaunch) context.close();
     visibleLaunch = launch;
-    root.hidden = !(showContext || canRecover || canAbandon);
+    waiting.hidden = !deferredDraft;
+    root.hidden = !(showContext || canRecover || canAbandon || deferredDraft);
     context.setAvailable(showContext);
     actions.hidden = !(canRecover || canAbandon);
     ordinaryButton.hidden = !canRecover;
@@ -259,13 +263,32 @@ export function createWebLaunchPanel({
       })
       .catch(() => {});
   }
+  function rememberReleasedLaunch(launchId) {
+    releasedDrafts.add(launchId);
+    if (releasedDrafts.size > WebLaunchLimits.activeReceipts)
+      releasedDrafts.delete(releasedDrafts.values().next().value);
+    if (deferredDraft?.launchId === launchId) {
+      deferredDraft = null;
+      render();
+    }
+  }
+  function acceptAbandonment(launchId) {
+    rememberReleasedLaunch(launchId);
+    if (current?.launchId !== launchId || !inputAssociated() || submitted() || busy || current.submissionInput)
+      return;
+    if (selected() && !cancellation?.keepText && readComposer().prompt === current.prompt)
+      installComposer({ clearPrompt: true });
+    inputReleased = true;
+    current = null;
+    receipt = null;
+    cancellation = null;
+    installing = false;
+    render();
+    void publishState();
+  }
   function rememberReleasedDraft(value) {
     if (value?.request.status === 'submitted' || value?.execution.executionSettled === true ||
-        CLOSED.has(value?.request.status)) {
-      releasedDrafts.add(value.launchId);
-      if (releasedDrafts.size > WebLaunchLimits.activeReceipts)
-        releasedDrafts.delete(releasedDrafts.values().next().value);
-    }
+        CLOSED.has(value?.request.status)) rememberReleasedLaunch(value.launchId);
   }
   function acceptReceipt(response) {
     if (disposed) return;
@@ -327,15 +350,16 @@ export function createWebLaunchPanel({
       }
       onReceipt({ ...response, threadId: current.threadId, matchesSubmission });
       refreshReceiptThread(response, intentionalCancel ? undefined : next.error?.code);
-      if (CLOSED.has(next.request.status) && cancellation?.launchId === next.launchId) {
-        if (
-          cancellation.hadInput &&
-          selected() &&
-          !cancellation.keepText &&
-          inputVersion === cancellation.inputVersion &&
-          readComposer().prompt === cancellation.prompt
-        )
-          installComposer({ clearPrompt: true });
+      const replacedDraft = hadInput && next.request.status === 'cancelled' &&
+        response.internal?.replacedDraft === true;
+      const localCancellation = cancellation?.launchId === next.launchId ? cancellation : null;
+      if (CLOSED.has(next.request.status) && (replacedDraft || localCancellation)) {
+        const clearInput = localCancellation
+          ? localCancellation.hadInput && !localCancellation.keepText &&
+            inputVersion === localCancellation.inputVersion &&
+            readComposer().prompt === localCancellation.prompt
+          : replacedDraft;
+        if (selected() && clearInput) installComposer({ clearPrompt: true });
         inputReleased = true;
         cancellation = null;
         current = null;
@@ -349,6 +373,9 @@ export function createWebLaunchPanel({
     if (disposed || registering || windowId === undefined) return;
     const composer = readComposer();
     try {
+      const canReplace = inputAssociated() && selected() && !current.automaticSendAllowed &&
+        !busy && !installing && !submitted() && !current.submissionInput && !actionPending &&
+        !composer.busy && !composer.attachments && !composer.attachmentReads;
       const state = {
         composerBusy: Boolean(
           composer.prompt.trim() ||
@@ -356,8 +383,10 @@ export function createWebLaunchPanel({
           composer.attachmentReads ||
           composer.busy ||
           busy ||
+          actionPending ||
           inputAssociated(),
         ),
+        ...(canReplace ? { replaceableDraftLaunchId: current.launchId } : {}),
         ...(current
           ? { launchId: current.launchId, composeRevision: current.composeRevision }
           : {}),
@@ -395,7 +424,7 @@ export function createWebLaunchPanel({
     if (!selected()) await restoreDispatched();
   }
   async function acceptEnvelope(envelope, internal, resume = false) {
-    if (disposed || !envelope || (!resume && blockedRestoration === envelope.launchId)) return;
+    if (disposed || !envelope) return;
     if (envelope.launchId === current?.launchId) {
       if (resume) await resumeCurrentEnvelope(envelope);
       return;
@@ -418,18 +447,23 @@ export function createWebLaunchPanel({
       return;
     }
     if (releasedDrafts.has(envelope.launchId)) return;
+    const sameDeferredDraft = deferredDraft?.launchId === envelope.launchId;
+    const revision = envelope.receipt?.receiptRevision ?? 0;
+    if (sameDeferredDraft && revision < deferredDraft.revision) return;
     if (composerHasWork(composer) || inputAssociated()) {
-      if (restored) blockedRestoration = envelope.launchId;
-      else {
-        await request(WebLaunchPanelMessage.Cancel, {
-          launchId: envelope.launchId,
-          reason: 'composer-busy',
-        }).catch(() => {});
+      if (!deferredDraft || sameDeferredDraft) {
+        deferredDraft = { launchId: envelope.launchId, revision };
+        render();
       }
-      fail('COMPOSER_BUSY', null);
       return;
     }
-    blockedRestoration = '';
+    if (sameDeferredDraft) {
+      deferredDraft = null;
+      if (Date.now() >= envelope.expiresAt) {
+        render();
+        return;
+      }
+    }
     current = { ...envelope, restored, clientTurnId: internal?.clientTurnId };
     receipt = envelope.receipt;
     submissionStartedAt = undefined;
@@ -467,7 +501,15 @@ export function createWebLaunchPanel({
     if (revisePromise || !current || !inputAssociated()) return revisePromise;
     const launchId = current.launchId;
     revisePromise = (async () => {
-      while (dirty && current?.launchId === launchId && selected() && !closed() && !disposed) {
+      while (
+        dirty &&
+        current?.launchId === launchId &&
+        selected() &&
+        !closed() &&
+        !disposed &&
+        !actionPending &&
+        readComposer().prompt.trim()
+      ) {
         const version = inputVersion;
         const input = actualInput();
         try {
@@ -483,7 +525,7 @@ export function createWebLaunchPanel({
           revisionError = false;
           acceptReceipt(result);
         } catch (failure) {
-          if (current?.launchId !== launchId || disposed) return;
+          if (current?.launchId !== launchId || disposed || actionPending) return;
           revisionError = true;
           fail(failure.code, launchId);
           break;
@@ -497,7 +539,17 @@ export function createWebLaunchPanel({
     return revisePromise;
   }
   function edit(field) {
-    if (installing || !selected() || !inputAssociated() || draftUnavailable() || disposed) return;
+    if (installing || !selected() || !inputAssociated() || disposed) return;
+    if (actionPending) {
+      if (field === 'prompt') inputVersion += 1;
+      return;
+    }
+    if (!readComposer().prompt.trim()) {
+      automaticDisarmed = true;
+      if (field === 'prompt' && !busy && !submitted() && !current.submissionInput) void cancel(false);
+      return;
+    }
+    if (draftUnavailable()) return;
     if (field === 'model') modelChanged = true;
     automaticDisarmed = true;
     dirty = true;
@@ -669,6 +721,7 @@ export function createWebLaunchPanel({
       connectionVersion += 1;
       connection.accept(message.connectionPending);
     }
+    if (message.abandonedLaunchId) acceptAbandonment(message.abandonedLaunchId);
     const resume = message.resume === true;
     if (message.envelope && message.envelope.launchId !== current?.launchId) {
       void acceptEnvelope(message.envelope, message.internal, resume);
@@ -696,7 +749,7 @@ export function createWebLaunchPanel({
     releasedDrafts.clear();
     receipt = null;
     cancellation = null;
-    blockedRestoration = '';
+    deferredDraft = null;
     installing = false;
     initialized = false;
     render();
@@ -738,6 +791,7 @@ export function createWebLaunchPanel({
       lastState = '';
       const composer = readComposer();
       const previousLaunchId = current?.launchId;
+      const previousDeferredLaunchId = deferredDraft?.launchId;
       const result = await request(WebLaunchPanelMessage.Register, {
         composerBusy: Boolean(
           composer.prompt.trim() ||
@@ -757,6 +811,11 @@ export function createWebLaunchPanel({
       const firstRegistration = !initialized;
       initialized = true;
       registered = true;
+      if (previousDeferredLaunchId && previousDeferredLaunchId === deferredDraft?.launchId &&
+          Array.isArray(result.observations) && !result.observations.some(
+            response => response.receipt?.launchId === previousDeferredLaunchId &&
+              !CLOSED.has(response.receipt.request.status) && response.receipt.request.status !== 'submitted',
+          )) rememberReleasedLaunch(previousDeferredLaunchId);
       if (
         connectionVersion === initialConnectionVersion &&
         Object.hasOwn(result, 'connectionPending')

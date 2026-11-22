@@ -68,13 +68,14 @@ describe('first website connection', () => {
       decision,
       ...extra,
     });
-  const request = async (bindingId = 'binding-1') =>
+  const request = async (bindingId = 'binding-1', modern = true) =>
     external({
       op: 'request',
       bindingId,
       bindingRevision: 1,
       input,
       payloadDigest: await inputDigest(input, webcrypto),
+      ...(modern ? { connectionWaitStatus: true } : {}),
     });
   const trustedClick = () => {
     const event = {
@@ -399,9 +400,14 @@ describe('first website connection', () => {
     });
     expect((await registerPanel()).connectionPending).toBeNull();
     expect(await request('other-connection')).toEqual({
-      ok: false,
-      code: 'WINDOW_BUSY',
-      busyReason: 'connection',
+      ok: true,
+      connectionPending: { status: 'waiting-for-connection' },
+    });
+    expect(await request('older-sdk', false)).toMatchObject({
+      ok: true, connectionPending: { status: 'expired', code: 'CONNECTION_PENDING' },
+    });
+    expect(await external({ op: 'query', bindingId: 'older-sdk' })).toMatchObject({
+      ok: true, connectionPending: { status: 'expired', code: 'CONNECTION_PENDING' },
     });
     const stored = storage.chromeWebLaunchSession.requests[handles[0].requestId].response;
     const original = client.request.getMockImplementation()!;
@@ -414,7 +420,8 @@ describe('first website connection', () => {
                 receipt: {
                   ...stored.receipt,
                   receiptRevision: stored.receipt.receiptRevision + 1,
-                  execution: { status: 'completed', executionSettled: true },
+                  request: { status: 'submitted' },
+                  execution: { status: 'running', executionSettled: false },
                 },
               },
             ],
@@ -439,29 +446,48 @@ describe('first website connection', () => {
     expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.SitesWrite, expect.anything());
   });
 
+  it.each([true, false])('reports connection contention as waiting and accepts a fresh click (new extension=%s)', async modern => {
+    const onConnection = vi.fn();
+    const onActionRequired = vi.fn();
+    const attempts = vi.fn();
+    externalSend = async value => {
+      if (value.op === 'probe' && !modern) return { ok: true, connected: false };
+      if (value.op !== 'request') return external(value);
+      attempts(value);
+      return modern ? { ok: true, connectionPending: { status: 'waiting-for-connection' } }
+        : { ok: false, busyReason: 'connection' };
+    };
+    await sdk.bind(document.getElementById('launch'), input, { onConnection, onActionRequired });
+    trustedClick();
+    await vi.waitFor(() => expect(onConnection).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'waiting-for-connection', message: expect.stringMatching(/return to the tab/i),
+    })));
+    expect(attempts.mock.calls[0][0].connectionWaitStatus).toBe(modern ? true : undefined);
+    expect(onActionRequired).not.toHaveBeenCalled();
+    trustedClick();
+    await vi.waitFor(() => expect(attempts).toHaveBeenCalledTimes(2));
+  });
+
   it.each([
-    { code: 'WINDOW_BUSY', busyReason: 'connection', message: /先前发起连接的标签页/u },
     { code: 'CAPACITY_EXCEEDED', message: /等待|等一笔完成/u },
     { code: 'PANEL_OPEN_FAILED', message: /工具栏.*扩展图标/u },
   ])(
     'gives actionable guidance and accepts the next click after $code',
-    async ({ code, busyReason, message }) => {
+    async ({ code, message }) => {
       vi.spyOn(window.navigator, 'language', 'get').mockReturnValue('zh-CN');
       sdk = newSdk();
       const attempts = vi.fn();
       externalSend = async value => {
         if (value.op !== 'request') return external(value);
         attempts();
-        return { ok: false, code, busyReason };
+        return { ok: false, code };
       };
-      const onError = vi.fn();
+      const onActionRequired = vi.fn();
       const onConnection = vi.fn();
-      await sdk.bind(document.getElementById('launch'), input, { onError, onConnection });
+      await sdk.bind(document.getElementById('launch'), input, { onActionRequired, onConnection });
 
       trustedClick();
-      await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
-      expect(onError.mock.calls[0][0].code).toBe(code);
-      expect(onError.mock.calls[0][0].message).toMatch(message);
+      await vi.waitFor(() => expect(onActionRequired).toHaveBeenCalledWith({ code, message: expect.stringMatching(message) }));
       expect(onConnection).toHaveBeenLastCalledWith(
         expect.objectContaining({
           status: 'rejected',
@@ -486,7 +512,7 @@ describe('first website connection', () => {
     try {
       const probe = external({ op: 'probe' });
       await vi.advanceTimersByTimeAsync(1000);
-      expect(await probe).toEqual({ ok: true, connected: false });
+      expect(await probe).toMatchObject({ ok: true, connected: false });
     } finally {
       vi.useRealTimers();
       finishRead?.({ sites: [], revision: 1 });

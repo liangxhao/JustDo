@@ -81,7 +81,7 @@ type Prepare = {
 3. 受限 `prepare` 成对传入 `connectionOnly:true` 和确认连接时的全局 `expectedPolicyRevision`。`false`、缺失 revision 或单独 revision 均拒绝。Main 在同一同步事务内比较全局 revision，保留原 `input` 和 `payloadDigest`，强制原请求等待侧栏手动发送。已存在的较高授权回执不能重新解释为受限续接。
 4. 用户在可信侧栏点击发送时确认该次操作。请求为 `final` 时，这一点击同时确认本轮回传。
 
-每个窗口可保留一笔等待中的连接申请。窗口仍有已接纳任务或任务队列时，初始状态为 `waiting-for-window`，保留原浏览器文档、绑定和两分钟期限，侧栏不弹出授权模态框。队列可用后重新读取策略，进入 `awaiting-consent`。其他连接申请保留兼容错误码 `WINDOW_BUSY`，并附有限原因 `busyReason: 'connection'`，供 SDK 提示回原标签页处理已有授权。
+每个窗口可保留一笔等待中的连接申请。窗口仍有待处理输入或任务队列时，初始状态为 `waiting-for-window`，保留原浏览器文档、绑定和两分钟期限。输入可用后重新读取策略，进入 `awaiting-consent`。已有连接申请时，后来的点击收到 `waiting-for-connection`，网页提示回原标签页处理已有申请。
 
 已具备当前站点授权和 Chrome host permission 的页面可由 `probe` 按精确浏览器文档修复内容桥。修复只注入内容脚本，后续发送仍需要新真实点击。
 
@@ -90,7 +90,9 @@ type Prepare = {
 `prepare` 或 `submit` 的 ACK 丢失后只调用 `read`。尚未收到本次 `prepare` 的 ACK 时用 `source + requestId` 找回回执，已知回执时用 `source + documentLeaseId + launchId`。后台只从新接纳或找回的本次请求更新文档租约；迟到的旧请求响应不能改写当前租约。
 同一仍 active 的文档可用新 `channelGeneration` 只读重连。文档租约终止撤销后不可恢复。
 
-每次真实点击都分配新的 requestId 和点击序号。后台在点击链上调用 `sidePanel.open()`，再按 Chrome 窗口保存有界 FIFO。队首在前一请求获得精确原生发送确认或已关闭，且原标签页和侧栏输入框可用后，使用原点击快照进入 `prepare`。Main 原子检查同一窗口尚未获得原生绑定的活动请求。已获得绑定的请求继续独立执行和回传结果。新对话接管当前侧栏，旧请求的状态更新只作用于各自会话。
+每次真实点击都分配新的 requestId 和点击序号。后台在点击链上调用 `sidePanel.open()`，再按 Chrome 窗口保存有界 FIFO。若 Chrome 未打开侧栏，已授权的点击保留在队列里，用户可通过工具栏打开侧栏。队首在前一请求获得精确原生发送确认或已关闭，且原标签页和侧栏输入框可用后，使用原点击快照进入 `prepare`。若输入框在接纳后被占用，侧栏保留该笔已接纳请求，等输入框可用后再切换。已获得绑定的请求继续独立执行和回传结果。
+
+同一网页的新点击到达队首时，可以替换侧栏当前关联且等待手动发送的网页草稿。后台核对原文档和当前侧栏，再用旧请求的来源、租约和 launchId 调用 `cancel`，附上新点击序号与入队时的策略版本。Main 只关闭尚未开始发送的手动草稿，并通过可信回执确认替换。旧草稿确认取消后，队首进入独立准入。若旧请求的发送已开始，它保留原回传权限，队首继续等待发送确认。
 
 等待中可以用原句柄查询或取消。网页得到 `queueStatus`，Main 接纳后才得到正式回执和 launchId。排队输入最长保留 15 分钟。提升队首时重新检查原文档、站点权限、输入框和绝对期限，并由 Main 在准入事务里用 `expectedQueuedPolicyRevision` 比较入队时的全局策略版本。直接点击后立即准入的路径沿用当前策略。未知 Prepare 保留只读恢复，队列不会重放原点击。
 

@@ -173,6 +173,7 @@ describe('webpage button bridge', () => {
     expect(onQueue).toHaveBeenCalledWith({
       requestId: second.requestId,
       status: 'queued',
+      reason: 'composer',
       message: expect.stringMatching(/draft.*side panel/u),
     });
 
@@ -289,7 +290,7 @@ describe('webpage button bridge', () => {
     await sdk.bind(
       document.getElementById('business'),
       { prompt: 'once' },
-      { onRequest: handle => handles.push(handle), onError: error => errors.push(error.code) },
+      { onRequest: handle => handles.push(handle), onActionRequired: action => errors.push(action.code) },
     );
     click();
     await vi.waitFor(() => expect(handles).toHaveLength(1));
@@ -316,30 +317,36 @@ describe('webpage button bridge', () => {
     expect(launchCount).toBe(1);
   });
 
-  it('keeps the confirmed composer-busy failure for the original handle and never polls it', async () => {
-    const handles: any[] = [];
-    const errors: string[] = [];
-    const original = runtime.sendMessage.getMockImplementation()!;
-    runtime.sendMessage.mockImplementation(async message => {
-      if (message.type.endsWith('launch')) return { ok: false, code: 'COMPOSER_BUSY' };
-      if (message.type.endsWith('read')) return { ok: false, code: 'EXPIRED' };
-      return original(message);
-    });
-    const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
-    await sdk.bind(
-      document.getElementById('business'),
-      { prompt: 'request with busy composer' },
-      { onRequest: handle => handles.push(handle), onError: error => errors.push(error.code) },
-    );
-    click();
-    await vi.waitFor(() => expect(errors).toEqual(['COMPOSER_BUSY']));
-    poll();
-    await expect(handles[0].read()).rejects.toMatchObject({ code: 'COMPOSER_BUSY' });
-    expect(runtime.sendMessage.mock.calls.some(([message]) => message.type.endsWith('read'))).toBe(
-      false,
-    );
-    expect(errors).toEqual(['COMPOSER_BUSY']);
-  });
+  it.each(['onActionRequired', 'onError'])(
+    'gives user guidance for a request that the desktop app cannot accept through %s',
+    async callback => {
+      const handles: any[] = [];
+      const codes: string[] = [];
+      const original = runtime.sendMessage.getMockImplementation()!;
+      runtime.sendMessage.mockImplementation(async message => {
+        if (message.type.endsWith('launch')) return { ok: false, code: 'APP_NOT_RUNNING' };
+        if (message.type.endsWith('read')) return { ok: false, code: 'EXPIRED' };
+        return original(message);
+      });
+      const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
+      await sdk.bind(
+        document.getElementById('business'),
+        { prompt: 'request while app is closed' },
+        {
+          onRequest: handle => handles.push(handle),
+          [callback]: (action: { code: string }) => codes.push(action.code),
+        },
+      );
+      click();
+      await vi.waitFor(() => expect(codes).toEqual(['APP_NOT_RUNNING']));
+      poll();
+      const action = { code: 'APP_NOT_RUNNING', message: expect.stringMatching(/Open the desktop app/u) };
+      if (callback === 'onError') await expect(handles[0].read()).rejects.toMatchObject(action);
+      else await expect(handles[0].read()).resolves.toMatchObject({ actionRequired: action });
+      expect(runtime.sendMessage.mock.calls.some(([message]) => message.type.endsWith('read'))).toBe(false);
+      expect(codes).toEqual(['APP_NOT_RUNNING']);
+    },
+  );
 
   it.each([
     { status: 'cancelled', expectedReads: 0 },
@@ -355,22 +362,22 @@ describe('webpage button bridge', () => {
         return result;
       });
       const onStatus = vi.fn();
-      const onError = vi.fn();
+      const onActionRequired = vi.fn();
       const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
       await sdk.bind(
         document.getElementById('business'),
         { prompt: 'one launch' },
-        { onStatus, onError },
+        { onStatus, onActionRequired },
       );
       click();
       await vi.waitFor(() => expect(onStatus).toHaveBeenCalledOnce());
       poll();
-      if (expectedReads) await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+      if (expectedReads) await vi.waitFor(() => expect(onActionRequired).toHaveBeenCalledOnce());
       poll();
       expect(
         runtime.sendMessage.mock.calls.filter(([message]) => message.type.endsWith('read')),
       ).toHaveLength(expectedReads);
-      expect(onError).toHaveBeenCalledTimes(expectedReads);
+      expect(onActionRequired).toHaveBeenCalledTimes(expectedReads);
     },
   );
 

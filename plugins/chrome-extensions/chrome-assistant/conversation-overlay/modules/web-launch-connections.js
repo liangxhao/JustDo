@@ -16,6 +16,7 @@ const LIFETIME = 120_000;
 const WINDOW_CHECK_INTERVAL = 5_000;
 const Status = Object.freeze({
   Waiting: 'waiting-for-window',
+  WaitingForConnection: 'waiting-for-connection',
   Awaiting: 'awaiting-consent',
   Granting: 'granting',
   Connected: 'connected',
@@ -31,7 +32,12 @@ const live = value =>
     pendingDecision(value) ||
     value.status === Status.Connected) &&
   !value.claimed;
-const competingConnection = () => ({ code: 'WINDOW_BUSY', busyReason: 'connection' });
+const competingConnection = supportsWaiting => ({
+  ok: true,
+  connectionPending: supportsWaiting
+    ? { status: Status.WaitingForConnection }
+    : { status: Status.Expired, code: 'CONNECTION_PENDING' },
+});
 const sameSource = (value, sender) =>
   value.source.origin === sender.origin &&
   value.source.documentId === sender.documentId &&
@@ -388,7 +394,7 @@ export function createWebLaunchConnections({
     }
     const fields = {
       probe: [],
-      request: ['bindingId', 'bindingRevision', 'payloadDigest', 'input'],
+      request: ['bindingId', 'bindingRevision', 'payloadDigest', 'input', 'connectionWaitStatus'],
       query: ['pendingId', 'bindingId'],
       cancel: ['pendingId', 'bindingId'],
     };
@@ -404,7 +410,6 @@ export function createWebLaunchConnections({
         reply({
           ok: false,
           code: publicErrorCode(error),
-          ...(error?.busyReason === 'connection' ? { busyReason: 'connection' } : {}),
         }),
       );
       return true;
@@ -412,13 +417,24 @@ export function createWebLaunchConnections({
     if (message.op === 'probe')
       return done(
         probeConnection(sender).then(
-          connected => ({ ok: true, connected }),
-          () => ({ ok: true, connected: false }),
+          connected => ({ ok: true, connected, connectionWaitStatus: true }),
+          () => ({ ok: true, connected: false, connectionWaitStatus: true }),
         ),
       );
     if (message.op === 'query')
       return done(
-        find(message, sender).then(async value => {
+        find(message, sender).catch(error => {
+          if (error?.code === 'EXPIRED' && !message.pendingId && !provisional.has(sender.tab.windowId))
+            return null;
+          throw error;
+        }).then(async value => {
+          if (!value) {
+            const hasCompetingConnection = await store(values => Object.values(values).some(
+              item => item.source.windowId === sender.tab.windowId && !expired(item) && live(item),
+            ));
+            return hasCompetingConnection ? competingConnection(false)
+              : { ok: true, connectionPending: { status: Status.Expired } };
+          }
           const busy = windowBusy(sender.tab.windowId);
           const shouldRefresh =
             (value.status === Status.Waiting && (busy || !value.code)) ||
@@ -450,13 +466,14 @@ export function createWebLaunchConnections({
       !input ||
       !Number.isSafeInteger(message.bindingRevision) ||
       message.bindingRevision < 1 ||
+      (message.connectionWaitStatus !== undefined && message.connectionWaitStatus !== true) ||
       !/^[a-f0-9]{64}$/u.test(message.payloadDigest ?? '')
     ) {
       reply({ ok: false, code: 'INVALID_REQUEST' });
       return false;
     }
     if (provisional.has(sender.tab.windowId)) {
-      reply({ ok: false, ...competingConnection() });
+      reply(competingConnection(message.connectionWaitStatus));
       return false;
     }
     provisional.add(sender.tab.windowId);
@@ -493,7 +510,7 @@ export function createWebLaunchConnections({
                 existing.bindingRevision !== message.bindingRevision ||
                 existing.payloadDigest !== message.payloadDigest
               )
-                throw competingConnection();
+                return undefined;
               return structuredClone(existing);
             }
             const bytes = Object.values(values).reduce(
@@ -530,6 +547,7 @@ export function createWebLaunchConnections({
             values[pendingId] = value;
             return structuredClone(value);
           });
+          if (!value) return competingConnection(message.connectionWaitStatus);
           if ((tabEpoch.get(sender.tab.id) ?? 0) !== epoch) throw { code: 'EXPIRED' };
           notify(value.source, metadata(value));
           value = await refreshConsent(value);

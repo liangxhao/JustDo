@@ -35,7 +35,7 @@ import {
   assertWebLaunchKeys, buildStrictWebLaunchContext, ChromeWebLaunchError, failWebLaunch,
   parseWebLaunchActualInput, parseWebLaunchPrepare, parseWebLaunchSource, parseWebLaunchSubmit,
   webLaunchActualDigest, webLaunchBoolean, webLaunchDigest, webLaunchInteger, webLaunchOrigin,
-  webLaunchRecord, webLaunchSourceKey, webLaunchString, webLaunchWindowKey,
+  webLaunchRecord, webLaunchSourceKey, webLaunchString,
 } from './chromeWebLaunchValidation';
 
 interface Dependencies {
@@ -217,6 +217,7 @@ export class ChromeWebLaunchService {
       ...(receipt.clientTurnId ? { clientTurnId: receipt.clientTurnId } : {}),
       ...(receipt.nativeBinding ? { nativeRunId: receipt.nativeBinding.nativeRunId } : {}),
       ...(receipt.notSent === true ? { notSent: true } : {}),
+      ...(receipt.replacedDraft ? { replacedDraft: true } : {}),
     } };
   }
 
@@ -349,9 +350,6 @@ export class ChromeWebLaunchService {
       state.watermarks[watermarkKey] = value.clickSequence;
       const site = state.sites.find(item => item.origin === value.source.origin);
       if (!site?.enabled) { error = 'SITE_NOT_ALLOWED'; return; }
-      const windowKey = webLaunchWindowKey(value.source);
-      if (Object.values(state.receipts).some(receipt => receipt.observed && receipt.windowKey === windowKey &&
-        !settled(receipt) && !receipt.notSent && !receipt.nativeBinding)) { error = 'COMPOSER_BUSY'; return; }
       if (Object.values(state.receipts).filter(receipt => receipt.observed && !settled(receipt) && !receipt.notSent).length >= WebLaunchLimits.activeReceipts || Object.keys(state.receipts).length >= 300) { error = 'CAPACITY_EXCEEDED'; return; }
       if (!lease) {
         lease = {
@@ -371,7 +369,7 @@ export class ChromeWebLaunchService {
       const shareResult = !value.connectionOnly && value.input.result === 'final' && site.allowResult;
       prepared = {
         launchId: this.uuid(), requestId: value.requestId, receiptRevision: 1, leaseId: lease.id,
-        source: strippedSource(value.source), sourceKey, windowKey, clickSequence: value.clickSequence,
+        source: strippedSource(value.source), sourceKey, clickSequence: value.clickSequence,
         bindingRevision: value.bindingRevision, payloadDigest: value.payloadDigest,
         actualDigest: webLaunchActualDigest({ prompt: value.input.prompt, ...(value.input.context ? { context: value.input.context } : {}), permissionMode }),
         permissionMode,
@@ -440,11 +438,9 @@ export class ChromeWebLaunchService {
     const input = { ...value.input, permissionMode: value.input.permissionMode ?? current.permissionMode ?? PermissionMode.Ask };
     const digest = webLaunchActualDigest(input);
     const context = buildStrictWebLaunchContext(current.source.origin, input.context?.text);
-    const existingOwner = this.owners.get(value.launchId);
     if (current.clientTurnId && !current.notSent) {
       if (current.composeRevision !== value.composeRevision || current.actualDigest !== digest) return failWebLaunch('COMPOSE_CHANGED');
-      if (existingOwner?.active || current.dispatchAttempted) return this.metadata(current);
-      return failWebLaunch('COMPOSER_BUSY');
+      return this.metadata(current);
     }
     if (current.notSent && value.submission !== 'confirmed') return failWebLaunch('CONFIRMATION_REQUIRED');
     const confirmedNewTask = value.submission === 'confirmed' && value.confirmNewTask === true;
@@ -850,7 +846,34 @@ export class ChromeWebLaunchService {
   }
 
   cancel(raw: unknown): WebLaunchResponse {
-    const { receipt } = this.reference(raw);
+    const { replacement, ...reference } = webLaunchRecord(raw);
+    const { receipt } = this.reference(reference);
+    if (replacement !== undefined) {
+      const replacementInput = webLaunchRecord(replacement);
+      assertWebLaunchKeys(replacementInput, ['clickSequence', 'expectedPolicyRevision']);
+      const clickSequence = webLaunchInteger(replacementInput.clickSequence);
+      const expectedPolicyRevision = webLaunchInteger(replacementInput.expectedPolicyRevision, 0);
+      const result = this.store.mutate(state => {
+        if (expectedPolicyRevision !== state.policyRevision) return failWebLaunch('POLICY_CONFLICT');
+        const item = this.get(state, receipt.launchId);
+        if (clickSequence <= (state.leases[item.leaseId]?.highWater ?? item.clickSequence)) return failWebLaunch('EXPIRED');
+        const owner = this.owners.get(item.launchId);
+        if (item.autoAllowed || item.executionStatus !== 'not-started' || settled(item) || item.nativeBinding ||
+            item.dispatchAttempted || item.clientTurnId && !item.notSent || owner?.active || owner?.dispatched ||
+            (item.requestStatus !== 'drafted' && item.requestStatus !== 'awaiting-confirmation')) return item;
+        item.requestStatus = 'cancelled';
+        item.notSent = true;
+        item.replacedDraft = true;
+        item.shareRevoked = true;
+        item.shareResult = false;
+        item.outputStatus = item.result === 'none' ? 'not-requested' : 'withheld';
+        item.errorCode = undefined;
+        this.bump(item);
+        return item;
+      });
+      if (result.replacedDraft) this.changed();
+      return this.metadata(result);
+    }
     const tooLate = receipt.dispatchAttempted && !receipt.notSent;
     this.store.mutate(state => {
       const item = this.get(state, receipt.launchId);

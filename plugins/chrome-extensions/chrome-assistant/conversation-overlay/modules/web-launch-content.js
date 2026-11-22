@@ -113,13 +113,16 @@ export function installWebLaunchContent({
         if (!observedLaunchId || observedLaunchId !== request.launchId) return;
         request.failure = code;
       }
-      post({
-        kind: 'error',
-        bindingId: request.bindingId,
-        requestId: request.requestId,
-        code,
-        ...(request.failure ? { terminal: true } : {}),
-      });
+      if (request.actionCode !== code || request.failure) {
+        request.actionCode = code;
+        post({
+          kind: 'error',
+          bindingId: request.bindingId,
+          requestId: request.requestId,
+          code,
+          ...(request.failure ? { terminal: true } : {}),
+        });
+      }
       if (['SITE_NOT_ALLOWED', 'PERMISSION_REQUIRED'].includes(response?.code)) {
         bindings.clear();
         requests.clear();
@@ -130,7 +133,8 @@ export function installWebLaunchContent({
       return;
     }
     if (response.queueStatus && !request.launchId) {
-      const queueReason = response.queueReason === 'composer' ? response.queueReason : undefined;
+      const queueReason = ['composer', 'panel'].includes(response.queueReason) ? response.queueReason : undefined;
+      request.actionCode = undefined;
       if (
         request.queueStatus === 'cancelled' ||
         (request.queueStatus === response.queueStatus && request.queueReason === queueReason)
@@ -151,6 +155,7 @@ export function installWebLaunchContent({
       if (request.receipt && response.receipt.receiptRevision < request.receipt.receiptRevision)
         return;
       request.launchId = response.receipt.launchId;
+      request.actionCode = undefined;
       request.queueStatus = undefined;
       request.queueReason = undefined;
       request.receipt = response.receipt;
@@ -206,7 +211,7 @@ export function installWebLaunchContent({
       if (retired) requests.delete(retired[0]);
       else {
         post({ kind: 'binding-error', bindingId, code: 'CAPACITY_EXCEEDED' });
-        return;
+        return { ok: false, code: 'CAPACITY_EXCEEDED' };
       }
     }
     if (
@@ -285,11 +290,10 @@ export function installWebLaunchContent({
         )
           throw { code: 'EXPIRED' };
         continuations.delete(message.pendingId);
-        const response = await launchRequest(message.bindingId, binding, continuation);
-        reply(
-          message,
-          response?.ok ? { ok: true } : { ok: false, code: publicErrorCode(response) },
-        );
+        const response = await Promise.resolve(launchRequest(message.bindingId, binding, continuation))
+          .catch(error => ({ ok: false, code: publicErrorCode(error) }));
+        const code = response ? publicErrorCode(response) : 'EXPIRED';
+        reply(message, response?.ok ? { ok: true } : { ok: false, code, actionRequired: { code } });
         return;
       }
       if (message.kind === 'unbind') {
@@ -315,8 +319,9 @@ export function installWebLaunchContent({
         !['read', 'cancel'].includes(message.kind)
       )
         throw { code: 'INVALID_REQUEST' };
-      if (request.failure) throw { code: request.failure };
-      const response = await observeRequest(request, message.kind);
+      const response = request.failure
+        ? { ok: false, code: request.failure }
+        : await observeRequest(request, message.kind).catch(error => ({ ok: false, code: publicErrorCode(error) }));
       reply(
         message,
         response?.ok
@@ -324,9 +329,13 @@ export function installWebLaunchContent({
               ok: true,
               receipt: response.receipt,
               ...(response.queueStatus ? { queueStatus: response.queueStatus } : {}),
-              ...(response.queueReason === 'composer' ? { queueReason: response.queueReason } : {}),
+              ...(['composer', 'panel'].includes(response.queueReason) ? { queueReason: response.queueReason } : {}),
             }
-          : { ok: false, code: publicErrorCode(response) },
+          : {
+              ok: false,
+              code: publicErrorCode(response),
+              actionRequired: { code: publicErrorCode(response), requestId: request.requestId },
+            },
       );
     } catch (error) {
       reply(message, { ok: false, code: publicErrorCode(error) });
