@@ -418,7 +418,9 @@ export const chatStyles = [
 
     .chat-container {
       /* Match .cowork-content-width so the composer aligns with message text. */
-      --chat-content-available-width: calc(100% - 2 * clamp(8px, (100% - 440px) / 4, 48px));
+      --chat-content-available-width: calc(
+        100% - 2 * clamp(2px, (100% - 440px) / 4, var(--chat-content-max-gutter, 48px))
+      );
       width: calc(
         100% - (100% - var(--justdo-chat-content-width, 60%)) *
           var(--chat-content-width-progress, 0)
@@ -671,7 +673,7 @@ export const chatStyles = [
     }
 
     :host(.full-width) .chat-shell:not(:has(.chat-minimap)) .chat-container {
-      --chat-content-available-width: calc(100% - 16px);
+      --chat-content-max-gutter: 8px;
     }
 
     /* ── Chat Group ─────────────────────────────────────────────────── */
