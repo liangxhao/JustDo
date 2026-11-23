@@ -7,6 +7,7 @@ import path from 'node:path';
 import { expect, test, vi } from 'vitest';
 
 import type { AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
+import * as appArtifacts from './artifact';
 import { artifactDigest } from './artifact';
 import { AppPluginManager, discoverAppCandidates } from './manager';
 import type { AppHostResources } from './registry';
@@ -15,7 +16,7 @@ const id = 'discovery-fixture';
 const native = 'export default {};';
 const sha = (value: string) => createHash('sha256').update(value).digest('hex');
 
-test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missing-native', 'missing-app', 'unavailable-runtime', 'shadowed'] as const)(
+test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missing-native', 'missing-app', 'unavailable-runtime', 'shadowed', 'installed-missing-code'] as const)(
   'admits the runtime alias while preserving native package checks: %s',
   async layout => {
     const root = await mkdtemp(path.join(tmpdir(), 'app-discovery-layout-'));
@@ -26,6 +27,7 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missi
       const nativeRoot = path.join(runtime, 'dist/extensions', id);
       const bundled = path.join(root, 'bundled');
       await mkdir(nativeRoot, { recursive: true });
+      await mkdir(bundled, { recursive: true });
       await writeFile(path.join(nativeRoot, 'index.js'), native);
       const manifest: AppPluginManifest = {
         manifestVersion: 1,
@@ -51,7 +53,8 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missi
         Object.entries(contents).map(([name, value]) => [name, sha(value)]),
       );
       const hash = artifactDigest(manifest, files);
-      const artifactRoot = path.join(bundled, id, hash);
+      const artifactRoot = layout === 'installed-missing-code'
+        ? path.join(nativeRoot, 'app') : path.join(bundled, id, hash);
       await mkdir(artifactRoot, { recursive: true });
       for (const [name, value] of Object.entries(contents))
         await writeFile(path.join(artifactRoot, name), value);
@@ -59,7 +62,8 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missi
         path.join(artifactRoot, 'app.artifact.json'),
         JSON.stringify({ manifest, files, hash }),
       );
-      await writeFile(path.join(bundled, 'catalog.json'), JSON.stringify([{ id, hash }]));
+      await writeFile(path.join(bundled, 'catalog.json'),
+        JSON.stringify(layout === 'installed-missing-code' ? [] : [{ id, hash }]));
       const selectedRuntime = path.join(root, 'current');
       await symlink(runtime, selectedRuntime, process.platform === 'win32' ? 'junction' : 'dir');
       if (layout === 'plugin-link') {
@@ -79,12 +83,18 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missi
       };
       if (layout === 'missing-native') await rm(path.join(nativeRoot, 'index.js'));
       if (layout === 'missing-app') await rm(artifactRoot, { recursive: true });
+      if (layout === 'installed-missing-code') await rm(path.join(artifactRoot, 'main.mjs'));
       const candidates = await discoverAppCandidates(
         bundled,
         layout === 'unavailable-runtime' ? null : layout === 'directory' ? runtime : selectedRuntime,
-        layout === 'shadowed' ? [{ id, installPath: path.join(root, 'installed') }] : [],
-        {},
+        layout === 'installed-missing-code' ? [{ id, installPath: nativeRoot }]
+          : layout === 'shadowed' ? [{ id, installPath: path.join(root, 'installed') }] : [],
+        layout === 'installed-missing-code' ? { [id]: hash } : {},
       );
+      if (layout === 'installed-missing-code')
+        expect(candidates).toEqual([expect.objectContaining({
+          nativePluginId: id, trusted: true, identity: { id, hash },
+        })]);
       const loadModule = vi.fn(async () => ({ register: () => ({ commands: [] }) }));
       manager = new AppPluginManager({
         retentionRoot: path.join(root, 'retained'),
@@ -99,7 +109,7 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missi
       await manager.prepare();
       await manager.activate();
       await manager.refresh();
-      if (layout === 'missing-app') {
+      if (layout === 'missing-app' || layout === 'installed-missing-code') {
         expect(manager.snapshot()).toEqual([]);
         expect(loadModule).not.toHaveBeenCalled();
         expect(manager.registry.hasUnresolvedInventory()).toBe(true);
@@ -141,6 +151,35 @@ test.each(['directory', 'runtime-link', 'plugin-link', 'different-bytes', 'missi
     }
   },
 );
+
+test('enables a native-only extension without inspecting unrelated app indexes or files', async () => {
+  const inspect = vi.spyOn(appArtifacts, 'inspectAppArtifact');
+  const readIndex = vi.spyOn(appArtifacts, 'readAppArtifactIndex');
+  const unavailable = path.join(tmpdir(), 'unavailable-app', randomUUID());
+  const manager = new AppPluginManager({
+    retentionRoot: path.join(unavailable, 'retained'),
+    candidates: async () => [{
+      root: path.join(unavailable, 'app'), nativeRoot: unavailable,
+      nativePluginId: 'unrelated-fixture', trusted: false,
+    }],
+    resources: {} as AppHostResources,
+    readDesiredEnabled: () => true,
+    isGatewayConnected: () => false,
+    broadcast: () => {},
+  });
+  const operation = vi.fn(async () => ({ success: true }));
+  try {
+    await expect(manager.mutate('native-only-fixture', true, operation))
+      .resolves.toEqual({ success: true });
+    expect(operation).toHaveBeenCalledOnce();
+    expect(inspect).not.toHaveBeenCalled();
+    expect(readIndex).not.toHaveBeenCalled();
+  } finally {
+    manager.dispose();
+    inspect.mockRestore();
+    readIndex.mockRestore();
+  }
+});
 
 test.each([
   {},

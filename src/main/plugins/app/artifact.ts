@@ -24,14 +24,16 @@ export const artifactDigest = (
       ),
     }),
   );
-export interface VerifiedAppArtifact {
+export interface AppArtifactIndex {
   root: string;
   artifact: AppPluginArtifact;
+}
+export interface VerifiedAppArtifact extends AppArtifactIndex {
   moduleGraphs?: AppModuleGraphs;
 }
 
-/** Verify an immutable, complete graph, not just its entry module. */
-export const inspectAppArtifact = async (directory: string): Promise<VerifiedAppArtifact> => {
+/** Read declarations for discovery; this does not verify or authorize artifact code. */
+export const readAppArtifactIndex = async (directory: string): Promise<AppArtifactIndex> => {
   const root = await realpath(directory);
   const indexPath = path.join(root, APP_PLUGIN_ARTIFACT);
   if ((await lstat(indexPath)).isSymbolicLink()) throw new Error('App artifact index is a link');
@@ -47,6 +49,18 @@ export const inspectAppArtifact = async (directory: string): Promise<VerifiedApp
     !/^[a-f0-9]{64}$/u.test(input.hash)
   )
     throw new Error('Invalid app artifact');
+  return { root, artifact: { manifest, files: input.files, hash: input.hash } };
+};
+
+/** Verify an immutable, complete graph, not just its entry module. */
+export const inspectAppArtifact = async (directory: string): Promise<VerifiedAppArtifact> =>
+  verifyAppArtifact(await readAppArtifactIndex(directory));
+
+const verifyAppArtifact = async (
+  { root, artifact: input }: AppArtifactIndex,
+  options?: { copyTo?: string; moduleGraphs?: AppModuleGraphs },
+): Promise<VerifiedAppArtifact> => {
+  const { manifest } = input;
   const files: Record<string, string> = {};
   let total = 0;
   const actual = new Set<string>();
@@ -74,11 +88,15 @@ export const inspectAppArtifact = async (directory: string): Promise<VerifiedApp
         throw new Error('App artifact changed');
       actual.add(relative);
       files[relative] = expected;
-      if (/\.[cm]?js$/u.test(relative)) sources.set(relative, bytes.toString('utf8'));
+      if (!options?.moduleGraphs && /\.[cm]?js$/u.test(relative)) sources.set(relative, bytes.toString('utf8'));
+      if (options?.copyTo) {
+        const output = path.join(options.copyTo, relative);
+        await mkdir(path.dirname(output), { recursive: true });
+        await writeFile(output, bytes, { flag: 'wx' });
+      }
     }
   };
   await visit('');
-  const moduleGraphs = verifyAppModuleGraph(manifest, sources, actual);
   if (
     Object.keys(input.files).length !== actual.size ||
     !actual.has(manifest.entries.main) ||
@@ -88,43 +106,41 @@ export const inspectAppArtifact = async (directory: string): Promise<VerifiedApp
     artifactDigest(manifest, files) !== input.hash
   )
     throw new Error('App artifact identity mismatch');
+  const moduleGraphs = options?.moduleGraphs ?? verifyAppModuleGraph(manifest, sources, actual);
   return { root, artifact: { manifest, files, hash: input.hash }, moduleGraphs };
 };
 
-/** Copy verified bytes away from the native install directory before loading any code. */
+/** Verify and retain the same bytes away from the native install directory. */
 export const retainAppArtifact = async (
-  source: VerifiedAppArtifact,
+  source: AppArtifactIndex,
   directory: string,
 ): Promise<VerifiedAppArtifact> => {
   const destination = path.resolve(directory, source.artifact.manifest.id, source.artifact.hash);
   const relative = path.relative(path.resolve(directory), destination);
   if (relative.startsWith('..') || path.isAbsolute(relative))
     throw new Error('Invalid app retention root');
-  try {
-    const existing = await inspectAppArtifact(destination);
-    if (existing.artifact.hash !== source.artifact.hash)
-      throw new Error('Retained app artifact mismatch');
-    return existing;
-  } catch (error) {
+  const existing = await inspectAppArtifact(destination).catch((error): null => {
     if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT')
       throw error;
+    return null;
+  });
+  if (existing) {
+    if (existing.artifact.hash !== source.artifact.hash)
+      throw new Error('Retained app artifact mismatch');
+    if (existing.root !== source.root)
+      await verifyAppArtifact(source, { moduleGraphs: existing.moduleGraphs });
+    return existing;
   }
   const staged = `${destination}.stage-${createHash('sha256').update(String(process.hrtime.bigint())).digest('hex').slice(0, 16)}`;
   await mkdir(staged, { recursive: true });
   try {
-    for (const [name, expected] of Object.entries(source.artifact.files)) {
-      const bytes = await readFile(path.join(source.root, name));
-      if (digest(bytes) !== expected) throw new Error('App source changed during retention');
-      await mkdir(path.dirname(path.join(staged, name)), { recursive: true });
-      await writeFile(path.join(staged, name), bytes, { flag: 'wx' });
-    }
-    await writeFile(path.join(staged, APP_PLUGIN_ARTIFACT), JSON.stringify(source.artifact), {
+    const verified = await verifyAppArtifact(source, { copyTo: staged });
+    await writeFile(path.join(staged, APP_PLUGIN_ARTIFACT), JSON.stringify(verified.artifact), {
       flag: 'wx',
     });
-    await inspectAppArtifact(staged);
     await mkdir(path.dirname(destination), { recursive: true });
     await rename(staged, destination);
-    return inspectAppArtifact(destination);
+    return { ...verified, root: await realpath(destination) };
   } finally {
     // This generated sibling stays under the already checked retention root.
     await rm(staged, { recursive: true, force: true });

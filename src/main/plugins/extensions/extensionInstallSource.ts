@@ -151,7 +151,8 @@ export const prepareExtensionInstallSource = async (
   };
   try {
     for (const [from, before] of entries) {
-      await verify(from, before);
+      // File copying already checks the opened inode before and after reading.
+      if (before.isDirectory() || from === hostLink) await verify(from, before);
       if (omitHostLink && from === hostLink) continue;
       const to = path.join(directory, path.relative(source, from));
       if (before.isDirectory()) await fsp.mkdir(to, { mode: before.mode });

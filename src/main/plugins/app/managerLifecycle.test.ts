@@ -260,6 +260,21 @@ test('does not withdraw execution sources for unchanged refreshes or ordinary re
   }
 });
 
+test('refreshes the admitted registration without rereading code and rejects a different registered source', async () => {
+  const f = await fixture();
+  const initial = f.manager.snapshot();
+  const replacement = 'export default {}; // different registered source';
+  await writeFile(f.receipt().nativeEntry, replacement);
+
+  await f.manager.refresh();
+  expect(f.manager.snapshot()).toEqual(initial);
+  expect(await f.read()).toEqual({ success: true, value: '1.0.0' });
+
+  Object.assign(f.receipt(), { registrationId: randomUUID(), sourceSha256: sha(replacement) });
+  await f.manager.refresh();
+  expect(f.manager.snapshot()[0].state).toBe('cleanup');
+});
+
 test('preserves explicit metadata notifications while deduplicating the unchanged lifecycle publication around a read', async () => {
   const f = await fixture({ notifyMetadataOnRead: true });
   const changed = vi.fn();

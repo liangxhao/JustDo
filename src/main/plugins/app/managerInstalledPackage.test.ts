@@ -49,6 +49,7 @@ async function fixture(options: {
     generation++;
   });
   const approveArtifact = vi.fn((pluginId: string, hash: string) => store.approve(pluginId, hash));
+  const loadModule = vi.fn(async (_url: string) => ({ register: () => ({ commands: [] }) }));
   const manager = new AppPluginManager({
     retentionRoot,
     resources: { ensureReady } as unknown as AppHostResources,
@@ -63,7 +64,7 @@ async function fixture(options: {
     getGatewayProcessId: () => processId,
     getGatewayProcessGeneration: () => generation,
     withStoppedGateway: stopped,
-    loadModule: async () => ({ register: () => ({ commands: [] }) }),
+    loadModule,
   });
   disposers.push(() => manager.dispose());
   await manager.prepare();
@@ -91,7 +92,7 @@ async function fixture(options: {
     return hash;
   };
   return {
-    manager, installPath, retentionRoot, store, stopped, ensureReady, approveArtifact, writeApp,
+    manager, installPath, retentionRoot, store, stopped, ensureReady, approveArtifact, loadModule, writeApp,
     recordInstalled: () => { installed.push({ id: options.nativePluginId ?? id, installPath }); },
     removeInstalled: () => { installed.splice(0); },
     beforeCandidates: (callback: () => void | Promise<void>) => { beforeCandidates = callback; },
@@ -132,6 +133,23 @@ test('rejects installation trust outside its stopped mutation owner', async () =
 
   expect(f.approveArtifact).not.toHaveBeenCalled();
   expect(f.stopped).not.toHaveBeenCalled();
+});
+
+test('first load uses the companion already retained by the same installation', async () => {
+  const f = await fixture();
+  const hash = await f.writeApp();
+  f.recordInstalled();
+
+  await f.manager.mutatePackage(async () => {
+    await f.manager.approveInstalledPackage({ nativePluginId: id, installPath: f.installPath });
+    // An out-of-band change after approval must neither replace the retained
+    // bytes nor trigger another scan of the install directory in this owner.
+    await writeFile(path.join(f.installPath, 'app', 'main.mjs'), 'export const changed = true;');
+  });
+
+  expect(f.manager.snapshot()[0]).toMatchObject({ id, hash, installed: true });
+  expect(f.loadModule).toHaveBeenCalledOnce();
+  expect(f.loadModule.mock.calls[0][0]).toContain(`/retained/${id}/${hash}/main.mjs`);
 });
 
 test('rejects a different package root even when its companion has the same identity', async () => {

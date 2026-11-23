@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { isBuiltin } from 'node:module';
 import path from 'node:path';
@@ -36,7 +36,7 @@ import {
   ExtensionPackageLifecycleMode,
   type ExtensionPackageMutationTarget,
 } from '../extensions/extensionPackageLifecycle';
-import { inspectAppArtifact, retainAppArtifact, type VerifiedAppArtifact } from './artifact';
+import { type AppArtifactIndex, artifactDigest, inspectAppArtifact, readAppArtifactIndex, retainAppArtifact, type VerifiedAppArtifact } from './artifact';
 import { appAssetPath, appPresentationAssetPath, publishAppAssets } from './assets';
 import type { AppHostResources, AppNativeState } from './registry';
 import { AppPluginRegistry } from './registry';
@@ -64,8 +64,10 @@ interface Selected {
   nativeEntry: string;
   cleanupOnly: boolean;
 }
+type PreparedPackages = Map<string, { sourceRoot: string; selected: Selected }>;
 interface PackageMutationOwner {
   ids: ReadonlySet<string>;
+  prepared: PreparedPackages;
   assertCurrent(): void;
 }
 const NATIVE_HANDSHAKE_RETRY_DELAYS_MS = [100, 250, 500, 1000, 2000, 5000, 5000] as const;
@@ -130,7 +132,7 @@ export class AppPluginManager {
   private databaseInitialized = false;
   private activated = false;
   private packageMutation = false;
-  private stoppedPackageMutation?: object;
+  private stoppedPackageMutation?: PreparedPackages;
   private packageRepairPending = false;
   private hotPackageMutation?: PackageMutationOwner;
   private readonly pendingPackageOwners = new Set<string>();
@@ -166,7 +168,9 @@ export class AppPluginManager {
     this.assertAvailable();
     for (const candidate of candidates.filter(item => item.trusted && item.bundled)) {
       try {
-        const { artifact } = await inspectCandidateArtifact(candidate);
+        const { artifact } = await readCandidateIndex(candidate);
+        if (artifactDigest(artifact.manifest, artifact.files) !== artifact.hash)
+          throw new Error('App artifact identity mismatch');
         this.rememberExecutionSourceCandidate(
           candidate,
           artifact.manifest.nativePluginId,
@@ -180,14 +184,16 @@ export class AppPluginManager {
       }
     }
     // Bootstrap old trusted inventories independently of an installed rewrite's schemas.
+    const bootstrapped = new Map<AppCandidate, VerifiedAppArtifact>();
     for (const candidate of candidates.filter(
       item => item.trusted && item.cleanupOnly && !item.retainedReceipt,
     )) {
       try {
         const artifact = await retainAppArtifact(
-          await inspectCandidateArtifact(candidate),
+          await readCandidateIndex(candidate),
           this.dependencies.retentionRoot,
         );
+        bootstrapped.set(candidate, artifact);
         this.rememberExecutionSourceCandidate(
           candidate,
           artifact.artifact.manifest.nativePluginId,
@@ -217,15 +223,16 @@ export class AppPluginManager {
       try {
         // A native capability consent is not app trust. External artifacts require separate approval.
         if (!candidate.trusted) continue;
-        const inspected = await inspectCandidateArtifact(candidate);
-        ownerId = inspected.artifact.manifest.id;
+        const retained = bootstrapped.get(candidate);
+        const index = retained ?? await readCandidateIndex(candidate);
+        ownerId = index.artifact.manifest.id;
         this.captureCurrentOwner(candidate, ownerId);
+        const artifact = retained ?? await retainAppArtifact(index, this.dependencies.retentionRoot);
         this.rememberExecutionSourceCandidate(
           candidate,
-          inspected.artifact.manifest.nativePluginId,
+          artifact.artifact.manifest.nativePluginId,
           knownCandidates,
         );
-        const artifact = await retainAppArtifact(inspected, this.dependencies.retentionRoot);
         const selected = await selectCandidateArtifact(candidate, artifact);
         const id = artifact.artifact.manifest.nativePluginId;
         if (this.selected.has(id)) continue;
@@ -515,9 +522,7 @@ export class AppPluginManager {
             sourceMatches =
               actual !== undefined &&
               realpathSync(actual) === expected &&
-              receipt?.sourceSha256 === selected.nativeHash &&
-              createHash('sha256').update(readFileSync(expected)).digest('hex') ===
-                selected.nativeHash;
+              receipt?.sourceSha256 === selected.nativeHash;
           } catch {
             sourceMatches = false;
           }
@@ -566,20 +571,24 @@ export class AppPluginManager {
     this.assertAvailable();
     if (!/^[a-z][a-z0-9-]{0,95}$/u.test(id)) return null;
     for (const candidate of await this.dependencies.candidates()) {
-      if (candidate.retainedReceipt || candidate.cleanupOnly) continue;
-      const artifact = await inspectAppArtifact(candidate.root).catch((): null => null);
-      if (artifact?.artifact.manifest.nativePluginId !== id) continue;
+      const candidateId = candidate.nativePluginId ?? candidate.identity?.id;
+      if (candidate.retainedReceipt || candidate.cleanupOnly || candidate.nativeOnly ||
+          (candidateId !== undefined && candidateId !== id)) continue;
+      const index = await readCandidateIndex(candidate).catch((): null => null);
+      if (index?.artifact.manifest.nativePluginId !== id ||
+          artifactDigest(index.artifact.manifest, index.artifact.files) !== index.artifact.hash) continue;
+      const { artifact } = index;
       this.assertAvailable();
       const review: AppPluginReview = {
         id,
-        version: artifact.artifact.manifest.version,
-        hash: artifact.artifact.hash,
-        capabilities: artifact.artifact.manifest.capabilities,
+        version: artifact.manifest.version,
+        hash: artifact.hash,
+        capabilities: artifact.manifest.capabilities,
         token: randomUUID(),
         approved: candidate.trusted,
         restartRequired:
           !this.selected.has(id) ||
-          this.selected.get(id)?.artifact.artifact.hash !== artifact.artifact.hash,
+          this.selected.get(id)?.artifact.artifact.hash !== artifact.hash,
       };
       this.reviews.set(id, { candidate, review, issued: Date.now() });
       return review;
@@ -602,20 +611,18 @@ export class AppPluginManager {
       !this.dependencies.approveArtifact
     )
       return { success: false };
-    const current = await inspectAppArtifact(pending.candidate.root).catch((): null => null);
+    const current = await readCandidateIndex(pending.candidate).catch((): null => null);
     if (!current || current.artifact.hash !== input.hash) return { success: false };
-    try {
-      await readNativeBinding(current, pending.candidate.nativeRoot, true);
-    } catch {
-      return { success: false };
-    }
     await this.mutatePackage(async () => {
-      const checked = await inspectAppArtifact(pending.candidate.root);
+      const prepared = this.stoppedPackageMutation;
+      const checked = await readCandidateIndex(pending.candidate);
       if (checked.artifact.hash !== input.hash) throw new Error('appPluginInvalidRequest');
-      await readNativeBinding(checked, pending.candidate.nativeRoot, true);
-      await retainAppArtifact(checked, this.dependencies.retentionRoot);
+      const artifact = await retainAppArtifact(checked, this.dependencies.retentionRoot);
+      const selected = await selectCandidateArtifact(pending.candidate, artifact);
+      if (selected.cleanupOnly) throw new Error('appPluginInvalidRequest');
       this.assertAvailable();
       await this.dependencies.approveArtifact!(input.id, input.hash);
+      prepared?.set(input.id, { sourceRoot: checked.root, selected });
     });
     return { success: true };
   }
@@ -654,7 +661,7 @@ export class AppPluginManager {
         ? path.resolve(value).toLowerCase() : path.resolve(value);
       return normalize(left) === normalize(right);
     };
-    const inspectInstalled = async (expectedHash?: string): Promise<VerifiedAppArtifact | null> => {
+    const readInstalled = async (expectedHash?: string): Promise<AppArtifactIndex | null> => {
       assertOwner();
       let indexStats: ReturnType<typeof lstatSync>;
       try { indexStats = lstatSync(path.join(appRoot, APP_PLUGIN_ARTIFACT)); }
@@ -679,7 +686,7 @@ export class AppPluginManager {
           !appStats.isDirectory() || appStats.isSymbolicLink() || realpathSync(appRoot) !== appRoot)
         throw identityMismatch();
       const identity = installed[0].identity && { ...installed[0].identity };
-      const artifact = await inspectAppArtifact(appRoot);
+      const artifact = await readAppArtifactIndex(appRoot);
       assertOwner();
       if (artifact.root !== appRoot || artifact.artifact.manifest.id !== nativePluginId ||
           artifact.artifact.manifest.nativePluginId !== nativePluginId ||
@@ -687,28 +694,37 @@ export class AppPluginManager {
             identity.id !== nativePluginId || identity.hash !== artifact.artifact.hash)) ||
           (expectedHash !== undefined && artifact.artifact.hash !== expectedHash))
         throw identityMismatch();
-      try { await readNativeBinding(artifact, nativeRoot, true); }
-      catch { throw identityMismatch(); }
-      assertOwner();
       return artifact;
     };
-    const artifact = await inspectInstalled();
-    if (!artifact) return;
+    const source = await readInstalled();
+    if (!source) return;
     const approveArtifact = this.dependencies.approveArtifact;
     if (!approveArtifact) throw new Error(t('extensionAppCodeTrustUnavailable'));
-    await retainAppArtifact(artifact, this.dependencies.retentionRoot);
+    const artifact = await retainAppArtifact(source, this.dependencies.retentionRoot);
+    const hash = artifact.artifact.hash;
     assertOwner();
-    if (!await inspectInstalled(artifact.artifact.hash)) throw identityMismatch();
-    await approveArtifact(nativePluginId, artifact.artifact.hash);
+    if (!await readInstalled(hash)) throw identityMismatch();
+    const binding = await readNativeBinding(artifact).catch((): never => { throw identityMismatch(); });
+    await verifyNativeBinding(nativeRoot, binding).catch((): never => { throw identityMismatch(); });
     assertOwner();
-    if (!await inspectInstalled(artifact.artifact.hash)) throw identityMismatch();
+    await approveArtifact(nativePluginId, hash);
+    assertOwner();
+    if (!await readInstalled(hash)) throw identityMismatch();
+    // The profile is tied to the digest already checked before the approval write.
+    await verifyNativeBinding(nativeRoot, binding, false).catch((): never => { throw identityMismatch(); });
+    assertOwner();
+    (hotOwner?.prepared ?? owner!).set(nativePluginId, {
+      sourceRoot: appRoot,
+      selected: { artifact, nativeRoot, nativeHash: binding.sha256, nativeEntry: binding.entry, cleanupOnly: false },
+    });
   }
   async mutate<T>(id: string, enabled: boolean, operation: () => Promise<T>): Promise<T> {
     const selected = this.selected.get(id);
     if (enabled && !selected) {
       for (const candidate of await this.dependencies.candidates()) {
-        if (candidate.retainedReceipt) continue;
-        const artifact = await inspectAppArtifact(candidate.root).catch((): null => null);
+        const candidateId = candidate.nativePluginId ?? candidate.identity?.id;
+        if (candidate.retainedReceipt || candidate.nativeOnly || (candidateId !== undefined && candidateId !== id)) continue;
+        const artifact = await readAppArtifactIndex(candidate.root).catch((): null => null);
         if (artifact?.artifact.manifest.nativePluginId === id)
           throw new Error(AppPluginError.ApprovalRequired);
       }
@@ -786,7 +802,7 @@ export class AppPluginManager {
     if (target.requireStopped === true ||
         (!this.dependencies.isGatewayConnected() && this.dependencies.getGatewayProcessId?.() == null)) return true;
     if (!target.sourceDirectory || !hasAppCompanionMarker(target.sourceDirectory)) return false;
-    const artifact = await inspectAppArtifact(path.join(target.sourceDirectory, 'app')).catch((): null => null);
+    const artifact = await readAppArtifactIndex(path.join(target.sourceDirectory, 'app')).catch((): null => null);
     this.assertAvailable();
     const manifest = artifact?.artifact.manifest;
     if (!manifest?.data) return false;
@@ -813,7 +829,7 @@ export class AppPluginManager {
     for (const [id, selected] of this.selected) {
       if (target.installPath && samePackagePath(target.installPath, selected.nativeRoot)) ids.add(id);
     }
-    const owner: PackageMutationOwner = { ids, assertCurrent: () => {
+    const owner: PackageMutationOwner = { ids, prepared: new Map(), assertCurrent: () => {
       assertReservation();
       if (this.hotPackageMutation !== owner) throw new Error(t('extensionInstallMutationUnavailable'));
     } };
@@ -849,7 +865,7 @@ export class AppPluginManager {
         return value;
       }
       clearProof();
-      await this.reconcilePackages(false, affected);
+      await this.reconcilePackages(false, affected, owner.prepared);
       owner.assertCurrent();
       if (this.registry.snapshot().some(item => ids.has(item.id) && item.state === 'blocked'))
         throw new Error(AppPluginError.Unavailable);
@@ -917,7 +933,8 @@ export class AppPluginManager {
         assertCurrent();
         entered = true;
         this.packageMutation = true;
-        this.stoppedPackageMutation = {};
+        const prepared: PreparedPackages = new Map();
+        this.stoppedPackageMutation = prepared;
         try {
           this.invalidate();
           let outcome: { value: T } | { error: unknown };
@@ -926,7 +943,7 @@ export class AppPluginManager {
           // The operation may have committed before returning an error. Read the
           // actual inventory once; never retry an unknown package mutation.
           try {
-            await this.reconcilePackages(true);
+            await this.reconcilePackages(true, undefined, prepared);
           } catch (error) {
             this.packageRepairPending = true;
             this.registry.setPackageAdmissionBlocked(true);
@@ -1006,7 +1023,11 @@ export class AppPluginManager {
       }
     }
   }
-  private async reconcilePackages(gatewayStopped: boolean, onlyIds?: readonly string[]): Promise<void> {
+  private async reconcilePackages(
+    gatewayStopped: boolean,
+    onlyIds?: readonly string[],
+    prepared?: PreparedPackages,
+  ): Promise<void> {
     this.executionSourceInventoryComplete = false;
     const candidates = await this.dependencies.candidates();
     const knownCandidates = this.rememberExecutionSourceCandidates(candidates);
@@ -1019,15 +1040,20 @@ export class AppPluginManager {
           (onlyIds && candidateId && !onlyIds.includes(candidateId))) continue;
       let ownerId = candidate.identity?.id;
       try {
-        const inspected = await inspectCandidateArtifact(candidate);
-        ownerId = inspected.artifact.manifest.id;
+        const index = await readCandidateIndex(candidate);
+        ownerId = index.artifact.manifest.id;
         if (onlyIds && !onlyIds.includes(ownerId)) continue;
         this.captureCurrentOwner(candidate, ownerId);
-        const artifact = await retainAppArtifact(inspected, this.dependencies.retentionRoot);
-        const id = artifact.artifact.manifest.nativePluginId;
+        const id = index.artifact.manifest.nativePluginId;
+        const ready = prepared?.get(id);
+        // An approval may hand off the exact retained bytes only within its package mutation.
+        const selected = ready && !candidate.bundled && !candidate.cleanupOnly &&
+          index.root === ready.sourceRoot && path.resolve(candidate.nativeRoot) === ready.selected.nativeRoot &&
+          candidate.identity?.hash === ready.selected.artifact.artifact.hash
+          ? ready.selected
+          : await selectCandidateArtifact(candidate, await retainAppArtifact(index, this.dependencies.retentionRoot));
         this.rememberExecutionSourceCandidate(candidate, id, knownCandidates);
         if (next.has(id)) continue;
-        const selected = await selectCandidateArtifact(candidate, artifact);
         await this.prepareSelectedData(selected, gatewayStopped);
         this.assertAvailable();
         next.set(id, selected);
@@ -1434,7 +1460,7 @@ export const discoverAppCandidates = async (
       });
       continue;
     }
-    const artifact = await inspectAppArtifact(root).catch((): null => null);
+    const artifact = await readAppArtifactIndex(root).catch((): null => null);
     result.push({
       root,
       nativeRoot: item.installPath,
@@ -1472,8 +1498,8 @@ export const discoverAppCandidates = async (
 const isOwnerReceipt = (id: string, hash: string): boolean =>
   /^[a-z][a-z0-9-]{0,95}$/u.test(id) && /^[a-f0-9]{64}$/u.test(hash);
 
-async function inspectCandidateArtifact(candidate: AppCandidate): Promise<VerifiedAppArtifact> {
-  const artifact = await inspectAppArtifact(candidate.root);
+async function readCandidateIndex(candidate: AppCandidate): Promise<AppArtifactIndex> {
+  const artifact = await readAppArtifactIndex(candidate.root);
   if (candidate.identity &&
       (!isOwnerReceipt(candidate.identity.id, candidate.identity.hash) ||
         artifact.artifact.manifest.id !== candidate.identity.id ||
@@ -1487,11 +1513,12 @@ async function selectCandidateArtifact(
   candidate: AppCandidate,
   artifact: VerifiedAppArtifact,
 ): Promise<Selected> {
-  const binding = await readNativeBinding(artifact, candidate.nativeRoot, false);
+  const binding = await readNativeBinding(artifact);
   let cleanupOnly = candidate.cleanupOnly === true || !candidate.nativeRoot;
   if (!cleanupOnly) {
     try {
-      await readNativeBinding(artifact, candidate.nativeRoot, true);
+      // Bundled bytes are already checked for this profile by the builder.
+      await verifyNativeBinding(candidate.nativeRoot, binding, !candidate.bundled);
     } catch {
       // Trusted Main bytes can still inventory and clean old metadata without Native business.
       cleanupOnly = true;
@@ -1501,11 +1528,7 @@ async function selectCandidateArtifact(
     nativeEntry: binding.entry, cleanupOnly };
 }
 
-async function readNativeBinding(
-  artifact: VerifiedAppArtifact,
-  nativeRoot: string,
-  verifyNative: boolean,
-) {
+async function readNativeBinding(artifact: VerifiedAppArtifact) {
   const binding = JSON.parse(
     await readFile(path.join(artifact.root, 'native.binding.json'), 'utf8'),
   ) as { entry: string; sha256: string; profile: string };
@@ -1515,13 +1538,18 @@ async function readNativeBinding(
     binding.profile !== APP_NATIVE_PROFILE
   )
     throw new Error('Invalid app native binding');
-  if (verifyNative) {
-    const entry = path.resolve(nativeRoot, binding.entry);
-    if (realpathSync(entry) !== entry) throw new Error('Native entry must not be a link');
-    const bytes = await readFile(entry);
-    if (createHash('sha256').update(bytes).digest('hex') !== binding.sha256)
-      throw new Error('Native source differs from its app companion');
-    verifyAppNativeModule(bytes.toString('utf8'), parse, isBuiltin);
-  }
   return binding;
+}
+
+async function verifyNativeBinding(
+  nativeRoot: string,
+  binding: Awaited<ReturnType<typeof readNativeBinding>>,
+  verifyProfile = true,
+): Promise<void> {
+  const entry = path.resolve(nativeRoot, binding.entry);
+  if (realpathSync(entry) !== entry) throw new Error('Native entry must not be a link');
+  const bytes = await readFile(entry);
+  if (createHash('sha256').update(bytes).digest('hex') !== binding.sha256)
+    throw new Error('Native source differs from its app companion');
+  if (verifyProfile) verifyAppNativeModule(bytes.toString('utf8'), parse, isBuiltin);
 }

@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { type AppPluginManifest } from '../../../../plugins/sdk/app-plugin-sdk/contracts';
-import { artifactDigest, inspectAppArtifact, retainAppArtifact } from './artifact';
+import { artifactDigest, inspectAppArtifact, readAppArtifactIndex, retainAppArtifact } from './artifact';
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -67,11 +67,20 @@ describe('app artifact identity and retention', () => {
     expect(inspected.artifact.hash).toBe(artifact.hash);
     expect(inspected.moduleGraphs?.browser.has(entry)).toBe(false);
   });
-  it('retains the complete graph independently of native uninstall', async () => {
+  it.each(['directory', 'linked-parent'] as const)('retains the complete graph independently of native uninstall: %s', async layout => {
     const { directory, root, artifact } = await fixture();
-    const verified = await inspectAppArtifact(root);
-    const retained = await retainAppArtifact(verified, path.join(directory, 'retained'));
+    const index = await readAppArtifactIndex(root);
+    const retentionRoot = path.join(directory, 'retained');
+    if (layout === 'linked-parent') {
+      const target = path.join(directory, 'retained-target');
+      await mkdir(target);
+      await symlink(target, retentionRoot, process.platform === 'win32' ? 'junction' : 'dir');
+    }
+    const retained = await retainAppArtifact(index, retentionRoot);
     await rm(root, { recursive: true, force: true });
+    expect(retained.root).toBe(await realpath(retained.root));
+    expect(retained.moduleGraphs?.browser.has(artifact.manifest.entries.browser)).toBe(true);
+    expect(retained.moduleGraphs?.browser.has(artifact.manifest.entries.main)).toBe(false);
     expect((await inspectAppArtifact(retained.root)).artifact.hash).toBe(artifact.hash);
   });
   it('rejects changes to a child even when the root entry is unchanged', async () => {

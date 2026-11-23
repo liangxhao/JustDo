@@ -62,7 +62,7 @@ SDK 1.5 的可选 `displayText(source, context)` 只处理解码后的可见用�
 
 `npm run plugins:app:build` 独立构建 SDK 和插件。产物为 `build/app-plugins/<id>/<hash>`；可安装完整包位于其 `packages/<id>/<hash>`，包含单文件原生 ESM、技能及 `app/`。Main 的 npm 依赖进入自己的 ESM 包；Browser 的 React/ReactDOM 指向宿主真实单例，插件自行编译 CSS/Tailwind。产物逐文件 SHA-256 和清单共同生成身份，限制路径、链接、文件数、大小及可解析模块图。
 
-保留目录复制后再校验，防止从可变安装目录执行 Main 代码。作者操作见 [SDK 说明](app-plugin-sdk.md)。
+候选发现、捆绑默认策略、启用时识别伴随包和读取受管数据声明只使用产物索引。OpenClaw 负责原生包及安装目录，宿主负责自己加载的 App 文件摘要和模块图。首次保留时，每个文件只读取一次，核对摘要后直接写入保留副本。同一包变更中，归属、路径和已登记的 hash 一致时，首次加载直接使用刚保留的副本和模块图。跨事务重新加载时仍验证实际文件，已保留的同一 hash 只解析一次模块图。作者操作见 [SDK 说明](app-plugin-sdk.md)。
 
 安装与删除继续使用原生扩展流程；安装时由 Main 自动接受原生能力声明，不再弹出人工确认。用户主动安装／更新也授权该次确切 Main/UI 产物的代码信任；原生安装已确认后，Main 在同一包变更 owner 内核对 canonical 安装路径、原生身份与绑定、逐文件产物 hash，保留不可变代码，再登记精确 hash。外部代码不复用原生 review token，不因市场来源或目录存在而获准；安装未知或校验失败不能登记信任。原生提交后登记失败明确返回已安装及具体原因，不能丢失回执或重放安装。审批文件位于 `state/plugin-data/.host/approvals.json`，只保存当前 hash 和有界历史批准；保留的不可变产物位于同一宿主目录的 `artifacts/<id>/<hash>`。损坏或不匹配的记录不能授权执行。安装目录同 ID 的自定义插件覆盖捆绑候选，不会退回执行另一个同名版本。
 
@@ -120,7 +120,7 @@ Plan Mode 不成为业务插件的源码/启用依赖。App SDK 的纯 planning 
 
 `@app-plugin/sdk/native` 通过 OpenClaw 的公开 `registerGatewayMethod`、`api.lifecycle` 和 `openclaw/plugin-sdk/gateway-method-runtime` 接入。通用构建器自动包装 Native 入口，并在产物清单加入 `contracts.gatewayMethodDispatch: ["authenticated-request"]`；插件作者不需要修改宿主源码。原生入口不导入 Main/Browser。
 
-每次 Native 注册产生独立的随机注册 ID，公开 `<plugin-id>.app.handshake` 返回插件 ID、注册 ID、实际进程 PID、canonical Native 入口、注册时固定的源码摘要，以及本实例自有 RPC 的绑定入口。Main 同时核对配置、所管理 Gateway 的 PID/进程代次、已批准产物中的 `native.binding.json`、入口路径和磁盘字节；等待握手时跨过进程代次或失效事件的结果不能激活插件。配置未知、来源不符或握手失败均撤回业务。
+每次 Native 注册产生独立的随机注册 ID，公开 `<plugin-id>.app.handshake` 返回插件 ID、注册 ID、实际进程 PID、canonical Native 入口、注册时固定的源码摘要，以及本实例自有 RPC 的绑定入口。Main 核对配置、所管理 Gateway 的 PID/进程代次、已批准产物中的 `native.binding.json` 和入口路径。等待握手时跨过进程代次或失效事件的结果不能激活插件。配置未知、来源不符或握手失败均撤回业务。
 
 该收据是应用与插件注册之间的关联，**不是原生私有 instance/generation 权限，也不是实际 ESM namespace 执行字节证明**。
 
@@ -128,7 +128,7 @@ Gateway 的 HELLO 和健康检查不证明配置重载已经稳定。Main 对握
 
 ### 字节身份与原生包替换
 
-支持 `single-file-v1`：业务依赖打包，只允许静态、字面量公开 OpenClaw SDK 模块和支持的 Node 内建导入，拒绝替代 loader。Main/UI 使用保留目录内按 hash 定址的产物。整个目录和 Native 更新交给 OpenClaw 官方安装事务及运行时应用；Main 校验已提交包的 Native binding 与当前注册。注册摘要不会随磁盘修改更新，运行时发现未经受管包操作确认的来源变化即撤回准入。不支持利用预热 namespace、自定义 loader 或私自原地改包获得新版本准入；代码审核与目录检查不是恶意本地代码隔离。
+支持 `single-file-v1`：业务依赖打包，只允许静态、字面量公开 OpenClaw SDK 模块和支持的 Node 内建导入，拒绝替代 loader。捆绑包在构建时检查此格式，宿主凭绑定摘要识别同一份 Native 字节。外部 App 包在准入时检查格式，同一次登记流程对相同摘要只解析一次。普通刷新核对当前认证注册的路径、进程、代次和固定摘要，新注册与已准入 binding 不匹配时撤回准入。代码审核与目录检查不是恶意本地代码隔离。
 
 ### 原生包与伴随代码生命周期
 
