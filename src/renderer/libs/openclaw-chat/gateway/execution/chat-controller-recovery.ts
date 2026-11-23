@@ -909,6 +909,7 @@ export function recoverFromInternalAgentSequenceGap(
   this: ChatControllerRecoveryContext,
   payloadValue: unknown,
 ): boolean {
+  if (this.state.localPlaceholder) return false;
   const payload = asRecord(payloadValue);
   const data = asRecord(payload?.data);
   if (
@@ -970,8 +971,7 @@ export function handleTimelineEvent(
       !text ||
       !this.localSideChatRunIds.has(runId) ||
       !this.pendingSideChats.has(runId) ||
-      normalizeTranscriptSessionKey(sessionKey) !==
-        normalizeTranscriptSessionKey(this.state.sessionKey)
+      !this.isSelectedSession(sessionKey)
     ) {
       return;
     }
@@ -1056,9 +1056,7 @@ export function handleTimelineEvent(
         });
       }
       this.ensureTranscriptSessionIdentity();
-      const matchesSelectedSession =
-        normalizeTranscriptSessionKey(payload.sessionKey) ===
-        normalizeTranscriptSessionKey(this.state.sessionKey);
+      const matchesSelectedSession = this.isSelectedSession(payload.sessionKey);
       if (!matchesSelectedSession) {
         this.applyBackgroundChatEvent(payload, failedErrorMessage ?? undefined);
         return;
@@ -1264,12 +1262,11 @@ export function handleTimelineEvent(
       normalized.event.sessionKey,
       normalized.event.sessionId,
     );
-    const eventTargetsBackgroundSession = normalized.event.sessionKey
-      ? normalizeTranscriptSessionKey(normalized.event.sessionKey) !==
-        normalizeTranscriptSessionKey(this.state.sessionKey)
-      : cachedEventSession !== null &&
-        normalizeTranscriptSessionKey(cachedEventSession[0]) !==
-          normalizeTranscriptSessionKey(this.state.sessionKey);
+    const eventTargetsBackgroundSession = this.state.localPlaceholder || (
+      normalized.event.sessionKey
+        ? !this.isSelectedSession(normalized.event.sessionKey)
+        : cachedEventSession !== null && !this.isSelectedSession(cachedEventSession[0])
+    );
     const eventActiveTurn = eventTargetsBackgroundSession
       ? (cachedEventSession?.[1].transcript.activeTurn ?? null)
       : this.state.transcript.activeTurn;
@@ -1332,6 +1329,7 @@ export function handleTimelineEvent(
 
   // Session metadata and durable transcript notifications for the selected session.
   if (event.event === 'sessions.changed') {
+    if (this.state.localPlaceholder) return;
     const payload = asRecord(event.payload);
     const sessionSnapshot = asRecord(payload?.session);
     const eventSessionKey =
@@ -1508,6 +1506,7 @@ export function handleTimelineEvent(
   }
 
   if (event.event === 'session.message') {
+    if (this.state.localPlaceholder) return;
     const payload = asRecord(event.payload);
     const eventSessionKey =
       typeof payload?.sessionKey === 'string' ? payload.sessionKey.trim() : '';
@@ -1692,7 +1691,8 @@ export function handleTimelineEvent(
       return;
     }
     const eventSessionKey = typeof payload.sessionKey === 'string' ? payload.sessionKey.trim() : '';
-    const targetsSelectedSession = !eventSessionKey || this.isSelectedSession(eventSessionKey);
+    const targetsSelectedSession =
+      !this.state.localPlaceholder && (!eventSessionKey || this.isSelectedSession(eventSessionKey));
     const sessionKey = targetsSelectedSession ? this.state.sessionKey : eventSessionKey;
     if (!targetsSelectedSession && !this.localCompactionStatusBySession.has(sessionKey)) {
       return;

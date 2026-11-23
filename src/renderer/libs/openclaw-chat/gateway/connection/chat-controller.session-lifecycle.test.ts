@@ -176,6 +176,7 @@ test.each([undefined, 'switched-provider/switched-model'])(
 );
 
 test('keeps first-send preparation neutral before and during the initial Gateway connection', async () => {
+  vi.useFakeTimers();
   class FakeWebSocket {
     static readonly OPEN = 1;
     readyState = 0;
@@ -192,8 +193,9 @@ test('keeps first-send preparation neutral before and during the initial Gateway
   expect(waitingStatus()).toBeNull();
   const observedStatuses: unknown[] = [];
   const unsubscribe = controller.subscribe(() => observedStatuses.push(waitingStatus()));
+  const temporaryKey = 'agent:main:justdo:temp-session-1';
 
-  await controller.connect('ws://gateway.test', 'token', 'agent:main:justdo:temp-session-1');
+  await controller.connect('ws://gateway.test', 'token', temporaryKey, { localPlaceholder: true });
 
   expect(controller.state.connected).toBe(false);
   expect(controller.state.transportStatus).toBe('connecting');
@@ -203,9 +205,30 @@ test('keeps first-send preparation neutral before and during the initial Gateway
     runId: expect.stringMatching(/^justdo-pending-/),
     stage: 'starting',
   });
-  (controller as unknown as { handleClose(): void }).handleClose();
+  const request = vi.spyOn(controller.state.client!, 'request').mockResolvedValue({});
+  const internal = controller as unknown as {
+    handleClose(): void;
+    handleHello(hello: Record<string, unknown>): void;
+  };
+  const hello = { features: { methods: ['progressCard.get', 'chat.startup'] } };
+  internal.handleHello(hello);
+  expect(controller.state.connected).toBe(true);
+  expect(controller.state.chatLoading).toBe(false);
+  expect(controller.state.initialHistoryReady).toBe(false);
+  expect(controller.state.progressCardAvailable).toBe(false);
+  expect(controller.isInitialDispatchReady(temporaryKey)).toBe(false);
+  expect(await controller.loadHistory(true, { preferStartup: true })).toBe(false);
+  await vi.advanceTimersByTimeAsync(36_000);
+  expect(request.mock.calls).toEqual([['sessions.subscribe', {}]]);
+
+  internal.handleClose();
   expect(waitingStatus()).toMatchObject({ kind: 'reconnecting', tone: 'warning' });
   expect(controller.state.chatSending).toBe(true);
+  internal.handleHello(hello);
+  expect(controller.state.connected).toBe(true);
+  expect(controller.state.pendingUserMessage?.text).toBe('first-session preparation');
+  expect(controller.state.initialHistoryReady).toBe(false);
+  expect(request.mock.calls).toEqual([['sessions.subscribe', {}], ['sessions.subscribe', {}]]);
   unsubscribe();
   controller.disconnect();
   expect(controller.state.transportStatus).toBe('disconnected');
@@ -484,22 +507,36 @@ test('makes prepared dispatch ready before the initial history request resolves'
 });
 
 test('admits the promoted optimistic first send without recovering its local activity as a native run', async () => {
+  let resolveMessageSubscription!: () => void;
+  const subscription = new Promise<void>(resolve => { resolveMessageSubscription = resolve; });
   let resolveHistory!: (value: unknown) => void;
   const history = new Promise(resolve => { resolveHistory = resolve; });
-  const request = vi.fn((method: string) =>
-    method === 'chat.history' ? history : Promise.resolve({ session: { hasActiveRun: false } }),
-  );
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.messages.subscribe') return subscription;
+    if (method === 'chat.history') return history;
+    return Promise.resolve({ session: { hasActiveRun: false } });
+  });
   const controller = new ChatController();
   const temporaryKey = 'agent:main:justdo:temp-prepared';
   const sessionKey = 'agent:main:justdo:prepared';
   controller.state.client = { request } as never;
   controller.state.connected = true;
-  controller.state.sessionKey = temporaryKey;
+  await controller.switchSession(temporaryKey, { localPlaceholder: true });
   controller.setPendingUserMessage('First prompt');
+  expect(request).not.toHaveBeenCalled();
+
   const switching = controller.switchSession(sessionKey, { promoteFromSessionKey: temporaryKey });
-  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.history', expect.anything(), expect.objectContaining({ signal: expect.any(AbortSignal) })));
+  expect(request.mock.calls).toEqual([['sessions.messages.subscribe', { key: sessionKey }]]);
+  expect(controller.isInitialDispatchReady(sessionKey)).toBe(false);
   expect(controller.state.pendingUserMessage?.text).toBe('First prompt');
   expect(controller.state.chatSending).toBe(true);
+  expect(controller.state.initialHistoryReady).toBe(false);
+  resolveMessageSubscription();
+  await vi.waitFor(() => expect(request).toHaveBeenCalledWith('chat.history', {
+    sessionKey,
+    limit: 250,
+    maxChars: 500_000,
+  }, expect.objectContaining({ signal: expect.any(AbortSignal) })));
   expect(controller.state.initialHistoryReady).toBe(false);
   expect(controller.isInitialDispatchReady(sessionKey)).toBe(true);
   resolveHistory({ sessionId: 'physical-prepared', messages: [] });

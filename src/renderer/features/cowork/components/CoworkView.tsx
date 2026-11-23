@@ -1258,6 +1258,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       // start waits on Home for the canonical checkout and renderer handoff.
       const startInPlanMode = store.getState().cowork.newSessionPlanMode;
       const tempSessionId = `temp-${Date.now()}`;
+      const sourceAgentId = currentAgentId?.trim() || 'main';
+      const temporarySessionKey = `agent:${sourceAgentId}:justdo:${tempSessionId}`;
       const appWorkspaceRequestId = homeAppContext
         ? homeApps.beginStart(tempSessionId, homeAppContext)
         : undefined;
@@ -1477,10 +1479,9 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                   panel.promoteRecordingSession(tempSessionId, session.id),
                 );
                 promotePendingBrowserTabs(tempSessionId, session.id);
-                const sourceAgentId = currentAgentId?.trim() || 'main';
                 const targetAgentId = session.agentId?.trim() || sourceAgentId;
                 chatWrapperRef.current?.registerSessionPromotion(
-                  `agent:${sourceAgentId}:justdo:${tempSessionId}`,
+                  temporarySessionKey,
                   session.nativeSessionKey ||
                     session.external?.sessionKey ||
                     `agent:${targetAgentId}:justdo:${session.id}`,
@@ -1556,7 +1557,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             status: startCancelled ? 'idle' : 'error',
           }),
         );
-        chatWrapperRef.current?.clearSending(failedSessionKey);
+        if (failedSessionId !== tempSessionId) {
+          chatWrapperRef.current?.clearSending(failedSessionKey);
+        }
+        chatWrapperRef.current?.clearSending(temporarySessionKey, undefined, {
+          localPlaceholder: true,
+        });
         if (startCancelled && store.getState().cowork.currentSession?.id === tempSessionId) {
           pendingPromptRef.current = null;
           pendingSendMotionRef.current = undefined;

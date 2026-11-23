@@ -93,3 +93,95 @@ test('a stale subscription to an abandoned key is still removed', async () => {
   expect(request).toHaveBeenCalledWith('sessions.messages.unsubscribe', { key: 'A' });
   expect(controller.isInitialDispatchReady('B')).toBe(true);
 });
+
+test('entering a local placeholder releases the previous subscription while a native selection can proceed', async () => {
+  const unsubscribeAck = deferred();
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.messages.unsubscribe') return unsubscribeAck.promise;
+    if (method === 'chat.history') return Promise.resolve({ sessionId: 'durable', messages: [] });
+    return Promise.resolve({});
+  });
+  const { controller, internals } = fixture(request);
+  const previousKey = 'agent:main:justdo:previous';
+  const placeholderKey = 'agent:main:justdo:temp-draft';
+  const nativeKey = 'agent:main:justdo:prepared';
+  controller.state.sessionKey = previousKey;
+  internals.subscribedMessageSessionKey = previousKey;
+
+  const toPlaceholder = controller.switchSession(placeholderKey, { localPlaceholder: true });
+  expect(request.mock.calls).toEqual([['sessions.messages.unsubscribe', { key: previousKey }]]);
+  expect(controller.isInitialDispatchReady(placeholderKey)).toBe(false);
+  await controller.switchSession(nativeKey);
+  expect(controller.isInitialDispatchReady(nativeKey)).toBe(true);
+
+  unsubscribeAck.resolve({});
+  await toPlaceholder;
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.messages.unsubscribe',
+    'sessions.messages.subscribe',
+    'chat.history',
+  ]);
+  expect(controller.isInitialDispatchReady(nativeKey)).toBe(true);
+});
+
+test('a native subscription whose key matches a local placeholder is retired on a late ACK', async () => {
+  const subscribeAck = deferred();
+  const request = vi.fn((method: string) => {
+    if (method === 'sessions.messages.subscribe') return subscribeAck.promise;
+    if (method === 'chat.history') return Promise.resolve({ sessionId: 'native-session', messages: [] });
+    return Promise.resolve({});
+  });
+  const { controller, internals } = fixture(request);
+  const sessionKey = 'agent:main:justdo:temp-draft';
+  controller.state.sessionKey = sessionKey;
+  const nativeSubscription = internals.syncMessageSessionSubscription(sessionKey);
+
+  await controller.switchSession(sessionKey, { localPlaceholder: true });
+  expect(controller.isInitialDispatchReady(sessionKey)).toBe(false);
+  subscribeAck.resolve({});
+  expect(await nativeSubscription).toBe(false);
+  expect(request.mock.calls).toEqual([
+    ['sessions.messages.subscribe', { key: sessionKey }],
+    ['sessions.messages.unsubscribe', { key: sessionKey }],
+  ]);
+
+  await controller.switchSession(sessionKey);
+  expect(controller.isInitialDispatchReady(sessionKey)).toBe(true);
+  expect(controller.state.currentSessionId).toBe('native-session');
+});
+
+test('keeps an active local draft separate from a native transcript with the same key', async () => {
+  const historyMessage = { role: 'user', content: 'Native history' };
+  const request = vi.fn((method: string) => Promise.resolve(
+    method === 'chat.history' ? { sessionId: 'native-session', messages: [historyMessage] } : {},
+  ));
+  const { controller } = fixture(request);
+  const key = 'agent:main:justdo:temp-draft';
+  await controller.switchSession(key);
+  expect(controller.state.chatMessages).toEqual([historyMessage]);
+
+  await controller.switchSession(key, { localPlaceholder: true });
+  controller.setPendingUserMessage('Local draft');
+  const { handleEvent } = controller as unknown as {
+    handleEvent(event: { event: string; payload: unknown }): void;
+  };
+  handleEvent.call(controller, {
+    event: 'sessions.changed',
+    payload: { sessionKey: key, reason: 'reset', sessionId: 'new-native-session' },
+  });
+  expect(controller.state.currentSessionId).toBeNull();
+  expect(controller.state.chatMessages).toEqual([]);
+  expect(controller.state.pendingUserMessage?.text).toBe('Local draft');
+
+  await controller.switchSession(key);
+  expect(controller.state.currentSessionId).toBe('native-session');
+  expect(controller.state.chatMessages).toEqual([historyMessage]);
+  expect(controller.state.pendingUserMessage).toBeNull();
+
+  controller.clearSending(key, undefined, { localPlaceholder: true });
+  await controller.switchSession('agent:main:justdo:failed-preparation', {
+    promoteFromSessionKey: key,
+  });
+  expect(controller.state.pendingUserMessage).toBeNull();
+  expect(controller.state.chatSending).toBe(false);
+});

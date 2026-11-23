@@ -5,7 +5,7 @@ import { McpAppSession } from '../mcp-app/mcp-app-session';
 import { dispatchInitialTurn } from './initial-turn-dispatch';
 
 describe('prepared initial turn dispatch', () => {
-  it.each(['cancel', 'client', 'session', 'generation', 'incarnation'])(
+  it.each(['cancel', 'client', 'session', 'placeholder', 'generation', 'incarnation'])(
     'does not send after %s during delayed canvas preparation',
     async change => {
       const request = vi.fn();
@@ -13,6 +13,7 @@ describe('prepared initial turn dispatch', () => {
       const state = {
         connected: true,
         sessionKey: 'agent:main:one',
+        localPlaceholder: false,
         currentSessionId: 'physical',
         client,
       };
@@ -53,6 +54,7 @@ describe('prepared initial turn dispatch', () => {
         if (change === 'cancel') cancelled = true;
         if (change === 'client') state.client = { ...client, request: vi.fn() };
         if (change === 'session') state.sessionKey = 'agent:main:other';
+        if (change === 'placeholder') state.localPlaceholder = true;
         if (change === 'generation') client.generation++;
         if (change === 'incarnation') state.currentSessionId = 'replacement';
         resolve({ token: 'private', viewId: 'mcp-app-editor', selected: true, priority: 2 });

@@ -10,6 +10,7 @@ export async function dispatchInitialTurn(
     client: NativeWidgetClient | null;
     connected: boolean;
     sessionKey: string;
+    localPlaceholder?: boolean;
     currentSessionId?: string | null;
   },
   params: Record<string, unknown>,
@@ -20,6 +21,7 @@ export async function dispatchInitialTurn(
   if (
     isCancelled() ||
     !state.connected ||
+    state.localPlaceholder ||
     !state.client ||
     !state.sessionKey ||
     params.sessionKey !== state.sessionKey
@@ -43,6 +45,7 @@ export async function dispatchInitialTurn(
         !isCancelled() &&
         state.client === client &&
         state.connected &&
+        !state.localPlaceholder &&
         state.sessionKey === params.sessionKey &&
         client.generation === generation &&
         (state.currentSessionId === nativeSessionId ||

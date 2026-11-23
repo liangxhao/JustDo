@@ -139,10 +139,10 @@ export function updateLocalCompactionMessage(
       transcript!.revision += 1;
     }
   }
-  const history =
-    this.state.sessionKey === sessionKey
-      ? this.state.chatMessages
-      : this.chatMessagesBySession.get(sessionKey)?.recentMessages;
+  const selected = !this.state.localPlaceholder && this.state.sessionKey === sessionKey;
+  const history = selected
+    ? this.state.chatMessages
+    : this.chatMessagesBySession.get(sessionKey)?.recentMessages;
   if (!history) return;
   const nextMessages = history.flatMap(message =>
     isLocalCompactionStatus(message, statusId)
@@ -151,7 +151,7 @@ export function updateLocalCompactionMessage(
         : [replacement]
       : [message],
   );
-  if (this.state.sessionKey === sessionKey) {
+  if (selected) {
     this.setCurrentSessionMessages(nextMessages);
     return;
   }
@@ -243,7 +243,7 @@ export function beginLocalCompactionStatus(
     setCompactionMessage(item, status.message);
     transcript!.revision += 1;
   }
-  if (this.state.sessionKey === sessionKey) {
+  if (!this.state.localPlaceholder && this.state.sessionKey === sessionKey) {
     this.setCurrentSessionMessages([...this.state.chatMessages, status.message]);
   } else {
     const history = this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
@@ -305,6 +305,7 @@ export function observeCompactionHistoryMessage(
   const generation = transcript.historyGeneration;
   const isCurrent = () =>
     this.state.connected &&
+    !this.state.localPlaceholder &&
     this.state.client === client &&
     this.state.sessionKey === sessionKey &&
     this.state.currentSessionId === currentSessionId &&

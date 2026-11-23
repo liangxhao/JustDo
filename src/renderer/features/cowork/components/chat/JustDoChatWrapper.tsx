@@ -198,7 +198,11 @@ export interface JustDoChatWrapperRef {
     state: 'completed' | 'failed' | 'aborted',
   ) => void;
   getSendingRunId: () => string | null;
-  clearSending: (expectedSessionKey?: string, expectedRunId?: string | null) => void;
+  clearSending: (
+    expectedSessionKey?: string,
+    expectedRunId?: string | null,
+    options?: { localPlaceholder?: boolean },
+  ) => void;
   /** Adopt an accepted Goal resume before its first stream event arrives. */
   beginGoalResume: (sessionKey: string, runId: string) => void;
   /** Clear the current card only if its completed revision is still current. */
@@ -214,6 +218,15 @@ export interface JustDoChatWrapperRef {
     },
   ) => Promise<boolean>;
   sendSideQuestion: (question: string, runId: string) => Promise<string>;
+}
+
+function isLocalPlaceholderSession(session: CoworkSession | null): boolean {
+  return Boolean(
+    session?.id.startsWith('temp-') &&
+    !session.nativeSessionKey &&
+    !session.external &&
+    !session.historyBinding,
+  );
 }
 
 const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProps>(
@@ -256,6 +269,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     engineReadyRef.current = engineReadiness.ready;
     const currentSession = useSelector(selectCurrentSession) as CoworkSession | null;
     const currentSessionId = currentSession?.id;
+    const localPlaceholder = isLocalPlaceholderSession(currentSession);
     const activeProductSessionId = useRef(currentSessionId);
     const previousProductSessionId = useRef(currentSessionId);
     activeProductSessionId.current = currentSessionId;
@@ -547,7 +561,9 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
     const [historyStatus, setHistoryStatus] = useState<
       'loading' | 'error' | 'preparation-pending' | 'ready'
     >('loading');
-    const [loadingHistorySessionKey, setLoadingHistorySessionKey] = useState(canonicalSessionKey);
+    const [loadingHistorySessionKey, setLoadingHistorySessionKey] = useState(
+      localPlaceholder ? null : canonicalSessionKey,
+    );
     const publishHistoryPresentationRef = useRef<(() => void) | null>(null);
     const [controller, setController] = useState<ChatController | null>(null);
     const connectedRef = useRef(false);
@@ -741,8 +757,8 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
               : null)
           );
         },
-        clearSending: (expectedSessionKey, expectedRunId) => {
-          controllerRef.current?.clearSending(expectedSessionKey, expectedRunId);
+        clearSending: (expectedSessionKey, expectedRunId, options) => {
+          controllerRef.current?.clearSending(expectedSessionKey, expectedRunId, options);
         },
         beginGoalResume: (sessionKey: string, runId: string) => {
           controllerRef.current?.beginGoalResume(sessionKey, runId);
@@ -854,6 +870,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       summaryObserverRef.current = summaryObserver;
       const publishHistoryPresentation = () => {
         const nextLoadingSessionKey =
+          !controller.state.localPlaceholder &&
           (!controller.state.connected ||
             !controller.state.initialHistoryReady ||
             (controller.state.historyReadFailed && controller.state.chatLoading)) &&
@@ -974,6 +991,7 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
           initialSession.external?.sessionKey ||
           `agent:${agentId}:justdo:${initialSession.id}`;
         controller.state.sessionKey = sessionKey;
+        controller.state.localPlaceholder = isLocalPlaceholderSession(initialSession);
       }
       publishHistoryPresentation();
 
@@ -1085,20 +1103,17 @@ const JustDoChatWrapper = forwardRef<JustDoChatWrapperRef, JustDoChatWrapperProp
       if (!sessionKey) return;
 
       if (
-        connectedRef.current &&
-        (controller.state.sessionKey !== sessionKey || !previousSessionId)
+        controller.state.sessionKey !== sessionKey ||
+        controller.state.localPlaceholder !== localPlaceholder ||
+        (connectedRef.current && !previousSessionId)
       ) {
         const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
         promotionSourceByTargetRef.current.delete(sessionKey);
-        void controller.switchSession(sessionKey, { promoteFromSessionKey });
-      } else if (!connectedRef.current && controller.state.sessionKey !== sessionKey) {
-        const promoteFromSessionKey = promotionSourceByTargetRef.current.get(sessionKey);
-        promotionSourceByTargetRef.current.delete(sessionKey);
-        // Reset the selected history synchronously even while connection metadata is pending.
-        void controller.switchSession(sessionKey, { promoteFromSessionKey });
+        // Reset the selected history synchronously, including during a reconnect.
+        void controller.switchSession(sessionKey, { localPlaceholder, promoteFromSessionKey });
       }
       publishHistoryPresentationRef.current?.();
-    }, [canonicalSessionKey, currentSessionId]);
+    }, [canonicalSessionKey, currentSessionId, localPlaceholder]);
 
     if (!connectedRef.current && !engineReadiness.ready) {
       return (
@@ -1240,9 +1255,11 @@ export async function connectToGateway(controller: ChatController): Promise<bool
   const token = tokenResult?.success ? tokenResult.token : undefined;
 
   // Use sessionKey already set on the controller (set by session-switch effect)
-  const sessionKey = controller.state.sessionKey || 'agent:main:justdo:default';
+  const { sessionKey, localPlaceholder } = controller.state;
 
-  await controller.connect(url, token ?? '', sessionKey);
+  await controller.connect(url, token ?? '', sessionKey || 'agent:main:justdo:default', {
+    localPlaceholder: !!sessionKey && localPlaceholder,
+  });
   return true;
 }
 

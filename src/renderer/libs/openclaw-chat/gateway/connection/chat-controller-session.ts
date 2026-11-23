@@ -21,11 +21,12 @@ import {
   ChatState,
   debugLog,
   isSubagentTaskHistoryMessage,
-  isTempJustDoSessionKey,
   LocalCompactionStatus,
+  LocalPlaceholderDraft,
   messageTimestampMs,
   PROGRESS_CARD_GET_METHOD,
   SessionLiveState,
+  SessionSelectionOptions,
   SwitchSessionOptions,
 } from '../chat-controller-support';
 import type { GatewayClient, GatewayEventFrame, GatewayHelloOk } from '../client';
@@ -34,6 +35,7 @@ export interface ChatControllerSessionContext {
   readonly historySourceBySession: Map<string, HistorySource>;
   readonly state: ChatState;
   readonly liveStateBySession: Map<string, SessionLiveState>;
+  readonly localPlaceholderBySession: Map<string, LocalPlaceholderDraft>;
   readonly clearRunActivityTimer: () => void;
   runProbeToken: symbol | null;
   readonly cacheCurrentTurnTiming: () => void;
@@ -47,11 +49,6 @@ export interface ChatControllerSessionContext {
   readonly resetAssistantSnapshotSource: () => void;
   readonly scheduleRunActivityCheck: (delayMs?: number) => void;
   readonly scheduleChatLifecycleEndFallback: () => void;
-  readonly historyPaginationBySession: Map<
-    string,
-    { hasMore: boolean; nextCursor: string | null; advanced: boolean }
-  >;
-  readonly displayedHistoryLeafBySession: Map<string, string | null>;
   readonly isSelectedSession: (sessionKey: string) => boolean;
   readonly turnTimingBySession: Map<string, AssistantTurnTiming>;
   readonly pendingAnnounceEvents: Map<string, NormalizedAgentEvent[]>;
@@ -150,7 +147,6 @@ export interface ChatControllerSessionContext {
   } | null;
   readonly clearLifecycleEndFallback: () => void;
   readonly cacheCurrentLiveState: (sessionKey: string) => void;
-  readonly promoteCachedSessionState: (sourceSessionKey: string, targetSessionKey: string) => void;
   readonly restoreLiveState: (sessionKey: string) => boolean;
   readonly clearPostFinalHistoryReload: () => void;
   readonly clearDeferredHistoryReload: () => void;
@@ -177,7 +173,7 @@ export function cacheSessionMessages(
   sessionKey: string,
   history: ChunkedMessageHistory = this.currentMessageHistory,
 ): void {
-  if (!sessionKey) return;
+  if (!sessionKey || this.state.localPlaceholder) return;
   this.chatMessagesBySession.delete(sessionKey);
   this.chatMessagesBySession.set(sessionKey, history);
   this.historySourceBySession.set(sessionKey, this.state.transcript.historySource);
@@ -220,6 +216,13 @@ export function cacheCurrentLiveState(
   if (!sessionKey) return;
   this.clearRunActivityTimer();
   this.runProbeToken = null;
+  if (this.state.localPlaceholder) {
+    const { pendingUserMessage, chatSending, runActivity } = this.state;
+    if (pendingUserMessage) {
+      this.localPlaceholderBySession.set(sessionKey, { pendingUserMessage, chatSending, runActivity });
+    }
+    return;
+  }
   this.cacheCurrentTurnTiming();
   this.state.transcript.historyGeneration += 1;
   this.state.transcript.revision += 1;
@@ -255,7 +258,7 @@ export function cacheCurrentLiveState(
 }
 
 export function restoreLiveState(this: ChatControllerSessionContext, sessionKey: string): boolean {
-  const cachedEntry = this.findLiveSessionState(sessionKey);
+  const cachedEntry = this.state.localPlaceholder ? null : this.findLiveSessionState(sessionKey);
   if (!cachedEntry) {
     this.state.currentSessionId = null;
     this.state.chatSending = false;
@@ -299,60 +302,10 @@ export function restoreLiveState(this: ChatControllerSessionContext, sessionKey:
 
 export function isSelectedSession(this: ChatControllerSessionContext, sessionKey: string): boolean {
   return (
+    !this.state.localPlaceholder &&
     normalizeTranscriptSessionKey(sessionKey) ===
     normalizeTranscriptSessionKey(this.state.sessionKey)
   );
-}
-
-export function promoteCachedSessionState(
-  this: ChatControllerSessionContext,
-  sourceSessionKey: string,
-  targetSessionKey: string,
-): void {
-  const sourceHistory = this.chatMessagesBySession.get(sourceSessionKey);
-  this.chatMessagesBySession.delete(sourceSessionKey);
-  if (sourceHistory) this.chatMessagesBySession.set(targetSessionKey, sourceHistory);
-
-  const sourceHistorySource = this.historySourceBySession.get(sourceSessionKey);
-  this.historySourceBySession.delete(sourceSessionKey);
-  if (sourceHistorySource) {
-    this.historySourceBySession.set(targetSessionKey, sourceHistorySource);
-  }
-
-  const sourcePagination = this.historyPaginationBySession.get(sourceSessionKey);
-  this.historyPaginationBySession.delete(sourceSessionKey);
-  if (sourcePagination) {
-    this.historyPaginationBySession.set(targetSessionKey, sourcePagination);
-  }
-  const sourceLeafKey = normalizeTranscriptSessionKey(sourceSessionKey);
-  const targetLeafKey = normalizeTranscriptSessionKey(targetSessionKey);
-  if (this.displayedHistoryLeafBySession.has(sourceLeafKey)) {
-    const sourceLeaf = this.displayedHistoryLeafBySession.get(sourceLeafKey) ?? null;
-    this.displayedHistoryLeafBySession.delete(sourceLeafKey);
-    this.displayedHistoryLeafBySession.set(targetLeafKey, sourceLeaf);
-  }
-
-  const sourceLiveEntry = this.findLiveSessionState(sourceSessionKey);
-  if (!sourceLiveEntry) return;
-  const [sourceLiveKey, sourceLiveState] = sourceLiveEntry;
-  this.liveStateBySession.delete(sourceLiveKey);
-  sourceLiveState.currentSessionId = null;
-  if (sourceLiveState.contextUsage) {
-    sourceLiveState.contextUsage = {
-      ...sourceLiveState.contextUsage,
-      sessionKey: targetSessionKey,
-      sessionId: null,
-    };
-  }
-  sourceLiveState.transcript.sessionKey = targetSessionKey;
-  sourceLiveState.transcript.sessionId = null;
-  sourceLiveState.transcript.historyGeneration += 1;
-  if (sourceLiveState.transcript.activeTurn) {
-    sourceLiveState.transcript.activeTurn.sessionKey = targetSessionKey;
-    sourceLiveState.transcript.activeTurn.sessionId = null;
-  }
-  sourceLiveState.transcript.revision += 1;
-  this.liveStateBySession.set(targetSessionKey, sourceLiveState);
 }
 
 export function getSessionRunId(
@@ -493,6 +446,7 @@ export function finishTurnTimingForSession(
 export function getCurrentTurnTiming(
   this: ChatControllerSessionContext,
 ): AssistantTurnTiming | null {
+  if (this.state.localPlaceholder) return null;
   const activeTurn = this.state.transcript.activeTurn;
   const cached = this.turnTimingBySession.get(this.state.sessionKey);
   if (!activeTurn) {
@@ -544,7 +498,8 @@ export async function syncMessageSessionSubscription(
 
   const previousSessionKey = this.subscribedMessageSessionKey;
   const clientGeneration = client.generation;
-  if (previousSessionKey === sessionKey) return true;
+  const localPlaceholder = this.state.localPlaceholder;
+  if (!localPlaceholder && previousSessionKey === sessionKey) return true;
   const subscriptionSeq = ++this.messageSubscriptionSeq;
   // The previous subscription stops being a readiness guarantee as soon as
   // its removal is issued, including when selection returns before the ACK.
@@ -556,6 +511,7 @@ export async function syncMessageSessionSubscription(
       .catch(() => {});
   }
   if (
+    localPlaceholder ||
     this.state.client !== client ||
     client.generation !== clientGeneration ||
     options.signal?.aborted ||
@@ -581,7 +537,8 @@ export async function syncMessageSessionSubscription(
       // A newer transition may have requested this same key again. Unsubscribe
       // is key-scoped, so cleaning up that older ACK would remove the new edge.
       if (client.generation === clientGeneration &&
-        (this.state.client !== client || !this.state.connected || this.state.sessionKey !== sessionKey)) {
+        (this.state.client !== client || !this.state.connected ||
+          this.state.localPlaceholder || this.state.sessionKey !== sessionKey)) {
         await client.request('sessions.messages.unsubscribe', { key: sessionKey }).catch(() => {});
       }
       return false;
@@ -745,7 +702,13 @@ export async function initializeConnectedSession(
     resumedTransport: boolean;
   },
 ): Promise<void> {
+  if (!this.isConnectionInitializationCurrent(params)) return;
+  if (this.state.localPlaceholder) {
+    await this.syncMessageSessionSubscription(params.sessionKey);
+    return;
+  }
   void this.loadProgressCard(params.sessionKey, true);
+  if (!this.isConnectionInitializationCurrent(params)) return;
   // Establish the durable notification edge before taking the snapshot. Any
   // write racing the snapshot then either appears in history or queues a
   // session.message catch-up reload.
@@ -807,11 +770,31 @@ export async function initializeConnectedSession(
   await this.loadInitialHistory(params);
 }
 
+function restoreSelectedMessageHistory(this: ChatControllerSessionContext): void {
+  const { sessionKey, localPlaceholder } = this.state;
+  const cached = localPlaceholder ? undefined : this.chatMessagesBySession.get(sessionKey);
+  this.currentMessageHistory = cached ?? new ChunkedMessageHistory();
+  this.state.chatMessages = this.currentMessageHistory.recentMessages;
+  this.state.loadedMessageCount = this.currentMessageHistory.length;
+  const initialWindow = latestHistoryWindow(this.currentMessageHistory.length);
+  this.state.historyWindowStart = initialWindow.start;
+  this.state.historyWindowEnd = initialWindow.end;
+  this.state.visibleChatMessages = this.currentMessageHistory.slice(
+    initialWindow.start,
+    initialWindow.end,
+  );
+  this.state.transcript.persistedMessages = this.state.chatMessages;
+  this.state.transcript.historySource = localPlaceholder
+    ? 'optimistic'
+    : this.historySourceBySession.get(sessionKey) ?? 'optimistic';
+}
+
 export async function connect(
   this: ChatControllerSessionContext,
   url: string,
   token: string,
   sessionKey: string,
+  { localPlaceholder = false }: SessionSelectionOptions,
 ): Promise<void> {
   this.historyReadAbortController?.abort();
   this.historyReadAbortController = null;
@@ -835,6 +818,7 @@ export async function connect(
   this.progressCardCache.clear();
 
   this.state.sessionKey = sessionKey;
+  this.state.localPlaceholder = localPlaceholder;
   this.historyPagingGeneration += 1;
   this.state.currentSessionId = null;
   this.state.initialHistoryReady = false;
@@ -842,20 +826,8 @@ export async function connect(
   this.state.historyLoadingOlder = false;
   this.restoreHistoryPagination(sessionKey);
   this.resetTranscriptForSession(sessionKey, null);
-  this.state.chatLoading = true;
-  this.currentMessageHistory =
-    this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
-  this.state.chatMessages = this.currentMessageHistory.recentMessages;
-  this.state.loadedMessageCount = this.currentMessageHistory.length;
-  const initialWindow = latestHistoryWindow(this.currentMessageHistory.length);
-  this.state.historyWindowStart = initialWindow.start;
-  this.state.historyWindowEnd = initialWindow.end;
-  this.state.visibleChatMessages = this.currentMessageHistory.slice(
-    initialWindow.start,
-    initialWindow.end,
-  );
-  this.state.transcript.persistedMessages = this.state.chatMessages;
-  this.state.transcript.historySource = this.historySourceBySession.get(sessionKey) ?? 'optimistic';
+  this.state.chatLoading = !localPlaceholder;
+  restoreSelectedMessageHistory.call(this);
   this.state.chatRunId = null;
   if (this.state.chatSending && this.state.pendingUserMessage) {
     this.beginRunActivity(`justdo-pending-${Date.now()}`);
@@ -910,33 +882,32 @@ export async function switchSession(
   ) {
     this.expectedPlanImplementationReset = null;
   }
-  const promotionSource = options.promoteFromSessionKey?.trim() || null;
-  const isTempSessionPromotion = Boolean(
-    promotionSource &&
-    isTempJustDoSessionKey(promotionSource) &&
-    !isTempJustDoSessionKey(sessionKey),
-  );
+  const promotionSource = options.localPlaceholder ? undefined : options.promoteFromSessionKey?.trim();
+  this.cacheCurrentLiveState(previousSessionKey);
+  this.rememberHistoryPagination(previousSessionKey);
+  const draftSource = options.localPlaceholder ? sessionKey : promotionSource;
+  const draft = draftSource ? this.localPlaceholderBySession.get(draftSource) : undefined;
+  if (draftSource) this.localPlaceholderBySession.delete(draftSource);
   debugLog('[ChatCtrl] switchSession:', sessionKey, {
     hadPendingUserMsg: !!this.state.pendingUserMessage,
     chatSending: this.state.chatSending,
     msgCount: this.state.chatMessages.length,
     previousSessionKey,
     promotionSource,
-    isTempSessionPromotion,
+    isTempSessionPromotion: Boolean(promotionSource && draft),
   });
   this.clearLifecycleEndFallback();
-  if (!isTempSessionPromotion || previousSessionKey !== promotionSource) {
+  if (!draft || previousSessionKey !== promotionSource) {
     this.pendingAnnounceEvents.clear();
   }
-  this.cacheCurrentLiveState(previousSessionKey);
-  this.rememberHistoryPagination(previousSessionKey);
-  if (isTempSessionPromotion && promotionSource) {
-    this.promoteCachedSessionState(promotionSource, sessionKey);
-  }
   this.state.sessionKey = sessionKey;
+  this.state.localPlaceholder = options.localPlaceholder ?? false;
   this.historyPagingGeneration += 1;
   this.progressCardLoadGeneration += 1;
-  this.state.progressCard = this.progressCardCache.get(sessionKey) ?? null;
+  this.state.progressCard = this.state.localPlaceholder
+    ? null
+    : this.progressCardCache.get(sessionKey) ?? null;
+  if (this.state.localPlaceholder) this.state.progressCardAvailable = false;
   this.state.progressCardLoading = false;
   this.state.progressCardError = null;
   this.state.initialHistoryReady = false;
@@ -944,32 +915,26 @@ export async function switchSession(
   this.state.historyLoadingOlder = false;
   this.restoreHistoryPagination(sessionKey);
   this.restoreLiveState(sessionKey);
-  this.currentMessageHistory =
-    this.chatMessagesBySession.get(sessionKey) ?? new ChunkedMessageHistory();
-  this.state.chatMessages = this.currentMessageHistory.recentMessages;
-  this.state.loadedMessageCount = this.currentMessageHistory.length;
-  const initialWindow = latestHistoryWindow(this.currentMessageHistory.length);
-  this.state.historyWindowStart = initialWindow.start;
-  this.state.historyWindowEnd = initialWindow.end;
-  this.state.visibleChatMessages = this.currentMessageHistory.slice(
-    initialWindow.start,
-    initialWindow.end,
-  );
-  this.state.transcript.persistedMessages = this.state.chatMessages;
-  this.state.transcript.historySource = this.historySourceBySession.get(sessionKey) ?? 'optimistic';
+  if (draft && !this.state.chatSending && this.state.transcript.activeTurn?.status !== 'running') {
+    this.state.pendingUserMessage = draft.pendingUserMessage;
+    this.state.chatSending = draft.chatSending;
+    this.state.runActivity = draft.runActivity;
+    this.scheduleRunActivityCheck();
+  }
+  restoreSelectedMessageHistory.call(this);
   this.suspendedRunId = null;
-  this.state.chatLoading = true;
+  this.state.chatLoading = !this.state.localPlaceholder;
   this.pendingHistoryReload = false;
   this.observedSessionMessageSeqBySession.clear();
   this.clearPostFinalHistoryReload();
   this.clearDeferredHistoryReload();
   this.clearActiveToolHistoryCatchUp();
   this.restorePendingManualCompactions(sessionKey);
+  const client = this.state.connected ? this.state.client : null;
+  const initializationSeq = ++this.connectionInitializationSeq;
   this.notify();
 
-  const client = this.state.client;
-  if (client && this.state.connected) {
-    const initializationSeq = ++this.connectionInitializationSeq;
+  if (client) {
     await this.initializeConnectedSession({
       client,
       sessionKey,
@@ -1029,7 +994,8 @@ export function handleHello(this: ChatControllerSessionContext, hello: GatewayHe
   this.subscribedMessageSessionKey = null;
   this.state.hello = hello;
   this.state.lastError = null;
-  this.state.progressCardAvailable = this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
+  this.state.progressCardAvailable =
+    !this.state.localPlaceholder && this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
   const recoveryGeneration = ++this.manualCompactionRecoveryGeneration;
   this.restorePendingManualCompactions();
   this.notify();

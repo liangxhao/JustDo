@@ -23,6 +23,7 @@ import {
   isChatTextRetraction,
   isHiddenOrPendingControlReplyText,
   LocalCompactionStatus,
+  LocalPlaceholderDraft,
   normalizeSessionId,
   PostFinalHistoryRecovery,
   readChatContextUsageSnapshot,
@@ -31,6 +32,7 @@ import {
   resolveInterruptedTurnMessage,
   RewindEditorDraft,
   SessionLiveState,
+  SessionSelectionOptions,
   SideChatResult,
   SideChatResultListener,
   SideChatStreamListener,
@@ -244,6 +246,7 @@ export class ChatController {
   private chatMessagesBySession = new Map<string, ChunkedMessageHistory>();
   private historySourceBySession = new Map<string, HistorySource>();
   private liveStateBySession = new Map<string, SessionLiveState>();
+  private readonly localPlaceholderBySession = new Map<string, LocalPlaceholderDraft>();
   private turnTimingBySession = new Map<string, AssistantTurnTiming>();
   private currentMessageHistory = new ChunkedMessageHistory();
   private readonly realtimeVoiceProjection = new RealtimeVoiceProjection();
@@ -383,6 +386,7 @@ export class ChatController {
       connected: false,
       transportStatus: 'connecting',
       sessionKey: '',
+      localPlaceholder: false,
       currentSessionId: null,
       initialHistoryReady: false,
       chatLoading: false,
@@ -444,8 +448,17 @@ export class ChatController {
   }
 
   /** Clear sending state (e.g. when session start fails) */
-  clearSending(expectedSessionKey?: string, expectedRunId?: string | null): void {
-    if (expectedSessionKey && !this.isSelectedSession(expectedSessionKey)) {
+  clearSending(
+    expectedSessionKey?: string,
+    expectedRunId?: string | null,
+    { localPlaceholder = false }: SessionSelectionOptions = {},
+  ): void {
+    if (localPlaceholder && expectedSessionKey &&
+      (!this.state.localPlaceholder || this.state.sessionKey !== expectedSessionKey)) {
+      this.localPlaceholderBySession.delete(expectedSessionKey);
+      return;
+    }
+    if (!localPlaceholder && expectedSessionKey && !this.isSelectedSession(expectedSessionKey)) {
       const cached = this.findLiveSessionState(expectedSessionKey)?.[1];
       if (!cached || (expectedRunId !== undefined && cached.chatRunId !== expectedRunId)) return;
       cached.chatSending = false;
@@ -764,7 +777,10 @@ export class ChatController {
     const {
       runActivity: activity, client, sessionKey, currentSessionId, chatRunId, transcript, compactionInFlight,
     } = this.state;
-    if (!activity || activity.yielded || !client || !this.state.connected || this.runProbeToken) return;
+    if (
+      !activity || activity.yielded || !client || !this.state.connected ||
+      this.state.localPlaceholder || this.runProbeToken
+    ) return;
     const runId = activity.runId;
     const generation = client.generation;
     const suspendedRunId = this.suspendedRunId;
@@ -775,6 +791,7 @@ export class ChatController {
     const isCurrent = () =>
       this.runProbeToken === probeToken &&
       this.state.client === client && client.generation === generation && this.state.connected &&
+      !this.state.localPlaceholder &&
       this.state.sessionKey === sessionKey && this.state.currentSessionId === currentSessionId &&
       this.state.transcript === transcript && transcript.historyGeneration === historyGeneration &&
       this.state.chatSending && this.state.chatRunId === chatRunId &&
@@ -1029,14 +1046,6 @@ export class ChatController {
     return chatControllerSession.isSelectedSession.call(
       this.chatControllerSessionContext,
       sessionKey,
-    );
-  }
-
-  private promoteCachedSessionState(sourceSessionKey: string, targetSessionKey: string): void {
-    return chatControllerSession.promoteCachedSessionState.call(
-      this.chatControllerSessionContext,
-      sourceSessionKey,
-      targetSessionKey,
     );
   }
 
@@ -1692,13 +1701,19 @@ export class ChatController {
    * Connect to the gateway and load chat history for the given session.
    * This replicates the webchat's connectGateway + loadChatHistory flow.
    */
-  connect(url: string, token: string, sessionKey: string): Promise<void> {
+  connect(
+    url: string,
+    token: string,
+    sessionKey: string,
+    options: SessionSelectionOptions = {},
+  ): Promise<void> {
     this.mcpApps.invalidate();
     return chatControllerSession.connect.call(
       this.chatControllerSessionContext,
       url,
       token,
       sessionKey,
+      options,
     );
   }
 
@@ -2645,6 +2660,7 @@ export class ChatController {
     if (
       !runId ||
       !this.state.connected ||
+      this.state.localPlaceholder ||
       !this.state.client ||
       this.state.sessionKey !== sessionKey ||
       (this.state.chatRunId !== null && this.state.chatRunId !== runId)
@@ -2670,6 +2686,7 @@ export class ChatController {
     // is independent of send admission, but the live notification edge is not.
     return Boolean(
       this.state.connected &&
+      !this.state.localPlaceholder &&
       this.state.client &&
       this.state.sessionKey === sessionKey &&
       this.subscribedMessageSessionKey === sessionKey &&
@@ -2701,6 +2718,7 @@ export class ChatController {
         ? 'storageHistoryPreparationPending' : 'storageHistoryFailed'));
     }
     if (
+      this.state.localPlaceholder ||
       options.isCancelled?.() ||
       (options.expectedSessionKey && options.expectedSessionKey !== this.state.sessionKey)
     ) {
@@ -3379,6 +3397,7 @@ export class ChatController {
       historySourceBySession: { get: () => this.historySourceBySession },
       state: { get: () => this.state },
       liveStateBySession: { get: () => this.liveStateBySession },
+      localPlaceholderBySession: { get: () => this.localPlaceholderBySession },
       clearRunActivityTimer: { get: () => this.clearRunActivityTimer.bind(this) },
       runProbeToken: {
         get: () => this.runProbeToken,
@@ -3411,8 +3430,6 @@ export class ChatController {
       scheduleChatLifecycleEndFallback: {
         get: () => this.scheduleChatLifecycleEndFallback.bind(this),
       },
-      historyPaginationBySession: { get: () => this.historyPaginationBySession },
-      displayedHistoryLeafBySession: { get: () => this.displayedHistoryLeafBySession },
       isSelectedSession: { get: () => this.isSelectedSession.bind(this) },
       turnTimingBySession: { get: () => this.turnTimingBySession },
       pendingAnnounceEvents: { get: () => this.pendingAnnounceEvents },
@@ -3526,7 +3543,6 @@ export class ChatController {
       },
       clearLifecycleEndFallback: { get: () => this.clearLifecycleEndFallback.bind(this) },
       cacheCurrentLiveState: { get: () => this.cacheCurrentLiveState.bind(this) },
-      promoteCachedSessionState: { get: () => this.promoteCachedSessionState.bind(this) },
       restoreLiveState: { get: () => this.restoreLiveState.bind(this) },
       clearPostFinalHistoryReload: { get: () => this.clearPostFinalHistoryReload.bind(this) },
       clearDeferredHistoryReload: { get: () => this.clearDeferredHistoryReload.bind(this) },

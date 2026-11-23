@@ -35,7 +35,7 @@ test('registers the exact optimistic message before notifying render subscribers
 
 test('registers the exact first-send pending object and preserves it during session promotion', async () => {
   const controller = new ChatController();
-  controller.state.sessionKey = 'agent:main:justdo:temp-motion';
+  await controller.switchSession('agent:main:justdo:temp-motion', { localPlaceholder: true });
   const onOptimisticMessage = vi.fn();
 
   controller.setPendingUserMessage('first send', [], undefined, onOptimisticMessage);

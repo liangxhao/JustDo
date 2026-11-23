@@ -108,6 +108,7 @@ export async function loadProgressCard(
   force = false,
   { preserveSavedCard = false }: { preserveSavedCard?: boolean } = {},
 ): Promise<boolean> {
+  if (this.state.localPlaceholder && this.state.sessionKey === sessionKey) return false;
   const client = this.state.client;
   const available =
     !!client && this.state.connected && this.isGatewayMethodAdvertised(PROGRESS_CARD_GET_METHOD);
@@ -203,6 +204,7 @@ export function handleProgressCardChanged(
   if (!changed) return;
 
   const targetsSelectedSession =
+    !this.state.localPlaceholder &&
     normalizeTranscriptSessionKey(changed.sessionKey) ===
     normalizeTranscriptSessionKey(this.state.sessionKey);
   const cached = this.progressCardCache.get(changed.sessionKey);

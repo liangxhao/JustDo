@@ -468,7 +468,7 @@ export function rememberHistoryPagination(
   this: ChatControllerHistoryContext,
   sessionKey: string,
 ): void {
-  if (!sessionKey) return;
+  if (!sessionKey || this.state.localPlaceholder) return;
   this.historyPaginationBySession.set(sessionKey, {
     hasMore: this.state.historyHasMore,
     nextCursor: this.state.historyNextCursor,
@@ -480,7 +480,7 @@ export function restoreHistoryPagination(
   this: ChatControllerHistoryContext,
   sessionKey: string,
 ): void {
-  const cached = this.historyPaginationBySession.get(sessionKey);
+  const cached = this.state.localPlaceholder ? undefined : this.historyPaginationBySession.get(sessionKey);
   this.historyPaginationAdvanced = cached?.advanced ?? false;
   this.state.historyHasMore = cached?.hasMore ?? false;
   this.state.historyNextCursor = cached?.nextCursor ?? null;
@@ -850,7 +850,9 @@ export async function normalizeHistoryPage(
 export async function loadOlderHistory(this: ChatControllerHistoryContext): Promise<boolean> {
   const sessionKey = this.state.sessionKey;
   const initialCursor = this.state.historyNextCursor;
-  if (!sessionKey || !initialCursor || this.state.historyLoadingOlder) return false;
+  if (this.state.localPlaceholder || !sessionKey || !initialCursor || this.state.historyLoadingOlder) {
+    return false;
+  }
 
   const historyGeneration = this.state.transcript.historyGeneration;
   const sessionId = this.state.transcript.sessionId;
@@ -973,7 +975,7 @@ export async function loadHistory(
   } = {},
 ): Promise<boolean> {
   const client = this.state.client;
-  if (!client || !this.state.connected) return false;
+  if (!client || !this.state.connected || this.state.localPlaceholder) return false;
 
   const sessionKey = this.state.sessionKey;
   this.ensureTranscriptSessionIdentity();

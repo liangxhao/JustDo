@@ -50,6 +50,8 @@ export interface ChatState {
   connected: boolean;
   transportStatus: ChatTransportStatus;
   sessionKey: string;
+  /** The selected product draft does not own a Gateway session yet. */
+  localPlaceholder: boolean;
   /** Backing OpenClaw session id returned by chat.startup/chat.history. */
   currentSessionId: string | null;
   /** True after the selected session's first subscribed history snapshot settles. */
@@ -236,7 +238,13 @@ export type PostFinalHistoryRecovery = {
   attempt: number;
 };
 
-export type SwitchSessionOptions = {
+export type SessionSelectionOptions = {
+  localPlaceholder?: boolean;
+};
+
+export type LocalPlaceholderDraft = Pick<ChatState, 'pendingUserMessage' | 'chatSending' | 'runActivity'>;
+
+export type SwitchSessionOptions = SessionSelectionOptions & {
   promoteFromSessionKey?: string;
 };
 
@@ -747,9 +755,6 @@ export function hashTextForDebug(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function isTempJustDoSessionKey(sessionKey: string): boolean {
-  return /:justdo:temp-[^:]+$/.test(sessionKey);
-}
 
 export function extractSnapshotText(message: unknown): string | null {
   if (!message || typeof message !== 'object') return null;

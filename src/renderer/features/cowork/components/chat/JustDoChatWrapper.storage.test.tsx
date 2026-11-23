@@ -15,6 +15,7 @@ const fixture = vi.hoisted(() => ({
     id: string;
     agentId: string;
     cwd?: string;
+    nativeSessionKey?: string;
     branchCreationPending?: boolean;
   },
   mcpControls: null as null | {
@@ -87,7 +88,10 @@ it('waits for execution admission before connecting history and uses the latest 
   fixture.readiness = { ready: true, pending: false, failed: false };
   view.rerender(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
   await waitFor(() => expect(connect).toHaveBeenCalledOnce());
-  expect(connect).toHaveBeenCalledWith('ws://127.0.0.1:1', 'fixture', 'agent:main:justdo:selected-while-starting');
+  expect(connect).toHaveBeenCalledWith(
+    'ws://127.0.0.1:1', 'fixture', 'agent:main:justdo:selected-while-starting',
+    { localPlaceholder: false },
+  );
   expect(send).not.toHaveBeenCalled();
 
   const controller = connect.mock.instances[0] as ChatController;
@@ -98,6 +102,25 @@ it('waits for execution admission before connecting history and uses the latest 
   view.rerender(<JustDoChatWrapper ref={ref} onHistoryReadyChange={onReady} />);
   expect(connect).toHaveBeenCalledOnce();
   expect(controller.state.chatMessages).toEqual([{ role: 'assistant', content: 'Retained history' }]);
+});
+
+it('skips the history loading banner only for the local placeholder', async () => {
+  fixture.session = { id: 'temp-draft', agentId: 'main' };
+  const key = 'agent:main:justdo:temp-draft';
+  const connect = vi.spyOn(ChatController.prototype, 'connect').mockResolvedValue();
+  const onReady = vi.fn();
+  const view = render(<JustDoChatWrapper onHistoryReadyChange={onReady} />);
+
+  await waitFor(() => expect(connect).toHaveBeenCalledExactlyOnceWith(
+    'ws://127.0.0.1:1', 'fixture', key, { localPlaceholder: true },
+  ));
+  expect(screen.queryByText('storageHistoryLoading')).toBeNull();
+  expect(onReady).toHaveBeenLastCalledWith(key, false);
+
+  fixture.session = { id: 'imported', agentId: 'main', nativeSessionKey: key };
+  view.rerender(<JustDoChatWrapper onHistoryReadyChange={onReady} />);
+  expect(screen.getByText('storageHistoryLoading')).toBeTruthy();
+  expect(onReady).toHaveBeenLastCalledWith(key, false);
 });
 
 it('keeps unopened history unavailable after startup failure and connects after a successful retry', async () => {
@@ -379,6 +402,7 @@ it('pauses Apps on the home screen without disconnecting and rechecks history wh
   fixture.session = { id: 'old', agentId: 'main' };
   view.rerender(<JustDoChatWrapper onWidgetDraft={() => true} />);
   expect(switchSession).toHaveBeenCalledExactlyOnceWith('agent:main:justdo:old', {
+    localPlaceholder: false,
     promoteFromSessionKey: undefined,
   });
   expect(connect).toHaveBeenCalledOnce();

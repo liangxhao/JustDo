@@ -1192,7 +1192,7 @@ test('sends the backing session id returned by chat history', async () => {
 
 test('preserves optimistic prompt when promoting a temp session to a persisted session', async () => {
   const controller = new ChatController();
-  controller.state.sessionKey = 'agent:main:justdo:temp-123';
+  await controller.switchSession('agent:main:justdo:temp-123', { localPlaceholder: true });
   controller.setPendingUserMessage('start this task');
 
   await controller.switchSession('agent:main:justdo:persisted-session', {
@@ -1215,8 +1215,7 @@ test('does not promote a temporary session during ordinary navigation', async ()
   ).setCurrentSessionMessages.bind(controller);
   setMessages([{ role: 'assistant', content: 'A-old', timestamp: 1_000 }]);
 
-  await controller.switchSession(temporarySession);
-  setMessages([{ role: 'user', content: 'B-new', timestamp: 2_000 }]);
+  await controller.switchSession(temporarySession, { localPlaceholder: true });
   controller.setPendingUserMessage('B-new');
   await controller.switchSession(originalSession);
 
@@ -1238,17 +1237,14 @@ test('promotes the registered temporary session after navigating away from it', 
   ).setCurrentSessionMessages.bind(controller);
   setMessages([{ role: 'assistant', content: 'A-old', timestamp: 1_000 }]);
 
-  await controller.switchSession(temporarySession);
-  setMessages([{ role: 'user', content: 'B-new', timestamp: 2_000 }]);
+  await controller.switchSession(temporarySession, { localPlaceholder: true });
   controller.setPendingUserMessage('B-new');
   await controller.switchSession(originalSession);
   await controller.switchSession(persistedSession, {
     promoteFromSessionKey: temporarySession,
   });
 
-  expect(controller.state.chatMessages).toEqual([
-    expect.objectContaining({ role: 'user', content: 'B-new' }),
-  ]);
+  expect(controller.state.chatMessages).toEqual([]);
   expect(controller.state.pendingUserMessage?.content).toBe('B-new');
   expect(controller.state.chatSending).toBe(true);
 });
