@@ -11,11 +11,13 @@ import {
   useEffect,
 } from 'react';
 
+import type { ManagedMcpAppOpen } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { i18nService } from '@/services/i18n';
 
 import type { OpenMcpAppFile } from '../mcpApps/fileApps';
 import type { FilePreview } from './FilePreviewDrawer';
 import {
+  FILE_PREVIEW_EVENT,
   isCurrentFilePreviewRequest,
   listenForResourceFilePreviews,
 } from './filePreviewNavigation';
@@ -27,6 +29,8 @@ export interface OpenFilePreviewOptions {
   keepWorkspaceFilesOpen?: boolean;
   workingDirectory?: string;
   openUnsupportedInSystem?: boolean;
+  managed?: ManagedMcpAppOpen;
+  signal?: AbortSignal;
   isCurrent?: () => boolean;
 }
 
@@ -88,15 +92,15 @@ export function useFilePreviewEvents({
   );
   const openFilePreview = useCallback(
     async (detail: OpenFilePreviewOptions) => {
-      if (!detail?.filePath || detail.isCurrent?.() === false) return;
+      if (!detail?.filePath || detail.isCurrent?.() === false || detail.signal?.aborted) return false;
       if (!detail.appHandlerId && isImageFilePath(detail.filePath)) {
         openImage(detail.filePath, '', detail.workingDirectory, detail.keepWorkspaceFilesOpen);
-        return;
+        return true;
       }
       const activeRequestId = ++filePreviewRequestIdRef.current;
       const sourceSessionId = currentSessionIdRef.current;
       const requestIsCurrent = () =>
-        detail.isCurrent?.() !== false &&
+        !detail.signal?.aborted && detail.isCurrent?.() !== false &&
         isCurrentFilePreviewRequest(
           activeRequestId,
           filePreviewRequestIdRef.current,
@@ -104,7 +108,7 @@ export function useFilePreviewEvents({
           currentSessionIdRef.current,
         );
       const openInSystem = async () => {
-        if (!requestIsCurrent()) return;
+        if (!requestIsCurrent()) return false;
         try {
           const result = await window.electron.shell.openPath(
             detail.filePath!,
@@ -121,6 +125,7 @@ export function useFilePreviewEvents({
               }),
             );
           }
+          return result.success;
         } catch {
           if (requestIsCurrent()) {
             window.dispatchEvent(
@@ -129,6 +134,7 @@ export function useFilePreviewEvents({
               }),
             );
           }
+          return false;
         }
       };
       const requestedTabId = fileDisplayTabId(detail.filePath);
@@ -154,28 +160,29 @@ export function useFilePreviewEvents({
             filePath: detail.filePath,
             isCurrent: requestIsCurrent,
             ...(detail.appHandlerId ? { handlerId: detail.appHandlerId } : {}),
+            ...(detail.managed ? { managed: detail.managed, signal: detail.signal } : {}),
           });
-          if (!requestIsCurrent()) return;
           if (opened) {
-            if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
-            return;
+            if (requestIsCurrent() && detail.keepWorkspaceFilesOpen === false)
+              setIsWorkspaceFilesOpen(false);
+            return true;
           }
+          if (!requestIsCurrent()) return false;
           if (detail.appHandlerId) {
             window.dispatchEvent(
               new CustomEvent('app:showToast', { detail: i18nService.t('mcpAppsUnavailable') }),
             );
-            return;
+            return false;
           }
         }
         if (existingPreview || existingUnsupportedPreview) {
           if (!existingPreview && detail.openUnsupportedInSystem) {
-            await openInSystem();
-            return;
+            return openInSystem();
           }
           if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
           setPreferredDisplayTabId(requestedTabId);
           setIsDisplayPanelOpen(true);
-          return;
+          return true;
         }
         result = await window.electron.shell.readPreviewFile(
           detail.filePath,
@@ -189,15 +196,17 @@ export function useFilePreviewEvents({
             }),
           );
         }
-        return;
+        return false;
       }
-      if (!requestIsCurrent()) {
+      const mismatchedPath = detail.managed && result.success &&
+        result.filePath !== detail.managed.filePath;
+      if (!requestIsCurrent() || mismatchedPath) {
         if (result.success && !isBrowserFilePreview(result)) {
           void window.electron.shell
             .revokePreviewFileEdit(result.editToken)
             .catch((): undefined => undefined);
         }
-        return;
+        return false;
       }
       if (result.success) {
         const resolvedTabId = fileDisplayTabId(result.filePath);
@@ -213,7 +222,7 @@ export function useFilePreviewEvents({
           if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
           setPreferredDisplayTabId(resolvedTabId);
           setIsDisplayPanelOpen(true);
-          return;
+          return true;
         }
         const preview: FilePreview = isBrowserFilePreview(result)
           ? {
@@ -236,11 +245,10 @@ export function useFilePreviewEvents({
         if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(resolvedTabId);
         setIsDisplayPanelOpen(true);
-        return;
+        return true;
       }
       if (detail.openUnsupportedInSystem && (result.unsupportedType || result.tooLarge)) {
-        await openInSystem();
-        return;
+        return openInSystem();
       }
       if (result.unsupportedType) {
         setUnsupportedFilePreviews(current =>
@@ -251,7 +259,7 @@ export function useFilePreviewEvents({
         if (detail.keepWorkspaceFilesOpen === false) setIsWorkspaceFilesOpen(false);
         setPreferredDisplayTabId(requestedTabId);
         setIsDisplayPanelOpen(true);
-        return;
+        return true;
       }
       window.dispatchEvent(
         new CustomEvent('app:showToast', {
@@ -262,6 +270,7 @@ export function useFilePreviewEvents({
               : result.error || i18nService.t('coworkFilePreviewFailed'),
         }),
       );
+      return false;
     },
     [
       currentSessionIdRef,
@@ -336,15 +345,23 @@ export function useFilePreviewEvents({
       if (typeof detail?.src === 'string') openImage(detail.src, detail.alt);
     };
     const handlePreviewFile = (event: Event) => {
-      const detail = (event as CustomEvent<OpenFilePreviewOptions>).detail;
-      if (detail) void openFilePreview(detail);
+      const detail = (event as CustomEvent<OpenFilePreviewOptions & {
+        sessionId?: string | null;
+        respond?: (result: Promise<boolean>) => void;
+      }>).detail;
+      if (!detail || event.defaultPrevented) return;
+      if (detail.managed) {
+        if (detail.sessionId !== currentSessionIdRef.current || !detail.respond) return;
+        event.preventDefault();
+        detail.respond(openFilePreview(detail));
+      } else void openFilePreview(detail);
     };
-    window.addEventListener('cowork:preview-file', handlePreviewFile);
+    window.addEventListener(FILE_PREVIEW_EVENT, handlePreviewFile);
     window.addEventListener(IMAGE_PREVIEW_EVENT, handlePreviewImage);
     return () => {
-      window.removeEventListener('cowork:preview-file', handlePreviewFile);
+      window.removeEventListener(FILE_PREVIEW_EVENT, handlePreviewFile);
       window.removeEventListener(IMAGE_PREVIEW_EVENT, handlePreviewImage);
     };
-  }, [openFilePreview, openImage]);
+  }, [currentSessionIdRef, openFilePreview, openImage]);
   return { openFilePreview };
 }

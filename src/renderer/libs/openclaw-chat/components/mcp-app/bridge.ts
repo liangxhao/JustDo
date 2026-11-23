@@ -10,6 +10,7 @@ import {
   type McpAppResourcePreviewStageInput,
 } from '@shared/plugins/mcpAppResourcePreview';
 import {
+  MCP_APP_OPEN_MANAGED_FILE,
   MCP_APP_PREPARE_CONTEXT_META,
   MCP_APP_SHARED_HEADER,
   McpAppEvent,
@@ -55,6 +56,7 @@ export class McpAppHostBridge extends AppBridge {
       | 'resources/subscribe'
       | 'resources/unsubscribe'
       | typeof MCP_APP_PREVIEW_RESOURCE
+      | typeof MCP_APP_OPEN_MANAGED_FILE
       | 'openai/files/open',
     handler: (
       params: Record<string, unknown>,
@@ -75,6 +77,11 @@ export interface McpAppBridgeHost {
   confirmDraft: (content: unknown[], target: 'active' | 'new') => Promise<boolean>;
   confirmFile: (path: string) => Promise<boolean>;
   openFile: (file: { path: string; name: string }) => Promise<boolean>;
+  openManagedFile?: (
+    relativePath: string,
+    isCurrent: () => boolean,
+    signal: AbortSignal,
+  ) => Promise<boolean>;
   previewResource?: (
     input: McpAppResourcePreviewStageInput,
     isCurrent: () => boolean,
@@ -161,6 +168,7 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
       experimental: {
         [MCP_APP_SHARED_HEADER]: { version: 1 },
         ...(interactive && host.previewResource ? { [MCP_APP_PREVIEW_RESOURCE]: { version: 1 } } : {}),
+        ...(interactive && host.openManagedFile ? { [MCP_APP_OPEN_MANAGED_FILE]: { version: 1 } } : {}),
         ...(payload.richModelContextSupported ? { 'openai/modelContext': {} } : {}),
         ...(interactive ? { 'openai/message': {} } : {}),
         ...(payload.fileResourcesSupported || payload.workspaceFile
@@ -319,6 +327,20 @@ export function createMcpAppBridge(host: McpAppBridgeHost): {
         return { isError: true };
       } finally {
         previewPending = false;
+      }
+    });
+  }
+  const openManagedFile = host.openManagedFile;
+  if (interactive && openManagedFile) {
+    bridge.setExtension(MCP_APP_OPEN_MANAGED_FILE, async (params, extra) => {
+      const signal = extra.mcpReq.signal;
+      const isCurrent = () =>
+        !disposed && !preparingContext && !signal.aborted && host.canInteract() && session.isCurrent();
+      if (typeof params.path !== 'string' || !isCurrent()) return { isError: true };
+      try {
+        return await openManagedFile(params.path, isCurrent, signal) ? {} : { isError: true };
+      } catch {
+        return { isError: true };
       }
     });
   }

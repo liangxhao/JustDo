@@ -13,6 +13,7 @@ export interface McpAppWorkspaceEntry {
   filePath?: string;
   fileHandlerId?: string;
   label?: string;
+  dispose?: () => void;
 }
 export interface McpAppWorkspaceLoadEntry {
   id: string;
@@ -43,10 +44,12 @@ export interface McpAppWorkspaceControlsEntry {
 export type McpAppWorkspaceItem =
   McpAppWorkspaceEntry | McpAppWorkspaceLoadEntry | McpAppWorkspaceControlsEntry;
 const entries = new WeakSet<object>();
-export function openWorkspaceApp(entry: McpAppWorkspaceEntry): void {
-  if (!isNativeMcpAppPreview(entry.preview) || !entry.context.isCurrent()) return;
+export function openWorkspaceApp(entry: McpAppWorkspaceEntry): boolean {
+  if (!isNativeMcpAppPreview(entry.preview) || !entry.context.isCurrent()) return false;
   entries.add(entry);
-  window.dispatchEvent(new CustomEvent(MCP_APP_WORKSPACE_EVENT, { detail: entry }));
+  return !window.dispatchEvent(new CustomEvent(MCP_APP_WORKSPACE_EVENT, {
+    detail: entry, cancelable: true,
+  }));
 }
 /** Reserve the file tab before native preparation; the tab owns its local wait. */
 export function openWorkspaceAppFile(entry: McpAppWorkspaceFileEntry): void {

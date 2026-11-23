@@ -13,12 +13,15 @@ import type { CoworkStore } from '../../data/coworkStore';
 import type { GatewayResponseContext } from '../../engine/gateway/types';
 import type { GatewayRequestOptions } from '../../engine/types';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
+import type { ManagedMcpFile } from './managedMcpFile';
 
 interface Dependencies {
   getStore: () => CoworkStore;
   request: <T>(method: string, params: unknown, options?: GatewayRequestOptions) => Promise<T>;
   captureResponseContext: () => Promise<GatewayResponseContext | null>;
   waitForStartup: (assertCurrent: () => void) => Promise<void>;
+  resolveManagedFile?: (raw: unknown) => ManagedMcpFile;
+  canOpenManagedFile?: (raw: unknown) => boolean;
 }
 interface WorkspaceEntry {
   stage: 'transport' | 'startup' | 'inspection' | 'creation';
@@ -69,11 +72,13 @@ function failureDetails(error: unknown) {
 /** Owned native preview sessions, without creating a product conversation. */
 export class WorkspaceAppSessions {
   private readonly owners = new Map<WebContents, Map<string, WorkspaceEntry>>();
+  private readonly managedFiles = new Map<WebContents, Map<string, ManagedMcpFile>>();
   private readonly watchedOwners = new WeakSet<WebContents>();
 
   constructor(private readonly deps: Dependencies) {}
 
   private retireDocument(owner: WebContents, reason: string): void {
+    this.managedFiles.delete(owner);
     const entries = this.owners.get(owner);
     if (!entries) return;
     console.info(`[WorkspaceAppSessions] Retiring document: ${JSON.stringify({
@@ -99,6 +104,26 @@ export class WorkspaceAppSessions {
     owner.on('did-navigate', () => this.retireDocument(owner, 'navigation-commit'));
     owner.on('render-process-gone', () => this.retireDocument(owner, 'renderer-gone'));
     owner.once('destroyed', () => this.retireDocument(owner, 'destroyed'));
+  }
+
+  canOpenManagedFile(owner: WebContents, raw: unknown): boolean {
+    try {
+      return !owner.isDestroyed() && this.deps.canOpenManagedFile?.(raw) === true;
+    } catch {
+      return false;
+    }
+  }
+
+  resolveManagedFile(owner: WebContents, raw: unknown) {
+    if (owner.isDestroyed() || !this.deps.resolveManagedFile) throw new Error('Managed App file is unavailable');
+    const files = this.managedFiles.get(owner) ?? new Map<string, ManagedMcpFile>();
+    if (files.size >= MAX_WORKSPACES_PER_DOCUMENT) throw new Error('Too many App workspaces');
+    const file = this.deps.resolveManagedFile(raw);
+    const requestId = randomUUID();
+    this.watchOwner(owner);
+    files.set(requestId, file);
+    this.managedFiles.set(owner, files);
+    return { filePath: file.filePath, name: file.name, cwd: file.cwd, requestId };
   }
 
   private async create(
@@ -128,7 +153,10 @@ export class WorkspaceAppSessions {
       agentId: scope.agentId,
       cwd: scope.cwd,
       permissionMode: scope.permissionMode,
-    }, { assertBeforeSend: assertCurrent });
+    }, { assertBeforeSend: () => {
+      assertCurrent();
+      scope.managedFile?.assertCurrent();
+    } });
     if (
       result.key !== sessionKey ||
       typeof result.sessionId !== 'string' ||
@@ -145,7 +173,7 @@ export class WorkspaceAppSessions {
     };
   }
 
-  private scope(raw: unknown) {
+  private scope(owner: WebContents, raw: unknown) {
     const input = mcpAppRecord(raw);
     if (
       typeof input?.requestId !== 'string' ||
@@ -160,16 +188,18 @@ export class WorkspaceAppSessions {
     const store = this.deps.getStore();
     const config = store.getConfig();
     const agent = store.getAgent(input.agentId);
+    const managedFile = this.managedFiles.get(owner)?.get(input.requestId);
+    const workspace = managedFile?.cwd ?? config.workingDirectory;
     if (
       !agent?.enabled ||
       agent.deletedAt ||
-      !config.workingDirectory.trim() ||
-      !path.isAbsolute(config.workingDirectory) ||
+      !workspace.trim() ||
+      !path.isAbsolute(workspace) ||
       (input.agentId !== MAIN_USER_AGENT_ID && config.allowMainAgentSwitch !== true) ||
-      path.resolve(input.cwd) !== path.resolve(config.workingDirectory)
+      path.resolve(input.cwd) !== path.resolve(workspace)
     )
       throw new Error('App workspace is no longer current');
-    const cwd = path.resolve(config.workingDirectory);
+    const cwd = path.resolve(workspace);
     const permissionMode = toOpenClawSessionPermissionMode(
       resolvePermissionMode(config.permissionMode),
     );
@@ -178,7 +208,8 @@ export class WorkspaceAppSessions {
       agentId: input.agentId,
       cwd,
       permissionMode,
-      signature: JSON.stringify([input.agentId, cwd, permissionMode]),
+      managedFile,
+      signature: JSON.stringify([input.agentId, cwd, permissionMode, managedFile?.filePath]),
     };
   }
 
@@ -205,7 +236,7 @@ export class WorkspaceAppSessions {
   private async prepareCurrent(
     owner: WebContents, raw: unknown, attempt: PreparationAttempt,
   ): Promise<McpAppWorkspaceBinding> {
-    const scope = this.scope(raw);
+    const scope = this.scope(owner, raw);
     if (owner.isDestroyed()) throw new Error('App workspace is closed');
     let entries = this.owners.get(owner);
     if (!entries) {
@@ -226,7 +257,7 @@ export class WorkspaceAppSessions {
       const assertOwnerCurrent = () => {
         if (
           this.owners.get(owner) !== entries || entries.get(scope.requestId) !== next ||
-          next.released || owner.isDestroyed() || this.scope(raw).signature !== scope.signature
+          next.released || owner.isDestroyed() || this.scope(owner, raw).signature !== scope.signature
         ) throw new Error('App workspace changed during preparation');
       };
       const assertCurrent = () => {
@@ -284,7 +315,7 @@ export class WorkspaceAppSessions {
     const responseContext = existing ? await this.deps.captureResponseContext() : entry.responseContext;
     const assertReadCurrent = () => {
       if (this.owners.get(owner) !== entries || entries.get(scope.requestId) !== entry ||
-        entry.released || owner.isDestroyed() || this.scope(raw).signature !== entry.signature ||
+        entry.released || owner.isDestroyed() || this.scope(owner, raw).signature !== entry.signature ||
         !responseContext?.isCurrent())
         throw new Error('App workspace changed during preparation');
     };
@@ -298,7 +329,7 @@ export class WorkspaceAppSessions {
     // Only explicit preparation may replace a removed owned context. Existing
     // native identities must still match; live view lifecycle checks stay native.
     if (!session && existing && !entry.released && !owner.isDestroyed() &&
-      this.scope(raw).signature === entry.signature && responseContext?.isCurrent()) {
+      this.scope(owner, raw).signature === entry.signature && responseContext?.isCurrent()) {
       // Concurrent absent reads may join the replacement owned by this entry;
       // they cannot remove or recreate the successor that is already preparing.
       if (!entry.replacementTask) {
@@ -311,7 +342,7 @@ export class WorkspaceAppSessions {
       const task = entry.replacementTask;
       const assertSuccessorCurrent = () => {
         if (!successor || this.owners.get(owner) !== entries || entries.get(scope.requestId) !== successor ||
-          successor.released || owner.isDestroyed() || this.scope(raw).signature !== successor.signature ||
+          successor.released || owner.isDestroyed() || this.scope(owner, raw).signature !== successor.signature ||
           !responseContext.isCurrent()) throw new Error('App workspace changed during replacement');
       };
       try {
@@ -326,14 +357,12 @@ export class WorkspaceAppSessions {
     }
     assertReadCurrent();
     if (
-      entry.released ||
-      owner.isDestroyed() ||
-      this.scope(raw).signature !== entry.signature ||
       session?.sessionId !== binding.gatewaySessionId ||
       session.sessionRoot !== scope.cwd ||
       session.permissionMode !== scope.permissionMode
     )
       throw new Error('Native App workspace changed');
+    scope.managedFile?.assertCurrent();
     console.info(`[WorkspaceAppSessions] Workspace ready: ${JSON.stringify({
       ownerId: owner.id, requestId: scope.requestId, count: entries.size,
     })}`);
@@ -353,6 +382,9 @@ export class WorkspaceAppSessions {
 
   async release(owner: WebContents, requestId: unknown): Promise<null> {
     if (typeof requestId !== 'string') throw new Error('Invalid App workspace');
+    const files = this.managedFiles.get(owner);
+    files?.delete(requestId);
+    if (files?.size === 0) this.managedFiles.delete(owner);
     const entries = this.owners.get(owner);
     const entry = entries?.get(requestId);
     if (!entry) return null;
@@ -394,7 +426,9 @@ export class WorkspaceAppSessions {
     create: (productSessionId: string, binding: McpAppWorkspaceBinding) => T,
     isCurrent: () => boolean,
   ): Promise<{ value: T; binding: McpAppWorkspaceBinding }> {
-    const scope = this.scope(raw);
+    const scope = this.scope(owner, raw);
+    if (scope.managedFile)
+      throw new WorkspaceAppAdoptionUnavailable('Managed file workspaces cannot start a conversation');
     const entries = this.owners.get(owner);
     const entry = entries?.get(scope.requestId);
     if (!entry || entry.released || entry.signature !== scope.signature)
@@ -413,7 +447,7 @@ export class WorkspaceAppSessions {
       owner.isDestroyed() ||
       !isCurrent() ||
       entries?.get(scope.requestId) !== entry ||
-      this.scope(raw).signature !== scope.signature ||
+      this.scope(owner, raw).signature !== scope.signature ||
       session?.sessionId !== binding.gatewaySessionId ||
       session.sessionRoot !== scope.cwd ||
       session.permissionMode !== scope.permissionMode

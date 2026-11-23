@@ -1,5 +1,8 @@
 import type { McpAppStagedResourcePreview } from '@shared/plugins/mcpAppResourcePreview';
 
+import type { ManagedMcpAppOpen } from '@/libs/openclaw-chat/components/mcp-app/view';
+
+export const FILE_PREVIEW_EVENT = 'cowork:preview-file';
 const resourcePreviewEvent = 'cowork:preview-resource';
 
 export interface ResourceFilePreviewRequest {
@@ -9,8 +12,22 @@ export interface ResourceFilePreviewRequest {
 }
 
 export function openResourceFilePreview(request: ResourceFilePreviewRequest): Promise<boolean> {
+  return dispatchPreview(resourcePreviewEvent, request);
+}
+
+export function openManagedFilePreview(request: {
+  filePath: string;
+  managed: ManagedMcpAppOpen;
+  sessionId: string | null;
+  isCurrent: () => boolean;
+  signal?: AbortSignal;
+}): Promise<boolean> {
+  return dispatchPreview(FILE_PREVIEW_EVENT, request);
+}
+
+function dispatchPreview(eventName: string, request: object): Promise<boolean> {
   let result: Promise<boolean> | undefined;
-  window.dispatchEvent(new CustomEvent(resourcePreviewEvent, {
+  window.dispatchEvent(new CustomEvent(eventName, {
     detail: { ...request, respond: (response: Promise<boolean>) => { result = response; } },
     cancelable: true,
   }));

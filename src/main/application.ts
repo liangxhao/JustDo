@@ -325,6 +325,7 @@ import { startAppDevelopmentAssets } from './plugins/app/developmentAssets';
 import { AppPluginManager, discoverAppCandidates } from './plugins/app/manager';
 import { ensureAppPluginRuntimeReady } from './plugins/app/runtimeReadiness';
 import { appPluginStoragePaths } from './plugins/app/storage';
+import { managedMcpFileProvider, resolveManagedMcpFile } from './plugins/mcp/managedMcpFile';
 import { WorkspaceAppSessions } from './plugins/mcp/workspaceAppSession';
 import { SkillWorkshopService } from './plugins/skills/skillWorkshopService';
 import {
@@ -2032,8 +2033,25 @@ if (agentBridgeArgv) {
     sessionPermissionModeRuntimeBound = true;
   };
 
+  const managedFileBinding = (input: unknown) => {
+    const manager = getOpenClawEngineManager();
+    const port = manager.getGatewayPort();
+    const generation = manager.getGatewayProcessGeneration();
+    return [manager.getStateDir(), manager.getConfigPath(), input, {
+      port,
+      isCurrent: () =>
+        openClawEngineManager === manager &&
+        manager.getGatewayPort() === port &&
+        manager.getGatewayProcessGeneration() === generation,
+    }] as const;
+  };
   const workspaceAppSessions = new WorkspaceAppSessions({
     getStore: getCoworkStore,
+    resolveManagedFile: input => resolveManagedMcpFile(...managedFileBinding(input)),
+    canOpenManagedFile: input => {
+      managedMcpFileProvider(...managedFileBinding(input))();
+      return true;
+    },
     waitForStartup: assertCurrent => {
       assertCurrent();
       return waitForGatewayStartup({ port: openClawEngineManager!.getGatewayPort(), assertCurrent });

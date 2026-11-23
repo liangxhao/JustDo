@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, expect, test, vi } from 'vitest';
 
+import { resolveManagedMcpFile } from '../mcp/managedMcpFile';
 import type { NativeMcpDataBinding } from './nativeMcpData';
 import {
   nativeMcpDataDirectory, ownedNativeMcpDataServerNames, prepareNativeMcpData, projectNativeMcpData,
@@ -42,6 +43,58 @@ async function fixture() {
   };
   return { root, state, file, receipt, binding, config, project, save };
 }
+
+test('resolves only an exact named document of the current managed service', async () => {
+  const f = await fixture();
+  f.save();
+  const id = '660fec46-853c-4b83-b477-dbb07a84e749';
+  const cwd = path.join(nativeMcpDataDirectory(f.state, 'sample'), 'files', id);
+  const filePath = path.join(cwd, '原始文档.xlsx');
+  fs.mkdirSync(cwd, { recursive: true });
+  fs.writeFileSync(filePath, 'fixture');
+  const input = { serverName: 'sample', relativePath: `files/${id}/原始文档.xlsx`, gatewayUrl: 'ws://127.0.0.1:12345' };
+  const gateway = { port: 12345, isCurrent: () => true };
+  const admitted = resolveManagedMcpFile(f.state, f.file, input, gateway);
+  expect(admitted).toMatchObject({ filePath, cwd, name: '原始文档.xlsx' });
+  expect(() => resolveManagedMcpFile(f.state, f.file, { ...input, gatewayUrl: 'ws://remote.invalid:12345' }, gateway))
+    .toThrow('requires the local Gateway');
+  expect(() => resolveManagedMcpFile(f.state, f.file, { ...input, gatewayUrl: 'ws://localhost:12346/' }, gateway))
+    .toThrow('requires the local Gateway');
+
+  const next = path.join(cwd, 'editing.tmp');
+  fs.writeFileSync(next, 'saved content');
+  fs.renameSync(next, filePath);
+  expect(() => admitted.assertCurrent()).not.toThrow();
+  f.config.mcp.servers.sample = { command: 'operator-override' };
+  fs.writeFileSync(f.file, JSON.stringify(f.config));
+  expect(() => admitted.assertCurrent()).toThrow('Managed App data is unavailable');
+});
+
+test('refuses a path outside the named document scope or with a different filesystem identity', async () => {
+  const f = await fixture();
+  f.save();
+  const id = '660fec46-853c-4b83-b477-dbb07a84e749';
+  const base = nativeMcpDataDirectory(f.state, 'sample');
+  const cwd = path.join(base, 'files', id);
+  const relativePath = `files/${id}/document.txt`;
+  const resolve = (name = relativePath) => resolveManagedMcpFile(f.state, f.file, {
+    serverName: 'sample', relativePath: name, gatewayUrl: 'ws://localhost:12345/',
+  }, { port: 12345, isCurrent: () => true });
+  fs.mkdirSync(cwd, { recursive: true });
+  const filePath = path.join(cwd, 'document.txt');
+  fs.writeFileSync(filePath, 'fixture');
+  expect(() => resolve(`files/${id}/../knowledge.sqlite`)).toThrow('Invalid managed App file');
+  expect(() => resolve(`files/${id}/document.txt:alternate`)).toThrow('Invalid managed App file');
+  fs.linkSync(filePath, path.join(f.root, 'hardlink.txt'));
+  expect(resolve).toThrow('Managed App file is unavailable');
+  fs.unlinkSync(path.join(f.root, 'hardlink.txt'));
+
+  const admitted = resolve();
+  fs.renameSync(cwd, path.join(base, 'files', `${id}-moved`));
+  fs.mkdirSync(cwd);
+  fs.writeFileSync(filePath, 'different directory');
+  expect(() => admitted.assertCurrent()).toThrow('Managed App file changed');
+});
 
 test('uses SDK-owned data in both configs and stores only digests and durable owner identity', async () => {
   const f = await fixture();

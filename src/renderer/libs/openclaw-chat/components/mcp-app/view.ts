@@ -11,6 +11,7 @@ import {
   MCP_APP_SHARED_HEADER,
   MCP_APP_VIEW_READ_ONLY,
   McpAppEvent,
+  type McpAppManagedFile,
   McpAppMethod,
   type McpAppModelContext,
   type McpAppPreview,
@@ -34,10 +35,16 @@ import { resolveMcpAppIcons } from './icons';
 import { connectAppContent, restrictRecoveredAppPayload } from './plugin-content';
 import { McpAppFrameTransport } from './transport';
 
+export type ManagedMcpAppOpen = McpAppManagedFile & { takeWorkspace: () => void };
+
 export type McpAppOpenedFile = {
   path: string;
   name: string;
-} & ({ preview?: undefined } | { preview: McpAppStagedResourcePreview; isCurrent: () => boolean });
+} & (
+  | { preview?: undefined; managed?: undefined }
+  | { preview: McpAppStagedResourcePreview; managed?: undefined; isCurrent: () => boolean }
+  | { preview?: undefined; managed: ManagedMcpAppOpen; isCurrent: () => boolean; signal: AbortSignal }
+);
 
 export interface McpAppViewContext {
   apps: McpAppSession;
@@ -480,6 +487,11 @@ export class McpAppView extends LitElement {
       this.mountKey++;
       this.requestUpdate();
       await this.updateComplete;
+      const sourceServer = readNativeMcpAppIdentity(preview)?.serverName;
+      const gatewayUrl = resources.session.gatewayUrl;
+      const managedFileAvailable = context.openFile && sourceServer && payload.messageSupported &&
+        await window.electron?.mcpApps?.canOpenManagedFile?.({ gatewayUrl, serverName: sourceServer })
+          .then(result => result.success && result.value).catch(() => false);
       if (!current()) return;
       const mount = this.renderRoot.querySelector('.mount');
       if (!mount) throw new Error('Missing MCP App mount');
@@ -527,6 +539,27 @@ export class McpAppView extends LitElement {
         confirmDraft: (content, target) => this.draft(content, target),
         confirmFile: path => this.confirm(path, 'file'),
         openFile: file => this.context?.openFile?.(file) ?? Promise.resolve(false),
+        ...(managedFileAvailable && sourceServer ? {
+          openManagedFile: async (relativePath, isCurrent, signal) => {
+            const result = await window.electron.mcpApps.resolveManagedFile({
+              gatewayUrl, serverName: sourceServer, relativePath,
+            });
+            if (!result.success) return false;
+            const file = result.value;
+            let taken = false;
+            try {
+              if (!isCurrent()) return false;
+              return await this.context?.openFile?.({
+                path: file.filePath, name: file.name,
+                managed: { ...file, takeWorkspace: () => { taken = true; } },
+                isCurrent, signal,
+              }) ?? false;
+            } finally {
+              if (!taken) await window.electron.mcpApps.releaseWorkspace(file.requestId)
+                .catch(() => undefined);
+            }
+          },
+        } : {}),
         ...(context.openFile ? {
           previewResource: async (input, isCurrent) => {
             const staged = await window.electron.mcpApps.stageResourcePreview(input);

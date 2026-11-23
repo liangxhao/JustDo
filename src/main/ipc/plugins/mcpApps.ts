@@ -97,8 +97,15 @@ export function registerMcpAppHandlers(deps: Dependencies): () => Promise<void> 
     });
   };
   handle(McpAppIpc.DownloadFile, saveMcpAppDownload);
+  handle(McpAppIpc.ResolveManagedFile, async (event, input) => {
+    if (deps.isAllowedWorkspaceSender?.(event) !== true) throw new Error('Untrusted application frame');
+    return workspaces.resolveManagedFile(event.sender, input);
+  });
   handle(McpAppIpc.StageResourcePreview, (event, input) => resourcePreviews.stage(event, input));
   handle(McpAppIpc.ReleaseResourcePreview, (event, input) => resourcePreviews.release(event, input));
+  handle(McpAppIpc.CanOpenManagedFile, async (event, input) =>
+    deps.isAllowedWorkspaceSender?.(event) === true && workspaces.canOpenManagedFile(event.sender, input),
+  );
   handle(McpAppIpc.PrepareWorkspace, (event, input) => workspaces.prepare(event.sender, input));
   handle(McpAppIpc.ReleaseWorkspace, (event, input) => workspaces.release(event.sender, input));
   handle(McpAppIpc.CreateSession, async (_event, raw) => {

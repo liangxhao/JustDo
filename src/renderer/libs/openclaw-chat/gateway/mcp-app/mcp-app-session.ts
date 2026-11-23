@@ -175,6 +175,10 @@ export class McpAppSession {
     return this.discoveredIcons?.isCurrent() ? this.discoveredIcons.value : undefined;
   }
 
+  get agentId(): string | undefined {
+    return this.getBinding()?.agentId;
+  }
+
   registerCanvasPreparation(
     viewId: string,
     prepare: CanvasRegistration['prepare'],

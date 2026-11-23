@@ -10,8 +10,8 @@ import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app
 import { i18nService } from '@/services/i18n';
 
 import { HOME_DISPLAY_SESSION_KEY } from '../display/tabs/useSessionDisplayState';
-import { openResourceFilePreview } from '../preview/filePreviewNavigation';
-import { decodeFileAppLaunch, findFileApp, type OpenMcpAppFile } from './fileApps';
+import { openResourceFilePreview, openManagedFilePreview } from '../preview/filePreviewNavigation';
+import { decodeFileAppLaunch, findFileApp, openManagedFileApp, type OpenMcpAppFile } from './fileApps';
 import { McpAppIcon } from './McpAppIcon';
 import type { McpAppComposerMenu } from './McpAppsControls';
 import { openWorkspaceAppFile, openWorkspaceAppLaunch } from './workspaceApps';
@@ -157,6 +157,13 @@ export function useHomeFileApps(options: Options): {
             interactive() ? latest.current.addDraft(text) : Promise.resolve(false),
           openFile: async file => {
             if (!interactive()) return false;
+            if (file.managed) return openManagedFilePreview({
+              filePath: file.path,
+              managed: file.managed,
+              signal: file.signal,
+              sessionId: created.targetSessionId ?? null,
+              isCurrent: () => interactive() && file.isCurrent(),
+            });
             if (file.preview) return openResourceFilePreview({
               preview: file.preview,
               sessionId: created.targetSessionId ?? null,
@@ -344,6 +351,16 @@ export function useHomeFileApps(options: Options): {
       if (!handler) return false;
       const { id: handlerId, input, icons } = handler;
       if (request.focusExisting?.(handlerId)) return true;
+      if (request.managed) {
+        const revision = session.apps.discoveryRevision;
+        return openManagedFileApp(
+          { ...request, managed: request.managed },
+          handler,
+          HOME_DISPLAY_SESSION_KEY,
+          context,
+          () => current() && session.apps.discoveryRevision === revision,
+        );
+      }
       const fileName = request.filePath.split(/[\\/]/).pop() || request.filePath;
       const load = async (signal?: AbortSignal, ownEpoch = navigation.current) => {
         const currentLoad = () =>

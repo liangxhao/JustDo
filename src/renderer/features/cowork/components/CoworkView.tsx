@@ -134,6 +134,7 @@ import {
   type FilePreviewNavigationOptions,
   isFilePreviewWithinPath,
   openResourceFilePreview,
+  openManagedFilePreview,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import { MessageFileLinkContext } from '@/features/cowork/components/preview/messageFileLinks';
@@ -3603,6 +3604,13 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
               onOpenMcpAppFile={async file => {
                 const sessionId = currentSessionIdRef.current;
                 if (!sessionId || sessionId !== currentSession.id) return false;
+                if (file.managed) return openManagedFilePreview({
+                  filePath: file.path,
+                  managed: file.managed,
+                  signal: file.signal,
+                  sessionId,
+                  isCurrent: () => currentSessionIdRef.current === sessionId && file.isCurrent(),
+                });
                 if (file.preview) return openResourceFilePreview({
                   preview: file.preview,
                   sessionId,

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { GatewayRequestOptions } from '../../engine/types';
 import { parseManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
+import type { ManagedMcpFile } from './managedMcpFile';
 import { WorkspaceAppSessions } from './workspaceAppSession';
 
 beforeEach(() => {
@@ -25,7 +26,7 @@ function logCalls(method: 'info' | 'warn') {
   });
 }
 
-function fixture() {
+function fixture(resolveManagedFile?: (raw: unknown) => ManagedMcpFile) {
   const cwd = path.resolve('workspace-fixture');
   let config = { workingDirectory: cwd, permissionMode: 'auto', allowMainAgentSwitch: false };
   const sessions = new Map<string, Record<string, unknown>>();
@@ -66,6 +67,7 @@ function fixture() {
     request: request as never,
     captureResponseContext,
     waitForStartup,
+    resolveManagedFile,
   });
   const emitter = new EventEmitter();
   const owner = Object.assign(emitter, { id: 17, isDestroyed: () => false }) as unknown as WebContents;
@@ -101,6 +103,54 @@ describe('homepage native App workspace ownership', () => {
       isMainFrame: true, isSameDocument: false,
     });
   };
+
+  it('admits only the resolved managed file parent for the owning document', async () => {
+    const cwd = path.resolve('private-documents', 'document-id');
+    const filePath = path.join(cwd, 'sample.xlsx');
+    const verify = vi.fn();
+    const f = fixture(() => ({ cwd, filePath, name: 'sample.xlsx', assertCurrent: verify }));
+    const admitted = f.service.resolveManagedFile(f.owner, {});
+    expect(admitted).toEqual({ cwd, filePath, name: 'sample.xlsx', requestId: expect.any(String) });
+    const input = { requestId: admitted.requestId, cwd: admitted.cwd, agentId: 'main' };
+    await expect(f.service.prepare(fixture().owner, input)).rejects.toThrow('no longer current');
+    await expect(f.service.prepare(f.owner, { ...input, cwd: path.dirname(cwd) })).rejects.toThrow('no longer current');
+    await expect(f.service.prepare(f.owner, input)).resolves.toMatchObject({ agentId: 'main' });
+    expect(f.created()).toEqual([['sessions.create', expect.objectContaining({ cwd }), expect.any(Object)]]);
+    expect(verify).toHaveBeenCalledTimes(2);
+    await expect(f.service.adopt(f.owner, input, f.productCreate, () => true)).rejects.toThrow('cannot start a conversation');
+    expect(f.productCreate).not.toHaveBeenCalled();
+    await f.service.release(f.owner, input.requestId);
+    await expect(f.service.prepare(f.owner, input)).rejects.toThrow('no longer current');
+  });
+
+  it('revokes a managed file admission that has not yet launched when the document navigates', async () => {
+    const cwd = path.resolve('private-documents', 'document-id');
+    const f = fixture(() => ({ cwd, filePath: path.join(cwd, 'sample.md'), name: 'sample.md', assertCurrent: () => {} }));
+    const admitted = f.service.resolveManagedFile(f.owner, {});
+    navigate(f.owner);
+    await expect(f.service.prepare(f.owner, { requestId: admitted.requestId, cwd, agentId: 'main' }))
+      .rejects.toThrow('no longer current');
+    expect(f.created()).toHaveLength(0);
+  });
+
+  it('checks a revoked managed file at the native create boundary after startup', async () => {
+    const cwd = path.resolve('private-documents', 'document-id');
+    let authorized = true;
+    const verify = vi.fn(() => {
+      if (!authorized) throw new Error('Managed App data is unavailable');
+    });
+    const f = fixture(() => ({ cwd, filePath: path.join(cwd, 'sample.xlsx'), name: 'sample.xlsx', assertCurrent: verify }));
+    f.waitForStartup.mockImplementationOnce(async assertCurrent => {
+      assertCurrent();
+      authorized = false;
+      assertCurrent();
+    });
+    const admitted = f.service.resolveManagedFile(f.owner, {});
+    await expect(f.service.prepare(f.owner, { requestId: admitted.requestId, cwd, agentId: 'main' }))
+      .rejects.toThrow('Managed App data is unavailable');
+    expect(f.sessions.size).toBe(0);
+    expect(verify).toHaveBeenCalledOnce();
+  });
 
   it('shares startup waiting before inspecting or creating a workspace', async () => {
     const f = fixture();

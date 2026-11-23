@@ -32,6 +32,8 @@ export const McpAppEvent = {
 } as const;
 
 export const McpAppIpc = {
+  CanOpenManagedFile: 'mcpApps:canOpenManagedFile',
+  ResolveManagedFile: 'mcpApps:resolveManagedFile',
   CreateSession: 'mcp-apps:session:create',
   Prepare: 'mcp-apps:session:prepare',
   PrepareWorkspace: 'mcp-apps:workspace:prepare',
@@ -93,12 +95,25 @@ export interface McpAppWorkspaceScope {
   agentId: string;
   cwd: string;
 }
+export const MCP_APP_OPEN_MANAGED_FILE = 'ui/open-managed-file';
+export interface McpAppManagedFile {
+  filePath: string;
+  name: string;
+  requestId: string;
+  cwd: string;
+}
 export interface McpAppWorkspaceBinding {
   sessionKey: string;
   gatewaySessionId: string;
   agentId: string;
 }
 export interface McpAppHostApi {
+  canOpenManagedFile: (input: { gatewayUrl: string; serverName: string }) => Promise<McpAppIpcResult<boolean>>;
+  resolveManagedFile: (input: {
+    gatewayUrl: string;
+    serverName: string;
+    relativePath: string;
+  }) => Promise<McpAppIpcResult<McpAppManagedFile>>;
   stageResourcePreview: (
     input: import('./mcpAppResourcePreview').McpAppResourcePreviewStageInput,
   ) => Promise<McpAppIpcResult<import('./mcpAppResourcePreview').McpAppStagedResourcePreview>>;

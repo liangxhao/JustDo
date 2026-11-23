@@ -26,8 +26,8 @@ export function nativeMcpDataDirectory(stateDirectory: string, pluginId: string)
   return resolvePluginDataDirectory(stateDirectory, pluginId);
 }
 
-function dataIdentity(stateDirectory: string, pluginId: string): string {
-  const directory = nativeMcpDataDirectory(stateDirectory, pluginId), file = path.join(directory, PLUGIN_DATA_OWNER_FILE);
+function dataIdentity(stateDirectory: string, pluginId: string, directory = nativeMcpDataDirectory(stateDirectory, pluginId)): string {
+  const file = path.join(directory, PLUGIN_DATA_OWNER_FILE);
   const before = fs.readFileSync(file, 'utf8'), owner = parsePluginDataOwner(JSON.parse(before));
   nativeMcpDataDirectory(stateDirectory, pluginId);
   if (fs.readFileSync(file, 'utf8') !== before) throw new Error('Plugin data owner changed');
@@ -88,6 +88,34 @@ export function ownedNativeMcpDataServerNames(configPath: string, stateDirectory
   const servers = record(config) && record(config.mcp) && record(config.mcp.servers) ? config.mcp.servers : {};
   return new Set(receipt.entries.filter(entry => entry.kind === 'server' &&
     Object.hasOwn(servers, entry.name) && digest(servers[entry.name]) === entry.hash).map(entry => entry.name));
+}
+
+/** Resolve only the active managed configuration projected for this server. */
+export function resolveActiveNativeMcpData(configPath: string, stateDirectory: string, serverName: string) {
+  const receipt = readReceipt(configPath, stateDirectory);
+  const config: unknown = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const plugins = record(config) && record(config.plugins) ? config.plugins : undefined;
+  const mcp = record(config) && record(config.mcp) ? config.mcp : undefined;
+  const servers = record(mcp?.servers) ? mcp.servers : undefined;
+  const server = servers && Object.hasOwn(servers, serverName) ? servers[serverName] : undefined;
+  if (!receipt || !plugins || plugins.enabled === false || !record(server) ||
+      server.enabled === false || typeof server.command !== 'string' || !record(server.env))
+    throw new Error('Managed App data is unavailable');
+  const serverHash = digest(server);
+  const entries = receipt.entries.filter(entry =>
+    entry.kind === 'server' && entry.name === serverName && entry.hash === serverHash);
+  if (entries.length !== 1) throw new Error('Managed App data is unavailable');
+  const entry = entries[0];
+  const plugin = record(plugins.entries) && Object.hasOwn(plugins.entries, entry.owner)
+    ? plugins.entries[entry.owner] : undefined;
+  const directory = nativeMcpDataDirectory(stateDirectory, entry.owner);
+  if (!record(plugin) || plugin.enabled === false || !record(plugin.config) ||
+      plugin.config.dataDirectory !== directory || server.env.PLUGIN_DATA !== directory ||
+      (Array.isArray(plugins.allow) && plugins.allow.length > 0 && !plugins.allow.includes(entry.owner)) ||
+      (Array.isArray(plugins.deny) && plugins.deny.includes(entry.owner)) ||
+      dataIdentity(stateDirectory, entry.owner, directory) !== entry.dataId)
+    throw new Error('Managed App data is unavailable');
+  return { directory, identity: JSON.stringify([entry.owner, entry.dataId, serverHash]) };
 }
 
 /** Replace only this package's matching launch definitions, including content from earlier installations. */

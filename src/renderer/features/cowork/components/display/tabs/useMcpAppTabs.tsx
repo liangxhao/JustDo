@@ -107,6 +107,8 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
   const loadFile = useCallback(
     (entry: McpAppWorkspaceLoadEntry) => {
       if (entry.sessionId !== latest.current.sessionId) return;
+      const previous = entriesRef.current.find(item => item.id === entry.id);
+      if (previous && 'preview' in previous) previous.dispose?.();
       operations.current.get(entry.id)?.abort();
       const abort = new AbortController();
       operations.current.set(entry.id, abort);
@@ -178,18 +180,15 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
           loadFile(entry);
       } else {
         if (!entry.context.isCurrent()) return;
-        operations.current.get(entry.id)?.abort();
-        update(current => {
-          const existing = current.find(item => item.id === entry.id);
-          if (
-            existing &&
-            'preview' in existing &&
-            existing.context.isCurrent() &&
-            existing.preview.viewId === entry.preview.viewId
-          )
-            return current;
-          return [...current.filter(item => item.id !== entry.id), entry];
-        });
+        const previous = entriesRef.current.find(item => item.id === entry.id);
+        const reuse = previous && 'preview' in previous && previous.context.isCurrent() &&
+          previous.preview.viewId === entry.preview.viewId;
+        if (!reuse) {
+          if (previous && 'preview' in previous) previous.dispose?.();
+          operations.current.get(entry.id)?.abort();
+          update(current => [...current.filter(item => item.id !== entry.id), entry]);
+          event.preventDefault();
+        }
       }
       latest.current.select(entry.id);
       latest.current.open();
@@ -202,7 +201,10 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
       window.removeEventListener(MCP_APP_WORKSPACE_CONTROLS_CLOSE_EVENT, listener);
       for (const abort of pending.values()) abort.abort();
       pending.clear();
-      for (const entry of entriesRef.current) if ('attach' in entry) entry.onClose();
+      for (const entry of entriesRef.current) {
+        if ('attach' in entry) entry.onClose();
+        if ('preview' in entry) entry.dispose?.();
+      }
     };
   }, [loadFile, update]);
   useLayoutEffect(() => {
@@ -248,6 +250,7 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
         }
         const view = views.current.get(entry.id);
         await view?.closeApp();
+        closingEntry.dispose?.();
         if (view?.contextCleanupUnconfirmed)
           window.dispatchEvent(
             new CustomEvent('app:showToast', { detail: i18nService.t('mcpAppsCloseUnknown') }),

@@ -28,7 +28,7 @@ import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app
 import { i18nService } from '@/services/i18n';
 
 import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
-import { decodeFileAppLaunch, findFileApp, type OpenMcpAppFile } from './fileApps';
+import { decodeFileAppLaunch, findFileApp, openManagedFileApp, type OpenMcpAppFile } from './fileApps';
 import { McpAppIcon } from './McpAppIcon';
 import { type AppSettings, appSettingsSchema, McpAppSettings } from './McpAppSettings';
 import { APP_BUTTON, APP_ICON_BUTTON, APP_INPUT } from './mcpAppStyles';
@@ -284,10 +284,18 @@ export function McpAppsControls({
         if (!handler) return false;
         const { id: handlerId, input, icons } = handler;
         if (request.focusExisting?.(handlerId)) return true;
-        const fileName = request.filePath.split(/[\\/]/).pop() || request.filePath;
         const epoch = lifecycle.fileEpoch;
         const sameHandler = () =>
           Boolean(findFileApp(fileActions.current.catalog, request.filePath, handlerId));
+        if (request.managed)
+          return openManagedFileApp(
+            { ...request, managed: request.managed },
+            handler,
+            sessionId,
+            await fileActions.current.prepare(),
+            () => available() && epoch === lifecycle.fileEpoch && sameHandler(),
+          );
+        const fileName = request.filePath.split(/[\\/]/).pop() || request.filePath;
         const load = async (signal?: AbortSignal) => {
           // Each explicit retry may use a reconnected binding; an in-flight
           // attempt must still reject a binding change during preparation.

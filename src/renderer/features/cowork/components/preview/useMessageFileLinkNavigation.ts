@@ -16,7 +16,7 @@ interface MessageFileLinkNavigationOptions {
   workspaceSessionId?: string;
   projectRoot: string;
   filePreviewRequestIdRef: MutableRefObject<number>;
-  openFilePreview: (options: OpenFilePreviewOptions) => Promise<void>;
+  openFilePreview: (options: OpenFilePreviewOptions) => Promise<boolean | void>;
   openLocalHtml: (options: OpenLocalHtmlOptions) => Promise<void>;
 }
 
@@ -116,7 +116,7 @@ export function useMessageFileLinkNavigation(
         navigationSuffix = result.navigationSuffix;
       }
       if (!isCurrent()) return;
-      let opening: Promise<void>;
+      let opening: Promise<boolean | void>;
       // The existing preview action starts its own request synchronously. Adopt
       // that counter before awaiting it, then reject any later navigation.
       invokingPreview = true;

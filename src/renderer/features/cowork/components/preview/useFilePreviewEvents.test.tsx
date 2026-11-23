@@ -7,7 +7,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { WORKSPACE_FILES_DISPLAY_TAB_ID } from '../display/tabs/displayTabIds';
 import { useSessionDisplayState } from '../display/tabs/useSessionDisplayState';
 import type { OpenMcpAppFile } from '../mcpApps/fileApps';
-import { openResourceFilePreview } from './filePreviewNavigation';
+import { openManagedFilePreview, openResourceFilePreview } from './filePreviewNavigation';
 import { IMAGE_PREVIEW_EVENT } from './imageFilePreview';
 import { useFilePreviewEvents } from './useFilePreviewEvents';
 
@@ -69,6 +69,23 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+test('managed originals fall back to the normal editable preview without claiming a workspace', async () => {
+  const filePath = 'E:/plugin-data/files/source/notes.md';
+  const plainPreview = { success: true, filePath, content: '# Edited outside', editToken: 'edit', version: 'v2' };
+  const readPreviewFile = vi.fn().mockResolvedValue(plainPreview);
+  const openAppFile = vi.fn().mockResolvedValue(false);
+  vi.stubGlobal('electron', { shell: { readPreviewFile, revokePreviewFileEdit: vi.fn().mockResolvedValue({}) } });
+  const owner = renderHook(() => usePreviewHarness(openAppFile));
+  const managed = { filePath, name: 'notes.md', cwd: 'E:/plugin-data/files/source', requestId: 'request', takeWorkspace: vi.fn() };
+  await act(async () => expect(await openManagedFilePreview({
+    filePath, managed, sessionId: 'session-a', isCurrent: () => true,
+  })).toBe(true));
+  expect(openAppFile).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ filePath, managed }));
+  expect(readPreviewFile).toHaveBeenCalledExactlyOnceWith(filePath, undefined);
+  expect(managed.takeWorkspace).not.toHaveBeenCalled();
+  expect(owner.result.current.filePreviews).toEqual([{ filePath, content: plainPreview.content, editToken: 'edit', version: 'v2' }]);
 });
 
 test('an archived text resource opens in the owning sidebar without a disk copy and is released with its tab', async () => {

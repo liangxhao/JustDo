@@ -116,10 +116,12 @@ test('the explicitly selected handler focuses its own tab for the same file path
   expect(result.current.focusFile(filePath, 'removed')).toBe(false);
 });
 
-test('file tabs keep the filename, focus the current view and replace invalidated views', () => {
+test('file tabs keep the filename, focus the current view and release invalidated views', async () => {
   let current = true;
+  let nextCurrent = true;
   const select = vi.fn(),
-    open = vi.fn();
+    open = vi.fn(),
+    dispose = vi.fn();
   const entry = {
     id: 'file-view:session:budget',
     sessionId: 'session',
@@ -127,9 +129,13 @@ test('file tabs keep the filename, focus the current view and replace invalidate
     label: '预算.xlsx',
     preview: { title: 'Univer', viewId: 'old' },
     context: { isCurrent: () => current } as McpAppViewContext,
+    dispose,
   } as McpAppWorkspaceEntry;
   const { result } = renderHook(() => useMcpAppTabs('session', select, open));
-  act(() => openWorkspaceApp(entry));
+  act(() => {
+    expect(openWorkspaceApp(entry)).toBe(true);
+    expect(openWorkspaceApp({ ...entry })).toBe(false);
+  });
   expect(result.current.tabs[0].label).toBe('预算.xlsx');
   expect(result.current.focusFile('E:/预算.xlsx')).toBe(true);
   current = false;
@@ -137,11 +143,25 @@ test('file tabs keep the filename, focus the current view and replace invalidate
   const next = {
     ...entry,
     preview: { ...entry.preview, viewId: 'new' },
-    context: { isCurrent: () => true } as McpAppViewContext,
+    context: { isCurrent: () => nextCurrent } as McpAppViewContext,
   };
-  act(() => openWorkspaceApp(next));
+  act(() => {
+    expect(openWorkspaceApp(next)).toBe(true);
+  });
   expect(result.current.tabs).toHaveLength(1);
   expect(result.current.panels(entry.id)[0].props.entry).toBe(next);
+  expect(dispose).toHaveBeenCalledTimes(1);
+  nextCurrent = false;
+  await act(async () => {
+    openWorkspaceAppFile({
+      id: next.id,
+      sessionId: next.sessionId,
+      filePath: 'E:/预算.xlsx',
+      label: '预算.xlsx',
+      load: async () => ({ preview: next.preview, context: { ...next.context, isCurrent: () => true } }),
+    });
+  });
+  expect(dispose).toHaveBeenCalledTimes(2);
 });
 
 test('a file open in another session is never focused', () => {

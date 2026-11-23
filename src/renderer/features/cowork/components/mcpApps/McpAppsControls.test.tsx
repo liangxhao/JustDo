@@ -10,6 +10,7 @@ import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-app-sess
 import { i18nService } from '@/services/i18n';
 
 import DisplayPanelLauncher from '../display/DisplayPanelLauncher';
+import * as fileApps from './fileApps';
 import { type McpAppComposerMenu, McpAppsControls } from './McpAppsControls';
 import {
   openWorkspaceApp,
@@ -671,6 +672,24 @@ test.each([false, true])(
           load: expect.any(Function),
         }),
       );
+      // A configured stdio file handler can omit pluginId in discovery.
+      const openManaged = vi.spyOn(fileApps, 'openManagedFileApp').mockResolvedValueOnce(true);
+      const cwd = 'E:/plugin-data/files/example';
+      const managed = { filePath: `${cwd}/预算.xlsx`, cwd, name: '预算.xlsx', requestId: 'managed', takeWorkspace: vi.fn() };
+      try {
+        await expect(onMenuChange.mock.lastCall![0].openFile({
+          filePath: managed.filePath,
+          managed,
+          isCurrent: () => navigationCurrent,
+        })).resolves.toBe(true);
+        expect(openManaged).toHaveBeenCalledWith(
+          expect.objectContaining({ managed }),
+          expect.objectContaining({ input: expect.objectContaining({ filePath: managed.filePath }) }),
+          'session', context, expect.any(Function),
+        );
+      } finally {
+        openManaged.mockRestore();
+      }
       // Once reserved, another file selection must not prevent this tab from
       // completing in the background, or move its result into another tab.
       navigationCurrent = false;
