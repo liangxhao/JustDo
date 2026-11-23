@@ -97,12 +97,14 @@ test('keeps plugin launch hooks when the first message is delegated to its curre
       _prompt: string,
       options: {
         dispatchChatSend?: unknown;
+        allowDefaultPlanModeOff?: true;
         beforeNativeSend?: () => Promise<void>;
         onNativeSendAbandoned?: () => Promise<void>;
         onAccepted: () => void;
       },
     ) => {
       expect(options.dispatchChatSend).toBeTypeOf('function');
+      expect(options.allowDefaultPlanModeOff).toBeUndefined();
       await options.beforeNativeSend!();
       await options.onNativeSendAbandoned!();
       options.onAccepted();
@@ -1120,8 +1122,18 @@ describe('homepage App adoption at first-message admission', () => {
       input.prompt,
       expect.objectContaining({ expectedInitialSessionId: f.native.sessionId }),
     );
+    expect(f.startSession.mock.calls[0]?.[2]).not.toHaveProperty('allowDefaultPlanModeOff');
     await f.workspaces.release(f.owner as never, input.appWorkspaceRequestId);
     expect(f.request.mock.calls.some(([method]) => method === 'sessions.delete')).toBe(false);
+  });
+
+  test('allows native default-off checks for an ordinary new desktop conversation', async () => {
+    const f = await setup();
+    await expect(f.start({ appWorkspaceRequestId: undefined })).resolves.toMatchObject({ success: true });
+    expect(f.startSession).toHaveBeenCalledExactlyOnceWith(
+      'standalone-chat', input.prompt, expect.objectContaining({ planMode: false, allowDefaultPlanModeOff: true }),
+    );
+    await f.workspaces.release(f.owner as never, input.appWorkspaceRequestId);
   });
 
   test('retains the adopted conversation when preparation fails before native send', async () => {

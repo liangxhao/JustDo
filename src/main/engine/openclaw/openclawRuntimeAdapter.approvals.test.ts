@@ -201,6 +201,7 @@ test('prepares the native OpenClaw session root and permission mode', async () =
     key: 'agent:main:justdo:session-1',
     cwd: workspace,
     permissionMode: 'workspace',
+    displayName: 'Test Session',
   });
   expect(ensureProjectGitRepository).toHaveBeenCalledOnce();
   expect(ensureProjectGitRepository).toHaveBeenCalledWith(workspace);
@@ -337,6 +338,7 @@ test('prepares a visible child conversation in its original native session witho
   await expect(adapter.prepareSession(session.id, { permissionMode: 'ask' })).resolves.toEqual({
     sessionKey: key,
     gatewaySessionId: 'native-child-id',
+    lifecycleRevision: entry.lifecycleRevision,
   });
   expect(request.mock.calls).toEqual([
     ['sessions.describe', { key }],

@@ -250,7 +250,7 @@ test.each(['first-event', 'retired-turn', 'retired-pending', 'changed-revision',
     const internals = adapter as unknown as {
       gatewayClient: GatewayClientLike;
       sessionIdBySessionKey: Map<string, string>;
-      preparedNativeSessionIds: Map<string, string>;
+      preparedNativeSessions: Map<string, { gatewaySessionId: string }>;
       rememberTerminalTurn(turn: SessionTurn): void;
       automaticErrorRetryLifecycle: AutomaticErrorRetryLifecycle;
       handleGatewayEvent(event: { event: string; payload: unknown }): void;
@@ -267,7 +267,7 @@ test.each(['first-event', 'retired-turn', 'retired-pending', 'changed-revision',
     });
     internals.gatewayClient = { request } as unknown as GatewayClientLike;
     internals.sessionIdBySessionKey.set(turn.sessionKey, turn.sessionId);
-    internals.preparedNativeSessionIds.set(turn.sessionId, 'native-1');
+    internals.preparedNativeSessions.set(turn.sessionId, { gatewaySessionId: 'native-1' });
     await adapter.armAutomaticErrorRetry(turn.sessionId, turn.runId);
     request.mockClear();
     if (scenario === 'retired-turn' || scenario === 'retired-pending') internals.rememberTerminalTurn(turn);
@@ -476,10 +476,10 @@ test('settles only the direct follow-up when a visible child still reports its s
   });
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const internals = adapter as unknown as {
-    preparedNativeSessionIds: Map<string, string>;
+    preparedNativeSessions: Map<string, { gatewaySessionId: string }>;
     handleGatewayEvent: (event: { event: string; payload: unknown }) => void;
   };
-  internals.preparedNativeSessionIds.set(session.id, sessionId);
+  internals.preparedNativeSessions.set(session.id, { gatewaySessionId: sessionId });
   const identity = {
     sessionKey, sessionId, spawnedBy: 'agent:main:justdo:parent', lifecycleGeneration: 'epoch',
   };

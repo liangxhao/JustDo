@@ -39,10 +39,12 @@ describe('GatewayConfigReloadMonitor', () => {
   it('waits for native snapshot publication even for dynamically-read config', async () => {
     const monitor = new GatewayConfigReloadMonitor();
     const generation = monitor.getGeneration();
+    expect(monitor.getSettledGeneration()).toBe(generation);
 
     monitor.observeLine(
       '[reload] config change detected; evaluating reload (meta.lastTouchedVersion)',
     );
+    expect(monitor.getSettledGeneration()).toBeUndefined();
 
     const result = monitor.waitForReloadAfter(generation);
     const settled = vi.fn();
@@ -51,6 +53,7 @@ describe('GatewayConfigReloadMonitor', () => {
     expect(settled).not.toHaveBeenCalled();
     monitor.observeLine('[reload] config change applied (dynamic reads: meta.lastTouchedVersion)');
     await expect(result).resolves.toBe(true);
+    expect(monitor.getSettledGeneration()).toBe(generation + 1);
   });
 
   it.each([
@@ -181,6 +184,21 @@ describe('GatewayConfigReloadMonitor', () => {
     monitor.observeLine('[reload] config reload failed: sandbox unavailable');
 
     await expect(result).resolves.toBe(false);
+  });
+
+  it('matches same-path reload completion to the current Gateway after a restart', async () => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const detected = '[reload] config change detected; evaluating reload (agents.entries)';
+    monitor.observeLine(detected);
+    monitor.observeLine('[gateway] ready');
+    const generation = monitor.getGeneration();
+    monitor.observeLine(detected);
+    const current = monitor.waitForReloadAfter(generation);
+
+    monitor.observeLine('[reload] config hot reload applied (agents.entries)');
+
+    expect(monitor.getSettledGeneration()).toBe(generation + 1);
+    await expect(current).resolves.toBe(true);
   });
 
   it('matches interleaved hot and restart completions to their own generations', async () => {

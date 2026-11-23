@@ -87,6 +87,7 @@ function setup(sendReceipt?: Record<string, unknown>) {
         entry: { sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full' },
       };
     }
+    if (method === 'sessions.pluginPatch') return { ok: true };
     if (method === 'chat.send')
       return sendReceipt ?? { runId: params?.idempotencyKey, status: 'started' };
     throw new Error(`Unexpected Main RPC: ${method}`);
@@ -281,6 +282,62 @@ describe('initial native storage preparation', () => {
 });
 
 describe('Main initial turn delegated to the presenting Renderer', () => {
+  const freshPlanModeEntry = {
+    sessionId: gatewaySessionId, sessionRoot: process.cwd(), permissionMode: 'full',
+    createdVia: 'operator', lifecycleRevision: 'creation-revision',
+  };
+
+  it.each([
+    { name: 'default off on a fresh row', planMode: false, patch: false },
+    { name: 'explicitly enabled', planMode: true, patch: true },
+    { name: 'an existing row', planMode: false, patch: true, existing: true },
+    { name: 'a stored review', planMode: false, patch: true, state: { enabled: true, awaitingReview: {} } },
+    { name: 'an incomplete creation receipt', planMode: false, patch: true, incomplete: true },
+  ])('writes Plan Mode only when needed before dispatch ($name)', async ({ planMode, patch, existing, state, incomplete }) => {
+    const s = setup();
+    const original = s.request.getMockImplementation()!;
+    const entry = {
+      ...freshPlanModeEntry, key: sessionKey,
+      lifecycleRevision: incomplete ? undefined : freshPlanModeEntry.lifecycleRevision,
+      ...(state ? { pluginExtensions: { 'plan-mode': { state } } } : {}),
+    };
+    s.request.mockImplementation(async (method, params) => {
+      if (method === 'sessions.describe') return { session: existing ? entry : null };
+      if (method === 'sessions.create') return { ok: true, key: sessionKey, sessionId: gatewaySessionId, entry };
+      return original(method, params);
+    });
+    const dispatch = vi.fn().mockResolvedValue({ runId: clientTurnId, status: 'started' });
+    const accepted = vi.fn();
+    const running = s.adapter.startSession(sessionId, 'Begin the task', {
+      clientTurnId, planMode, allowDefaultPlanModeOff: true, dispatchChatSend: dispatch, onAccepted: accepted,
+    });
+    await vi.waitFor(() => expect(accepted).toHaveBeenCalledOnce());
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual([
+      'sessions.describe', 'sessions.create', ...(patch ? ['sessions.pluginPatch'] : []),
+    ]);
+    if (patch) expect(s.request).toHaveBeenLastCalledWith('sessions.pluginPatch', expect.objectContaining({
+      key: sessionKey, value: expect.objectContaining({ enabled: planMode }),
+    }));
+    expect(s.request.mock.invocationCallOrder.at(-1)).toBeLessThan(dispatch.mock.invocationCallOrder[0]);
+    expect(dispatch).toHaveBeenCalledOnce();
+    await s.finish(running);
+  });
+
+  it('does not dispatch a first turn on a replacement connection using the previous default-off receipt', async () => {
+    const s = setup();
+    s.request.mockResolvedValueOnce({ session: null }).mockResolvedValueOnce({
+      ok: true, key: sessionKey, sessionId: gatewaySessionId, entry: freshPlanModeEntry,
+    });
+    const dispatch = vi.fn();
+    await expect(s.adapter.startSession(sessionId, 'Begin the task', {
+      clientTurnId, planMode: false, allowDefaultPlanModeOff: true, dispatchChatSend: dispatch,
+      beforeNativeSend: async () => { s.internals.gatewayClientGeneration += 1; },
+    })).rejects.toMatchObject({ requestSent: false });
+
+    expect(s.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('confirms the captured first-message model before delegating the only native send', async () => {
     const s = setup();
     useInitialSelection(s);

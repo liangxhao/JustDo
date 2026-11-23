@@ -599,26 +599,23 @@ export const registerCoworkSessionHandlers = ({
       }
       if (getSessionPlugins?.().isDeleting(input.sessionId))
         return { success: false, error: 'collaborationDeletePending' };
-      // Reconcile old launch cleanup when possible; only another explicit
-      // plugin launch requires it. Ordinary input retains native run admission.
-      if (getSessionPlugins) {
+      // Receipt reconciliation gates explicit plugin launches.
+      if (getSessionPlugins && input.pluginPrompt) {
         const launch = getSessionPlugins();
         const released = await launch.releaseIfSettled(input.sessionId).catch(() => false);
-        if (input.pluginPrompt) {
-          if (!released) throw new Error('appPluginLaunchUnconfirmed');
-          await launch.register({
-            sessionId: input.sessionId,
-            clientTurnId: input.clientTurnId,
-            prompt: input.pluginPrompt,
-            assertCurrent: () => {
-              if (
-                stoppingSessions.has(input.sessionId) ||
-                getSessionPlugins?.().isDeleting(input.sessionId)
-              )
-                throw new Error('collaborationDeletePending');
-            },
-          });
-        }
+        if (!released) throw new Error('appPluginLaunchUnconfirmed');
+        await launch.register({
+          sessionId: input.sessionId,
+          clientTurnId: input.clientTurnId,
+          prompt: input.pluginPrompt,
+          assertCurrent: () => {
+            if (
+              stoppingSessions.has(input.sessionId) ||
+              getSessionPlugins?.().isDeleting(input.sessionId)
+            )
+              throw new Error('collaborationDeletePending');
+          },
+        });
       }
       if (unknownAdmissions.has(input.sessionId)) {
         if (input.pluginPrompt)

@@ -186,7 +186,9 @@ describe('late native publication through actual Main admission layers', () => {
     expect(f.store.getSession(f.product.id)).not.toHaveProperty('nativeSessionKey');
     expect(f.store.getSession(f.product.id)).not.toHaveProperty('historyBinding');
     expect(f.store.getSessionRuns(f.product.id)).toHaveLength(1);
-    await expect(f.router.prepareSession(f.product.id)).resolves.toEqual({ sessionKey: f.key, gatewaySessionId: f.physicalId });
+    await expect(f.router.prepareSession(f.product.id)).resolves.toEqual({
+      sessionKey: f.key, gatewaySessionId: f.physicalId, lifecycleRevision: f.row.lifecycleRevision,
+    });
     expect(f.methods).toEqual(['sessions.describe', 'sessions.create']);
     const preparedMethods = f.methods.length;
     const preparedReads = f.reads();

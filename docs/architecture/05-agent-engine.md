@@ -317,7 +317,7 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 因此首次界面保存 `language: zh` 与语言初始化标记不重新同步 Gateway；真正切换中英文
 仍同步语音等依赖语言的配置。
 
-普通受管会话在唯一一次 `sessions.create` 之前，以认证连接定向调用
+普通受管会话准备时，以认证连接定向调用
 `sessions.describe({key, agentId})`，让原生 startup-read 路径等待该 Agent 的后台存储准备。
 同 Agent 的结构化 `agent-database-inspection-pending`，以及没有结构化故障码的原生
 `UNAVAILABLE`，只允许在这个只读探针内按 1/2/4/8 秒退避等待；完整请求和退避共用
@@ -325,7 +325,10 @@ Gateway 运行期间不执行同步编译缓存序列化，缓存由 launcher �
 
 明确 inspection-failed、其他结构化故障、目标不符及非原生拒绝立即返回。
 成功必须明确返回 `session:null`，或 key 与可选 Agent 字段匹配的公共行；不能将缺字段视为就绪。
-这不是宿主启动检查或写授权，后续 create、原生会话回执及发送准入仍保持原有保护。
+同一认证连接、Gateway 进程和已稳定配置下，普通受管会话可以复用先前原生写入确认的边界。
+本次读取需确认同一原生会话和 lifecycle revision、相同权限、沙盒继承状态及有效的规范化目录；待应用权限、
+未知写入或特殊绑定继续走原生准备。需要写入时仍只调用一次 `sessions.create`，核对原生回执后
+再进入发送准入。会话标题仍由创建和独立标题同步流程管理。
 停止和替换 pending start 立即取消该等待，连接代次或产品会话的 Agent、绑定、目录、权限
 变化也撤销准备；每次异步完成及创建前重新核对。
 
@@ -366,6 +369,8 @@ Gateway 首次拒绝的诊断日志仍可能出现。此恢复不重启运行时
 不绕过原生插件实例撤销检查。
 
 桌面主聊天的首轮原生发送支持由实际 Renderer 连接执行：Adapter 准备 session/root、权限、模型、运行 ID 与 Goal intent 后，向受信窗口交出同一份 `chat.send` 参数；Main 保留监听与运行状态。只有已挂载原生 viewer 的 HTTP(S) 聊天连接公告 `inline-widgets`，原生执行按 originating client capability 决定 `show_widget` 是否可用。
+
+普通桌面首轮在同一认证连接明确确认新建会话且没有持久计划状态时，直接使用原生默认关闭的计划模式，省一次 `sessions.pluginPatch`。显式开启、已有状态、收据不完整、采用 App 工作区和 Worktree 继续写入并确认。
 
 Main 的后台连接保持 headless，未增加 UI capability 或 native runtime patch。一次 ACK 必须对应原始幂等 ID，停止控制回执和 structured Goal receipt 分别校验；不确定发送只恢复状态，不重新启动任务。
 
@@ -442,7 +447,7 @@ sequenceDiagram
 
 Windows 沙盒准入先验证锁定的 MXC 二进制，再运行执行器 `--probe` 与真实无网络隔离进程；插件注册也探测实际选中的执行器。不能用实验性 IsolationSession 的 IsoEnvBroker 服务是否存在来判断 ProcessContainer 可用性。自检失败保持拒绝准入，设置页显示具体原因和诊断入口；系统盘准备仍是用户显式触发的可选操作。详见 [Windows 原生沙盒](17-windows-native-sandbox.md)。
 
-全局 exec/fs 使用 restricted fallback。会话权限走单独 coordinator，以原生 sessions.create 写入并核对 permissionMode/sessionRoot。失败时不发送，不能用全局 full 兜底“修好”单个会话。
+全局 exec/fs 使用 restricted fallback。会话权限走单独 coordinator，确认原生 permissionMode/sessionRoot，按需调用 sessions.create 写入并核对回执。失败时不发送，不能用全局 full 兜底“修好”单个会话。
 
 ## 5. 模型与凭据进入执行的方式
 

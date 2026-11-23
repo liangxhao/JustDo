@@ -51,6 +51,7 @@ type PreparedManagedSessionModelOptions = {
   isCurrentConnection: () => boolean;
   sessionKey: string;
   gatewaySessionId: string;
+  expectedLifecycleRevision?: string;
   agentId: string;
   getPersistedModelRef: () => string | null | undefined;
   persistModelRef: (modelRef: string) => void;
@@ -101,6 +102,7 @@ export async function reconcilePreparedManagedSessionModel({
   isCurrentConnection,
   sessionKey,
   gatewaySessionId,
+  expectedLifecycleRevision,
   agentId,
   getPersistedModelRef,
   persistModelRef,
@@ -121,8 +123,8 @@ export async function reconcilePreparedManagedSessionModel({
       'sessions.describe', { key: sessionKey },
     );
     assertCurrent();
-    if (described.session?.key !== sessionKey ||
-      described.session.sessionId !== gatewaySessionId) {
+    if (described.session?.key !== sessionKey || described.session.sessionId !== gatewaySessionId ||
+      (expectedLifecycleRevision !== undefined && described.session.lifecycleRevision !== expectedLifecycleRevision)) {
       throw new Error(t('sessionModelIdentityChanged'));
     }
     const selectedRef = readModelRef(described.session);
@@ -138,11 +140,15 @@ export async function reconcilePreparedManagedSessionModel({
       key?: unknown;
       entry?: Record<string, unknown>;
       resolved?: unknown;
-    }>('sessions.patch', { key: sessionKey, expectedSessionId: gatewaySessionId, model: target });
+    }>('sessions.patch', {
+      key: sessionKey, expectedSessionId: gatewaySessionId, model: target,
+      ...(expectedLifecycleRevision !== undefined ? { expectedLifecycleRevision } : {}),
+    });
     assertCurrent();
     const resolvedRef = readModelRef(patched.resolved);
     const entryRef = modelRefFromIdentity(patched.entry?.modelOverride, patched.entry?.providerOverride);
     if (patched.key !== sessionKey || patched.entry?.sessionId !== gatewaySessionId ||
+      (expectedLifecycleRevision !== undefined && patched.entry.lifecycleRevision !== expectedLifecycleRevision) ||
       !resolvedRef || !entryRef ||
       !matchesModelSelectionIdentity(target, resolvedRef) ||
       !matchesModelSelectionIdentity(target, entryRef)) {

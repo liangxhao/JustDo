@@ -185,6 +185,8 @@ export type CoworkStartOptions = {
   agentId?: string;
   clientTurnId?: string;
   planMode?: boolean;
+  /** Ordinary desktop first turns may use native default-off after confirmed creation. */
+  allowDefaultPlanModeOff?: true;
   /** Trusted local transport metadata supplied to the model but omitted from transcript history. */
   untrustedContext?: string;
   /** Main-process admission receipt; never supplied across IPC. */
@@ -208,6 +210,7 @@ export type CoworkPrepareSessionOptions = {
   signal?: AbortSignal;
   /** Explicit initial selection; ordinary continuation preparation preserves native choices. */
   modelRef?: string;
+  allowDefaultPlanModeOff?: true;
   expectedSessionId?: string;
   /** Main's branch creation handler only; ordinary sends must respect the persistent fence. */
   pendingBranchPreparation?: true;
@@ -220,6 +223,7 @@ export type CoworkPreparedSession = {
   sessionKey: string;
   gatewaySessionId: string;
   lifecycleRevision?: string;
+  defaultPlanModeOffGeneration?: number;
 };
 
 export interface CoworkGenerateTitleOptions {

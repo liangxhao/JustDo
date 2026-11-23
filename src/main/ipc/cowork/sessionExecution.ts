@@ -455,6 +455,8 @@ export const registerCoworkSessionExecutionHandlers = ({
           ...(selectedModelRef ? { initialModelRef: selectedModelRef } : {}),
           clientTurnId: options.clientTurnId,
           planMode: options.planMode === true,
+          ...(options.rendererDispatch && options.planMode !== true && !options.worktree &&
+            !options.appWorkspaceRequestId && !pluginSubmission ? { allowDefaultPlanModeOff: true } : {}),
           ...(appBinding ? { expectedInitialSessionId: appBinding.gatewaySessionId } : {}),
           ...(options.rendererDispatch
             ? {

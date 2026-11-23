@@ -41,14 +41,14 @@ function abortable<T>(operation: () => Promise<T>, signal: AbortSignal): Promise
   });
 }
 
-/** Wait on a native read before the single create attempt; this grants no write authority. */
+/** Read the exact target once its storage is ready; this grants no write authority. */
 export async function waitForSessionStorageReadiness(options: {
   client: Pick<GatewayClientLike, 'request'>;
   sessionKey: string;
   agentId: string;
   isCurrent: () => boolean;
   signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<Record<string, unknown> | null> {
   const controller = new AbortController();
   const signal = controller.signal;
   const deadlineAt = Date.now() + SESSION_STORAGE_PREPARATION_TIMEOUT_MS;
@@ -84,9 +84,11 @@ export async function waitForSessionStorageReadiness(options: {
         ), signal));
         assertCurrent();
         const session = record(result?.session);
-        if (result && Object.hasOwn(result, 'session') && (result.session === null ||
-          (session?.key === options.sessionKey &&
-          (!('agentId' in session) || session.agentId === options.agentId)))) return;
+        if (result && Object.hasOwn(result, 'session')) {
+          if (result.session === null) return null;
+          if (session?.key === options.sessionKey &&
+            (!('agentId' in session) || session.agentId === options.agentId)) return session;
+        }
         throw new Error(t('sessionStoragePreparationChanged'));
       } catch (error) {
         assertCurrent();

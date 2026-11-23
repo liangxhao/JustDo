@@ -1357,24 +1357,19 @@ function registerPluginFollowupFixture() {
   return { launch, beginSessionRun, handler, input };
 }
 
-test.each(['settled', 'unsettled', 'unavailable'])(
-  'admits an ordinary main follow-up while the previous plugin launch cleanup is %s',
-  async condition => {
-    const { launch, beginSessionRun, handler, input } = registerPluginFollowupFixture();
-    if (condition === 'settled') launch.releaseIfSettled.mockResolvedValue(true);
-    if (condition === 'unavailable')
-      launch.releaseIfSettled.mockRejectedValue(new Error('Gateway disconnected'));
+test('admits an ordinary main follow-up without waiting for old plugin cleanup', async () => {
+  const { launch, beginSessionRun, handler, input } = registerPluginFollowupFixture();
+  launch.releaseIfSettled.mockReturnValue(new Promise(() => {}));
 
-    await expect(handler(null, input)).resolves.toMatchObject({
-      success: true,
-      timing: { id: 'followup', clientTurnId: 'new-input' },
-    });
-    expect(beginSessionRun).toHaveBeenCalledWith(input);
-    expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
-    expect(launch.register).not.toHaveBeenCalled();
-    expect(launch.cancel).not.toHaveBeenCalled();
-  },
-);
+  await expect(handler(null, input)).resolves.toMatchObject({
+    success: true,
+    timing: { id: 'followup', clientTurnId: 'new-input' },
+  });
+  expect(beginSessionRun).toHaveBeenCalledWith(input);
+  expect(launch.releaseIfSettled).not.toHaveBeenCalled();
+  expect(launch.register).not.toHaveBeenCalled();
+  expect(launch.cancel).not.toHaveBeenCalled();
+});
 
 test.each(['task', 'group'] as const)(
   'keeps a new explicit %s plugin launch blocked until the previous launch is settled',
@@ -1398,7 +1393,7 @@ test('preserves the active user-run rejection independently of previous plugin l
     success: false,
     error: 'This session already has an active user run.',
   });
-  expect(launch.releaseIfSettled).toHaveBeenCalledWith('source');
+  expect(launch.releaseIfSettled).not.toHaveBeenCalled();
   expect(launch.cancel).not.toHaveBeenCalled();
 });
 

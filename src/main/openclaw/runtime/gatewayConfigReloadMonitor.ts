@@ -111,6 +111,7 @@ const parseCompletionPaths = (line: string): string[] => {
 export class GatewayConfigReloadMonitor {
   private generation = 0;
   private gatewayLifecycleGeneration = 0;
+  private configGenerationAtReady = 0;
   private lastGatewayReadyGeneration = 0;
   private lastGatewayExitGeneration = 0;
   private gatewayRestartPending = false;
@@ -118,6 +119,13 @@ export class GatewayConfigReloadMonitor {
   private readonly listeners = new Set<() => void>();
 
   getGeneration(): number {
+    return this.generation;
+  }
+
+  getSettledGeneration(): number | undefined {
+    if (this.gatewayRestartPending || this.records.some(record =>
+      record.generation > this.configGenerationAtReady && record.outcome === null,
+    )) return undefined;
     return this.generation;
   }
 
@@ -179,6 +187,7 @@ export class GatewayConfigReloadMonitor {
 
     if (GATEWAY_READY_LINE_PATTERN.test(line)) {
       this.gatewayRestartPending = false;
+      this.configGenerationAtReady = this.generation;
       this.lastGatewayReadyGeneration = ++this.gatewayLifecycleGeneration;
       for (const record of this.records) {
         if (!record.outcome && record.restartAccepted) {
@@ -312,7 +321,9 @@ export class GatewayConfigReloadMonitor {
     completionPaths: string[] = [],
     expectedKind?: Exclude<GatewayConfigReloadKind, 'dynamic'>,
   ): ReloadRecord | undefined {
-    const pending = this.records.filter(candidate => !candidate.outcome);
+    const pending = this.records.filter(candidate =>
+      candidate.generation > this.configGenerationAtReady && candidate.outcome === null,
+    );
     if (completionPaths.length > 0) {
       const exact = pending.find(candidate =>
         completionPaths.some(completionPath =>

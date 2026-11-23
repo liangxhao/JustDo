@@ -556,6 +556,12 @@ export class OpenClawEngineManager extends EventEmitter {
     return this.gatewayConfigReloadMonitor.getGeneration();
   }
 
+  getGatewaySessionPreparationRevision(): string | undefined {
+    const configGeneration = this.gatewayConfigReloadMonitor.getSettledGeneration();
+    if (configGeneration === undefined) return undefined;
+    return `${this.gatewayProcessGeneration}:${this.getGatewayLifecycleGeneration()}:${configGeneration}`;
+  }
+
   waitForGatewayConfigReload(generation: number, timeoutMs?: number): Promise<boolean> {
     return this.gatewayConfigReloadMonitor.waitForReloadAfter(generation, timeoutMs);
   }

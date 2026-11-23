@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs';
+
 import { expect, test, vi } from 'vitest';
 
 vi.mock('electron', () => ({
@@ -7,6 +9,7 @@ vi.mock('electron', () => ({
 vi.mock('../../cowork/coworkLogger', () => ({ coworkLog: vi.fn() }));
 vi.mock('../../core/filesystem/projectGit', () => ({ ensureProjectGitRepository: vi.fn() }));
 
+import { ensureProjectGitRepository } from '../../core/filesystem/projectGit';
 import { t } from '../../core/i18n';
 import { enqueueSessionModelOperation } from '../gateway/sessionModelOperations';
 import type { GatewayClientLike } from '../gateway/types';
@@ -20,12 +23,14 @@ function fixture(override?: string) {
   const applyHistorySessionDefaults = vi.fn(() => false);
   let created = false;
   let configGeneration = 1;
+  let reloadingConfig = false;
   const adapter = new OpenClawRuntimeAdapter({
     getSession: () => session, updateSession, applyHistorySessionDefaults,
   } as never, {
     getGatewayConfigReloadGeneration: () => configGeneration,
+    getGatewaySessionPreparationRevision: () => reloadingConfig ? undefined : `1:1:${configGeneration}`,
   } as never);
-  const request = vi.fn(async (method: string) => {
+  const request = vi.fn(async (method: string): Promise<unknown> => {
     if (method === 'sessions.create') {
       created = true;
       return {
@@ -53,6 +58,7 @@ function fixture(override?: string) {
   return {
     adapter, internals, session, request, updateSession, applyHistorySessionDefaults,
     reloadConfig: () => { configGeneration += 1; },
+    setReloadingConfig: (reloading: boolean) => { reloadingConfig = reloading; },
   };
 }
 
@@ -192,6 +198,142 @@ test.each([undefined, '', '   '])('prepares a fresh managed session with no extr
     sessionKey: 'agent:main:justdo:session-1', gatewaySessionId: 'native-1',
   });
   expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+  expect(h.updateSession).not.toHaveBeenCalled();
+});
+
+async function existingManagedSession(sandboxMode?: 'off') {
+  const h = fixture();
+  const cwd = realpathSync(process.cwd());
+  const entry = {
+    key, sessionId: 'native-1', lifecycleRevision: 'revision-1',
+    createdVia: 'operator', sessionRoot: cwd, spawnedCwd: cwd, permissionMode: 'full',
+    permissionModePending: false, archived: false, modelOverrideSource: null,
+    sandboxMode,
+  };
+  h.request.mockResolvedValueOnce({ session: null });
+  h.request.mockResolvedValueOnce({ key, sessionId: entry.sessionId, entry });
+  const prepared = await h.adapter.prepareSession('session-1');
+  h.request.mockClear();
+  return { ...h, entry, prepared };
+}
+
+test.each([undefined, 'off'] as const)('prepares an unchanged managed continuation with a single native read (sandboxMode=%s)', async sandboxMode => {
+  const h = await existingManagedSession(sandboxMode);
+  h.request.mockResolvedValueOnce({ session: h.entry });
+
+  await expect(h.adapter.prepareSession('session-1')).resolves.toEqual(h.prepared);
+
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe']);
+});
+
+test.each([undefined, 'off'] as const)('revalidates the native workspace after sandbox inheritance changes (sandboxMode=%s)', async sandboxMode => {
+  const h = await existingManagedSession(sandboxMode);
+  h.request.mockResolvedValueOnce({ session: {
+    ...h.entry, sandboxMode: sandboxMode === 'off' ? undefined : 'off',
+  } });
+
+  await h.adapter.prepareSession('session-1');
+
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+});
+
+test('reconciles a managed continuation model override without rewriting its workspace', async () => {
+  const h = await existingManagedSession();
+  const session = { ...h.entry, modelOverrideSource: 'user', modelProvider: 'p', model: 'chosen' };
+  h.request.mockResolvedValueOnce({ session });
+  h.request.mockImplementationOnce(() => Promise.resolve({
+    config: { models: { providers: { p: { models: [{ id: 'chosen' }] } } } },
+  }));
+  h.request.mockResolvedValueOnce({ session });
+
+  await expect(h.adapter.prepareSession('session-1')).resolves.toEqual(h.prepared);
+
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.describe', 'config.get', 'sessions.describe',
+  ]);
+  expect(h.updateSession).toHaveBeenCalledExactlyOnceWith('session-1', { modelRef: 'p/chosen' });
+});
+
+test('rejects a lifecycle change during model reconciliation for a reused session', async () => {
+  const h = await existingManagedSession();
+  const gitPreparations = vi.mocked(ensureProjectGitRepository).mock.calls.length;
+  const session = { ...h.entry, modelOverrideSource: 'user', modelProvider: 'p', model: 'removed' };
+  h.request.mockResolvedValueOnce({ session });
+  h.request.mockResolvedValueOnce({ config: {
+    models: { providers: { p: { models: [{ id: 'old' }] } } },
+  } });
+  h.request.mockResolvedValueOnce({ session: { ...session, lifecycleRevision: 'revision-2' } });
+
+  await expect(h.adapter.prepareSession('session-1')).rejects.toThrow(t('sessionModelIdentityChanged'));
+
+  expect(h.request).not.toHaveBeenCalledWith('sessions.patch', expect.anything());
+  expect(h.updateSession).not.toHaveBeenCalled();
+  expect(ensureProjectGitRepository).toHaveBeenCalledTimes(gitPreparations);
+});
+
+test.each([
+  { sessionId: 'replacement' },
+  { lifecycleRevision: 'revision-2' },
+  { sessionRoot: 'different-root' },
+  { spawnedCwd: 'different-cwd' },
+  { permissionMode: 'guarded' },
+  { permissionModePending: true },
+  { modelOverrideSource: undefined },
+])('keeps native preparation when a described session no longer matches: %j', async change => {
+  const h = await existingManagedSession();
+  h.request.mockResolvedValueOnce({ session: { ...h.entry, ...change } });
+
+  await h.adapter.prepareSession('session-1');
+
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+});
+
+test('requires a current native write confirmation following configuration reload', async () => {
+  const h = await existingManagedSession();
+  h.reloadConfig();
+  h.request.mockResolvedValueOnce({ session: h.entry });
+
+  await h.adapter.prepareSession('session-1');
+
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+});
+
+test('falls back to native preparation if configuration changes during project Git preparation', async () => {
+  const h = await existingManagedSession();
+  h.request.mockResolvedValueOnce({ session: h.entry });
+  vi.mocked(ensureProjectGitRepository).mockImplementationOnce(async () => h.reloadConfig());
+
+  await h.adapter.prepareSession('session-1');
+
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual(['sessions.describe', 'sessions.create']);
+});
+
+test('does not reuse a write confirmed while Gateway configuration was still applying', async () => {
+  const h = await existingManagedSession();
+  h.reloadConfig();
+  h.setReloadingConfig(true);
+  h.request.mockResolvedValueOnce({ session: h.entry });
+  h.request.mockResolvedValueOnce({ key, sessionId: h.entry.sessionId, entry: h.entry });
+  await h.adapter.prepareSession('session-1');
+
+  h.setReloadingConfig(false);
+  h.request.mockResolvedValueOnce({ session: h.entry });
+  await h.adapter.prepareSession('session-1');
+
+  expect(h.request.mock.calls.map(([method]) => method)).toEqual([
+    'sessions.describe', 'sessions.create', 'sessions.describe', 'sessions.create',
+  ]);
+});
+
+test('rejects an empty create response even when an existing row matches the requested model', async () => {
+  const h = await existingManagedSession();
+  h.request.mockResolvedValueOnce({ session: {
+    ...h.entry, modelOverrideSource: 'user', modelProvider: 'p', model: 'chosen',
+  } });
+  h.request.mockResolvedValueOnce(null);
+
+  await expect(h.adapter.prepareSession('session-1', { modelRef: 'p/chosen' })).rejects.toThrow('returned no sessionId');
+
   expect(h.updateSession).not.toHaveBeenCalled();
 });
 

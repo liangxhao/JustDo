@@ -7,6 +7,7 @@ import path from 'path';
 import { normalizeSessionDisplayName } from '../../../../plugins/extensions/runtime-services/contracts/session-display-name';
 import { createPropertyContext } from '../../../shared/app/propertyContext';
 import type { DiagnosticGatewayInfo } from '../../../shared/cowork/diagnostics/sessionDiagnostics';
+import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
 import { ensureProjectGitRepository } from '../../core/filesystem/projectGit';
 import { t } from '../../core/i18n';
 import {
@@ -308,7 +309,15 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly automaticErrorRetryLifecycle: AutomaticErrorRetryLifecycle;
   private readonly externalRetryCancellations = new Map<string, () => void>();
   private readonly executionSuccessorClaims = new ExecutionSuccessorClaims();
-  private readonly preparedNativeSessionIds = new Map<string, string>();
+  private readonly preparedNativeSessions = new Map<string, CoworkPreparedSession & {
+    managedWorkspace?: {
+      root: string;
+      permissionMode: string;
+      sandboxMode: 'off' | null;
+      gatewayRevision: string;
+      hasModelOverride: boolean;
+    };
+  }>();
 
   get agentTimeoutSeconds(): number {
     return this.store.getAgentRuntimeSettings().agent.runTimeoutSeconds;
@@ -535,6 +544,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       onNativeAccepted: options.onNativeAccepted,
       onNativeSendAbandoned: options.onNativeSendAbandoned,
       planMode: options.planMode,
+      allowDefaultPlanModeOff: options.allowDefaultPlanModeOff,
       untrustedContext: options.untrustedContext,
       onAccepted: options.onAccepted,
       dispatchChatSend: options.dispatchChatSend,
@@ -551,7 +561,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
       const agentId = options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID;
       const sessionKey = session.nativeSessionKey || this.toSessionKey(sessionId, agentId);
-      const prepare = () => this.prepareSessionKey(sessionId, sessionKey, options);
+      const prepare = () => this.prepareSessionWorkspace(sessionId, sessionKey, options);
       // Include model-queue waits: their captured workspace can already be stale.
       return options.modelRef ? enqueueSessionModelOperation(sessionKey, prepare) : prepare();
     });
@@ -708,11 +718,12 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (options.modelRef && !isInitialModelContextCurrent())
         throw new Error(t('sessionModelPreparationChanged'));
       this.rememberSessionKey(sessionId, sessionKey);
-      this.preparedNativeSessionIds.set(sessionId, options.expectedSessionId);
-      return {
+      const prepared = {
         sessionKey, gatewaySessionId: options.expectedSessionId,
         ...(typeof entry.lifecycleRevision === 'string' ? { lifecycleRevision: entry.lifecycleRevision } : {}),
       };
+      this.preparedNativeSessions.set(sessionId, prepared);
+      return prepared;
     }
     if (session.nativeSessionKey && !session.historyBinding) {
       if (sessionKey !== session.nativeSessionKey) {
@@ -780,15 +791,18 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (options.modelRef) await pinInitialModel(entry.sessionId);
       assertPreparationCurrent();
       this.rememberSessionKey(sessionId, sessionKey);
-      this.preparedNativeSessionIds.set(sessionId, entry.sessionId);
-      return {
+      const prepared = {
         sessionKey, gatewaySessionId: entry.sessionId,
         ...(typeof lifecycleRevision === 'string' ? { lifecycleRevision } : {}),
       };
+      this.preparedNativeSessions.set(sessionId, prepared);
+      return prepared;
     }
     const client = this.requireGatewayClient();
     const generation = this.gatewayClientGeneration;
-    await waitForSessionStorageReadiness({
+    const previous = this.preparedNativeSessions.get(sessionId);
+    const gatewayRevision = this.engineManager.getGatewaySessionPreparationRevision?.();
+    const describedEntry = await waitForSessionStorageReadiness({
       client,
       sessionKey,
       agentId: options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID,
@@ -813,15 +827,71 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         );
     }
     assertPreparationCurrent();
-    const preparationProcessGeneration = this.engineManager.getGatewayProcessGeneration?.();
-    const displayName =
+    const managedRoot =
       !session.external && !session.historyBinding && !session.nativeParentSessionId &&
-      sessionKey === buildManagedSessionKey(session.id, session.agentId)
-        ? normalizeSessionDisplayName(this.store.getSession(session.id)?.title)
-        : undefined;
+      sessionKey === buildManagedSessionKey(session.id, session.agentId);
+    const reconcileModel = (
+      gatewaySessionId: string, expectedLifecycleRevision?: string, isWorkspaceCurrent?: () => boolean,
+    ) => {
+      const configGeneration = this.engineManager.getGatewayConfigReloadGeneration();
+      return reconcilePreparedManagedSessionModel({
+        client,
+        isCurrentConnection: () => isInitialModelContextCurrent() &&
+          this.engineManager.getGatewayConfigReloadGeneration() === configGeneration &&
+          (isWorkspaceCurrent?.() ?? true),
+        sessionKey,
+        gatewaySessionId,
+        expectedLifecycleRevision,
+        agentId: options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID,
+        getPersistedModelRef: () => this.store.getSession(sessionId)?.modelRef,
+        persistModelRef: modelRef => this.store.updateSession(sessionId, { modelRef }),
+      });
+    };
+    const isWorkspacePreparationCurrent = () =>
+      this.preparedNativeSessions.get(sessionId) === previous &&
+      this.sessionPreparationCounts.get(sessionId) === 1 &&
+      !this.hasUnconfirmedSessionPreparation(sessionId);
+    const canReuse = () => isWorkspacePreparationCurrent() &&
+      this.engineManager.getGatewaySessionPreparationRevision?.() === gatewayRevision;
+    let projectGitPrepared = false;
+    if (managedRoot && !options.modelRef && !session.branchCreationPending &&
+      gatewayRevision !== undefined && previous?.managedWorkspace?.gatewayRevision === gatewayRevision &&
+      previous.managedWorkspace.permissionMode === nativePermissionMode &&
+      previous.sessionKey === sessionKey && previous.lifecycleRevision &&
+      describedEntry?.sessionId === previous.gatewaySessionId &&
+      describedEntry.lifecycleRevision === previous.lifecycleRevision &&
+      describedEntry.sandboxMode === (previous.managedWorkspace.sandboxMode ?? undefined) &&
+      !(previous.managedWorkspace.hasModelOverride && describedEntry.modelOverrideSource === null) &&
+      canReuse() && this.hasPreparedManagedWorkspace(
+        describedEntry, nativePermissionMode, workspaceRoot, previous.managedWorkspace.root,
+      )) {
+      const hasModelOverride = describedEntry.modelOverrideSource === 'user' || describedEntry.modelOverrideSource === 'auto';
+      if (hasModelOverride) {
+        await reconcileModel(previous.gatewaySessionId, previous.lifecycleRevision, canReuse);
+        assertPreparationCurrent();
+      }
+      await ensureProjectGitRepository(workspaceRoot);
+      projectGitPrepared = true;
+      assertPreparationCurrent();
+      if (canReuse()) {
+        this.rememberSessionKey(sessionId, sessionKey);
+        return {
+          sessionKey, gatewaySessionId: previous.gatewaySessionId,
+          lifecycleRevision: previous.lifecycleRevision,
+        };
+      }
+      if (hasModelOverride || !isWorkspacePreparationCurrent())
+        throw new Error(t('sessionModelPreparationChanged'));
+    }
+    const preparationProcessGeneration = this.engineManager.getGatewayProcessGeneration?.();
+    const displayName = managedRoot
+      ? normalizeSessionDisplayName(this.store.getSession(session.id)?.title)
+      : undefined;
     const result = await client.request<{
+      ok?: unknown;
       key?: unknown;
       sessionId?: unknown;
+      runError?: unknown;
       resolved?: unknown;
       entry?: {
         sessionId?: unknown;
@@ -829,6 +899,11 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         sessionRoot?: unknown;
         modelOverride?: unknown;
         lifecycleRevision?: unknown;
+        createdVia?: unknown;
+        sandbox?: unknown;
+        sandboxMode?: unknown;
+        planMode?: unknown;
+        pluginExtensions?: unknown;
       };
     }>('sessions.create', {
       key: sessionKey,
@@ -845,13 +920,13 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       throw error;
     });
     assertPreparationCurrent();
-    const gatewaySessionId =
-      typeof result.sessionId === 'string'
-        ? result.sessionId.trim()
-        : typeof result.entry?.sessionId === 'string'
-          ? result.entry.sessionId.trim()
-          : '';
-    if (!gatewaySessionId) {
+    const entry = result?.entry;
+    const gatewaySessionId = typeof result?.sessionId === 'string'
+      ? result.sessionId.trim()
+      : typeof entry?.sessionId === 'string'
+        ? entry.sessionId.trim()
+        : '';
+    if (!result || !gatewaySessionId) {
       throw new Error('OpenClaw sessions.create returned no sessionId.');
     }
     if (
@@ -861,7 +936,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         this.gatewayClientGeneration !== generation)
     )
       throw new Error('The imported conversation changed during preparation.');
-    this.assertPreparedSessionEntry(result.entry, nativePermissionMode, workspaceRoot);
+    this.assertPreparedSessionEntry(entry, nativePermissionMode, workspaceRoot);
     if (options.modelRef) {
       if (!isInitialModelContextCurrent()) throw new Error(t('sessionModelPreparationChanged'));
       this.store.updateSession(sessionId, {
@@ -872,40 +947,69 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           options.modelRef,
         ),
       });
-    } else if (
-      typeof result.entry?.modelOverride === 'string' &&
-      result.entry.modelOverride.trim()
-    ) {
-      if (result.key !== sessionKey || result.entry.sessionId !== gatewaySessionId) {
+    } else if (typeof entry?.modelOverride === 'string' && entry.modelOverride.trim()) {
+      if (result.key !== sessionKey || entry.sessionId !== gatewaySessionId) {
         throw new Error(t('sessionModelIdentityChanged'));
       }
-      const configGeneration = this.engineManager.getGatewayConfigReloadGeneration();
-      await reconcilePreparedManagedSessionModel({
-        client,
-        isCurrentConnection: () =>
-          isInitialModelContextCurrent() &&
-          this.gatewayClient === client &&
-          this.gatewayClientGeneration === generation &&
-          this.engineManager.getGatewayConfigReloadGeneration() === configGeneration,
-        sessionKey,
-        gatewaySessionId,
-        agentId: options.agentId || session.agentId || DEFAULT_MANAGED_AGENT_ID,
-        getPersistedModelRef: () => this.store.getSession(sessionId)?.modelRef,
-        persistModelRef: modelRef => this.store.updateSession(sessionId, { modelRef }),
-      });
+      await reconcileModel(gatewaySessionId);
     }
     assertPreparationCurrent();
-    await ensureProjectGitRepository(workspaceRoot);
+    if (!projectGitPrepared) await ensureProjectGitRepository(workspaceRoot);
     assertPreparationCurrent();
     if (options.modelRef && !isInitialModelContextCurrent())
       throw new Error(t('sessionModelPreparationChanged'));
 
     this.rememberSessionKey(sessionId, sessionKey);
-    this.preparedNativeSessionIds.set(sessionId, gatewaySessionId);
-    return {
+    const prepared = {
       sessionKey, gatewaySessionId,
-      ...(typeof result.entry?.lifecycleRevision === 'string' ? { lifecycleRevision: result.entry.lifecycleRevision } : {}),
+      ...(typeof entry?.lifecycleRevision === 'string' ? { lifecycleRevision: entry.lifecycleRevision } : {}),
     };
+    // Retain the directory validated by an ordinary operator create. Delegated
+    // sandboxed sessions can require additional native containment checks.
+    const managedWorkspace = managedRoot && gatewayRevision !== undefined &&
+      this.engineManager.getGatewaySessionPreparationRevision?.() === gatewayRevision &&
+      result.key === sessionKey && entry?.sessionId === gatewaySessionId &&
+      entry.createdVia === 'operator' && entry.sandbox == null && typeof entry.sessionRoot === 'string' &&
+      (entry.sandboxMode === undefined || entry.sandboxMode === 'off')
+      ? {
+          root: entry.sessionRoot,
+          permissionMode: nativePermissionMode,
+          sandboxMode: entry.sandboxMode === 'off' ? 'off' as const : null,
+          gatewayRevision,
+          hasModelOverride: typeof entry.modelOverride === 'string' && Boolean(entry.modelOverride.trim()),
+        }
+      : undefined;
+    this.preparedNativeSessions.set(sessionId, { ...prepared, managedWorkspace });
+    // An absent Plan Mode namespace is disabled. An existing row or stored state
+    // still needs the explicit write, which also clears pending review state.
+    if (options.allowDefaultPlanModeOff && managedRoot && describedEntry === null &&
+      result.ok === true && result.runError === undefined &&
+      result.key === sessionKey && result.sessionId === gatewaySessionId &&
+      entry?.sessionId === gatewaySessionId && prepared.lifecycleRevision &&
+      entry.createdVia === 'operator' && entry.planMode === undefined &&
+      (entry.pluginExtensions === undefined || (isRecord(entry.pluginExtensions) &&
+        !Object.hasOwn(entry.pluginExtensions, OpenClawExtensionId.PLAN_MODE)))) {
+      return { ...prepared, defaultPlanModeOffGeneration: generation };
+    }
+    return prepared;
+  }
+
+  private hasPreparedManagedWorkspace(
+    entry: Record<string, unknown>, permissionMode: string, workspaceRoot: string, preparedRoot: string,
+  ): boolean {
+    if (entry.permissionMode !== permissionMode || entry.permissionModePending !== false ||
+      entry.sessionRoot !== preparedRoot || entry.spawnedCwd !== preparedRoot ||
+      entry.archived !== false || entry.worktree != null || entry.repositoryWorkspaceId != null ||
+      entry.execNode != null || entry.execCwd != null || entry.spawnedWorkspaceDir != null ||
+      (entry.modelOverrideSource !== null && entry.modelOverrideSource !== 'user' &&
+        entry.modelOverrideSource !== 'auto')) return false;
+    // A create with cwd validates and sets both native paths, even on a reused key.
+    try {
+      const cwd = fs.realpathSync(workspaceRoot);
+      return cwd === preparedRoot && fs.statSync(cwd).isDirectory();
+    } catch {
+      return false;
+    }
   }
 
   private assertPreparedSessionEntry(
@@ -1353,6 +1457,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       onNativeAccepted?: CoworkStartOptions['onNativeAccepted'];
       onNativeSendAbandoned?: () => Promise<void>;
       planMode?: boolean;
+      allowDefaultPlanModeOff?: true;
       untrustedContext?: string;
       hiddenUserMessage?: boolean;
       onAccepted?: CoworkStartOptions['onAccepted'];
@@ -1438,6 +1543,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       const preparedSession = await this.prepareSession(sessionId, {
         signal: pendingStart.preparationAbortController.signal,
         ...(options.initialModelRef ? { modelRef: options.initialModelRef } : {}),
+        ...(options.planMode === false && options.allowDefaultPlanModeOff ? { allowDefaultPlanModeOff: true } : {}),
         expectedSessionId: options.expectedInitialSessionId,
         permissionMode: session.permissionMode,
         workspaceRoot: options.workspaceRoot,
@@ -1446,7 +1552,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       if (isStartCancelled()) return;
       const sessionKey = preparedSession.sessionKey;
 
-      if (options.planMode !== undefined) {
+      const useDefaultPlanModeOff = options.planMode === false &&
+        preparedSession.defaultPlanModeOffGeneration === this.gatewayClientGeneration && this.gatewayClient !== null;
+      if (options.planMode !== undefined && !useDefaultPlanModeOff) {
         await this.patchPlanModeState(this.requireGatewayClient(), sessionKey, agentId, {
           enabled: options.planMode,
           updatedAt: Date.now(),
@@ -1561,6 +1669,9 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
           this.gatewayClientGeneration === replayClientGeneration &&
           replaySourceIdentity() === replayCapturedIdentity;
         const send = async () => {
+          if (useDefaultPlanModeOff && !isNativeSendCurrent()) {
+            throw Object.assign(new Error('The prepared native owner changed.'), { requestSent: false });
+          }
           if (options.initialModelRef) {
             const assertCurrent = () => {
               if (
@@ -2605,7 +2716,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       !isNativeDashboardSessionKey(event.sessionKey, session.agentId) ||
       session.nativeSessionKey !== event.sessionKey ||
       !event.sessionId ||
-      this.preparedNativeSessionIds.get(sessionId) !== event.sessionId
+      this.preparedNativeSessions.get(sessionId)?.gatewaySessionId !== event.sessionId
     ) return false;
     // Dashboard events can retain the earlier spawn's display lineage. The
     // exact product receipt identifies a directly submitted turn in this child.
@@ -2998,7 +3109,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private stopGatewayClient(): void {
     this.automaticErrorRetryHost.clear();
     this.automaticErrorRetryLifecycle.clearWaitTerminals();
-    this.preparedNativeSessionIds.clear();
+    this.preparedNativeSessions.clear();
     return runtimeGatewayConnection.stopGatewayClient.call(this.runtimeGatewayConnectionContext);
   }
 
@@ -3048,7 +3159,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private cleanupGatewayClientState(): void {
     this.automaticErrorRetryHost.clear();
     this.automaticErrorRetryLifecycle.clear();
-    this.preparedNativeSessionIds.clear();
+    this.preparedNativeSessions.clear();
     return runtimeGatewayConnection.cleanupGatewayClientState.call(
       this.runtimeGatewayConnectionContext,
     );
@@ -3110,7 +3221,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   ): void {
     this.cancelAutomaticErrorRetry(sessionId);
     this.automaticErrorRetryHost.forgetPresentation(sessionId);
-    this.preparedNativeSessionIds.delete(sessionId);
+    this.preparedNativeSessions.delete(sessionId);
     this.emit('sessionDeleted', sessionId);
     const removedKeys: string[] = [
       ...new Set(persistedSessionKeys.map(key => key.trim()).filter(Boolean)),
@@ -3201,7 +3312,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
 
   armAutomaticErrorRetry(sessionId: string, clientTurnId: string): Promise<void> {
     return this.automaticErrorRetryHost.arm(sessionId, clientTurnId,
-      this.preparedNativeSessionIds.get(sessionId));
+      this.preparedNativeSessions.get(sessionId)?.gatewaySessionId);
   }
 
   cancelAutomaticErrorRetry(sessionId: string): void {

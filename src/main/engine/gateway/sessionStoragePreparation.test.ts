@@ -46,7 +46,7 @@ describe('native session storage preparation before creation', () => {
   ])('accepts an exact native read without another delay: %j', async result => {
     const h = harness();
     h.request.mockResolvedValue(result);
-    await expect(h.wait()).resolves.toBeUndefined();
+    await expect(h.wait()).resolves.toEqual(result.session);
     expect(h.request).toHaveBeenCalledExactlyOnceWith('sessions.describe', { key: sessionKey, agentId }, {
       signal: expect.any(AbortSignal), timeoutMs: SESSION_STORAGE_PREPARATION_TIMEOUT_MS,
     });
@@ -63,7 +63,7 @@ describe('native session storage preparation before creation', () => {
     });
     const result = h.wait();
     await vi.advanceTimersByTimeAsync(23_000);
-    await expect(result).resolves.toBeUndefined();
+    await expect(result).resolves.toBeNull();
     expect(times).toEqual([0, 1_000, 3_000, 7_000, 15_000, 23_000]);
     expect(h.request.mock.calls.every(([method]) => method === 'sessions.describe')).toBe(true);
   });
@@ -77,7 +77,7 @@ describe('native session storage preparation before creation', () => {
     h.request.mockRejectedValueOnce(error);
     const result = h.wait();
     await vi.advanceTimersByTimeAsync(1_000);
-    await expect(result).resolves.toBeUndefined();
+    await expect(result).resolves.toBeNull();
     expect(h.request).toHaveBeenCalledTimes(2);
   });
 
