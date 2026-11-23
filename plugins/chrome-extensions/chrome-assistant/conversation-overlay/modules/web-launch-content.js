@@ -6,6 +6,7 @@ import {
   normalizeInput,
   randomIdentifier,
   publicErrorCode,
+  queueWaitReason,
   validIdentifier,
 } from './web-launch-security.js';
 
@@ -133,11 +134,12 @@ export function installWebLaunchContent({
       return;
     }
     if (response.queueStatus && !request.launchId) {
-      const queueReason = ['composer', 'panel'].includes(response.queueReason) ? response.queueReason : undefined;
+      const queueReason = queueWaitReason(response.queueReason);
+      const hadAction = request.actionCode !== undefined;
       request.actionCode = undefined;
       if (
         request.queueStatus === 'cancelled' ||
-        (request.queueStatus === response.queueStatus && request.queueReason === queueReason)
+        (!hadAction && request.queueStatus === response.queueStatus && request.queueReason === queueReason)
       )
         return;
       request.queueStatus = response.queueStatus;
@@ -329,7 +331,7 @@ export function installWebLaunchContent({
               ok: true,
               receipt: response.receipt,
               ...(response.queueStatus ? { queueStatus: response.queueStatus } : {}),
-              ...(['composer', 'panel'].includes(response.queueReason) ? { queueReason: response.queueReason } : {}),
+              ...(queueWaitReason(response.queueReason) ? { queueReason: response.queueReason } : {}),
             }
           : {
               ok: false,

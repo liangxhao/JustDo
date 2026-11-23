@@ -15,6 +15,7 @@ export const WebLaunchPanelMessage = {
 };
 const SENT = new Set(['submitting', 'submitted']);
 const CLOSED = new Set(['cancelled', 'expired', 'rejected']);
+const SEND_CONFIRMATION = new Set(['CONFIRMATION_REQUIRED', 'RESULT_CONSENT_REQUIRED']);
 const noop = () => {};
 
 /** Owns only the external composer presentation; Main remains the execution owner. */
@@ -86,6 +87,7 @@ export function createWebLaunchPanel({
   let visibleLaunch = '';
   let refreshedReceipt = '';
   let deferredDraft = null;
+  let submissionNotice = '';
   const make = (tag, key, parent = root) => {
     const node = document.createElement(tag);
     if (key) node.textContent = t(key);
@@ -205,8 +207,10 @@ export function createWebLaunchPanel({
     const launch = show ? current.launchId : '';
     if (launch !== visibleLaunch) context.close();
     visibleLaunch = launch;
-    waiting.hidden = !deferredDraft;
-    root.hidden = !(showContext || canRecover || canAbandon || deferredDraft);
+    const notice = editable ? submissionNotice : '';
+    waiting.textContent = notice || t('webLaunchWaitingComposer');
+    waiting.hidden = !(deferredDraft || notice);
+    root.hidden = !(showContext || canRecover || canAbandon || deferredDraft || notice);
     context.setAvailable(showContext);
     actions.hidden = !(canRecover || canAbandon);
     ordinaryButton.hidden = !canRecover;
@@ -318,9 +322,9 @@ export function createWebLaunchPanel({
         current.shareAllowed =
           current.result === 'final' && !response.internal.requiresResultConsent;
       if (next.request.status === 'awaiting-confirmation') automaticDisarmed = true;
-      const intentionalCancel =
-        next.error?.code === 'CANCELLED' &&
-        (cancellation?.launchId === next.launchId || stopPending === next.launchId);
+      const intentionalCancel = next.error?.code === 'EXECUTION_INTERRUPTED' ||
+        (next.error?.code === 'CANCELLED' &&
+          (cancellation?.launchId === next.launchId || stopPending === next.launchId));
       if (next.error?.code && !intentionalCancel) fail(next.error.code);
       if (response.internal?.composeRevision !== undefined)
         current.composeRevision = response.internal.composeRevision;
@@ -473,6 +477,7 @@ export function createWebLaunchPanel({
     revisionError = false;
     automaticDisarmed = restored;
     modelChanged = false;
+    submissionNotice = '';
     onClearError();
     installing = true;
     context.value = envelope.contextText || '';
@@ -527,7 +532,7 @@ export function createWebLaunchPanel({
         } catch (failure) {
           if (current?.launchId !== launchId || disposed || actionPending) return;
           revisionError = true;
-          fail(failure.code, launchId);
+          fail(failure.code === 'COMPOSE_CHANGED' ? 'COMPOSE_CONFLICT' : failure.code, launchId);
           break;
         }
       }
@@ -577,6 +582,7 @@ export function createWebLaunchPanel({
     const attempt = (current.submissionInput ??= { precedingClientTurnId: current.clientTurnId });
     submissionStartedAt = Date.now();
     busy = true;
+    submissionNotice = '';
     onClearError();
     render();
     try {
@@ -601,7 +607,8 @@ export function createWebLaunchPanel({
           !attempt.clientTurnId
         )
           withdrawSubmissionInput();
-        fail(failure.code, launchId);
+        if (SEND_CONFIRMATION.has(failure.code)) submissionNotice = t(`webLaunchAction_${failure.code}`);
+        else fail(failure.code, launchId);
       }
     } finally {
       busy = false;

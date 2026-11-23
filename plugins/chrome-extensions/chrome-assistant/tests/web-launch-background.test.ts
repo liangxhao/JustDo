@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createWebLaunchBackground } from '../conversation-overlay/modules/web-launch-background.js';
-import { WebLaunchMethod } from '../contracts/webLaunch';
+import { WebLaunchLimits, WebLaunchMethod } from '../contracts/webLaunch';
 
 const extensionId = 'fixture-extension';
 const sender = {
@@ -392,7 +392,7 @@ describe('web launch background', () => {
     },
   );
 
-  it('cancels a new preparation after a failed probe without revoking the running launch', async () => {
+  it('recovers a new preparation after a failed probe without revoking the running launch', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     const draft = structuredClone(reply);
     await invoke(controller, { type: 'web-launch:panel:register', ...panelScope }, panelSender(7));
@@ -407,16 +407,21 @@ describe('web launch background', () => {
 
     const original = client.request.getMockImplementation()!;
     client.request.mockImplementation(async (method, params) => {
-      if (method === WebLaunchMethod.Prepare) {
-        api.tabs.sendMessage.mockRejectedValueOnce(new Error('Document probe failed'));
+      if (method === WebLaunchMethod.Prepare || (method === WebLaunchMethod.Read && params.requestId === 'request-2')) {
+        if (method === WebLaunchMethod.Prepare) {
+          api.tabs.sendMessage.mockRejectedValueOnce(new Error('Document probe failed'));
+        }
         return { ...draft, receipt: { ...draft.receipt, requestId: params.requestId, launchId: 'launch-2' } };
       }
-      if (method === WebLaunchMethod.Cancel) return {};
       return original(method, params);
     });
     expect(await invoke(controller, { ...launch, requestId: 'request-2', clickSequence: 2 }))
-      .toMatchObject({ ok: false, code: 'LEASE_REVOKED' });
-    expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.Cancel, expect.objectContaining({ launchId: 'launch-2' }));
+      .toEqual({ ok: true, pending: true });
+    expect(await invoke(controller, {
+      type: 'web-launch:document:read', requestId: 'request-2', documentNonce: launch.documentNonce,
+    })).toMatchObject({ ok: true, receipt: { launchId: 'launch-2' } });
+    expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.Read, expect.objectContaining({ requestId: 'request-2' }));
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Cancel, expect.anything());
     expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.RevokeDocument, expect.anything());
     expect(await invoke(controller, {
       type: 'web-launch:document:read', requestId: launch.requestId, documentNonce: launch.documentNonce,
@@ -720,6 +725,61 @@ describe('web launch background', () => {
       launchId: 'launch-old',
       confirm: true,
     });
+  });
+
+  it('admits the next click when an unanswered prepare cannot be found, without replaying it', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const original = client.request.getMockImplementation()!;
+    let releaseLateRead: ((response: unknown) => void) | undefined;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Read && params.requestId === launch.requestId) throw { code: 'EXPIRED' };
+      if (method !== WebLaunchMethod.Prepare) return original(method, params);
+      if (params.requestId === launch.requestId) throw { code: 'REQUEST_TIMEOUT', requestSent: true };
+      return { ...reply, receipt: { ...reply.receipt, requestId: params.requestId, launchId: 'launch-2' } };
+    });
+    expect(await invoke(controller, launch)).toMatchObject({ ok: false, prepareUncertain: true });
+    expect(await invoke(controller, { ...launch, requestId: 'request-2', clickSequence: 2 }))
+      .toMatchObject({ ok: true, receipt: { launchId: 'launch-2' } });
+    expect(client.request).toHaveBeenCalledWith(WebLaunchMethod.Read, expect.objectContaining({ requestId: launch.requestId }));
+    expect(client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare).map(([, params]) => params.requestId))
+      .toEqual([launch.requestId, 'request-2']);
+    client.request.mockImplementation(async (method, params) =>
+      method === WebLaunchMethod.Read && params.requestId === launch.requestId
+        ? new Promise(resolve => { releaseLateRead = resolve; })
+        : original(method, params),
+    );
+    const read = { type: 'web-launch:document:read', documentNonce: launch.documentNonce, requestId: launch.requestId };
+    const lateRead = invoke(controller, read);
+    await vi.waitFor(() => expect(releaseLateRead).toBeDefined());
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + WebLaunchLimits.confirmationMs + 1);
+    try {
+      expect(await invoke(controller, read)).toMatchObject({ ok: false, code: 'EXPIRED', queueClosed: true });
+      releaseLateRead?.(reply);
+      expect(await lateRead).toMatchObject({ ok: false, code: 'EXPIRED' });
+      expect(storage.chromeWebLaunchSession.requests[launch.requestId]).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('keeps an authorized click when the document probe or desktop preflight is temporarily unavailable', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    const panel = panelSender(7);
+    await invoke(controller, { type: 'web-launch:panel:register', ...panelScope }, panel);
+    const probe = api.tabs.sendMessage.getMockImplementation();
+    api.tabs.sendMessage.mockRejectedValue(new Error('Temporary Chrome probe outage'));
+    expect(await invoke(controller, launch)).toMatchObject({ ok: true, queueStatus: 'queued', queueReason: 'connection' });
+    api.tabs.sendMessage.mockImplementation(probe);
+    const original = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.SitesRead) throw { code: 'APP_NOT_RUNNING' };
+      return original(method, params);
+    });
+    const read = { type: 'web-launch:document:read', documentNonce: launch.documentNonce, requestId: launch.requestId };
+    expect(await invoke(controller, read)).toMatchObject({ ok: true, queueStatus: 'queued', queueReason: 'connection' });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Prepare, expect.anything());
+    client.request.mockImplementation(original);
+    expect(await invoke(controller, read)).toMatchObject({ ok: true, receipt: { launchId: 'launch-1' } });
   });
 
   it('waits for a pending prepare then recovers a lost ACK by read, never another prepare', async () => {
@@ -1209,7 +1269,7 @@ describe('web launch background', () => {
     const second = createWebLaunchBackground({ chromeApi: api, client });
     const panel = panelSender(7);
     await invoke(second, { type: 'web-launch:panel:register', ...panelScope }, panel);
-    api.tabs.sendMessage.mockRejectedValue(new Error('No document'));
+    api.tabs.sendMessage.mockResolvedValue({ active: false });
     const response = await invoke(
       second,
       {
@@ -1223,7 +1283,7 @@ describe('web launch background', () => {
       },
       panel,
     );
-    expect(response).toEqual({ ok: false, code: 'EXPIRED' });
+    expect(response).toEqual({ ok: false, code: 'EXPIRED', requestSent: false });
     expect(client.request.mock.calls.some(([method]) => method === WebLaunchMethod.Submit)).toBe(
       false,
     );
@@ -1254,6 +1314,13 @@ describe('web launch background', () => {
     };
 
     expect(await invoke(controller, submit)).toEqual({ ok: false, code: 'FORBIDDEN' });
+    api.tabs.sendMessage.mockRejectedValueOnce(new Error('Temporary Chrome probe outage'));
+    expect(await invoke(controller, submit, panel)).toEqual({
+      ok: false,
+      code: 'CONNECTION_UNAVAILABLE',
+      requestSent: false,
+    });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Submit, expect.anything());
     expect(await invoke(controller, submit, panel)).toEqual({
       ok: false,
       code: 'CONFIRMATION_REQUIRED',

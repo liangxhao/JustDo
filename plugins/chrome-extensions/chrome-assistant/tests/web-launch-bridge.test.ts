@@ -181,6 +181,45 @@ describe('webpage button bridge', () => {
     expect(handles[1].launchId).toBe('launch-2');
   });
 
+  it('restores the same receipt after a temporary read issue and localizes a later terminal result', async () => {
+    const onRequest = vi.fn();
+    const onStatus = vi.fn();
+    const onActionRequired = vi.fn();
+    const original = runtime.sendMessage.getMockImplementation()!;
+    let current: any;
+    let disconnected = false;
+    runtime.sendMessage.mockImplementation(async message => {
+      if (message.type.endsWith('read')) return disconnected ? { ok: false, code: 'REQUEST_TIMEOUT' } : current;
+      const response = await original(message);
+      if (message.type.endsWith('launch')) current = response;
+      return response;
+    });
+    const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
+    await sdk.bind(document.getElementById('business'), { prompt: 'Run once' }, { onRequest, onStatus, onActionRequired });
+    click();
+    await vi.waitFor(() => expect(onStatus).toHaveBeenCalledOnce());
+    const handle = onRequest.mock.calls[0][0];
+    disconnected = true;
+    await handle.read();
+    expect(onActionRequired).toHaveBeenCalledOnce();
+    disconnected = false;
+    await handle.read();
+    expect(onStatus).toHaveBeenCalledTimes(2);
+    expect(onStatus.mock.calls[1][0]).toEqual(onStatus.mock.calls[0][0]);
+
+    current = { ok: true, receipt: {
+      ...current.receipt,
+      receiptRevision: 2,
+      request: { status: 'submitted' },
+      execution: { status: 'failed', executionSettled: true },
+      error: { code: 'EXECUTION_FAILED', messageKey: 'webLaunchErrorEXECUTION_FAILED' },
+    } };
+    const result = await handle.read();
+    expect(result.receipt.error).toMatchObject({ code: 'EXECUTION_FAILED', message: expect.stringMatching(/original conversation/u) });
+    expect(onStatus).toHaveBeenLastCalledWith(result.receipt);
+    expect(launchCount).toBe(1);
+  });
+
   it('delivers an artifact-only exact result through the existing onResult callback', async () => {
     const onRequest = vi.fn();
     const onResult = vi.fn();
@@ -317,34 +356,39 @@ describe('webpage button bridge', () => {
     expect(launchCount).toBe(1);
   });
 
-  it.each(['onActionRequired', 'onError'])(
-    'gives user guidance for a request that the desktop app cannot accept through %s',
-    async callback => {
+  it.each([
+    { callback: 'onActionRequired', code: 'APP_NOT_RUNNING', message: /Open the desktop app/u },
+    { callback: 'onError', code: 'APP_NOT_RUNNING', message: /Open the desktop app/u },
+    { callback: 'onActionRequired', code: 'INCOMPATIBLE_VERSION', message: /Update and reload the Chrome extension/u },
+    { callback: 'onActionRequired', code: 'STORAGE_UNAVAILABLE', message: /read or save this request/u },
+  ])(
+    'gives specific guidance for $code through $callback',
+    async ({ callback, code, message }) => {
       const handles: any[] = [];
-      const codes: string[] = [];
+      const notices: { code: string; message: string }[] = [];
       const original = runtime.sendMessage.getMockImplementation()!;
       runtime.sendMessage.mockImplementation(async message => {
-        if (message.type.endsWith('launch')) return { ok: false, code: 'APP_NOT_RUNNING' };
+        if (message.type.endsWith('launch')) return { ok: false, code };
         if (message.type.endsWith('read')) return { ok: false, code: 'EXPIRED' };
         return original(message);
       });
       const sdk = createChromeAssistant({ window, document, cryptoApi: webcrypto });
       await sdk.bind(
         document.getElementById('business'),
-        { prompt: 'request while app is closed' },
+        { prompt: 'website request' },
         {
           onRequest: handle => handles.push(handle),
-          [callback]: (action: { code: string }) => codes.push(action.code),
+          [callback]: (action: { code: string; message: string }) => notices.push(action),
         },
       );
       click();
-      await vi.waitFor(() => expect(codes).toEqual(['APP_NOT_RUNNING']));
+      const action = { code, message: expect.stringMatching(message) };
+      await vi.waitFor(() => expect(notices).toContainEqual(expect.objectContaining(action)));
       poll();
-      const action = { code: 'APP_NOT_RUNNING', message: expect.stringMatching(/Open the desktop app/u) };
       if (callback === 'onError') await expect(handles[0].read()).rejects.toMatchObject(action);
       else await expect(handles[0].read()).resolves.toMatchObject({ actionRequired: action });
       expect(runtime.sendMessage.mock.calls.some(([message]) => message.type.endsWith('read'))).toBe(false);
-      expect(codes).toEqual(['APP_NOT_RUNNING']);
+      expect(notices).toHaveLength(1);
     },
   );
 

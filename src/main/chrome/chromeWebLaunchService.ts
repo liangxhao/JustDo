@@ -69,6 +69,13 @@ const settled = (receipt: WebLaunchStoredReceipt) => receipt.executionSettled;
 const closedRequestStatuses = new Set<WebLaunchStoredReceipt['requestStatus']>([
   'cancelled', 'expired', 'rejected',
 ]);
+const keepDraftAfterUnsent = new Set(['COMPOSE_CHANGED', 'NATIVE_UNAVAILABLE', 'UNKNOWN_EXECUTION']);
+function clearResolvedUnknownOrigin(state: ChromeWebLaunchState, origin: string): void {
+  if (!state.abandonedUnknownOrigins.includes(origin) &&
+      !Object.values(state.receipts).some(item => item.source.origin === origin && item.executionStatus === 'unknown')) {
+    state.unknownOrigins = state.unknownOrigins.filter(value => value !== origin);
+  }
+}
 const strippedSource = (source: WebLaunchSource): WebLaunchSource => {
   const { url: _url, title: _title, ...identity } = source;
   return identity;
@@ -410,7 +417,6 @@ export class ChromeWebLaunchService {
     buildStrictWebLaunchContext(old.source.origin, input.context?.text);
     const owner = this.owners.get(id);
     if (owner?.dispatched || old.dispatchAttempted && !old.notSent) return failWebLaunch('TOO_LATE');
-    if (owner) this.closeUnsent(id, 'COMPOSE_CHANGED');
     const result = this.store.mutate(state => {
       const receipt = this.get(state, id);
       if (receipt.composeRevision !== expected) return failWebLaunch('COMPOSE_CHANGED');
@@ -427,8 +433,9 @@ export class ChromeWebLaunchService {
       this.bump(receipt);
       return receipt;
     });
+    if (owner) this.closeUnsent(id, 'COMPOSE_CHANGED');
     this.changed();
-    return this.metadata(result);
+    return this.metadata(owner ? this.get(this.store.read(), id) : result);
   }
 
   submit(raw: unknown): WebLaunchResponse {
@@ -549,7 +556,7 @@ export class ChromeWebLaunchService {
             item.requestStatus = 'submitted';
             item.executionStatus = 'running';
             if (item.errorCode === 'UNKNOWN_EXECUTION') item.errorCode = undefined;
-            if (!state.abandonedUnknownOrigins.includes(item.source.origin) && !Object.values(state.receipts).some(candidate => candidate.source.origin === item.source.origin && candidate.executionStatus === 'unknown')) state.unknownOrigins = state.unknownOrigins.filter(origin => origin !== item.source.origin);
+            clearResolvedUnknownOrigin(state, item.source.origin);
             this.bump(item);
           });
           if (owner.stopIntent) void this.abortBound(launchId, owner).catch(() => {});
@@ -597,9 +604,10 @@ export class ChromeWebLaunchService {
       item.autoAllowed = false;
       if (owner.closedReason === 'CANCELLED') item.requestStatus = 'cancelled';
       else if (owner.closedReason === 'EXPIRED' || item.deadlineAt <= this.now()) item.requestStatus = 'expired';
-      else if (owner.closedReason && owner.closedReason !== 'COMPOSE_CHANGED') item.requestStatus = 'cancelled';
+      else if (owner.closedReason && !keepDraftAfterUnsent.has(owner.closedReason)) item.requestStatus = 'cancelled';
       else this.confirmation(item);
       item.errorCode = owner.closedReason === 'CANCELLED' ? undefined : owner.closedReason ?? 'NATIVE_UNAVAILABLE';
+      clearResolvedUnknownOrigin(state, item.source.origin);
       this.bump(item);
     });
     this.changed();
@@ -672,7 +680,7 @@ export class ChromeWebLaunchService {
     let changed = false;
     this.store.mutate(state => {
       const receipt = state.receipts[launchId];
-      if (!receipt || receipt.executionSettled) return;
+      if (!receipt || receipt.executionSettled || receipt.notSent) return;
       const missingOrigin = !state.unknownOrigins.includes(receipt.source.origin);
       if (receipt.executionStatus === 'unknown' && receipt.errorCode === 'UNKNOWN_EXECUTION' && !missingOrigin) return;
       receipt.executionStatus = 'unknown';
@@ -733,7 +741,7 @@ export class ChromeWebLaunchService {
         if (item.result === 'final' && item.shareResult && !item.shareRevoked) item.outputStatus = 'unavailable';
       }
       this.bump(item);
-      if (!state.abandonedUnknownOrigins.includes(item.source.origin) && !Object.values(state.receipts).some(candidate => candidate.source.origin === item.source.origin && candidate.executionStatus === 'unknown')) state.unknownOrigins = state.unknownOrigins.filter(origin => origin !== item.source.origin);
+      clearResolvedUnknownOrigin(state, item.source.origin);
     });
     owner.dispose?.();
     this.changed();
@@ -894,6 +902,7 @@ export class ChromeWebLaunchService {
     assertWebLaunchKeys(value, ['launchId']);
     const id = webLaunchString(value.launchId);
     const receipt = this.get(this.store.read(), id);
+    if (settled(receipt) || closedRequestStatuses.has(receipt.requestStatus)) return this.metadata(receipt);
     const owner = this.owners.get(id);
     if (!owner) {
       if (receipt.clientTurnId && !receipt.notSent) return failWebLaunch('UNKNOWN_EXECUTION');

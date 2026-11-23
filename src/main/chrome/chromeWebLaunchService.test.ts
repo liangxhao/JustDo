@@ -512,6 +512,30 @@ describe('webpage owned sender and exact results', () => {
     expect(f.state().receipts[prepared.receipt.launchId].nativeBinding?.nativeRunId).toBe('native-1');
   });
 
+  it('preserves the exact send on a stale edit and returns its completed receipt after restart', async () => {
+    const f = fixture();
+    const prepared = f.prepare();
+    const { launchId } = prepared.receipt;
+    let release!: () => void;
+    f.beforeSend = () => new Promise(resolve => { release = resolve; });
+    f.submit(prepared);
+    await tick();
+    expect(() => f.service.revise({
+      launchId, expectedComposeRevision: 2, input: { prompt: 'stale edit' },
+    })).toThrow('COMPOSE_CHANGED');
+    release();
+    await tick();
+    expect(f.wire).toHaveBeenCalledOnce();
+    f.finish();
+    const completed = await f.service.read(f.ref(prepared));
+    f.service.close();
+    const restarted = new ChromeWebLaunchService(f.deps);
+    services.push(restarted);
+    expect((await restarted.stop({ launchId })).receipt.execution).toEqual(completed.receipt.execution);
+    expect(completed.receipt.execution.executionSettled).toBe(true);
+    expect(f.request.mock.calls.some(([method]) => method === 'sessions.abort')).toBe(false);
+  });
+
   it('fences an automatic Full owner when the user revises the same draft to Ask', async () => {
     const f = fixture(); const prepared = f.prepare();
     const downgraded = { prompt: input.prompt, context: input.context, permissionMode: 'ask' };
@@ -719,6 +743,27 @@ describe('webpage owned sender and exact results', () => {
     expect(result.internal.requiresSendConfirmation).toBe(true);
     expect(result.receipt.execution).toEqual({ status: 'not-started', executionSettled: false });
     expect(() => f.submit(result)).toThrow('CONFIRMATION_REQUIRED');
+  });
+
+  it('releases the origin uncertainty after the original owner proves nothing was sent', async () => {
+    const f = fixture();
+    const prepared = f.prepare();
+    let release!: () => void;
+    f.chat.sendMessage.mockImplementationOnce(async (_value, hooks) => {
+      hooks.assertCurrent();
+      hooks.finalSyncAdmission?.(binding);
+      await new Promise<void>(resolve => { release = resolve; });
+      throw Object.assign(new Error('fixture disconnected before send'), { requestSent: false });
+    });
+    f.submit(prepared);
+    await tick();
+    f.runtime.getGatewayClientGeneration = () => binding.clientGeneration + 1;
+    expect((await f.service.read(f.ref(prepared))).receipt.error?.code).toBe('UNKNOWN_EXECUTION');
+    release();
+    await tick();
+    expect((await f.service.read(f.ref(prepared))).internal.notSent).toBe(true);
+    expect(f.prepare({ requestId: 'after-proof', clickSequence: 2 }).internal.requiresUnknownConfirmation).toBe(false);
+    expect(f.wire).not.toHaveBeenCalled();
   });
 
   it('returns the exact final result after one confirmed send without granting future automatic return', async () => {

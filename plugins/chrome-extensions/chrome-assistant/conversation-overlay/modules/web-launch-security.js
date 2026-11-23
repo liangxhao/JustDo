@@ -235,6 +235,10 @@ export function publicErrorCode(error) {
   return PUBLIC_ERROR_CODES.has(error?.code) ? error.code : 'CONNECTION_UNAVAILABLE';
 }
 
+export const queueWaitReason = value => ['composer', 'panel', 'connection'].includes(value)
+  ? value
+  : undefined;
+
 /** Rebuild each field; never forward arbitrary Main payloads to a webpage. */
 export function publicReceipt(value, allowResult = false) {
   if (

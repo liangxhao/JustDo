@@ -6,6 +6,7 @@ import {
   normalizeInput,
   randomIdentifier,
   publicErrorCode,
+  queueWaitReason,
 } from './web-launch-security.js';
 
 const DEFINITE_CONNECTION_REJECTIONS = new Set([
@@ -26,15 +27,16 @@ const messages = {
       'Return to the tab where you started the existing connection. Allow or decline it in the side panel, then come back and click this button again.',
     confirm: 'Open the extension side panel in this tab and select Allow connection.',
     checking: 'Checking this website’s Chrome permissions.',
+    connectionAppPending: 'Open the desktop app, then continue this connection in the side panel.',
     connectionExpired:
       'This connection request expired. Click the webpage button to request the connection again.',
     connected:
       'Website connected. Review the draft in the side panel and select Send when it is ready.',
     queued:
       'The request is queued. Keep its tab open so the side panel can start it when it is next.',
-    composer:
-      'The request is queued. Send or clear the current draft and attachments in the side panel to continue. Copy any text you want to keep first.',
+    composer: 'The request is queued. Handle the current draft or approval in the side panel, or wait for the send confirmation.',
     panel: 'The request is queued. Open the extension side panel from the Chrome toolbar in this tab to continue.',
+    connection: 'The request is queued while the extension checks this page and the connection. Keep this tab open and open the desktop app if needed.',
     cancelled: 'This request was cancelled.',
     errors: {
       APP_NOT_RUNNING: 'Open the desktop app, then return to this tab and click the button again.',
@@ -59,8 +61,21 @@ const messages = {
         'Click the webpage button again and confirm this website in the extension side panel.',
       BRIDGE_UNAVAILABLE: 'Check that the Chrome extension is enabled and this website uses its matching SDK, then click again.',
       CONNECTION_UNAVAILABLE: 'Check the desktop app and the extension connection. Look for the current request in the side panel before clicking again.',
+      INCOMPATIBLE_VERSION: 'Update and reload the Chrome extension using the version supplied with the desktop app, then check the original request in the side panel.',
+      STORAGE_UNAVAILABLE: 'The desktop app cannot read or save this request. Check the original request in the side panel and contact your administrator if the problem continues.',
       UNKNOWN_EXECUTION: 'Check the original request in the side panel before starting another task.',
       REQUEST_TOO_LARGE: 'Reduce the text or context provided by this button, then click again.',
+      REQUEST_CONFLICT: 'Finish or cancel the current website request before changing the button or starting again. If the conflict persists, ask the website administrator to check the integration.',
+      CONFIRMATION_REQUIRED: 'Review the draft in the extension side panel and select Send to confirm it.',
+      RESULT_CONSENT_REQUIRED: 'Review the draft and result sharing in the extension side panel, then select Send to confirm.',
+      COMPOSE_CHANGED: 'Check the latest draft in the side panel and send it once the update is confirmed.',
+      TOO_LATE: 'Check the original conversation in the side panel. If the task is still running and you want to stop it, select Stop there.',
+      EXECUTION_FAILED: 'Open the original conversation in the side panel to see why the task failed.',
+      EXECUTION_INTERRUPTED: 'The task stopped. Open the original conversation to review its progress.',
+      RESULT_UNAVAILABLE: 'Open the original conversation in the side panel to check the result.',
+      CANCEL_PENDING: 'Wait for cancellation confirmation. Check the original request in the side panel for its current status.',
+      INTERNAL_ERROR: 'Check the original request in the side panel before trying again. Contact your administrator if the problem continues.',
+      NATIVE_UNAVAILABLE: 'Check the desktop app’s connection and current working folder, then review the original request in the side panel.',
     },
   },
   zh: {
@@ -70,12 +85,13 @@ const messages = {
     waitingForConnection: '请回到先前发起连接的标签页，在侧栏允许或拒绝该连接，再回到此页点击按钮。',
     confirm: '请打开此标签页的扩展侧栏，点击「允许连接」。',
     checking: '正在核对 Chrome 的网站访问权限。',
+    connectionAppPending: '请打开桌面应用，再在侧栏继续这笔连接申请。',
     connectionExpired: '这次连接申请已过期，请点击网页按钮重新申请。',
     connected: '网站已连接。草稿就绪后，请在侧栏核对并点击发送。',
     queued: '请求已排队。请保留此标签页，轮到时会在侧栏处理。',
-    composer:
-      '请求已排队。请先发送或清空侧栏里的草稿和附件，队列会继续处理。如需保留文字，可以先复制。',
+    composer: '请求已排队。请先处理侧栏当前的草稿或审批，或等待当前消息确认发送。',
     panel: '请求已排队。请在此标签页点击 Chrome 工具栏的扩展图标打开侧栏，队列会继续处理。',
+    connection: '请求已排队，扩展正在核对网页与桌面端连接。请保留此标签页，如桌面应用未启动，请先打开。',
     cancelled: '本次请求已取消。',
     errors: {
       APP_NOT_RUNNING: '请先打开桌面应用，再回到此标签页点击按钮。',
@@ -91,8 +107,21 @@ const messages = {
       SITE_NOT_ALLOWED: '请再次点击网页按钮，在扩展侧栏确认此网站的连接权限。',
       BRIDGE_UNAVAILABLE: '请确认 Chrome 扩展已启用，且网页 SDK 与扩展版本匹配，再点击按钮。',
       CONNECTION_UNAVAILABLE: '请检查桌面应用和扩展的连接，并在侧栏核对原请求后再点击按钮。',
+      INCOMPATIBLE_VERSION: '请用桌面应用附带的版本更新并重新加载 Chrome 扩展，然后在侧栏核对原请求。',
+      STORAGE_UNAVAILABLE: '桌面应用暂时无法读取或保存请求。请在侧栏核对原请求，问题持续时请联系管理员。',
       UNKNOWN_EXECUTION: '请先在侧栏核对原请求，再决定是否发起新任务。',
       REQUEST_TOO_LARGE: '请缩减按钮提供的文字或附带的上下文，再点击按钮。',
+      REQUEST_CONFLICT: '请先处理或取消当前网页请求，再更新按钮或重新发起。问题持续时，请联系网站管理员检查接入。',
+      CONFIRMATION_REQUIRED: '请在扩展侧栏核对草稿，再点击「发送」确认。',
+      RESULT_CONSENT_REQUIRED: '请在扩展侧栏核对草稿和结果回传范围，再点击「发送」确认。',
+      COMPOSE_CHANGED: '输入已改变。请在侧栏核对最新草稿，等待更新确认后再发送。',
+      TOO_LATE: '请在侧栏核对原会话。如果任务仍在运行且你想结束它，请在侧栏点击「停止」。',
+      EXECUTION_FAILED: '请在扩展侧栏打开原会话，查看任务失败的原因。',
+      EXECUTION_INTERRUPTED: '任务已停止。可打开原会话查看已有进度。',
+      RESULT_UNAVAILABLE: '请在扩展侧栏打开原会话，查看任务结果。',
+      CANCEL_PENDING: '请等待取消确认，并在侧栏核对原请求的当前状态。',
+      INTERNAL_ERROR: '请先在侧栏核对原请求，问题持续时请联系管理员。',
+      NATIVE_UNAVAILABLE: '请检查桌面应用的连接和当前工作目录，再在侧栏核对原请求。',
     },
   },
 };
@@ -112,13 +141,17 @@ export function createChromeAssistant({
   const copy = view.navigator?.language?.startsWith('zh') ? messages.zh : messages.en;
   const errorMessage = code => {
     const key = ({
-      NATIVE_UNAVAILABLE: 'CONNECTION_UNAVAILABLE', NATIVE_HOST_UNAVAILABLE: 'CONNECTION_UNAVAILABLE',
+      NATIVE_HOST_UNAVAILABLE: 'CONNECTION_UNAVAILABLE',
       REQUEST_TIMEOUT: 'CONNECTION_UNAVAILABLE', CONTEXT_TOO_LARGE: 'REQUEST_TOO_LARGE',
       INVALID_SOURCE: 'FORBIDDEN', INVALID_ORIGIN: 'FORBIDDEN', UNSUPPORTED_INPUT: 'INVALID_REQUEST',
+      CONFLICT: 'REQUEST_CONFLICT', UNKNOWN_REQUEST: 'EXPIRED', UNSUPPORTED_RESULT_MODE: 'RESULT_UNAVAILABLE',
     })[code] ?? code;
     return Object.hasOwn(copy.errors, key) ? copy.errors[key] : copy.generic;
   };
   const failure = code => Object.assign(new Error(errorMessage(code)), { code });
+  const describeReceipt = receipt => receipt?.error
+    ? { ...receipt, error: { ...receipt.error, message: errorMessage(publicErrorCode(receipt.error)) } }
+    : receipt;
   const actionRequired = (code, requestId) => ({
     code, message: errorMessage(code), ...(requestId ? { requestId } : {}),
   });
@@ -167,7 +200,9 @@ export function createChromeAssistant({
     const message =
       guidance ??
       (value.code
-        ? errorMessage(value.code)
+        ? (value.code === 'APP_NOT_RUNNING' && ['waiting-for-window', 'pending'].includes(status)
+          ? copy.connectionAppPending
+          : errorMessage(value.code))
         : {
             'waiting-for-window': copy.waiting,
             'waiting-for-connection': copy.waitingForConnection,
@@ -265,7 +300,7 @@ export function createChromeAssistant({
         ok: true,
         actionRequired: actionRequired(publicErrorCode(message.actionRequired), message.actionRequired.requestId),
       });
-      else if (message.ok) waiter.resolve(message);
+      else if (message.ok) waiter.resolve(message.receipt ? { ...message, receipt: describeReceipt(message.receipt) } : message);
       else waiter.reject(failure(publicErrorCode(message)));
       return;
     }
@@ -367,7 +402,8 @@ export function createChromeAssistant({
       ['queued', 'cancelled'].includes(message.status)
     ) {
       state.terminal = message.status === 'cancelled';
-      const reason = ['composer', 'panel'].includes(message.reason) ? message.reason : undefined;
+      state.actionPending = false;
+      const reason = queueWaitReason(message.reason);
       binding.callbacks.onQueue?.({
         requestId: message.requestId,
         status: message.status,
@@ -378,6 +414,7 @@ export function createChromeAssistant({
     }
     if (message.kind === 'error') {
       if (message.terminal === true) state.terminal = true;
+      else state.actionPending = true;
       notifyAction(binding, publicErrorCode(message), message.requestId);
       return;
     }
@@ -387,13 +424,15 @@ export function createChromeAssistant({
       message.receipt.receiptRevision < state.revision
     )
       return;
-    const receipt = message.receipt;
+    const receipt = describeReceipt(message.receipt);
     state.launchId = receipt.launchId;
     state.terminal =
       receipt.execution?.executionSettled === true ||
       ['cancelled', 'expired', 'rejected'].includes(receipt.request?.status);
-    if (receipt.receiptRevision > state.revision) binding.callbacks.onStatus?.(receipt);
+    const changed = receipt.receiptRevision > state.revision || state.actionPending;
+    state.actionPending = false;
     state.revision = receipt.receiptRevision;
+    if (changed) binding.callbacks.onStatus?.(receipt);
     if (
       receipt.execution?.executionSettled === true &&
       ['available', 'empty', 'unsupported', 'unavailable'].includes(receipt.output?.status)

@@ -211,8 +211,8 @@ try {
 | --------------------- | -------------------------------------------------------------------------------------- |
 | `onConnection(state)` | 首次连接的进度。包含 `status`、浏览器核验的 `origin`、操作提示 `message` 和可选 `code`。 |
 | `onRequest(handle)`   | 保存本次真实点击的句柄，关联业务记录。                                                 |
-| `onQueue(state)`      | 根据 `requestId` 更新等待状态。`reason` 为 `composer` 时提示处理当前输入，为 `panel` 时提示手动打开侧栏。 |
-| `onStatus(receipt)`   | 更新请求、执行、结果及投递状态，同时检查可选的 receipt.error。                         |
+| `onQueue(state)`      | 根据 `requestId` 更新等待状态。`reason` 可为 `composer`、`panel` 或 `connection`。 |
+| `onStatus(receipt)`   | 更新请求、执行、结果及投递状态。使用可选的 `receipt.error.message` 展示本地化说明。 |
 | `onResult(receipt)`   | 执行已结算，且输出为 available / empty / unsupported / unavailable；参数仍是整份回执。 |
 | `onActionRequired({ code, message, requestId? })` | 用 `message` 显示下一步，用 `code` 做业务判断。有对应请求时按 `requestId` 更新。 |
 
@@ -254,19 +254,28 @@ SDK 识别 `empty`，但当前没有普遍可验证的成功空结果保证；�
 
 | 现象或公开码                                                                            | 建议处理                                                                                         |
 | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| BRIDGE_UNAVAILABLE                                                                      | 检查扩展是否已安装/启用、SDK 是否匹配，以及按钮是否在 HTTP(S) 顶层 light DOM；不要自动重放点击。 |
-| SITE_NOT_ALLOWED / PERMISSION_REQUIRED                                                  | 在扩展侧栏确认实际网站和 Chrome 访问授权；已撤权的旧请求不能恢复。                               |
-| PANEL_OPEN_FAILED                                                                       | 浏览器未允许本次打开侧栏；用户可点击扩展图标检查状态，再主动发起新操作，不自动弹新标签或重试。   |
-| APP_NOT_RUNNING / NATIVE_HOST_UNAVAILABLE / CONNECTION_UNAVAILABLE / NATIVE_UNAVAILABLE | 检查桌面应用与扩展连接，再由用户确认下一步；已有句柄只读核对。                                   |
-| `onQueue` 的 `reason: 'composer'`                                                       | 发送或清空侧栏当前输入。队列会自动继续。 |
-| `onQueue` 的 `reason: 'panel'`                                                          | 点击 Chrome 工具栏的扩展图标，在当前标签页打开侧栏。队列会自动继续。 |
-| `onConnection` 的 `waiting-for-connection`                                               | 回到先前申请连接的标签页，在侧栏允许或拒绝，再回到当前网页点击。 |
-| CONFIRMATION_REQUIRED / RESULT_CONSENT_REQUIRED                                         | 查看侧栏提示，核对草稿后点击发送。                                                               |
-| CONTEXT_TOO_LARGE / REQUEST_TOO_LARGE / INVALID_REQUEST / UNSUPPORTED_INPUT             | 在下一次操作前缩短并修正完整参数，普通文本入口不支持斜杠命令或附件。                             |
-| EXPIRED / LEASE_REVOKED                                                                 | 连接申请、请求回执或网页访问权限已失效。按下方说明检查是否需要重新发起。                         |
-| CAPACITY_EXCEEDED                                                                       | 暂停新点击并检查在途请求及侧栏状态，释放已不再需要的绑定；不要自动重放这次操作。                 |
-| UNKNOWN_EXECUTION / REQUEST_TIMEOUT                                                     | 展示“结果未知”，使用原句柄查询；不得自动重发。                                                   |
-| TOO_LATE                                                                                | 请求可能已发出，分享已撤回；需要停止时让用户操作侧栏。                                           |
+| `onQueue` 的 `reason: 'composer'` | 处理侧栏的草稿或审批，或等待发送确认。队列自动继续。 |
+| `onQueue` 的 `reason: 'panel'` | 从 Chrome 工具栏打开当前标签页的扩展侧栏。队列自动继续。 |
+| `onQueue` 的 `reason: 'connection'` | 保持原网页打开。若桌面应用未启动，请先打开。连接与来源确认后，原请求自动继续。 |
+| `onConnection` 的 `waiting-for-connection` | 回到先前申请连接的标签页处理授权，再回当前网页点击。 |
+| `APP_NOT_RUNNING` | 打开桌面应用。已有连接申请可在侧栏继续。未接纳的点击按网页提示重新发起。 |
+| `CONNECTION_UNAVAILABLE` / `NATIVE_HOST_UNAVAILABLE` / `NATIVE_UNAVAILABLE` | 检查桌面连接，必要时检查当前工作目录。已有句柄用于核对原请求。 |
+| `BRIDGE_UNAVAILABLE` / `INCOMPATIBLE_VERSION` | 核对扩展、桌面应用和网页 SDK 版本。用桌面应用附带的版本更新扩展。 |
+| `STORAGE_UNAVAILABLE` / `INTERNAL_ERROR` | 在侧栏核对原请求。问题持续时联系管理员。 |
+| `SITE_NOT_ALLOWED` / `PERMISSION_REQUIRED` / `CONNECTION_REJECTED` | 如需继续，请在侧栏确认站点和 Chrome 访问授权。 |
+| `FORBIDDEN` / `INVALID_SOURCE` / `INVALID_ORIGIN` | 在网站主标签页使用按钮。问题持续时由网站管理员核对页面和来源配置。 |
+| `PANEL_OPEN_FAILED` | 首次连接时，先打开侧栏，再从网页发起连接。已授权的点击会进入等待侧栏的队列。 |
+| `INVALID_REQUEST` / `UNSUPPORTED_INPUT` | 由网站管理员修正按钮参数，使用受支持的文本输入。 |
+| `CONTEXT_TOO_LARGE` / `REQUEST_TOO_LARGE` | 缩短按钮提供的文字或上下文。 |
+| `REQUEST_CONFLICT` / `CONFLICT` | 处理或取消原请求后，再更新按钮或发起下一笔。问题持续时检查接入。 |
+| `POLICY_CONFLICT` | 核对当前网站授权或发送设置，再发起新点击。 |
+| `CONFIRMATION_REQUIRED` / `RESULT_CONSENT_REQUIRED` / `COMPOSE_CHANGED` | 核对侧栏最新草稿和回传范围，准备好后点击发送。 |
+| `EXPIRED` / `LEASE_REVOKED` / `UNKNOWN_REQUEST` | 核对原请求状态，再决定是否重新发起。 |
+| `CAPACITY_EXCEEDED` | 等一笔完成、取消排队请求，或释放不用的绑定。 |
+| `UNKNOWN_EXECUTION` / `REQUEST_TIMEOUT` | 使用原句柄进行只读核对。若暂时查不到原准备请求，其他点击可继续进入队列。 |
+| `CANCEL_PENDING` / `TOO_LATE` | 等待确认并查看原请求。若任务仍在运行且需要结束，请在侧栏点击停止。 |
+| `EXECUTION_FAILED` / `EXECUTION_INTERRUPTED` | 按原会话的执行回执显示结果，引导用户查看详情或已有进度。 |
+| `RESULT_UNAVAILABLE` / `UNSUPPORTED_RESULT_MODE` | 在原会话里查看结果或执行进度。 |
 
 连接申请或未发送的草稿超时后，用户可以从原网页再次发起。请求已发送或发送状态未知时，请先在扩展侧栏核对原会话，再决定是否重新发起。已发送任务的执行状态以原会话为准。
 

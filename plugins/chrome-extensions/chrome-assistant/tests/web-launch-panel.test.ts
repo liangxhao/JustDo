@@ -710,6 +710,8 @@ describe('website launch panel', () => {
     );
     await panel.submit();
     expect(onSubmitInput).toHaveBeenCalledOnce();
+    expect(document.querySelector('.web-launch-waiting')?.textContent).toMatch(/select Send/u);
+    expect(document.getElementById('error')?.textContent).toBe('');
     expect(onWithdrawSubmitInput).toHaveBeenCalledExactlyOnceWith({
       launchId: 'launch-one',
       threadId: 'external-thread',

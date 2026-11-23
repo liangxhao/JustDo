@@ -74,7 +74,7 @@ async function bindExample(section, onReceipt) {
     const row = requests.get(receipt.requestId);
     if (!row || receipt.receiptRevision < row.revision) return;
     row.revision = receipt.receiptRevision;
-    row.label.textContent = copy.receipt(receipt);
+    row.label.textContent = [copy.receipt(receipt), receipt.error?.message].filter(Boolean).join(' · ');
     if (receipt.error) row.label.textContent += ` · ${copy.inspectTask}`;
     if (receipt.requestId === latestRequestId) status.textContent = '';
     const available =
