@@ -44,9 +44,10 @@ export const getSkillManagementCapabilities = (options: {
   eligible: boolean;
   hasPath: boolean;
   filePath?: string;
+  managedBy?: { id: string };
 }): PluginManagementCapabilities => {
   if (options.source === 'openclaw-extra' && isPluginManagedSkillPath(options.filePath)) {
-    const managed = blockedPluginAction(PluginActionReason.MANAGED_BY_EXTENSION);
+    const managed = blockedPluginAction(PluginActionReason.MANAGED_BY_EXTENSION, options.managedBy);
     return {
       enable: allowedPluginAction(),
       disable: allowedPluginAction(),

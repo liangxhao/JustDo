@@ -68,6 +68,7 @@ test('all extension connection fields and original JSON are read-only even when 
   const original = screen.getByLabelText('mcpRawParametersJson') as HTMLTextAreaElement;
   expect(JSON.parse(original.value)).toEqual(fixture().definition);
   expect(screen.getByRole('heading').textContent).toBe('mcpViewParameters');
+  expect(screen.getByText('pluginScope.extension · Demo')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'saveMcpServer' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'mcpRestoreExtensionDefaults' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'close' }));

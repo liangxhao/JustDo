@@ -1,4 +1,6 @@
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { MarketplaceInstallOperation, PluginKind } from '../../../shared/plugins/marketplace';
@@ -640,6 +642,51 @@ test('returns scope and action capabilities with the authoritative skill list', 
       { id: 'invalid', version: undefined },
     ],
   });
+});
+
+test('retains the parent extension identity in listed and updated skill capabilities', async () => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-source-ipc-'));
+  try {
+    const stateDir = path.join(fixtureRoot, 'state');
+    const pluginDir = path.join(stateDir, 'extensions', 'directory-alias');
+    const skillDir = path.join(pluginDir, 'skills', 'example');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(pluginDir, 'openclaw.plugin.json'), '{"id":"native-parent"}');
+    const publishedDir = path.join(stateDir, 'plugin-skills', 'example');
+    fs.mkdirSync(path.dirname(publishedDir), { recursive: true });
+    fs.symlinkSync(skillDir, publishedDir, 'junction');
+    const skill = createSkill('openclaw-extra', {
+      baseDir: publishedDir,
+      filePath: path.join(publishedDir, 'SKILL.md'),
+    });
+    registerSkillHandlers({
+      skillService: {
+        getStatus: vi.fn(async () => createStatus(skill)),
+        updateConfig: vi.fn(async () => ({ ok: true })),
+        waitForEnabledStatus: vi.fn(async () => createStatus({ ...skill, disabled: true })),
+      } as unknown as OpenClawSkillService,
+      skillFileService: { deleteDirectory: vi.fn() },
+      installationService: new PluginInstallationService(),
+    });
+    const expected = {
+      success: true,
+      skills: [
+        {
+          management: {
+            remove: { allowed: false, managedById: 'native-parent' },
+            configure: { allowed: false, managedById: 'native-parent' },
+          },
+        },
+      ],
+    };
+
+    await expect(handlers.get('skills:list')?.()).resolves.toMatchObject(expected);
+    await expect(
+      handlers.get('skills:setEnabled')?.(undefined, { id: skill.skillKey, enabled: false }),
+    ).resolves.toMatchObject(expected);
+  } finally {
+    fs.rmSync(fixtureRoot, { recursive: true, force: true });
+  }
 });
 
 test.each([false, true])(

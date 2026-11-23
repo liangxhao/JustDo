@@ -226,6 +226,9 @@ const ExtensionMcpParametersModal = ({
         )}
       </div>
       <div className={PLUGIN_DETAIL_FOOTER_CLASS_NAME + ' justify-end'}>
+        <span className="min-w-0 flex-1 text-[11px] leading-4 text-purple-700 [overflow-wrap:anywhere] dark:text-purple-300">
+          {i18nService.t('pluginScope.extension')} · {server.providerName}
+        </span>
         {onProbe && (
           <McpProbeButton
             onProbe={() => onProbe(server)}

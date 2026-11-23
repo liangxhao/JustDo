@@ -15,15 +15,12 @@ import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngin
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
 import type { OpenClawSkillFileService, OpenClawSkillService } from '../../plugins/skills';
-import { resolveSkillOwnershipScope } from '../../plugins/skills/openclawSkillOwnership';
+import { resolveSkillOwnership } from '../../plugins/skills/openclawSkillOwnership';
 import {
   isGatewaySkillEnabled,
   SkillStateConfirmationError,
 } from '../../plugins/skills/openclawSkillService';
-import {
-  getSkillManagementCapabilities,
-  getSkillScope,
-} from '../../plugins/skills/skillManagement';
+import { getSkillManagementCapabilities } from '../../plugins/skills/skillManagement';
 import {
   createPluginOperationReporter,
   type PluginOperationReporter,
@@ -43,37 +40,41 @@ interface SkillHandlerDependencies {
   ) => void;
 }
 
-const mapGatewaySkill = (entry: GatewaySkillEntry, manager?: OpenClawEngineManager) => ({
-  id: entry.skillKey,
-  name: entry.name,
-  description: entry.description,
-  // Skills can require an explicit opt-in even when Gateway does not mark them disabled.
-  enabled: isGatewaySkillEnabled(entry),
-  isOfficial: entry.bundled,
-  isBuiltIn: entry.bundled,
-  updatedAt: 0,
-  prompt: '',
-  skillPath: entry.filePath,
-  version:
-    entry.clawhub?.status === 'linked' && entry.clawhub.valid
-      ? entry.clawhub.installedVersion
-      : undefined,
-  source: entry.source,
-  eligible: entry.eligible,
-  missing: entry.missing,
-  install: entry.install,
-  emoji: entry.emoji,
-  homepage: entry.homepage,
-  scope: getSkillScope(entry.source, entry.filePath),
-  ownershipScope: resolveSkillOwnershipScope(entry, manager),
-  management: getSkillManagementCapabilities({
+const mapGatewaySkill = (entry: GatewaySkillEntry, manager?: OpenClawEngineManager) => {
+  const { scope, ownershipScope, extensionId } = resolveSkillOwnership(entry, manager);
+  return {
+    id: entry.skillKey,
+    name: entry.name,
+    description: entry.description,
+    // Skills can require an explicit opt-in even when Gateway does not mark them disabled.
+    enabled: isGatewaySkillEnabled(entry),
+    isOfficial: entry.bundled,
+    isBuiltIn: entry.bundled,
+    updatedAt: 0,
+    prompt: '',
+    skillPath: entry.filePath,
+    version:
+      entry.clawhub?.status === 'linked' && entry.clawhub.valid
+        ? entry.clawhub.installedVersion
+        : undefined,
     source: entry.source,
-    bundled: entry.bundled,
     eligible: entry.eligible,
-    hasPath: Boolean(entry.filePath),
-    filePath: entry.filePath,
-  }),
-});
+    missing: entry.missing,
+    install: entry.install,
+    emoji: entry.emoji,
+    homepage: entry.homepage,
+    scope,
+    ownershipScope,
+    management: getSkillManagementCapabilities({
+      source: entry.source,
+      bundled: entry.bundled,
+      eligible: entry.eligible,
+      hasPath: Boolean(entry.filePath),
+      filePath: entry.filePath,
+      managedBy: extensionId ? { id: extensionId } : undefined,
+    }),
+  };
+};
 
 export const registerSkillHandlers = ({
   skillService,

@@ -82,6 +82,10 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
     getPluginArtworkTone('skills:personal'),
   );
   const selectedSkill = skills.find(skill => skill.id === selectedSkillId);
+  const selectedSkillExtensionId =
+    selectedSkill?.scope === PluginHubScope.EXTENSION
+      ? selectedSkill.management.remove.managedById
+      : undefined;
   const selectedSkillMissing = selectedSkill
     ? getMissingSkillDependencies(selectedSkill)
     : undefined;
@@ -745,6 +749,11 @@ const SkillsManager: React.FC<SkillsManagerProps> = ({
                     <TrashIcon className="h-4 w-4" />
                   </button>
                 </Tooltip>
+              )}
+              {selectedSkillExtensionId && (
+                <span className="min-w-0 flex-1 text-right text-[11px] leading-4 text-purple-700 [overflow-wrap:anywhere] dark:text-purple-300">
+                  {i18nService.t('pluginScope.extension')} · {selectedSkillExtensionId}
+                </span>
               )}
             </div>
           </Modal>,

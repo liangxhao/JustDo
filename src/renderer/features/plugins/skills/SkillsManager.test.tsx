@@ -367,7 +367,11 @@ test('switches an extension skill from its card while keeping details free of sw
     management: {
       enable: { allowed: true },
       disable: { allowed: true },
-      remove: { allowed: false, reason: PluginActionReason.MANAGED_BY_EXTENSION },
+      remove: {
+        allowed: false,
+        reason: PluginActionReason.MANAGED_BY_EXTENSION,
+        managedById: 'coding-provider',
+      },
       configure: { allowed: false, reason: PluginActionReason.MANAGED_BY_EXTENSION },
       revealInFolder: { allowed: true },
     } satisfies Skill['management'],
@@ -381,6 +385,9 @@ test('switches an extension skill from its card while keeping details free of sw
     within(close.closest<HTMLElement>('[data-workspace-overlay]')!).queryByRole('switch'),
   ).toBeNull();
   expect(screen.queryByRole('button', { name: 'deleteSkill' })).toBeNull();
+  const provider = screen.getByText('pluginScope.extension · coding-provider');
+  const footer = provider.parentElement!;
+  expect(within(footer).getByRole('button', { name: 'openFolder' })).toBeTruthy();
   fireEvent.click(close);
   const toggle = screen.getByRole('switch', { name: 'enableSkill' });
   expect(toggle.hasAttribute('disabled')).toBe(false);
@@ -393,6 +400,7 @@ test('switches an extension skill from its card while keeping details free of sw
 test('does not expose mutations in read-only skill details', async () => {
   await openDetails(true);
 
+  expect(screen.queryByText(/^pluginScope.extension · /)).toBeNull();
   const close = screen.getByRole('button', { name: 'close' });
   expect(
     within(close.closest<HTMLElement>('[data-workspace-overlay]')!).queryByRole('switch'),
