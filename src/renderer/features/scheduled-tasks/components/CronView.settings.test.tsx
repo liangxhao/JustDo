@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { TaskStatus } from '@shared/scheduledTask/constants';
 import type { ScheduledTask } from '@shared/scheduledTask/types';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -139,6 +140,57 @@ test('does not report an empty inventory after a failed initial task read', () =
   render(<CronView />);
   expect(screen.getByText('Gateway unavailable')).toBeTruthy();
   expect(screen.queryByText('cronEmptyTitle')).toBeNull();
+});
+
+test('shows failed tasks through the filter without a separate banner', () => {
+  const failed: ScheduledTask = {
+    id: 'daily-report',
+    name: 'Daily report',
+    description: '',
+    enabled: true,
+    schedule: { kind: 'every', everyMs: 86_400_000 },
+    sessionTarget: 'isolated',
+    wakeMode: 'now',
+    payload: { kind: 'agentTurn', message: 'Prepare a report' },
+    delivery: { mode: 'none' },
+    agentId: 'main',
+    sessionKey: null,
+    management: 'editable',
+    state: {
+      nextRunAtMs: null,
+      lastRunAtMs: 1_800_000_000_000,
+      lastStatus: TaskStatus.Error,
+      lastError: 'Report unavailable',
+      lastDurationMs: null,
+      runningAtMs: null,
+      consecutiveErrors: 1,
+    },
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+  };
+  const successful: ScheduledTask = {
+    ...failed,
+    id: 'weekly-summary',
+    name: 'Weekly summary',
+    state: { ...failed.state, lastStatus: TaskStatus.Success, lastError: null, consecutiveErrors: 0 },
+  };
+  state.scheduledTask.tasks = [failed, successful];
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { platform: 'win32', scheduledTasks: {} },
+  });
+
+  render(<CronView />);
+
+  const failedFilter = screen.getByRole('button', { name: 'cronStatsFailed 1', pressed: false });
+  expect(screen.queryByRole('button', { name: /cronViewFailed/ })).toBeNull();
+  expect(screen.getByText(successful.name)).toBeTruthy();
+
+  fireEvent.click(failedFilter);
+
+  expect(screen.getByRole('button', { name: 'cronStatsFailed 1', pressed: true })).toBe(failedFilter);
+  expect(screen.getByText(failed.name)).toBeTruthy();
+  expect(screen.queryByText(successful.name)).toBeNull();
 });
 
 test('does not synthesize additional tasks from native memory settings', () => {

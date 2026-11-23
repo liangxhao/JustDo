@@ -2190,13 +2190,16 @@ export const CronView: React.FC<CronViewProps> = ({
                               'failed',
                               'cronStatsFailed',
                               failedJobs.length,
-                              'bg-rose-500/10 text-rose-700 dark:text-rose-400',
+                              failedJobs.length > 0
+                                ? 'bg-rose-500/10 text-rose-700 dark:text-rose-400'
+                                : 'bg-primary/10 text-primary',
                             ],
                           ] as const
                         ).map(([value, label, count, selectedClass]) => (
                           <button
                             key={value}
                             type="button"
+                            aria-pressed={taskStatusFilter === value}
                             onClick={() => setTaskStatusFilter(value)}
                             className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors ${
                               taskStatusFilter === value
@@ -2204,26 +2207,20 @@ export const CronView: React.FC<CronViewProps> = ({
                                 : 'text-secondary hover:bg-surface-raised hover:text-foreground'
                             }`}
                           >
-                            {t(label)}
-                            <span className="tabular-nums opacity-70">{count}</span>
+                            {`${t(label)} `}
+                            <span
+                              className={`tabular-nums ${
+                                value === 'failed' && count > 0
+                                  ? 'min-w-4 rounded-full bg-rose-500/10 px-1 text-center text-rose-700 dark:text-rose-400'
+                                  : 'opacity-70'
+                              }`}
+                            >
+                              {count}
+                            </span>
                           </button>
                         ))}
                       </div>
                     </div>
-
-                    {failedJobs.length > 0 && taskStatusFilter !== 'failed' && (
-                      <button
-                        type="button"
-                        onClick={() => setTaskStatusFilter('failed')}
-                        className="mb-6 flex w-full items-center gap-3 rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3 text-left text-sm text-red-700 transition-colors hover:bg-red-500/10 dark:text-red-300"
-                      >
-                        <ExclamationTriangleIcon className="h-5 w-5 shrink-0" />
-                        <span className="flex-1">
-                          {t('cronFailedAttention').replace('{count}', String(failedJobs.length))}
-                        </span>
-                        <span className="font-medium">{t('cronViewFailed')}</span>
-                      </button>
-                    )}
 
                     {/* Jobs Grid / Empty State */}
                     {error && tasks.length === 0 ? null : tasks.length === 0 ? (
