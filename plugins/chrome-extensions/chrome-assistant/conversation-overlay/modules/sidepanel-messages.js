@@ -585,7 +585,7 @@ export function createMessageRenderer(
     const hideCopy = !showAnswerCopy || !copy.copyText.trim();
     if (hideCopy && !copy.hidden) copyController.invalidate(copy);
     copy.hidden = hideCopy;
-    patchMessageMetadata(node, entry.display);
+    patchMessageMetadata(node, showAnswerCopy ? entry.display : undefined);
   }
 
   function patchMessageMetadata(node, display) {

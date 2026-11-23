@@ -79,7 +79,7 @@ describe('side panel answer and code copying', () => {
     await vi.waitFor(() => expect(writeText).toHaveBeenLastCalledWith('First continues'));
   });
 
-  it('keeps only the last text copy action in each turn, including after expanding the process', async () => {
+  it('keeps the copy action and metadata only on the last answer in each turn, including expanded process messages', async () => {
     const display = { modelName: 'native-model', timestampMs: Date.parse('2026-11-10T10:30:45Z') };
     const previous = { id: 'previous-answer', type: 'agentMessage', text: 'Previous answer' };
     const progress = { id: 'progress', type: 'agentMessage', text: 'Checking the result', display };
@@ -110,6 +110,8 @@ describe('side panel answer and code copying', () => {
     render([progress, final], true);
     expect(progressCopy.hidden).toBe(true);
     expect(progressCopy.dataset.copyState).toBeUndefined();
+    expect(progressCopy.parentElement!.hidden).toBe(true);
+    expect(progressCopy.parentElement!.querySelector<HTMLTimeElement>('time')!.hidden).toBe(true);
     expect(visibleCopies()).toHaveLength(2);
 
     render([progress, final], false);
@@ -117,8 +119,10 @@ describe('side panel answer and code copying', () => {
     history.querySelector('summary')!.click();
     await vi.waitFor(() => expect(history.querySelector('.assistant-content')?.textContent?.trim()).toBe(progress.text));
     expect(history.querySelector('.message-copy:not([hidden])')).toBeNull();
-    expect(history.querySelector('.message-model')?.textContent).toBe(display.modelName);
-    expect(history.querySelector('time')?.dateTime).toBe('2026-11-10T10:30:45.000Z');
+    expect(history.querySelector<HTMLElement>('.message-actions')!.hidden).toBe(true);
+    expect(history.querySelector<HTMLElement>('.message-model')!.hidden).toBe(true);
+    expect(history.querySelector<HTMLTimeElement>('time')!.hidden).toBe(true);
+    expect(history.querySelector('time')!.hasAttribute('datetime')).toBe(false);
     expect(visibleCopies()).toHaveLength(2);
     const finalCopy = visibleCopies()[1];
     expect(finalCopy.nextElementSibling?.querySelector('.message-model')?.textContent).toBe(display.modelName);

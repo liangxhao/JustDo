@@ -2,8 +2,15 @@ import type { ChromeExtensionMessageDisplay } from '@shared/chrome/chromeExtensi
 import type { ChromeExtensionStreamEvent } from '@shared/chrome/chromeExtensionStream';
 import { readTerminalGuardObservation } from '@shared/openclaw/agentEvent';
 
-import { createChatTranscriptState, type TurnItem } from '@/libs/openclaw-chat/model/chat-transcript-state';
-import { reduceAgentEvent, reduceChatEvent } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
+import {
+  type AssistantTurn,
+  createChatTranscriptState,
+  type TurnItem,
+} from '@/libs/openclaw-chat/model/chat-transcript-state';
+import {
+  reduceAgentEvent,
+  reduceChatEvent,
+} from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
 import { createRunActivity, type RunActivity } from '@/libs/openclaw-chat/model/turn/run-activity';
 
 import { projectChromeExtensionActivity } from './chrome-extension-activity';
@@ -19,6 +26,10 @@ type Item = Record<string, unknown> & {
   /** Local presentation identity; never a native ownership or authorization field. */
   displayKey?: string;
   display?: ChromeExtensionMessageDisplay;
+  rawMessage?: Record<string, unknown>;
+  /** Native commentary ownership, used only to reconcile this browser view. */
+  preambleItemId?: string;
+  commentaryItemIds?: readonly string[];
 };
 /** Optional browser presentation groups; not the app-server's canonical Thread/Turn. */
 type ChromeDisplayView = { id: string; turns: Array<{ id: string; items: Item[] }> };
@@ -41,7 +52,7 @@ const readInputRunId = (item: Item): string | undefined =>
     ? item.inputRunId
     : undefined;
 
-function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>): Item {
+function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>, turn: AssistantTurn): Item {
   const identity = {
     id: item.id,
     displayKey: item.id,
@@ -49,7 +60,30 @@ function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>): Item {
     updatedAt: item.updatedAt,
     status: item.status,
   };
-  if (item.type === 'content') return { ...identity, type: 'agentMessage', text: item.text };
+  if (item.type === 'content')
+    return {
+      ...identity,
+      type: 'agentMessage',
+      text: item.text,
+      ...(item.preambleItemId ? { preambleItemId: item.preambleItemId } : {}),
+      ...(item.commentarySnapshot === 'message' && item.assistantTextScopeId
+        ? {
+            commentaryItemIds: [
+              ...new Set([
+                ...turn.items.flatMap(candidate =>
+                  candidate.type === 'content' &&
+                  candidate.assistantTextScopeId === item.assistantTextScopeId &&
+                  candidate.preambleItemId
+                    ? [candidate.preambleItemId]
+                    : [],
+                ),
+                ...(turn.assistantTextScopes?.get(item.assistantTextScopeId)?.commentaryItemIds ??
+                  []),
+              ]),
+            ],
+          }
+        : {}),
+    };
   if (item.type === 'thinking') return { ...identity, type: 'reasoning', content: [item.text] };
   if (item.type === 'terminal') return { ...identity, type: 'systemMessage', text: item.message };
   return {
@@ -62,8 +96,26 @@ function projectItem(item: Exclude<TurnItem, { type: 'compaction' }>): Item {
     progressText: item.progressText,
     status: item.status === 'running' ? 'inProgress' : item.status,
     isError: item.status === 'failed',
-    ...(item.presentation?.questionResult ? { questionResult: item.presentation.questionResult } : {}),
+    ...(item.presentation?.questionResult
+      ? { questionResult: item.presentation.questionResult }
+      : {}),
   };
+}
+
+function projectLiveItems(turn: AssistantTurn, includeTerminal = true): Item[] {
+  return turn.items
+    .filter(
+      (item): item is Exclude<TurnItem, { type: 'compaction' }> =>
+        item.type !== 'compaction' && (includeTerminal || item.type !== 'terminal'),
+    )
+    .filter(
+      item =>
+        !(
+          item.type === 'content' &&
+          (item.assistantTextScopeSuppressed || item.assistantTextSourcePending)
+        ),
+    )
+    .map(item => projectItem(item, turn));
 }
 
 function itemText(item: Item): string {
@@ -81,9 +133,52 @@ function sameItem(history: Item, live: Item): boolean {
   if (history.type !== live.type) return false;
   if (live.type === 'toolCall')
     return Boolean(live.toolUseId) && history.toolUseId === live.toolUseId;
+  if (
+    live.preambleItemId &&
+    history.display?.sourceSegmentId &&
+    live.preambleItemId !== history.display.sourceSegmentId
+  )
+    return false;
   const a = itemText(history).trim();
   const b = itemText(live).trim();
   return Boolean(a && b) && (a.startsWith(b) || b.startsWith(a));
+}
+
+/** Update a display copy while retaining the native row's media and metadata. */
+function withItemText(item: Item, text: string): Item {
+  const raw = item.rawMessage;
+  return {
+    ...item,
+    text,
+    ...(raw
+      ? {
+          rawMessage: {
+            ...raw,
+            text: undefined,
+            content: Array.isArray(raw.content)
+              ? [
+                  { type: 'text', text },
+                  ...raw.content.filter(
+                    block => !block || typeof block !== 'object' || block.type !== 'text',
+                  ),
+                ]
+              : text,
+          },
+        }
+      : {}),
+  };
+}
+
+function withoutItemText(item: Item): Item | null {
+  const raw = item.rawMessage;
+  const hasRichContent =
+    raw &&
+    ((Array.isArray(raw.content) &&
+      raw.content.some(block => block && typeof block === 'object' && block.type !== 'text')) ||
+      ['MediaPaths', 'MediaUrls', 'MediaPath', 'MediaUrl', '__openclaw', 'openclawDelivery'].some(
+        key => Boolean(raw[key]),
+      ));
+  return hasRichContent ? withItemText(item, '') : null;
 }
 
 function mergeItem(history: Item, live: Item): Item {
@@ -97,7 +192,10 @@ function mergeItem(history: Item, live: Item): Item {
           startedAt: live.startedAt,
           updatedAt: live.updatedAt,
         }
-      : live;
+      : {
+          ...withItemText(history, itemText(live)),
+          ...live,
+        };
   }
   const merged = {
     ...history,
@@ -113,16 +211,66 @@ function mergeItem(history: Item, live: Item): Item {
   return merged;
 }
 
-function reconcileItems(history: Item[], live: Item[]): { items: Item[]; matches: number[] } {
+function reconcileItems(
+  history: Item[],
+  live: Item[],
+): { items: Item[]; matches: number[]; covered: boolean } {
   const toolIndex = (item: Item) =>
     item.type === 'toolCall' ? history.findIndex(candidate => sameItem(candidate, item)) : -1;
   const matches: number[] = [];
+  const commentaryGroups = new Map<number, number[]>();
+  const matchedPositions = new Set<number>();
   let previousMatch = -1;
   let unanchoredTool = false;
   for (let index = 0; index < live.length; index += 1) {
     const item = live[index];
     let match = toolIndex(item);
-    if (item.type !== 'toolCall' && !unanchoredTool) {
+    let nativeCommentary = false;
+    if (item.type === 'agentMessage') {
+      const owners = new Set(
+        item.commentaryItemIds ?? (item.preambleItemId ? [item.preambleItemId] : []),
+      );
+      let candidates = history.flatMap((candidate, position) =>
+        candidate.type === item.type &&
+        candidate.display?.sourceSegmentId &&
+        owners.has(candidate.display.sourceSegmentId) &&
+        itemText(candidate).trim()
+          ? [position]
+          : [],
+      );
+      const sources = new Set(candidates.map(position => history[position].display?.sourceId));
+      const sourceId = sources.size === 1 ? history[candidates[0]]?.display?.sourceId : undefined;
+      // A subscriber can join after the earlier owners were emitted. A native
+      // whole-message snapshot also covers those commentary siblings once its
+      // current owner has anchored the exact persisted message.
+      if (item.commentaryItemIds && sourceId) {
+        candidates = history.flatMap((candidate, position) =>
+          candidate.type === item.type &&
+          candidate.display?.sourceId === sourceId &&
+          candidate.display.sourceSegmentId &&
+          itemText(candidate).trim()
+            ? [position]
+            : [],
+        );
+      }
+      const discriminators = new Set(
+        candidates.map(position =>
+          JSON.stringify([
+            history[position].display?.sourceSegmentId,
+            history[position].display?.sourceIndex,
+          ]),
+        ),
+      );
+      // Only actual native commentary owners can bridge a Tool boundary or
+      // join the segment rows behind a whole-message live snapshot.
+      if (candidates.length && sources.size === 1 && discriminators.size === candidates.length) {
+        match = candidates[candidates.length - 1];
+        nativeCommentary = true;
+        if (item.commentaryItemIds || candidates.length > 1)
+          commentaryGroups.set(index, candidates);
+      }
+    }
+    if (match < 0 && item.type !== 'toolCall' && !unanchoredTool) {
       const followingTool = live
         .slice(index + 1)
         .map(toolIndex)
@@ -138,29 +286,78 @@ function reconcileItems(history: Item[], live: Item[]): { items: Item[]; matches
         (candidate, position) => position >= start && position < end && sameItem(candidate, item),
       );
     }
-    if (match <= previousMatch) match = -1;
+    if ((!nativeCommentary && match <= previousMatch) || matchedPositions.has(match)) match = -1;
     // Until this Tool is persisted, following text belongs beyond the known
     // historical boundary, even if it repeats the preceding response exactly.
     if (item.type === 'toolCall') unanchoredTool = match < 0;
     matches.push(match);
-    if (match >= 0) previousMatch = match;
+    if (match >= 0) {
+      previousMatch = Math.max(previousMatch, match);
+      matchedPositions.add(match);
+    }
   }
-  const items: Item[] = [];
-  let cursor = 0;
+  const replacements = new Map<number, Item | null>();
+  const insertions = new Map<number, Item[]>();
+  let covered = true;
   for (let index = 0; index < live.length; index += 1) {
     const match = matches[index];
+    const item = live[index];
+    const group = commentaryGroups.get(index);
+    const candidate = history[match];
+    const historicalText = group
+      ? group.map(position => itemText(history[position])).join('\n')
+      : candidate
+        ? itemText(candidate)
+        : '';
+    covered &&=
+      Boolean(candidate) &&
+      (group
+        ? historicalText.startsWith(itemText(item))
+        : sameItem(candidate, item) &&
+          (item.type === 'toolCall'
+            ? candidate.status !== 'inProgress' && Boolean(candidate.output || !item.output)
+            : historicalText.includes(itemText(item))));
     if (match >= 0) {
-      items.push(...history.slice(cursor, match), mergeItem(history[match], live[index]));
-      cursor = match + 1;
+      if (group) {
+        const prefix = group
+          .slice(0, -1)
+          .map(position => itemText(history[position]))
+          .join('\n');
+        const boundary = prefix ? `${prefix}\n` : '';
+        // Preserve native segment rows, including rich content. Append only
+        // the unpersisted suffix instead of repeating the entire snapshot.
+        let merged: Item;
+        if (historicalText.startsWith(itemText(item))) {
+          merged = candidate;
+        } else if (itemText(item).startsWith(boundary)) {
+          merged = mergeItem(candidate, { ...item, text: itemText(item).slice(boundary.length) });
+        } else {
+          // A replacement can revise the earlier paragraphs as well. Keep
+          // their media while the current native snapshot owns the whole text.
+          for (const position of group.slice(0, -1)) {
+            replacements.set(position, withoutItemText(history[position]));
+          }
+          merged = mergeItem(candidate, item);
+        }
+        replacements.set(match, merged);
+      } else {
+        replacements.set(match, mergeItem(candidate, item));
+      }
     } else {
       const followingMatch = matches.slice(index + 1).find(value => value >= 0);
       const position = followingMatch ?? history.length;
-      items.push(...history.slice(cursor, position), live[index]);
-      cursor = position;
+      insertions.set(position, [...(insertions.get(position) ?? []), item]);
     }
   }
-  items.push(...history.slice(cursor));
-  return { items, matches };
+  // Public history can put split commentary before its Thinking sibling even
+  // when the live cumulative update followed Thinking. Native anchors retain
+  // that order without moving the history cursor backwards and duplicating rows.
+  const items = history.flatMap((item, index) => {
+    const retained = replacements.has(index) ? replacements.get(index) : item;
+    return [...(insertions.get(index) ?? []), ...(retained ? [retained] : [])];
+  });
+  items.push(...(insertions.get(history.length) ?? []));
+  return { items, matches, covered };
 }
 
 /** Browser-only projection. Durable history remains owned by Gateway. */
@@ -192,7 +389,9 @@ export class ChromeExtensionStream {
   }
 
   /** Retain only IDs for uniquely identified rows already joined by display reconciliation. */
-  private retainDisplayKeys(turn: ChromeDisplayView['turns'][number]): ChromeDisplayView['turns'][number] {
+  private retainDisplayKeys(
+    turn: ChromeDisplayView['turns'][number],
+  ): ChromeDisplayView['turns'][number] {
     const sources = turn.items.map(item => {
       const display = item.display;
       if (!display?.sourceId || !Number.isSafeInteger(display.sourceIndex)) return null;
@@ -230,8 +429,13 @@ export class ChromeExtensionStream {
 
   /** Bind a server-confirmed run before its first native stream event. */
   bindRun(runId: string, startedAt = Date.now(), retryAttempt = 0): boolean {
-    if (!runId.trim() || this.completedRuns.has(runId) || !Number.isSafeInteger(retryAttempt) ||
-        retryAttempt < this.retryAttempt) return false;
+    if (
+      !runId.trim() ||
+      this.completedRuns.has(runId) ||
+      !Number.isSafeInteger(retryAttempt) ||
+      retryAttempt < this.retryAttempt
+    )
+      return false;
     const previous = this.boundRunId ?? this.state.activeTurn?.runId;
     if (retryAttempt > this.retryAttempt && previous) {
       if (previous === runId) return false;
@@ -263,8 +467,11 @@ export class ChromeExtensionStream {
   }
 
   start(message: string, rawMessage?: Record<string, unknown>, submissionId?: string): void {
-    if (submissionId && (this.optimisticInputs.has(submissionId) ||
-        this.activeInput?.submissionId === submissionId)) return;
+    if (
+      submissionId &&
+      (this.optimisticInputs.has(submissionId) || this.activeInput?.submissionId === submissionId)
+    )
+      return;
     this.finish();
     this.pendingRunEvents = [];
     this.pendingRunChars = 0;
@@ -399,13 +606,19 @@ export class ChromeExtensionStream {
       return false;
     }
     const attempt = value.retryAttempt;
-    if (attempt !== undefined && (!Number.isSafeInteger(attempt) || attempt < this.retryAttempt)) return false;
+    if (attempt !== undefined && (!Number.isSafeInteger(attempt) || attempt < this.retryAttempt))
+      return false;
     if (attempt !== undefined && attempt > this.retryAttempt) {
       const { sessionKey, sessionId, runId } = value.event;
       const expectedSessionId = this.state.sessionId ?? this.state.activeTurn?.sessionId;
-      if (!sessionKey || (this.state.sessionKey && sessionKey !== this.state.sessionKey) ||
+      if (
+        !sessionKey ||
+        (this.state.sessionKey && sessionKey !== this.state.sessionKey) ||
         (sessionId && expectedSessionId && sessionId !== expectedSessionId) ||
-        !runId || !this.bindRun(runId, value.startedAt, attempt)) return false;
+        !runId ||
+        !this.bindRun(runId, value.startedAt, attempt)
+      )
+        return false;
     }
     // Missing deltas cannot be repaired by appending later fragments, even
     // after one history page arrives. Keep this run on authoritative history.
@@ -457,20 +670,12 @@ export class ChromeExtensionStream {
       ...(this.activity ? { activity: this.activity } : {}),
     };
     const turn = this.state.activeTurn;
-    if (!turn?.items.length) return { ...history, turns: this.projectOptimisticInputs(history.turns) };
+    if (!turn?.items.length)
+      return { ...history, turns: this.projectOptimisticInputs(history.turns) };
     const turns = this.history.turns.slice();
     const index = this.anchor ?? Math.max(0, turns.length - 1);
     const historical = turns[index] ?? { id: turn.id, items: [] };
-    const live = turn.items
-      .filter(item => item.type !== 'compaction')
-      .filter(
-        item =>
-          !(
-            item.type === 'content' &&
-            (item.assistantTextScopeSuppressed || item.assistantTextSourcePending)
-          ),
-      )
-      .map(projectItem);
+    const live = projectLiveItems(turn);
     turns[index] = this.retainDisplayKeys({
       ...historical,
       items: reconcileItems(historical.items, live).items,
@@ -494,25 +699,8 @@ export class ChromeExtensionStream {
     if (preserveUnpersisted && this.state.activeTurn?.items.length) {
       const historical =
         this.history.turns[this.anchor ?? Math.max(0, this.history.turns.length - 1)]?.items ?? [];
-      const live = this.state.activeTurn.items
-        .filter(item => item.type !== 'terminal' && item.type !== 'compaction')
-        .filter(
-          item =>
-            !(
-              item.type === 'content' &&
-              (item.assistantTextScopeSuppressed || item.assistantTextSourcePending)
-            ),
-        )
-        .map(projectItem);
-      const { matches } = reconcileItems(historical, live);
-      const covered = live.every((item, index) => {
-        const candidate = historical[matches[index]];
-        if (!candidate) return false;
-        if (!sameItem(candidate, item)) return false;
-        return item.type === 'toolCall'
-          ? candidate.status !== 'inProgress' && Boolean(candidate.output || !item.output)
-          : itemText(candidate).includes(itemText(item));
-      });
+      const live = projectLiveItems(this.state.activeTurn, false);
+      const { covered } = reconcileItems(historical, live);
       if (!covered) {
         this.settled = true;
         for (const item of this.state.activeTurn.items) {
@@ -529,9 +717,7 @@ export class ChromeExtensionStream {
       const index = this.anchor ?? Math.max(0, this.history.turns.length - 1);
       const historical = this.history.turns[index];
       if (historical) {
-        const live = this.state.activeTurn.items
-          .filter(item => item.type !== 'compaction' && item.type !== 'terminal')
-          .map(projectItem);
+        const live = projectLiveItems(this.state.activeTurn, false);
         const { matches } = reconcileItems(historical.items, live);
         const ids = new Map(matches.map((match, position) => [match, live[position]]));
         this.history = {

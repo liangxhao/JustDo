@@ -953,6 +953,44 @@ describe('extension streaming DOM', () => {
     expect(document.querySelectorAll('.message.assistant')).toHaveLength(1);
   });
 
+  it('renders cumulative commentary once when native history splits it into rich segments', async () => {
+    const { thread, emit } = await mountThread();
+    const preamble = (seq: number, itemId: string, progressText: string) => emit(seq, 'item', {
+      kind: 'preamble', phase: 'update', itemId, progressText,
+      assistantTextScope: { id: 'message-scope', commentarySnapshot: 'message' },
+    });
+    preamble(1, 'commentary-1', 'First paragraph.');
+    emit(2, 'thinking', { text: 'Inspect the file.' });
+    preamble(3, 'commentary-2', 'First paragraph.\nSecond paragraph.');
+    await vi.waitFor(() => expect(document.querySelectorAll('.assistant-content')).toHaveLength(1));
+
+    const update = (second: string) => mock.notify('chrome/thread/updated', {
+      threadId: 'one', thread: { ...thread, turns: [{ ...thread.turns[0], items: [
+        ...thread.turns[0].items,
+        { type: 'agentMessage', text: 'First paragraph.',
+          display: { sourceId: 'native-message', sourceSegmentId: 'commentary-1', sourceIndex: 0 } },
+        { type: 'agentMessage', text: second,
+          rawMessage: { role: 'assistant', content: [
+            { type: 'text', text: second },
+            { type: 'attachment', attachment: { kind: 'document', label: 'notes.pdf', url: '/notes.pdf' } },
+          ] },
+          display: { sourceId: 'native-message', sourceSegmentId: 'commentary-2', sourceIndex: 0 } },
+        { type: 'reasoning', content: ['Inspect the file.'] },
+        { type: 'toolCall', toolUseId: 'read-1', toolName: 'read', status: 'inProgress' },
+      ] }] },
+    });
+    update('Second');
+    const paragraphs = () => [...document.querySelectorAll('.assistant-content p')]
+      .map(node => node.textContent?.trim());
+    await vi.waitFor(() => expect(paragraphs()).toEqual(['First paragraph.', 'Second paragraph.']));
+    expect(document.querySelectorAll('.assistant-content')).toHaveLength(2);
+    expect(document.querySelectorAll('.assistant-content .chrome-delivery-card')).toHaveLength(1);
+
+    update('Second paragraph.');
+    expect(paragraphs()).toEqual(['First paragraph.', 'Second paragraph.']);
+    expect(document.querySelectorAll('.assistant-content .chrome-delivery-card')).toHaveLength(1);
+  });
+
   it('keeps historical thinking collapsed and uses matching header icon geometry', async () => {
     const { thread } = await mountThread();
     mock.notify('chrome/thread/updated', {

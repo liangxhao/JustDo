@@ -58,16 +58,52 @@ describe('extension live projection', () => {
   it('retains the structured question result for the browser presentation', () => {
     const questionResult = {
       version: 1,
-      questions: [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }],
+      questions: [
+        {
+          id: 'stack',
+          question: 'Which stack?',
+          options: [
+            { id: 'react', label: 'React' },
+            { id: 'vue', label: 'Vue' },
+          ],
+        },
+      ],
       response: { status: 'answered', answers: { stack: { selected: ['react'] } } },
     };
     const view = new ChromeExtensionStream('one');
     view.start('Question');
     view.bindRun('run-1');
-    view.accept(agent(1, 'tool', { phase: 'start', toolCallId: 'question-1', name: 'ask_user_question', args: { questions: questionResult.questions } }));
-    view.accept(agent(2, 'tool', { phase: 'result', toolCallId: 'question-1', name: 'ask_user_question', result: { content: [{ type: 'text', text: JSON.stringify({ askUserQuestion: questionResult, summary: 'User selected: React' }) }] } }));
+    view.accept(
+      agent(1, 'tool', {
+        phase: 'start',
+        toolCallId: 'question-1',
+        name: 'ask_user_question',
+        args: { questions: questionResult.questions },
+      }),
+    );
+    view.accept(
+      agent(2, 'tool', {
+        phase: 'result',
+        toolCallId: 'question-1',
+        name: 'ask_user_question',
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                askUserQuestion: questionResult,
+                summary: 'User selected: React',
+              }),
+            },
+          ],
+        },
+      }),
+    );
 
-    expect(items(view).find(item => item.type === 'toolCall')).toMatchObject({ status: 'completed', questionResult });
+    expect(items(view).find(item => item.type === 'toolCall')).toMatchObject({
+      status: 'completed',
+      questionResult,
+    });
   });
 
   it('buffers a pending send until the explicit native binding selects its events', () => {
@@ -97,8 +133,16 @@ describe('extension live projection', () => {
     expect(view.accept(retry)).toBe(true);
     expect(view.accept(agent(50, 'assistant', { text: 'Late predecessor frame' }))).toBe(false);
     expect(view.bindRun('run-1', 1, 0)).toBe(false);
-    expect(items(view).map(item => item.type)).toEqual(['userMessage', 'agentMessage', 'agentMessage']);
-    expect(items(view).map(item => item.text)).toEqual([undefined, 'Earlier native commentary', 'Continued reply']);
+    expect(items(view).map(item => item.type)).toEqual([
+      'userMessage',
+      'agentMessage',
+      'agentMessage',
+    ]);
+    expect(items(view).map(item => item.text)).toEqual([
+      undefined,
+      'Earlier native commentary',
+      'Continued reply',
+    ]);
   });
 
   it('calibrates overflowed pending deltas from history instead of displaying a missing prefix', () => {
@@ -370,6 +414,145 @@ describe('extension live projection', () => {
     ]);
   });
 
+  it('joins the exact commentary owner when history reaches a tool before the live stream', () => {
+    const view = new ChromeExtensionStream('one');
+    view.setHistory(history());
+    view.accept(
+      agent(1, 'item', {
+        kind: 'preamble',
+        phase: 'update',
+        itemId: 'commentary-1',
+        progressText: 'Checking the file.',
+      }),
+    );
+    view.setHistory(
+      history([
+        {
+          type: 'agentMessage',
+          text: 'Checking the file.',
+          display: { sourceId: 'message-1', sourceSegmentId: 'commentary-1', sourceIndex: 0 },
+        },
+        { type: 'toolCall', toolUseId: 'read-1', status: 'inProgress' },
+      ]),
+    );
+
+    expect(items(view)).toMatchObject([
+      user,
+      { text: 'Checking the file.' },
+      { toolUseId: 'read-1' },
+    ]);
+    view.accept(agent(2, 'tool', { phase: 'start', toolCallId: 'read-1', name: 'read' }));
+    expect(items(view)).toHaveLength(3);
+  });
+
+  it.each([
+    { rich: false, thinking: false },
+    { rich: true, thinking: true },
+  ])(
+    'reconciles whole-message commentary with split history ($rich, $thinking)',
+    ({ rich, thinking }) => {
+      const view = new ChromeExtensionStream('one');
+      view.setHistory(history());
+      const preamble = (seq: number, itemId: string, text: string) =>
+        view.accept(
+          agent(seq, 'item', {
+            kind: 'preamble',
+            phase: 'update',
+            itemId,
+            progressText: text,
+            assistantTextScope: { id: 'scope-1', commentarySnapshot: 'message' },
+          }),
+        );
+      preamble(1, 'commentary-1', 'First paragraph.');
+      if (thinking) view.accept(agent(2, 'thinking', { text: 'Inspect the file.' }));
+      preamble(3, 'commentary-2', 'First paragraph.\nSecond paragraph.');
+      const native = (second: string) =>
+        history([
+          {
+            type: 'agentMessage',
+            text: 'First paragraph.',
+            display: { sourceId: 'message-1', sourceSegmentId: 'commentary-1', sourceIndex: 0 },
+            ...(rich
+              ? {
+                  rawMessage: {
+                    role: 'assistant',
+                    content: [
+                      { type: 'text', text: 'First paragraph.' },
+                      { type: 'image', source: { type: 'url', url: '/image.png' } },
+                    ],
+                  },
+                }
+              : {}),
+          },
+          {
+            type: 'agentMessage',
+            text: second,
+            display: { sourceId: 'message-1', sourceSegmentId: 'commentary-2', sourceIndex: 0 },
+          },
+          ...(thinking ? [{ type: 'reasoning', content: ['Inspect the file.'] }] : []),
+        ]);
+      view.setHistory(native('Second'));
+      expect(items(view).filter(item => item.type === 'agentMessage')).toMatchObject([
+        { text: 'First paragraph.' },
+        { text: 'Second paragraph.' },
+      ]);
+      expect(items(view).filter(item => item.type === 'reasoning')).toHaveLength(thinking ? 1 : 0);
+      if (rich)
+        expect(items(view).find(item => item.rawMessage)?.rawMessage).toMatchObject({
+          content: expect.arrayContaining([
+            { type: 'image', source: { type: 'url', url: '/image.png' } },
+          ]),
+        });
+      view.finish(true);
+      expect(
+        items(view)
+          .filter(item => item.type === 'agentMessage')
+          .map(item => item.text),
+      ).toEqual(['First paragraph.', 'Second paragraph.']);
+
+      view.setHistory(native('Second paragraph.'));
+      // Once history covers the snapshot, retire the live projection and retain
+      // the native segmentation rather than persisting a coalesced transcript.
+      expect(items(view).filter(item => item.type === 'agentMessage')).toMatchObject([
+        { text: 'First paragraph.' },
+        { text: 'Second paragraph.' },
+      ]);
+      expect(items(view).filter(item => item.type === 'reasoning')).toHaveLength(thinking ? 1 : 0);
+    },
+  );
+
+  it('keeps equal commentary from distinct native scopes separate', () => {
+    const view = new ChromeExtensionStream('one');
+    view.setHistory(
+      history([
+        {
+          type: 'agentMessage',
+          text: 'Checking.',
+          display: {
+            sourceId: 'previous-message',
+            sourceSegmentId: 'previous-commentary',
+            sourceIndex: 0,
+          },
+        },
+      ]),
+    );
+    view.accept(
+      agent(1, 'item', {
+        kind: 'preamble',
+        phase: 'update',
+        itemId: 'current-commentary',
+        progressText: 'Checking.',
+        assistantTextScope: { id: 'current-scope', commentarySnapshot: 'message' },
+      }),
+    );
+
+    expect(
+      items(view)
+        .filter(item => item.type === 'agentMessage')
+        .map(item => item.text),
+    ).toEqual(['Checking.', 'Checking.']);
+  });
+
   it('preserves unmatched historical activities when a tool event arrives late', () => {
     const view = new ChromeExtensionStream('one');
     view.setHistory(
@@ -388,6 +571,93 @@ describe('extension live projection', () => {
       { content: ['Later thinking'] },
       { toolUseId: 't2' },
     ]);
+  });
+
+  it('joins earlier persisted commentary when subscribing at a later cumulative owner', () => {
+    const view = new ChromeExtensionStream('one');
+    view.accept(
+      agent(5, 'item', {
+        kind: 'preamble',
+        phase: 'update',
+        itemId: 'commentary-2',
+        progressText: 'First.\nSecond.',
+        assistantTextScope: { id: 'scope-1', commentarySnapshot: 'message' },
+      }),
+    );
+    view.setHistory(
+      history([
+        {
+          type: 'agentMessage',
+          text: 'First.',
+          display: { sourceId: 'message-1', sourceSegmentId: 'commentary-1', sourceIndex: 0 },
+        },
+        {
+          type: 'agentMessage',
+          text: 'Second.',
+          display: { sourceId: 'message-1', sourceSegmentId: 'commentary-2', sourceIndex: 0 },
+        },
+      ]),
+    );
+
+    expect(
+      items(view)
+        .filter(item => item.type === 'agentMessage')
+        .map(item => item.text),
+    ).toEqual(['First.', 'Second.']);
+    view.finish(true);
+    expect(view.project().activity).toBeUndefined();
+    expect(
+      items(view)
+        .filter(item => item.type === 'agentMessage')
+        .map(item => item.text),
+    ).toEqual(['First.', 'Second.']);
+  });
+
+  it('preserves a revised whole-message snapshot and historical media until history catches up', () => {
+    const view = new ChromeExtensionStream('one');
+    view.accept(
+      agent(5, 'item', {
+        kind: 'preamble',
+        phase: 'update',
+        itemId: 'commentary-2',
+        progressText: 'Revised first.\nSecond. More.',
+        assistantTextScope: { id: 'scope-1', commentarySnapshot: 'message' },
+      }),
+    );
+    view.setHistory(
+      history([
+        {
+          type: 'agentMessage',
+          text: 'First.',
+          rawMessage: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'First.' },
+              { type: 'image', source: { type: 'url', url: '/image.png' } },
+            ],
+          },
+          display: { sourceId: 'message-1', sourceSegmentId: 'commentary-1', sourceIndex: 0 },
+        },
+        {
+          type: 'agentMessage',
+          text: 'Second.',
+          display: { sourceId: 'message-1', sourceSegmentId: 'commentary-2', sourceIndex: 0 },
+        },
+      ]),
+    );
+
+    const visibleText = () =>
+      items(view)
+        .filter(item => item.type === 'agentMessage' && item.text)
+        .map(item => item.text);
+    expect(visibleText()).toEqual(['Revised first.\nSecond. More.']);
+    expect(items(view).find(item => item.rawMessage)?.rawMessage).toMatchObject({
+      content: expect.arrayContaining([
+        { type: 'image', source: { type: 'url', url: '/image.png' } },
+      ]),
+    });
+    view.finish(true);
+    expect(visibleText()).toEqual(['Revised first.\nSecond. More.']);
   });
 
   it('aligns repeated text using shared tool boundaries when full history arrives', () => {
@@ -541,7 +811,10 @@ describe('extension live projection', () => {
       view.finish();
       expect(items(view)).toMatchObject([user]);
 
-      view.setHistory({ id: 'one', turns: [...priorTurns, { id: 'new-turn', items: [nativeUser, reply] }] });
+      view.setHistory({
+        id: 'one',
+        turns: [...priorTurns, { id: 'new-turn', items: [nativeUser, reply] }],
+      });
       expect(items(view)).toMatchObject([...(existing ? [previous] : []), nativeUser, reply]);
     },
   );
@@ -559,7 +832,8 @@ describe('extension live projection', () => {
     view.setHistory(snapshot, true);
     view.finish();
     expect(view.project().turns.map(turn => turn.items)).toMatchObject([
-      [oldUser, oldReply, nextReply], [user],
+      [oldUser, oldReply, nextReply],
+      [user],
     ]);
 
     view.setHistory(snapshot);
@@ -568,15 +842,21 @@ describe('extension live projection', () => {
 
   it('retains attachment-only input until the exact native row, even across a pending-row gap', () => {
     const view = new ChromeExtensionStream('one');
-    const rawMessage = { role: 'user', content: [{ type: 'attachment', attachment: { label: 'file.pdf' } }] };
+    const rawMessage = {
+      role: 'user',
+      content: [{ type: 'attachment', attachment: { label: 'file.pdf' } }],
+    };
     view.start('', rawMessage, 'input-1');
     const local = view.project().turns[0].items[0];
     expect(local.rawMessage).toEqual(rawMessage);
 
     const native = { ...local, inputRunId: 'input-1' };
-    view.setHistory({ id: 'one', turns: [
-      { id: 'native', items: [{ ...native, pendingInput: { id: 'transfer', state: 'queued' } }] },
-    ] });
+    view.setHistory({
+      id: 'one',
+      turns: [
+        { id: 'native', items: [{ ...native, pendingInput: { id: 'transfer', state: 'queued' } }] },
+      ],
+    });
     expect(items(view)).toHaveLength(1);
     expect(items(view)[0].pendingInput).toEqual({ id: 'transfer', state: 'queued' });
 

@@ -238,7 +238,7 @@ describe('Chrome extension preparation', () => {
       expect(second.productName).toBe(projectProductName);
       expect(manifest).toMatchObject({
         name: projectProductName,
-        version: '2.4.0',
+        version: '2.4.1',
         action: { default_title: projectProductName },
       });
       expect(manifest.description).toContain(projectProductName);
@@ -529,7 +529,7 @@ describe('Chrome extension preparation', () => {
       const manifest = JSON.parse(
         fs.readFileSync(path.join(rebuilt.outputDir, 'manifest.json'), 'utf8'),
       );
-      expect(manifest).toMatchObject({ version: '2.4.0' });
+      expect(manifest).toMatchObject({ version: '2.4.1' });
       expect(manifest).not.toHaveProperty('version_name');
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
