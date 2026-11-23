@@ -67,6 +67,9 @@ flowchart LR
 Main 先登记发送与 key、物理 SID、lifecycle revision、客户端代次的关联，再允许输入。
 只接受精确原生整轮 `executionSettled:true` 终态；chat final、空闲和 Stop ACK 不替代结算。
 丢失实时事件时，精确 `agent.wait` 结果使用独立证明类型，不制造 agentSeq。
+桌面对话断线后，Main 核验原生会话身份，使用带原生结束时间的成功让出结果（`yielded`、`paused`）释放当前运行的重试认领。
+若结果包含 `stopReason`，该字段需为 `end_turn`。
+Goal 继续接收原有的让出事件，后续子任务由原生运行时接管。
 
 Runtime Services 的只读 `runtimeServices.executionFailure`
 使用公开 Session Store/Transcript API，核对读取前后的 SID/revision，只返回指定 run

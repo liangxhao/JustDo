@@ -115,7 +115,9 @@ export class AutomaticErrorRetryLifecycle {
     verifiedIdentity?: WaitIdentity,
   ): Promise<void> {
     const { coordinator } = this.dependencies;
-    if (event.sessionId && event.yielded !== true && typeof endedAt === 'number' && Number.isFinite(endedAt) &&
+    const canSettleRetry = event.yielded !== true ||
+      (verifiedIdentity !== undefined && event.phase === 'end' && status === 'completed');
+    if (canSettleRetry && event.sessionId && typeof endedAt === 'number' && Number.isFinite(endedAt) &&
         event.stopReason !== 'restart' && event.stopReason !== 'superseded') {
       const receipt: AutomaticErrorRetryWaitReceipt = {
         source: 'agent.wait', runId: event.runId, sessionKey: event.sessionKey,

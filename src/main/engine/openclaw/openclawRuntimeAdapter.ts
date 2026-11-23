@@ -78,6 +78,7 @@ import {
   SessionGoalStatus,
 } from '../../../shared/cowork/sessionGoal';
 import { readRunExecutionTiming } from '../../../shared/cowork/sessionRun';
+import { isSourceGroupedSession } from '../../../shared/cowork/sessionSource';
 import {
   hasSlashCommandBeforeSendHook,
   parseGoalStartObjective,
@@ -3645,6 +3646,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         error?: string;
         pendingError?: boolean;
         yielded?: boolean;
+        livenessState?: string;
       }>('agent.wait', { runId: turn.runId, timeoutMs: 0 });
       if (!isCurrent()) return;
       if (result.runId !== turn.runId || result.pendingError === true) return;
@@ -3658,6 +3660,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         result.stopReason !== 'aborted' &&
         result.stopReason !== 'rpc'
       ) {
+        // External clients keep their own logical-turn settlement and Stop contract.
+        const retrySession = verifiedRetryIdentity && !unknownRun?.cancelled
+          ? this.store.getSession(sessionId) : null;
+        const settleRetry = retrySession !== null && !isSourceGroupedSession(retrySession);
+        // Chat delivery can preserve the paused yield without projecting a stop reason.
+        if (settleRetry && (!Number.isFinite(result.endedAt) ||
+          result.livenessState !== 'paused' ||
+          (result.stopReason !== undefined && result.stopReason !== 'end_turn'))) return;
         this.confirmUnknownSessionRunAdmission(sessionId, turn);
         // Yield proves admission, but not whole-session completion. Release the
         // old request identity to normal parent/descendant activity aggregation.
@@ -3683,7 +3693,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
             yielded: true,
             livenessState: 'paused',
             stopReason: 'end_turn',
-          }, 'completed', result.endedAt);
+          }, 'completed', settleRetry ? result.endedAt : undefined);
         }
         this.scheduleGoalRecovery(this.gatewayClientGeneration);
         return;
