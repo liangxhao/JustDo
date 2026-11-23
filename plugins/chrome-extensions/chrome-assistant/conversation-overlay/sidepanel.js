@@ -487,7 +487,8 @@ async function refreshSessions(preferredSessionId, generation) {
   const current = preferredSessionId ?? sessionSelect.value;
   const result = await client.request('thread/list');
   if (generation !== refreshGeneration) return false;
-  sessionSelect.replaceChildren();
+  // Keep the native select's compact label while refreshing its choices.
+  sessionSelect.options.length = 0;
   const createOption = document.createElement('option');
   createOption.value = '';
   createOption.textContent = t('newChat');

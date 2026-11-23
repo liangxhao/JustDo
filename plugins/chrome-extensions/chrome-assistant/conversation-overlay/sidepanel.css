@@ -107,26 +107,117 @@ header {
   height: 21px;
 }
 .conversation-picker {
+  position: relative;
+  justify-self: start;
   min-width: 0;
-  justify-content: flex-start;
+  max-width: 100%;
+  color: var(--chat-muted);
 }
 #session {
+  appearance: none;
+  field-sizing: content;
   max-width: 100%;
   min-width: 0;
-  border: 0;
-  padding: 7px 18px 7px 0;
+  height: 34px;
+  border: 1px solid color-mix(in srgb, var(--chat-border) 40%, transparent);
+  border-radius: 9px;
+  padding-block: 0;
+  padding-inline: 9px 28px;
   color: var(--chat-text);
-  background: transparent;
+  background: var(--chat-surface);
   font-size: 14px;
-  font-weight: 500;
-  text-align: left;
+  font-weight: 600;
+  text-align: start;
+  white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+#session:not(:disabled):is(:hover, :open) {
+  background: var(--chat-hover);
+}
+#session:focus-visible {
+  outline: 2px solid var(--chat-link);
+  outline-offset: 2px;
+}
+.conversation-picker:has(#session:disabled) {
+  opacity: .55;
+}
+#session:disabled { cursor: default; }
+.conversation-chevron {
+  position: absolute;
+  inset-inline-end: 8px;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.conversation-picker:has(#session:open) .conversation-chevron {
+  transform: rotate(180deg);
 }
 #session option,
 #permission option,
 #model option {
   color: var(--chat-text);
   background: var(--chat-surface);
+}
+@supports (appearance: base-select) {
+  #session,
+  #session::picker(select) {
+    appearance: base-select;
+  }
+  #session { align-items: center; }
+  #session > button,
+  #session selectedcontent {
+    min-width: 0;
+    overflow: hidden;
+  }
+  #session selectedcontent {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  #session::picker-icon { display: none; }
+  #session::picker(select) {
+    min-width: min(236px, calc(100vw - 56px));
+    max-width: min(420px, calc(100vw - 56px));
+    max-height: min(340px, calc(100vh - 72px));
+    margin-block: 6px;
+    overflow: auto;
+    scrollbar-width: thin;
+    padding: 4px;
+    border: 1px solid var(--chat-border);
+    border-radius: 12px;
+    color: var(--chat-text);
+    background: var(--chat-bg);
+    box-shadow: 0 8px 24px #0002;
+    font-size: 13px;
+    font-weight: 400;
+  }
+  #session option {
+    min-height: 34px;
+    padding: 7px 9px;
+    border-radius: 7px;
+    background: transparent;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  #session option:checked {
+    background: var(--chat-surface);
+    font-weight: 600;
+  }
+  #session option:hover,
+  #session option:focus-visible {
+    background: var(--chat-hover);
+  }
+  #session option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: var(--chat-link);
+  }
 }
 .header-actions {
   justify-content: flex-end;

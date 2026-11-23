@@ -15,8 +15,12 @@
       <div class="brand" title="__PRODUCT_NAME__"><img src="icons/icon32.png" alt="" /></div>
       <div class="conversation-picker">
         <select id="session" aria-label="Conversation" data-i18n-aria-label="conversation">
+          <button type="button"><selectedcontent></selectedcontent></button>
           <option value="" data-i18n="newChat">New chat</option>
         </select>
+        <svg class="conversation-chevron" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
+        </svg>
       </div>
       <div class="header-actions">
         <button
