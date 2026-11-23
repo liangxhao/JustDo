@@ -66,6 +66,7 @@ import {
   useMemoryDreamingControl,
   withMemoryDreamingCard,
 } from './memoryDreamingControl';
+import { formatRunError } from './runDiagnosticPresentation';
 import type { IntervalUnit, RecurrenceKind, ScheduleFormState, ScheduleMode } from './scheduleForm';
 import {
   buildScheduleForSubmission,
@@ -266,7 +267,7 @@ export function CronJobCard({
   const runningAtMs = job.state.runningAtMs;
   const isRunning = runningAtMs !== null && Number.isFinite(runningAtMs);
   const lastStatus = job.state.lastStatus === TaskStatus.Running ? null : job.state.lastStatus;
-  const lastError = job.state.lastError;
+  const lastError = job.state.lastError ? formatRunError(job.state.lastError) : undefined;
   const nextRunMs = job.state.nextRunAtMs;
   const scheduleLabel = isPlaceholder
     ? t('cronMemoryScheduleManaged')

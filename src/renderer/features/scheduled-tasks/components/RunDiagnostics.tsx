@@ -4,9 +4,11 @@ import type { ScheduledTaskRun, ScheduledTaskRunDiagnostic } from '@shared/sched
 import { i18nService } from '@/services/i18n';
 
 import {
+  formatRunError,
   formatRunModel,
   getRunErrorReasonLabel,
   getRunExplanation,
+  getVisibleDeliveryError,
 } from './runDiagnosticPresentation';
 import { formatDateTime } from './utils';
 
@@ -57,7 +59,7 @@ export default function RunDiagnostics({
   const t = i18nService.t.bind(i18nService);
   const diagnostics = run.diagnostics?.entries ?? [];
   const diagnosticMessages = new Set(diagnostics.map(entry => entry.message.trim()));
-  const deliveryError = run.deliveryError?.trim();
+  const deliveryError = getVisibleDeliveryError(run.error, run.deliveryError);
   const explanationText = getRunExplanation(run);
   const explanation =
     expanded &&
@@ -67,6 +69,7 @@ export default function RunDiagnostics({
       : explanationText;
   const visibleDeliveryError =
     expanded && deliveryError && diagnosticMessages.has(deliveryError) ? undefined : deliveryError;
+  const formattedExplanation = explanation ? formatRunError(explanation) : undefined;
   const summaryText = run.diagnostics?.summary?.trim();
   const diagnosticSummary =
     expanded &&
@@ -106,7 +109,7 @@ export default function RunDiagnostics({
   const diagnosticContent = (diagnostics.length > 0 || diagnosticSummary) && (
     <>
       {diagnosticSummary && (
-        <p className="mt-2 whitespace-pre-wrap break-words">{diagnosticSummary}</p>
+        <p className="mt-2 whitespace-pre-wrap break-words">{formatRunError(diagnosticSummary)}</p>
       )}
       {diagnostics.length > 0 && (
         <ul
@@ -143,7 +146,7 @@ export default function RunDiagnostics({
                     </time>
                   </p>
                 )}
-                <p className="whitespace-pre-wrap break-words">{entry.message}</p>
+                <p className="whitespace-pre-wrap break-words">{formatRunError(entry.message)}</p>
                 {(entry.toolName || entry.exitCode !== undefined || entry.truncated) && (
                   <p className="mt-0.5 text-xs text-secondary">
                     {[
@@ -197,12 +200,12 @@ export default function RunDiagnostics({
           {t('scheduledTasksReasonLabel')}: {reason}
         </p>
       )}
-      {explanation && (
+      {formattedExplanation && (
         <p
           className={`whitespace-pre-wrap break-words ${compact ? 'line-clamp-2' : ''} ${run.status === 'error' ? 'text-red-600 dark:text-red-400' : ''}`}
-          title={compact ? explanation : undefined}
+          title={compact ? formattedExplanation : undefined}
         >
-          {explanation}
+          {formattedExplanation}
         </p>
       )}
       {visibleDeliveryError && (

@@ -78,6 +78,43 @@ test('shows real historical routing errors instead of hiding them', () => {
   expect(screen.getByText('外部通知失败: announce requires a delivery channel')).toBeTruthy();
 });
 
+test('explains a recovered Gateway interruption once and preserves the unknown delivery status', () => {
+  i18nService.setLanguage('zh', { persist: false });
+  const error = 'cron: job interrupted by gateway restart';
+  render(
+    <RunDiagnostics
+      run={{ ...run, status: 'error', error, deliveryStatus: 'unknown', deliveryError: error }}
+      expanded
+    />,
+  );
+
+  expect(screen.getAllByText('Gateway 重启，任务运行中断。')).toHaveLength(1);
+  expect(screen.getByText('外部通知: 发送结果未知')).toBeTruthy();
+  expect(screen.queryByText(/外部通知失败/)).toBeNull();
+});
+
+test('localizes the task-level interruption and displays a distinct delivery error', () => {
+  i18nService.setLanguage('en', { persist: false });
+  const error = 'cron: job interrupted by gateway restart';
+  const state: TaskState = {
+    nextRunAtMs: null,
+    lastRunAtMs: 1,
+    lastStatus: 'error',
+    lastError: error,
+    lastDurationMs: 100,
+    runningAtMs: null,
+    consecutiveErrors: 1,
+    lastDeliveryError: error,
+  };
+  const view = render(<TaskStateNotice state={state} enabled />);
+
+  expect(screen.getByTitle('The Gateway restarted and interrupted this run.')).toBeTruthy();
+  expect(screen.queryByText(/External notification failed/i)).toBeNull();
+
+  view.rerender(<TaskStateNotice state={{ ...state, lastDeliveryError: 'Notification endpoint unavailable' }} enabled />);
+  expect(screen.getByText(/Notification endpoint unavailable/)).toBeTruthy();
+});
+
 test('shows actual model and supplied zero usage without inventing a total', () => {
   i18nService.setLanguage('zh', { persist: false });
   render(

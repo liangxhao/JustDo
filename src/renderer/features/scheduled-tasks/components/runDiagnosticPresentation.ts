@@ -3,6 +3,8 @@ import type { ScheduledTaskRun } from '@shared/scheduledTask/types';
 
 import { i18nService } from '@/services/i18n';
 
+const GATEWAY_RESTART_INTERRUPTION = 'cron: job interrupted by gateway restart';
+
 const REASON_KEYS: Record<string, string> = {
   auth: 'scheduledTasksReasonAuth',
   auth_permanent: 'scheduledTasksReasonAuth',
@@ -18,6 +20,24 @@ const REASON_KEYS: Record<string, string> = {
   session_expired: 'scheduledTasksReasonSession',
   empty_response: 'scheduledTasksReasonEmpty',
 };
+
+export function formatRunError(message: string): string {
+  return message.trim() === GATEWAY_RESTART_INTERRUPTION
+    ? i18nService.t('scheduledTasksReasonGatewayRestart')
+    : message;
+}
+
+export function getVisibleDeliveryError(
+  executionError: string | null | undefined,
+  deliveryError: string | null | undefined,
+): string | undefined {
+  const message = deliveryError?.trim();
+  // Startup recovery copies this interruption into both native error fields.
+  if (message === GATEWAY_RESTART_INTERRUPTION && executionError?.trim() === message) {
+    return undefined;
+  }
+  return message;
+}
 
 export function getRunErrorReasonLabel(reason: string | undefined): string | undefined {
   if (!reason?.trim()) return undefined;
