@@ -1,5 +1,5 @@
 import { ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline';
-import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import { readRunExecutionTiming, type SessionRunTiming } from '@shared/cowork/sessionRun';
 import { useEffect, useMemo, useRef } from 'react';
 
 import ChatMessageDisplay from '@/features/cowork/components/chat/ChatMessageDisplay';
@@ -86,6 +86,7 @@ const SideChatPanel = ({
     () =>
       messages.flatMap(message => {
         if (message.status === 'pending' || message.answeredAt === undefined) return [];
+        const startedAt = message.startedAt ?? message.askedAt;
         return [
           {
             id: `side-chat:${message.runId}`,
@@ -93,8 +94,9 @@ const SideChatPanel = ({
             clientTurnId: message.runId,
             rootRunId: message.runId,
             ...(message.modelRef ? { modelRef: message.modelRef } : {}),
-            startedAt: message.startedAt ?? message.askedAt,
+            startedAt,
             endedAt: message.answeredAt,
+            executionTiming: readRunExecutionTiming(startedAt, message.answeredAt),
             state: message.status === 'complete' ? 'completed' : 'failed',
           },
         ];

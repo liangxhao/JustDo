@@ -4,6 +4,7 @@
  */
 import type { BrowserAnnotationDisplay } from '@shared/browser/browserAnnotation';
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
+import type { SessionRunState } from '@shared/cowork/sessionRun';
 
 import type { WebpageEmbedPreview } from './pipeline/embed-presentation';
 import type { NativeCanvasPreview } from './pipeline/native-canvas';
@@ -47,6 +48,7 @@ export type MessageGroup = {
   messages: Array<{ message: unknown; key: string; duplicateCount?: number }>;
   timestamp: number;
   durationMs?: number;
+  runState?: SessionRunState;
   isStreaming: boolean;
 };
 

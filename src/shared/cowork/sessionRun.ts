@@ -3,6 +3,17 @@ import type { AutomaticErrorRetryRunMetadata } from './automaticErrorRetry';
 
 export type SessionRunState = 'running' | 'completed' | 'failed' | 'aborted';
 
+export interface RunExecutionTiming {
+  startedAt: number;
+  endedAt: number;
+}
+
+export function readRunExecutionTiming(startedAt: unknown, endedAt: unknown): RunExecutionTiming | undefined {
+  if (typeof startedAt !== 'number' || !Number.isSafeInteger(startedAt) || startedAt <= 0 ||
+      typeof endedAt !== 'number' || !Number.isSafeInteger(endedAt) || endedAt < startedAt) return;
+  return { startedAt, endedAt };
+}
+
 export const SessionRunBeginErrorCode = {
   FollowupAvailable: 'followup_available',
   RuntimeActive: 'runtime_active',
@@ -23,6 +34,8 @@ export interface SessionRunTiming {
   acceptedAt?: number;
   endedAt?: number;
   state: SessionRunState;
+  /** Measured whole-run timestamps. For main chat they come from the native terminal. */
+  executionTiming?: RunExecutionTiming;
   /** Content-free presentation association; never used to resume execution. */
   automaticErrorRetry?: AutomaticErrorRetryRunMetadata;
 }

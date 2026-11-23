@@ -258,6 +258,7 @@ export function foldCompletedProcessRows(
       }
       const answer = answerSources[index];
       if (index < finalIndex && !(answer && visibleAnswerSources.has(answer.key)) &&
+        !(row.item.kind === 'history-message' && row.item.runReceiptId) &&
         !options.keepVisibleKeys?.has(row.item.key) &&
         canFold(row.item, options.foldUnresolvedTools)) {
         prefix.push(row);

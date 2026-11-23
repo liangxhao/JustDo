@@ -793,46 +793,45 @@ describe('projectPersistedTimeline', () => {
     ]);
   });
 
-  test('uses a persisted run receipt and attaches it to the last visible announce', () => {
-    const result = projectPersistedTimeline(
-      [
-        {
-          role: 'user',
-          content: 'prompt',
-          runId: 'run-root',
-        },
-        {
-          role: 'assistant',
-          content: 'answer',
-          runId: 'run-root',
-        },
-        {
-          role: 'assistant',
-          content: 'subagent result',
-          runId: 'announce:v1:child',
-          provider: 'openclaw',
-          model: 'gateway-injected',
-        },
-      ],
-      [
-        {
-          id: 'timing-1',
-          sessionId: 'session-1',
-          clientTurnId: 'run-root',
-          rootRunId: 'run-root',
-          startedAt: 1_000,
-          endedAt: 6_000,
-          state: 'completed',
-        },
-      ],
+  test('attaches native elapsed time once to the last reply from its own run', () => {
+    const timing = {
+      id: 'timing-1', sessionId: 'session-1', clientTurnId: 'run-root', rootRunId: 'run-root',
+      startedAt: 1_000, endedAt: 75_000, executionTiming: { startedAt: 1_000, endedAt: 6_000 },
+      state: 'completed' as const,
+    };
+    const interim: GatewayMessage[] = [
+      { role: 'user', content: 'prompt', runId: 'run-root' },
+      { role: 'assistant', content: 'first step', runId: 'run-root', endTurn: false },
+      {
+        role: 'assistant', runId: 'run-root',
+        content: [{ type: 'text', text: 'I will read it.' }, { type: 'toolCall', id: 'call', name: 'read' }],
+      },
+    ];
+    expect(projectPersistedTimeline(interim, [timing])).not.toContainEqual(
+      expect.objectContaining({ runReceiptId: timing.id }),
     );
 
-    expect(result[1]).toEqual(expect.not.objectContaining({ durationMs: expect.any(Number) }));
-    expect(result[2]).toMatchObject({
-      kind: 'history-message',
-      durationMs: 5_000,
-      completedAt: 6_000,
-    });
+    const result = projectPersistedTimeline([
+      ...interim,
+      { role: 'assistant', content: 'earlier segment', runId: 'run-root' },
+      { role: 'assistant', content: 'answer', runId: 'run-root' },
+      { role: 'assistant', content: 'subagent result', runId: 'announce:v1:child', provider: 'openclaw', model: 'gateway-injected' },
+    ], [timing]);
+    expect(result.filter(item => item.kind === 'history-message' && item.durationMs !== undefined))
+      .toEqual([expect.objectContaining({ message: expect.objectContaining({ content: 'answer' }), durationMs: 5_000, completedAt: 6_000 })]);
+  });
+
+  test('restores the elapsed time after a committed steer input names the run', () => {
+    const result = projectPersistedTimeline([
+      { role: 'user', content: 'Change direction', __openclaw: {
+        id: 'steer', seq: 10, idempotencyKey: 'different-input:user', steerTargetRunId: 'original-run',
+      } },
+      { role: 'assistant', content: 'Updated answer' },
+    ], [{
+      id: 'receipt', sessionId: 'session-1', clientTurnId: 'original-input', rootRunId: 'original-run',
+      startedAt: 1_000, endedAt: 9_000, executionTiming: { startedAt: 1_000, endedAt: 6_000 }, state: 'completed',
+    }]);
+    expect(result[1]).toMatchObject({ kind: 'history-message', durationMs: 5_000 });
   });
 
   test.each(['completed', 'failed', 'aborted'] as const)(
@@ -916,6 +915,7 @@ describe('projectPersistedTimeline', () => {
             modelRef: 'zcode/glm-5.3-flash',
             startedAt: 1_000,
             endedAt: 6_000,
+            executionTiming: { startedAt: 1_000, endedAt: 6_000 },
             state: 'failed',
           },
         ],
@@ -945,6 +945,7 @@ describe('projectPersistedTimeline', () => {
         modelRef: 'provider/previous-model',
         startedAt: 1_000,
         endedAt: 6_000,
+        executionTiming: { startedAt: 1_000, endedAt: 6_000 },
         state: 'completed' as const,
       };
       const receipt = {
@@ -961,7 +962,9 @@ describe('projectPersistedTimeline', () => {
             role: 'user',
             content: 'Previous request',
             timestamp: 1_000,
-            ...(previousRunId ? { runId: previousRunId } : {}),
+            ...(previousRunId ? { runId: previousRunId } : {
+              __openclaw: { id: 'user-entry', seq: 1, idempotencyKey: 'run-previous:user' },
+            }),
           },
           {
             role: 'assistant',
@@ -1160,7 +1163,7 @@ describe('projectPersistedTimeline', () => {
     ]);
   });
 
-  test('matches a persisted receipt by user timestamp when history omits run ids', () => {
+  test('omits elapsed time when only nearby timestamps link the receipt to history', () => {
     const result = projectPersistedTimeline(
       [
         { role: 'user', content: 'prompt', timestamp: 1_010 },
@@ -1182,13 +1185,14 @@ describe('projectPersistedTimeline', () => {
           rootRunId: 'gateway-run-1',
           startedAt: 1_000,
           endedAt: 6_000,
+          executionTiming: { startedAt: 1_000, endedAt: 6_000 },
           state: 'completed',
         },
       ],
     );
 
     expect(result[1]).toEqual(expect.not.objectContaining({ durationMs: expect.any(Number) }));
-    expect(result[2]).toMatchObject({ durationMs: 5_000, completedAt: 6_000 });
+    expect(result[2]).not.toHaveProperty('durationMs');
   });
 
   test('does not reuse an older prompt when a newer user timestamp is invalid', () => {

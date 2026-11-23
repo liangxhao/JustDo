@@ -128,6 +128,8 @@ export class SqliteStore {
         started_at INTEGER NOT NULL,
         accepted_at INTEGER,
         ended_at INTEGER,
+        execution_started_at INTEGER,
+        execution_ended_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
@@ -139,9 +141,18 @@ export class SqliteStore {
         ON cowork_session_runs(session_id)
         WHERE ended_at IS NULL;
     `);
-    if (!this.db.prepare('PRAGMA table_info(cowork_session_runs)').all()
-      .some(column => (column as { name: string }).name === 'automatic_error_retry')) {
+    const sessionRunColumns = new Set(
+      (this.db.prepare('PRAGMA table_info(cowork_session_runs)').all() as { name: string }[])
+        .map(column => column.name),
+    );
+    if (!sessionRunColumns.has('automatic_error_retry')) {
       this.db.exec('ALTER TABLE cowork_session_runs ADD COLUMN automatic_error_retry TEXT');
+    }
+    if (!sessionRunColumns.has('execution_started_at')) {
+      this.db.exec('ALTER TABLE cowork_session_runs ADD COLUMN execution_started_at INTEGER');
+    }
+    if (!sessionRunColumns.has('execution_ended_at')) {
+      this.db.exec('ALTER TABLE cowork_session_runs ADD COLUMN execution_ended_at INTEGER');
     }
     initializeSessionDiagnosticsTables(this.db);
 

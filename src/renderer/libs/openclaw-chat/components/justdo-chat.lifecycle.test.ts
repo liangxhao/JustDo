@@ -57,7 +57,10 @@ test('an external open receipt keeps its place in history without driving the li
   controller.state.chatMessages = [
     { role: 'user', content: 'First request', timestamp: 1_000 },
     { role: 'assistant', content: 'First reply', timestamp: 2_000 },
-    { role: 'user', content: 'Second request', timestamp: 3_000 },
+    {
+      role: 'user', content: 'Second request', timestamp: 3_000,
+      __openclaw: { id: 'second-input', seq: 3, idempotencyKey: 'second:user' },
+    },
     { role: 'assistant', content: 'Second reply', timestamp: 4_000 },
   ];
   vi.spyOn(controller, 'getLoadedMessages').mockReturnValue(controller.state.chatMessages);
@@ -76,6 +79,32 @@ test('an external open receipt keeps its place in history without driving the li
   chat.useOpenRunTimingForActivity = true;
   await chat.updateComplete;
   expect(chat.shadowRoot?.querySelector('.active-turn__footer')).not.toBeNull();
+});
+
+test.each([undefined, true, false])('restores one interruption notice and duration with endTurn %j', async endTurn => {
+  const controller = new ChatController();
+  controller.state.chatMessages = [
+    { role: 'user', content: 'Request', __openclaw: { id: 'input', seq: 1, idempotencyKey: 'stopped:user' } },
+    ...(endTurn === undefined ? [] : [{
+      role: 'assistant', content: 'Partial reply', endTurn, __openclaw: { runId: 'stopped' },
+    }]),
+  ];
+  vi.spyOn(controller, 'getLoadedMessages').mockReturnValue(controller.state.chatMessages);
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.controller = controller;
+  chat.runTimings = [{
+    id: 'receipt', sessionId: 'session', clientTurnId: 'stopped', state: 'aborted',
+    startedAt: 1_000, endedAt: 20_000, executionTiming: { startedAt: 1_000, endedAt: 4_000 },
+  }];
+  document.body.append(chat);
+  await chat.updateComplete;
+
+  expect(chat.shadowRoot?.querySelectorAll('.process-terminal--aborted')).toHaveLength(1);
+  expect(chat.shadowRoot?.textContent?.match(/Stopped after 3s/g)).toHaveLength(1);
+  if (endTurn !== undefined) {
+    expect(chat.shadowRoot?.querySelector('.chat-group--assistant .chat-bubble__text')?.textContent)
+      .toContain('Partial reply');
+  }
 });
 
 test('resubscribes to the existing controller when the same element reconnects', async () => {

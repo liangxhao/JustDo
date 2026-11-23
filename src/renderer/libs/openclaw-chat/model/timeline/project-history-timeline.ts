@@ -28,6 +28,7 @@ import {
 } from '../../pipeline/native-mcp-app';
 import { type ThinkingItem, type ToolItem } from '../chat-transcript-state';
 import { deterministicHistoryKey } from '../history/history-reconciler';
+import { readCommittedUserInputKey } from '../history/session-message-apply';
 import {
   hasToolResultPayload,
   inferSessionsYieldInput,
@@ -74,6 +75,7 @@ export type PersistedTimelineItem =
       completedAt?: number;
       modelRef?: string;
       runState?: SessionRunTiming['state'];
+      runReceiptId?: string;
     }
   | {
       kind: 'phase-boundary';
@@ -159,11 +161,10 @@ function isGatewayInjectedAssistant(
   ].some(isGatewayInjectedModelRef);
 }
 
-function runIdOf(
+function runIdsOf(
   outer: Record<string, unknown>,
   message: Record<string, unknown>,
-  fallback: string,
-): string {
+): string[] {
   const outerMetadata =
     outer.metadata && typeof outer.metadata === 'object' && !Array.isArray(outer.metadata)
       ? (outer.metadata as Record<string, unknown>)
@@ -182,6 +183,7 @@ function runIdOf(
     !Array.isArray(message.__openclaw)
       ? (message.__openclaw as Record<string, unknown>)
       : null;
+  const ids = new Set<string>();
   for (const value of [
     message.runId,
     message.run_id,
@@ -196,9 +198,9 @@ function runIdOf(
     outerMetadata?.runId,
     outerMetadata?.run_id,
   ]) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'string' && value.trim()) ids.add(value.trim());
   }
-  return fallback;
+  return [...ids];
 }
 
 function clientTurnTimestampOf(timing: SessionRunTiming): number | null {
@@ -260,14 +262,19 @@ export function projectPersistedTimeline(
   const claimableTimings = runTimings
     .slice()
     .sort((left, right) => left.startedAt - right.startedAt || left.id.localeCompare(right.id));
-  const timingByRootRunId = new Map(
-    claimableTimings
-      .filter(timing => timing.rootRunId)
-      .map(timing => [timing.rootRunId!, timing] as const),
-  );
+  const timingByRunId = new Map<string, SessionRunTiming | null>();
+  const toolTimingByRootRunId = new Map<string, SessionRunTiming>();
+  const timingByInputKey = new Map<string, SessionRunTiming>();
+  for (const timing of claimableTimings) {
+    const runId = timing.rootRunId ?? timing.clientTurnId;
+    timingByRunId.set(runId, timingByRunId.has(runId) ? null : timing);
+    if (timing.rootRunId) toolTimingByRootRunId.set(timing.rootRunId, timing);
+    timingByInputKey.set(`${timing.clientTurnId}:user`, timing);
+  }
   const claimedTimingIds = new Set<string>();
   let activeTiming: SessionRunTiming | null = null;
-  let lastTimedMessage: Extract<PersistedTimelineItem, { kind: 'history-message' }> | null = null;
+  let turnTiming: SessionRunTiming | null = null;
+  const receiptByMessageKey = new Map<string, SessionRunTiming>();
   const terminalTimingByProcessId = new Map<string, SessionRunTiming>();
   const supersededTools = new Set<string>();
   let planPresentedSinceLastReset = false;
@@ -415,36 +422,21 @@ export function projectPersistedTimeline(
   const emitMessage = (
     message: GatewayMessage,
     key: string,
-    durationMs?: number,
-    completedAt?: number,
-    modelRef?: string,
-    runState?: SessionRunTiming['state'],
+    timing?: SessionRunTiming | null,
   ) => {
     flushSummary();
-    if (durationMs !== undefined && lastTimedMessage) {
-      delete lastTimedMessage.durationMs;
-      delete lastTimedMessage.completedAt;
-      delete lastTimedMessage.runState;
-    }
     const item: Extract<PersistedTimelineItem, { kind: 'history-message' }> = {
       kind: 'history-message',
       key,
       message,
-      ...(durationMs !== undefined ? { durationMs } : {}),
-      ...(completedAt !== undefined ? { completedAt } : {}),
-      ...(modelRef ? { modelRef } : {}),
-      ...(runState ? { runState } : {}),
     };
+    if (timing && timing.state !== 'running') receiptByMessageKey.set(key, timing);
     projected.push(item);
-    if (durationMs !== undefined) lastTimedMessage = item;
   };
 
-  const claimTiming = (runId: string, timestamp: number): SessionRunTiming | null => {
-    const exact = timingByRootRunId.get(runId);
-    if (exact) {
-      claimedTimingIds.add(exact.id);
-      return exact;
-    }
+  // Legacy tools without a native owner still need the existing interruption
+  // presentation. This approximation cannot supply a reply footer.
+  const claimLegacyToolTiming = (timestamp: number): SessionRunTiming | null => {
     if (timestamp <= 0) return null;
     const candidate = claimableTimings
       .filter(timing => !claimedTimingIds.has(timing.id))
@@ -708,20 +700,12 @@ export function projectPersistedTimeline(
     messageOccurrences.set(projectionKey, occurrence + 1);
     const messageKey =
       occurrence === 0 ? projectionKey : `${projectionKey}:projection:${occurrence}`;
-    const runId = runIdOf(outer, message, nativeKey);
-    if (runId === nativeKey) syntheticRunIds.add(runId);
+    const runIds = runIdsOf(outer, message);
+    const runId = runIds[0] ?? nativeKey;
+    if (runIds.length === 0) syntheticRunIds.add(runId);
     const timestamp = timestampOf(outer, message);
     const role = roleOf(message);
-    const marker =
-      message.__openclaw &&
-      typeof message.__openclaw === 'object' &&
-      !Array.isArray(message.__openclaw)
-        ? (message.__openclaw as Record<string, unknown>)
-        : outer.__openclaw &&
-            typeof outer.__openclaw === 'object' &&
-            !Array.isArray(outer.__openclaw)
-          ? (outer.__openclaw as Record<string, unknown>)
-          : null;
+    const marker = asToolRecord(message.__openclaw) ?? asToolRecord(outer.__openclaw);
     if (marker?.kind === 'reset') {
       flushSummary();
       if (planPresentedSinceLastReset || marker.planImplementation === true) {
@@ -742,13 +726,18 @@ export function projectPersistedTimeline(
         syntheticRunIds.clear();
         claimedTimingIds.clear();
         terminalTimingByProcessId.clear();
+        receiptByMessageKey.clear();
         supersededTools.clear();
       }
       planPresentedSinceLastReset = false;
       toolEpoch += 1;
       activeTiming = null;
-      lastTimedMessage = null;
+      turnTiming = null;
       return;
+    }
+    if (marker?.turnBoundary === true) {
+      activeTiming = null;
+      turnTiming = null;
     }
     // A subsequent explicit assistant run cannot still be executing tools
     // from the previous run. Missing results remain interrupted, not successful.
@@ -763,30 +752,44 @@ export function projectPersistedTimeline(
         }
       }
     }
-    const matchingTiming = timingByRootRunId.get(runId);
+    const matchingTiming = runIds.length === 1 ? timingByRunId.get(runId) : null;
+    const matchingToolTiming = toolTimingByRootRunId.get(runId);
     if (role === 'user') {
       toolEpoch += 1;
-      activeTiming = claimTiming(runId, timestamp);
-      lastTimedMessage = null;
-    } else if (matchingTiming) {
-      activeTiming = matchingTiming;
-      claimedTimingIds.add(matchingTiming.id);
-      lastTimedMessage = null;
+      const inputKey = readCommittedUserInputKey(message);
+      const inputTiming = inputKey ? timingByInputKey.get(inputKey) : undefined;
+      // Steering has its own input key and preserves the target run's identity.
+      const steerTarget = inputKey && typeof marker?.steerTargetRunId === 'string'
+        ? marker.steerTargetRunId : undefined;
+      if (steerTarget) {
+        turnTiming = runIds.length === 0 || (runIds.length === 1 && runId === steerTarget)
+          ? timingByRunId.get(steerTarget) ?? null : null;
+      } else {
+        turnTiming = runIds.length > 0
+          ? matchingTiming && (!inputTiming || inputTiming === matchingTiming) ? matchingTiming : null
+          : inputTiming ?? null;
+      }
+      activeTiming = turnTiming ?? matchingToolTiming ?? claimLegacyToolTiming(timestamp);
+    } else {
+      if (matchingToolTiming) activeTiming = matchingToolTiming;
+      if (runIds.length > 0 && matchingTiming !== turnTiming) turnTiming = null;
     }
+    if (activeTiming) claimedTimingIds.add(activeTiming.id);
     const failedRunMessage = isFailedRunMessage(outerMessage);
-    // Failure receipts can belong to background runs between user turns.
-    // Only their exact run timing may supply an outcome/model footer.
-    const displayTiming = failedRunMessage ? matchingTiming : activeTiming;
-    const durationMs =
-      (failedRunMessage ||
-        (role === 'assistant' &&
-          (!isGatewayInjectedAssistant(outer, message) || runId.startsWith('announce:v1:')))) &&
-      displayTiming?.endedAt !== undefined
-        ? Math.max(0, displayTiming.endedAt - displayTiming.startedAt)
-        : undefined;
-    const completedAt = durationMs === undefined ? undefined : displayTiming?.endedAt;
-    const modelRef = durationMs === undefined ? undefined : displayTiming?.modelRef;
-    const runState = durationMs === undefined ? undefined : displayTiming?.state;
+    const replyPhase = message.phase ?? outer.phase;
+    const stopReason = message.stopReason ?? message.stop_reason;
+    const content = Array.isArray(message.content) ? message.content : null;
+    const replyTiming = runIds.length > 0 ? matchingTiming : turnTiming;
+    const displayTiming = failedRunMessage ? matchingTiming
+      : replyTiming && role === 'assistant' && !isGatewayInjectedAssistant(outer, message) &&
+        replyPhase !== 'commentary' && fallback?.source !== 'segment' &&
+        message.endTurn !== false && stopReason !== 'toolUse' &&
+        !content?.some(value => {
+          const block = asToolRecord(value);
+          return block !== null && isToolCallRecord(withToolMessageContext(message, block));
+        })
+      ? replyTiming
+      : null;
     const attachments = [
       ...attachedToolMessages(message),
       ...(message === outer ? [] : attachedToolMessages(outer)),
@@ -813,10 +816,7 @@ export function projectPersistedTimeline(
           ? failureMessage
           : { ...outer, message: failureMessage }) as GatewayMessage,
         `${messageKey}:failure`,
-        durationMs,
-        completedAt,
-        modelRef,
-        runState,
+        matchingTiming,
       );
     };
 
@@ -825,7 +825,6 @@ export function projectPersistedTimeline(
       return;
     }
 
-    const content = Array.isArray(message.content) ? message.content : null;
     if (!content) {
       const senderLabel = message.senderLabel ?? outer.senderLabel;
       const fallbackText = message.text ?? (message === outer ? undefined : outer.text);
@@ -845,7 +844,7 @@ export function projectPersistedTimeline(
         (attachments.length === 0 && !hasBlankAssistantControlContent) ||
         (typeof message.content === 'string' && message.content.trim().length > 0)
       ) {
-        emitMessage(outerMessage, messageKey, durationMs, completedAt, modelRef, runState);
+        emitMessage(outerMessage, messageKey, displayTiming);
       }
       for (const [index, attached] of attachments.entries()) {
         applyToolOnlyMessage(
@@ -867,10 +866,7 @@ export function projectPersistedTimeline(
       emitMessage(
         visibleMessageWithContent(outerMessage, message, visibleBlocks),
         `${messageKey}:content:${visibleBlockStart}`,
-        durationMs,
-        completedAt,
-        modelRef,
-        runState,
+        displayTiming,
       );
       visibleBlocks = [];
     };
@@ -954,7 +950,7 @@ export function projectPersistedTimeline(
   // when a subagent announce is persisted behind a long sessions_yield call.
   // Keep the same invariant as the live projection: only settled Thinking and
   // Tool items belong in a collapsible summary.
-  return projected.flatMap(item => {
+  const visibleTimeline = projected.flatMap<PersistedTimelineItem>(item => {
     if (item.kind === 'history-message' && (nativeDocIds.size || appIds.size)) {
       const source = unwrapToolMessage(item.message);
       if (!source || roleOf(source) !== 'assistant') return [item];
@@ -1038,7 +1034,7 @@ export function projectPersistedTimeline(
 
     for (const process of item.items) {
       if (process.status === 'running') {
-        const latestRootTiming = timingByRootRunId.get(process.runId);
+        const latestRootTiming = toolTimingByRootRunId.get(process.runId);
         const terminalTiming =
           latestRootTiming === undefined
             ? terminalTimingByProcessId.get(process.id)
@@ -1072,4 +1068,23 @@ export function projectPersistedTimeline(
     flushSettled();
     return normalized;
   });
+  if (!receiptByMessageKey.size) return visibleTimeline;
+
+  const shownReceipts = new Set<string>();
+  for (let index = visibleTimeline.length - 1; index >= 0; index -= 1) {
+    const item = visibleTimeline[index];
+    if (item.kind !== 'history-message') continue;
+    const timing = receiptByMessageKey.get(item.key);
+    if (!timing || shownReceipts.has(timing.id)) continue;
+    shownReceipts.add(timing.id);
+    const execution = timing.executionTiming;
+    if (execution) {
+      item.durationMs = execution.endedAt - execution.startedAt;
+      item.completedAt = execution.endedAt;
+    }
+    item.runReceiptId = timing.id;
+    item.runState = timing.state;
+    if (timing.modelRef) item.modelRef = timing.modelRef;
+  }
+  return visibleTimeline;
 }

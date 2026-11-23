@@ -76,6 +76,8 @@ function setupDb(): void {
       started_at INTEGER NOT NULL,
       accepted_at INTEGER,
       ended_at INTEGER,
+      execution_started_at INTEGER,
+      execution_ended_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       FOREIGN KEY (session_id) REFERENCES cowork_sessions(id) ON DELETE CASCADE
@@ -346,6 +348,9 @@ test('copies terminal run metadata with stable transcript run ids', () => {
   });
   store.bindSessionRunRootRun(completed.id, 'gateway-run-1');
   store.finishSessionRun(completed.id, 'completed', 1_700_000_002_000);
+  const executionTiming = { startedAt: 1_700_000_000_100, endedAt: 1_700_000_001_800 };
+  store.recordSessionRunExecutionTiming(source.id, 'gateway-run-1', executionTiming);
+  expect(store.bindSessionRunRootRun(completed.id, 'gateway-run-1')?.executionTiming).toEqual(executionTiming);
 
   expect(store.copyTerminalSessionRuns(source.id, target.id)).toBe(1);
   expect(store.getSessionRuns(target.id)).toEqual([
@@ -356,9 +361,11 @@ test('copies terminal run metadata with stable transcript run ids', () => {
       state: 'completed',
       startedAt: 1_700_000_000_000,
       endedAt: 1_700_000_002_000,
+      executionTiming,
     }),
   ]);
   expect(store.getSessionRuns(target.id)[0]?.clientTurnId).not.toBe('justdo-1700000000000-source');
+  expect(store.bindSessionRunRootRun(completed.id, 'different-run')?.executionTiming).toBeUndefined();
 });
 
 test('copies branch timing only through the exact native cut run', () => {

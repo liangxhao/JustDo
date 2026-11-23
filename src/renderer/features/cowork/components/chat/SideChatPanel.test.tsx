@@ -112,10 +112,9 @@ describe('SideChatPanel', () => {
             runId: 'done',
             question: 'Second?',
             answer: '**Only the sidebar.**',
-            askedAt: 2,
-            answeredAt: 3,
+            askedAt: 2_000,
+            answeredAt: 3_000,
             modelRef: 'openai/gpt-5.6',
-            startedAt: 2.25,
             status: 'complete',
           },
         ]}
@@ -136,8 +135,9 @@ describe('SideChatPanel', () => {
       .toEqual([
         expect.objectContaining({
           modelRef: 'openai/gpt-5.6',
-          startedAt: 2.25,
-          endedAt: 3,
+          startedAt: 2_000,
+          endedAt: 3_000,
+          executionTiming: { startedAt: 2_000, endedAt: 3_000 },
           state: 'completed',
         }),
       ]);

@@ -33,6 +33,7 @@ import {
 } from '../../shared/cowork/sessionGoal';
 import type {
   BeginSessionRunInput,
+  RunExecutionTiming,
   SessionRunState,
   SessionRunTiming,
 } from '../../shared/cowork/sessionRun';
@@ -207,6 +208,8 @@ interface SessionRunRow {
   started_at: number;
   accepted_at: number | null;
   ended_at: number | null;
+  execution_started_at: number | null;
+  execution_ended_at: number | null;
 }
 
 interface PlanHandoffRow {
@@ -253,6 +256,9 @@ const mapSessionRun = (row: SessionRunRow): SessionRunTiming => ({
   startedAt: row.started_at,
   ...(row.accepted_at === null ? {} : { acceptedAt: row.accepted_at }),
   ...(row.ended_at === null ? {} : { endedAt: row.ended_at }),
+  ...(row.execution_started_at != null && row.execution_ended_at != null
+    ? { executionTiming: { startedAt: row.execution_started_at, endedAt: row.execution_ended_at } }
+    : {}),
   state: row.state,
   ...(parseAutomaticErrorRetryMetadata(row.automatic_error_retry)
     ? { automaticErrorRetry: parseAutomaticErrorRetryMetadata(row.automatic_error_retry) }
@@ -406,8 +412,9 @@ export class CoworkStore {
     const insert = this.db.prepare(
       `INSERT INTO cowork_session_runs
         (id, session_id, client_turn_id, root_run_id, model_ref, state,
-         started_at, accepted_at, ended_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         started_at, accepted_at, ended_at, execution_started_at, execution_ended_at,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const copy = this.db.transaction(() => {
       const now = Date.now();
@@ -423,6 +430,8 @@ export class CoworkStore {
           run.started_at,
           run.accepted_at,
           run.ended_at,
+          run.execution_started_at,
+          run.execution_ended_at,
           now,
           now,
         );
@@ -437,11 +446,27 @@ export class CoworkStore {
     this.db
       .prepare(
         `UPDATE cowork_session_runs
-         SET root_run_id = ?, accepted_at = COALESCE(accepted_at, ?), updated_at = ?
-         WHERE id = ?`,
+         SET execution_started_at = CASE WHEN root_run_id = @rootRunId THEN execution_started_at END,
+             execution_ended_at = CASE WHEN root_run_id = @rootRunId THEN execution_ended_at END,
+             root_run_id = @rootRunId, accepted_at = COALESCE(accepted_at, @now), updated_at = @now
+         WHERE id = @id`,
       )
-      .run(rootRunId, now, now, id);
+      .run({ rootRunId, now, id });
     return this.getSessionRun(id);
+  }
+
+  recordSessionRunExecutionTiming(
+    sessionId: string,
+    rootRunId: string,
+    timing: RunExecutionTiming,
+  ): void {
+    this.db.prepare(
+      `UPDATE cowork_session_runs
+       SET execution_started_at = @startedAt, execution_ended_at = @endedAt
+       WHERE session_id = @sessionId AND root_run_id = @rootRunId AND execution_ended_at IS NULL
+         AND (SELECT COUNT(*) FROM cowork_session_runs
+              WHERE session_id = @sessionId AND root_run_id = @rootRunId) = 1`,
+    ).run({ sessionId, rootRunId, ...timing });
   }
 
   finishSessionRun(

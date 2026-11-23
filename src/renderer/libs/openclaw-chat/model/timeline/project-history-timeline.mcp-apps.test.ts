@@ -76,11 +76,12 @@ describe('native MCP App history projection', () => {
       mcpApp: descriptor,
     },
   };
-  it('removes the native duplicate preview and shortcode but preserves prose and code examples', () => {
+  it('removes native duplicate previews and keeps prose, code examples and the matching footer', () => {
     const timeline = projectPersistedTimeline([
       projectedResult,
       {
         role: 'assistant',
+        runId: 'run',
         content: [
           {
             type: 'text',
@@ -89,9 +90,14 @@ describe('native MCP App history projection', () => {
           fallback,
         ],
       },
-    ]);
+      { role: 'assistant', runId: 'run', content: [fallback] },
+    ], [{
+      id: 'run', sessionId: 'session', clientTurnId: 'run', rootRunId: 'run',
+      startedAt: 1_000, endedAt: 4_000, executionTiming: { startedAt: 1_000, endedAt: 4_000 }, state: 'completed',
+    }]);
     expect(timeline.filter(item => item.kind === 'mcp-app')).toHaveLength(1);
     const messages = timeline.filter(item => item.kind === 'history-message');
+    expect(messages).toMatchObject([{ durationMs: 3_000 }]);
     const content = messages.flatMap(item => (item.message as { content: unknown[] }).content);
     expect(content).toEqual([
       { type: 'text', text: `Ready.  \`[embed ref="${descriptor.viewId}" /]\`` },

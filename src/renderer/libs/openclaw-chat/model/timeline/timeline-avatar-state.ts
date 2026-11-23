@@ -76,7 +76,7 @@ export function prepareVisibleTimelineRows(
       continue;
     }
     if (role !== 'assistant') continue;
-    row.showFooter = !laterAssistantMessageInTurn;
+    row.showFooter = Boolean(row.item.runReceiptId) || !laterAssistantMessageInTurn;
     laterAssistantMessageInTurn = true;
   }
 
@@ -86,7 +86,8 @@ export function prepareVisibleTimelineRows(
       if (row.item.kind !== 'history-message') continue;
       const role = historyMessageRole(row.item);
       if (role === 'user') break;
-      if (role === 'assistant' || isFailedRunMessage(row.item.message)) row.showFooter = false;
+      if (!row.item.runReceiptId && (role === 'assistant' || isFailedRunMessage(row.item.message)))
+        row.showFooter = false;
     }
   }
 

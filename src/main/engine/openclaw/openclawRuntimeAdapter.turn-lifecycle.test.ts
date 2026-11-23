@@ -136,7 +136,8 @@ type StopTestAdapter = {
 
 test('records only a matching whole-run terminal after chat final retires its binding', () => {
   const { store } = createEmptyStore();
-  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const recordSessionRunExecutionTiming = vi.fn();
+  const adapter = new OpenClawRuntimeAdapter({ ...store, recordSessionRunExecutionTiming }, {});
   const internals = adapter as unknown as {
     activeTurns: Map<string, SessionTurn>;
     sessionIdBySessionKey: Map<string, string>;
@@ -157,18 +158,22 @@ test('records only a matching whole-run terminal after chat final retires its bi
   const terminal = {
     sessionKey: turn.sessionKey, sessionId: 'native-1', lifecycleGeneration: 'epoch-1',
     runId: turn.runId, seq: 3, stream: 'lifecycle',
-    data: { phase: 'end', executionSettled: true, endedAt: 1234 },
+    data: { phase: 'end', executionSettled: true, startedAt: 1000, endedAt: 1234 },
   };
   for (const changed of [
     { sessionId: 'replacement' }, { lifecycleGeneration: 'replacement' }, { runId: 'other' },
     { sessionKey: `${turn.sessionKey}:child` }, { seq: 1 },
     { seq: undefined, aseq: 3 },
-    { seq: 2, data: { phase: 'end', executionSettled: false } },
+    { seq: 2, data: { phase: 'finishing', startedAt: 1000, endedAt: 1100 } },
   ]) {
     internals.handleGatewayEvent({ event: 'agent', seq: 90, payload: { ...terminal, ...changed } });
     expect(adapter.getRunTerminalReceipt(turn.runId)).toBeNull();
   }
+  expect(recordSessionRunExecutionTiming).not.toHaveBeenCalled();
   internals.handleGatewayEvent({ event: 'agent', payload: terminal });
+  expect(recordSessionRunExecutionTiming).toHaveBeenCalledExactlyOnceWith(turn.sessionId, turn.runId, {
+    startedAt: 1000, endedAt: 1234,
+  });
   expect(adapter.getRunTerminalReceipt(turn.runId)).toEqual({
     runId: turn.runId, sessionKey: turn.sessionKey, sessionId: 'native-1',
     lifecycleGeneration: 'epoch-1', clientGeneration: 7, agentSeq: 3, executionSettled: true,

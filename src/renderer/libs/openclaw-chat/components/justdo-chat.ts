@@ -73,6 +73,7 @@ import {
   projectPersistedMessagesForActiveTurn,
   readMessageFollowingActiveTurn,
 } from '@/libs/openclaw-chat/model/history/optimistic-history-tail';
+import { readCommittedUserInputKey } from '@/libs/openclaw-chat/model/history/session-message-apply';
 import { planImplementationEntryIds } from '@/libs/openclaw-chat/model/history/transcript-identity';
 import { mergePendingUserMessageForDisplay } from '@/libs/openclaw-chat/model/input/optimistic-user-message';
 import {
@@ -220,13 +221,21 @@ function gatewayMessageRunId(message: GatewayMessage | undefined): string | null
   return null;
 }
 
-function latestPersistedUserEntryId(messages: readonly GatewayMessage[]): string | null {
+function latestUserMessage(messages: readonly GatewayMessage[]): GatewayMessage | undefined {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role?.toLowerCase() !== 'user') continue;
-    return openClawEntryId(message);
+    return message;
   }
-  return null;
+  return undefined;
+}
+
+function lastHistoryMessage(timeline: readonly PersistedTimelineItem[]) {
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const item = timeline[index];
+    if (item.kind === 'history-message') return item;
+  }
+  return undefined;
 }
 
 @customElement('justdo-chat')
@@ -881,9 +890,7 @@ export class JustDoChatElement extends LitElement {
       ctrl.state.pendingUserMessage === null,
     );
     this.actionableUserEntryId = this.userMessageHistoryActionsAvailable
-      ? latestPersistedUserEntryId(
-          this.messagesForPerspective(ctrl!.getLoadedMessages() as GatewayMessage[]),
-        )
+      ? openClawEntryId(latestUserMessage(this.forkEligibilityMessages))
       : null;
 
     // Merge the optimistic prompt in turn order during session transitions.
@@ -912,9 +919,8 @@ export class JustDoChatElement extends LitElement {
     };
     const persistedRunTimings = displayRunTimings;
     const runTimingSignature = displayRunTimings
-      .map(
-        timing => `${timing.id}:${timing.rootRunId ?? ''}:${timing.state}:${timing.endedAt ?? ''}`,
-      )
+      .map(timing => JSON.stringify([timing.id, timing.rootRunId, timing.clientTurnId, timing.state,
+        timing.startedAt, timing.endedAt, timing.executionTiming, timing.modelRef]))
       .join('|');
     const getHistoryTimeline = () =>
       this.persistedTimelineCache.get(
@@ -942,18 +948,39 @@ export class JustDoChatElement extends LitElement {
         historyTimeline,
         activeTimeline,
       );
-      const activeFooterTiming = selectActiveTurnTiming(
-        ctrl?.getCurrentTurnTiming() ?? null,
-        currentRunTiming,
-        activeTurn !== null,
+      const controllerTiming = ctrl?.getCurrentTurnTiming();
+      const liveTiming = activeTurn
+        ? (controllerTiming?.runId === activeTurn.runId ? controllerTiming : activeTurn)
+        : (isStreaming && controllerTiming?.status === 'running' ? controllerTiming : null);
+      const matchingReceipts = liveTiming ? displayRunTimings.filter(timing =>
+        (timing.rootRunId ?? timing.clientTurnId) === liveTiming.runId,
+      ) : [];
+      const receipt = matchingReceipts.length === 1 ? matchingReceipts[0] : null;
+      const interruptedHistory = !liveTiming && currentRunTiming?.state === 'aborted'
+        ? lastHistoryMessage(historyTimeline) : undefined;
+      const receiptAnchor = !liveTiming && currentRunTiming?.state === 'running'
+        ? latestUserMessage(messages) : interruptedHistory?.message;
+      const anchorRole = receiptAnchor?.role?.toLowerCase();
+      const anchorRunId = gatewayMessageRunId(receiptAnchor);
+      const trailingReceipt = currentRunTiming && (
+        interruptedHistory?.runReceiptId === currentRunTiming.id ||
+        ((anchorRole === 'user' || (interruptedHistory && anchorRole === 'assistant')) &&
+          (anchorRunId
+            ? anchorRunId === (currentRunTiming.rootRunId ?? currentRunTiming.clientTurnId)
+            : readCommittedUserInputKey(receiptAnchor) === `${currentRunTiming.clientTurnId}:user`)))
+        ? currentRunTiming : null;
+      const activeFooterTiming = selectActiveTurnTiming(liveTiming, receipt) ?? trailingReceipt;
+      const footerReceipt = receipt ?? trailingReceipt;
+      const historyOwnsFooter = footerReceipt && footerReceipt.state !== 'running' && historyTimeline.some(item =>
+        item.kind === 'history-message' && item.runReceiptId === footerReceipt.id,
       );
-      // Run receipts can arrive before Gateway history. Keep their metadata
-      // attached to visible content instead of rendering an orphan footer.
-      const activeTurnFooter =
+      const projectedFooter =
         (!activeTurn || !hiddenRetryRunIds.has(activeTurn.runId)) &&
-        (historyTimeline.length > 0 || activeTimeline.length > 0)
+        (activeTimeline.length > 0 || trailingReceipt ||
+          (liveTiming?.status === 'running' && pendingMessage !== null))
           ? projectActiveTurnFooter(activeFooterTiming)
           : null;
+      const activeTurnFooter = historyOwnsFooter ? null : projectedFooter;
       const persistedView = this.persistedTimelineRenderCache.get(
         historyTimeline, processFoldOptions, this.projectedFollowingMessageId,
       );
@@ -971,19 +998,19 @@ export class JustDoChatElement extends LitElement {
         ...timelineView.activeRows,
       ].some(row => row.item.kind === 'terminal' && row.item.item.status === 'aborted');
       const interruptedTerminalFallback = shouldRenderInterruptedTerminalFallback(
-        activeTurnFooter,
+        projectedFooter,
         hasVisibleInterruptedTerminal,
       )
         ? ({
             kind: 'terminal',
-            key: `terminal:aborted:fallback:${activeTurn?.runId ?? currentRunTiming?.id ?? 'run'}`,
+            key: `terminal:aborted:fallback:${activeTurn?.runId ?? trailingReceipt?.id ?? 'run'}`,
             item: {
-              id: `terminal:aborted:fallback:${activeTurn?.runId ?? currentRunTiming?.id ?? 'run'}`,
-              runId: activeTurn?.runId ?? currentRunTiming?.rootRunId ?? 'run',
+              id: `terminal:aborted:fallback:${activeTurn?.runId ?? trailingReceipt?.id ?? 'run'}`,
+              runId: activeTurn?.runId ?? trailingReceipt?.rootRunId ?? trailingReceipt?.clientTurnId ?? 'run',
               firstSeq: activeTurn?.lastAgentSeq ?? 0,
               lastSeq: activeTurn?.lastAgentSeq ?? 0,
-              startedAt: activeTurnFooter?.completedAt ?? Date.now(),
-              updatedAt: activeTurnFooter?.completedAt ?? Date.now(),
+              startedAt: projectedFooter?.completedAt ?? Date.now(),
+              updatedAt: projectedFooter?.completedAt ?? Date.now(),
               type: 'terminal',
               status: 'aborted',
               message: i18nService.t('coworkRunInterruptedMessage'),
@@ -1437,9 +1464,8 @@ export class JustDoChatElement extends LitElement {
       this._controller?.state.runActivity != null ||
       (this.useOpenRunTimingForActivity &&
         this.runTimings[this.runTimings.length - 1]?.state === 'running') ||
-      ((!this.useOpenRunTimingForActivity || this.runTimings.length === 0) &&
-        (this._controller?.getCurrentTurnTiming()?.status === 'running' ||
-          this.activeTurn?.status === 'running')) ||
+      this._controller?.getCurrentTurnTiming()?.status === 'running' ||
+      this.activeTurn?.status === 'running' ||
       this._controller?.state.compactionInFlight === true;
     if (isRunning && this.activeTurnClockTimer === null) {
       this.activeTurnClockTimer = setInterval(() => this.requestUpdate(), 1_000);
@@ -2520,7 +2546,6 @@ export class JustDoChatElement extends LitElement {
       ? entryId === this.actionableUserEntryId && Boolean(this.onLastUserMessageAction)
       : item.message.role?.toLowerCase() === 'assistant' &&
           showFooter &&
-          item.durationMs !== undefined &&
           item.runState === 'completed' &&
           Boolean(this.onAssistantMessageFork);
   }
@@ -2593,11 +2618,11 @@ export class JustDoChatElement extends LitElement {
       }
       const historyItems = this.buildItems([item.message], [], [], null).map(historyItem =>
         historyItem.kind === 'group' &&
-        historyItem.role === 'assistant' &&
-        item.durationMs !== undefined
+        historyItem.role === 'assistant' && item.runState !== undefined
           ? {
               ...historyItem,
               durationMs: item.durationMs,
+              runState: this._controller ? item.runState : undefined,
               ...(item.completedAt !== undefined ? { timestamp: item.completedAt } : {}),
             }
           : historyItem,
@@ -2683,7 +2708,6 @@ export class JustDoChatElement extends LitElement {
       const assistantForkPoint =
         item.message.role?.toLowerCase() === 'assistant' &&
         showFooter &&
-        item.durationMs !== undefined &&
         item.runState === 'completed' &&
         this.userMessageHistoryActionsAvailable &&
         this.onAssistantMessageFork

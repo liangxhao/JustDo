@@ -28,30 +28,26 @@ function turn(status: AssistantTurn['status'], items: TurnItem[] = []): Assistan
 }
 
 describe('active turn footer', () => {
-  test.each([true, false])(
-    'keeps actual Gateway model with durable timing (active=%s)',
-    hasActiveTurn => {
-      const live = { ...turn('running'), modelRef: 'new-provider/new-model' };
-      const receipt: SessionRunTiming = {
-        id: 'receipt',
-        sessionId: 'session-1',
-        clientTurnId: 'run-1',
-        startedAt: 900,
-        endedAt: 2_500,
-        state: 'completed',
-        modelRef: 'old-provider/old-model',
-      };
-      expect(projectActiveTurnFooter(selectActiveTurnTiming(live, receipt, hasActiveTurn))).toEqual(
-        {
-          completedAt: 2_500,
-          durationMs: 1_600,
-          running: false,
-          status: 'completed',
-          modelRef: 'new-provider/new-model',
-        },
-      );
-    },
-  );
+  test('keeps the actual Gateway model and native timestamps from the matching receipt', () => {
+    const live = { ...turn('running'), modelRef: 'new-provider/new-model' };
+    const receipt: SessionRunTiming = {
+      id: 'receipt',
+      sessionId: 'session-1',
+      clientTurnId: 'run-1',
+      startedAt: 900,
+      endedAt: 2_500,
+      executionTiming: { startedAt: 1_000, endedAt: 2_400 },
+      state: 'completed',
+      modelRef: 'old-provider/old-model',
+    };
+    expect(projectActiveTurnFooter(selectActiveTurnTiming(live, receipt))).toEqual({
+      completedAt: 2_400,
+      durationMs: 1_400,
+      running: false,
+      status: 'completed',
+      modelRef: 'new-provider/new-model',
+    });
+  });
 
   test('does not present a saved selection as the model that produced a reply', () => {
     const receipt: SessionRunTiming = {
@@ -64,7 +60,7 @@ describe('active turn footer', () => {
     };
     expect(projectActiveTurnFooter(receipt, 1_000)?.modelRef).toBeUndefined();
     expect(
-      projectActiveTurnFooter(selectActiveTurnTiming(turn('running'), receipt, true))?.modelRef,
+      projectActiveTurnFooter(selectActiveTurnTiming(turn('running'), receipt))?.modelRef,
     ).toBeUndefined();
   });
 
@@ -81,9 +77,9 @@ describe('active turn footer', () => {
       state: 'aborted',
     };
 
-    expect(selectActiveTurnTiming(resumed, staleReceipt, true)).toBe(resumed);
+    expect(selectActiveTurnTiming(resumed, staleReceipt)).toBe(resumed);
     expect(
-      projectActiveTurnFooter(selectActiveTurnTiming(resumed, staleReceipt, true), 3_000),
+      projectActiveTurnFooter(selectActiveTurnTiming(resumed, staleReceipt), 3_000),
     ).toEqual(expect.objectContaining({ status: 'running', running: true }));
   });
 
@@ -99,14 +95,14 @@ describe('active turn footer', () => {
       state: 'running',
     };
 
-    expect(selectActiveTurnTiming(resumed, currentReceipt, true)).toMatchObject({
+    expect(selectActiveTurnTiming(resumed, currentReceipt)).toMatchObject({
       runId: 'run-resumed',
       startedAt: 1_000,
       status: 'running',
     });
   });
 
-  test('uses newer durable timing when the controller has no active turn', () => {
+  test('keeps the controller footer when a different background run has a receipt', () => {
     const cachedInterrupted = turn('aborted');
     cachedInterrupted.runId = 'run-paused';
     const durableRunning: SessionRunTiming = {
@@ -118,22 +114,22 @@ describe('active turn footer', () => {
       state: 'running',
     };
 
-    expect(selectActiveTurnTiming(cachedInterrupted, durableRunning, false)).toBe(durableRunning);
+    expect(selectActiveTurnTiming(cachedInterrupted, durableRunning)).toBe(cachedInterrupted);
   });
 
-  test('uses a newer running receipt over a stale terminal active turn', () => {
+  test('a receipt with a bound root does not match its different client ID', () => {
     const staleInterrupted = turn('aborted');
     staleInterrupted.runId = 'run-paused';
     const durableRunning: SessionRunTiming = {
       id: 'timing-automatic',
       sessionId: 'session-1',
-      clientTurnId: 'runtime-recovery-2',
+      clientTurnId: 'run-paused',
       rootRunId: 'run-automatic',
       startedAt: 3_000,
       state: 'running',
     };
 
-    expect(selectActiveTurnTiming(staleInterrupted, durableRunning, true)).toBe(durableRunning);
+    expect(selectActiveTurnTiming(staleInterrupted, durableRunning)).toBe(staleInterrupted);
   });
 
   test.each([
@@ -173,10 +169,9 @@ describe('active turn footer', () => {
     });
   });
 
-  test('keeps the completion time and final duration after the turn finishes', () => {
+  test('omits elapsed time when only display completion is known', () => {
     expect(projectActiveTurnFooter(turn('final'), 9_000)).toEqual({
       completedAt: 2_000,
-      durationMs: 1_000,
       running: false,
       status: 'completed',
     });
@@ -185,7 +180,6 @@ describe('active turn footer', () => {
   test('projects an aborted run as interruption status metadata', () => {
     expect(projectActiveTurnFooter(turn('aborted'), 9_000)).toEqual({
       completedAt: 2_000,
-      durationMs: 1_000,
       running: false,
       status: 'aborted',
     });

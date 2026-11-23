@@ -77,6 +77,7 @@ import {
   type SessionGoalMutationResult,
   SessionGoalStatus,
 } from '../../../shared/cowork/sessionGoal';
+import { readRunExecutionTiming } from '../../../shared/cowork/sessionRun';
 import {
   hasSlashCommandBeforeSendHook,
   parseGoalStartObjective,
@@ -2800,6 +2801,14 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
     });
     const sessionId = this.resolveSessionIdBySessionKey(binding.sessionKey);
     const receipt = this.runTerminalReceipts.get(event.runId)!;
+    const executionTiming = readRunExecutionTiming(event.data.startedAt, event.data.endedAt);
+    if (sessionId && executionTiming) {
+      try {
+        this.store.recordSessionRunExecutionTiming(sessionId, event.runId, executionTiming);
+      } catch {
+        coworkLog('WARN', 'OpenClawRuntime', 'Failed to persist run execution timing', { sessionId, runId: event.runId });
+      }
+    }
     if (sessionId) this.automaticErrorRetryHost.observeSettled(sessionId, receipt);
     else this.automaticErrorRetryHost.coordinator.observeSettled(receipt);
     while (this.runTerminalReceipts.size > 100) {

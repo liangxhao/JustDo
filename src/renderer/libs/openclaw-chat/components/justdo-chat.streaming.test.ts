@@ -408,10 +408,21 @@ describe('justdo-chat direct-property streaming', () => {
 
   test('waits for history content before showing completed run metadata', async () => {
     const controller = prepareController();
+    const previousAnswer = {
+      role: 'assistant', content: 'Previous answer', timestamp: 1_000,
+      __openclaw: { runId: 'previous-run' },
+    };
+    let history: unknown[] = [previousAnswer];
+    vi.spyOn(controller, 'getLoadedMessages').mockImplementation(() => history);
     controller.state.chatLoading = true;
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.controller = controller;
     chat.runTimings = [
+      {
+        id: 'previous-run', sessionId: 'session-1', clientTurnId: 'previous-run',
+        startedAt: 1, endedAt: 2_000, state: 'completed',
+        executionTiming: { startedAt: 1, endedAt: 2_000 },
+      },
       {
         id: 'history-run',
         sessionId: 'session-1',
@@ -419,6 +430,7 @@ describe('justdo-chat direct-property streaming', () => {
         rootRunId: 'history-run',
         startedAt: 1_000,
         endedAt: 8_000,
+        executionTiming: { startedAt: 1_000, endedAt: 8_000 },
         state: 'completed',
       },
     ];
@@ -426,8 +438,10 @@ describe('justdo-chat direct-property streaming', () => {
     await chat.updateComplete;
     expect(chat.shadowRoot?.querySelector('.active-turn__footer')).toBeNull();
     expect(chat.shadowRoot?.textContent).not.toContain('Worked for 7s');
+    expect(chat.shadowRoot?.textContent).toContain('Worked for 1s');
 
-    const history = [
+    history = [
+      previousAnswer,
       {
         role: 'assistant',
         content: 'Loaded answer',
@@ -450,10 +464,17 @@ describe('justdo-chat direct-property streaming', () => {
     notifyController(controller);
     await chat.updateComplete;
     expect(chat.shadowRoot?.textContent).toContain('Loaded answer');
-    expect(chat.shadowRoot?.querySelector('.active-turn__footer')?.textContent).toContain('7s');
+    const footers = () => [...(chat.shadowRoot?.querySelectorAll('.chat-group__footer') ?? [])]
+      .map(footer => footer.textContent);
+    expect(footers()).toEqual([expect.stringContaining('Worked for 1s'), expect.stringContaining('Worked for 7s')]);
+    chat.runTimings = [chat.runTimings[0], {
+      ...chat.runTimings[1], executionTiming: { startedAt: 2_000, endedAt: 8_000 },
+    }];
+    await chat.updateComplete;
+    expect(footers()).toEqual([expect.stringContaining('Worked for 1s'), expect.stringContaining('Worked for 6s')]);
   });
 
-  test('renders standalone completed turns with the main-chat model and duration footer', async () => {
+  test.each(['completed', 'failed'] as const)('keeps the standalone model and duration footer for %s turns', async state => {
     const frames = createAnimationFrameHarness();
     const startedAt = new Date(2026, 8, 17, 9, 30, 0).getTime();
     const endedAt = startedAt + 2_500;
@@ -482,7 +503,8 @@ describe('justdo-chat direct-property streaming', () => {
         modelRef: 'openai/gpt-5.6',
         startedAt,
         endedAt,
-        state: 'completed',
+        executionTiming: { startedAt, endedAt },
+        state,
       },
     ];
     document.body.append(chat);
@@ -493,7 +515,7 @@ describe('justdo-chat direct-property streaming', () => {
     const footer = chat.shadowRoot?.querySelector('.chat-group--assistant .chat-group__footer');
     expect(footer?.textContent).toContain('openai/gpt-5.6');
     expect(footer?.textContent).toContain('2026-09-17 09:30');
-    expect(footer?.textContent).toContain('2s');
+    expect(footer?.textContent).toContain('Worked for 2s');
   });
 
   test('renders an accessible waiting row while a standalone consumer is streaming', async () => {
@@ -519,9 +541,13 @@ describe('justdo-chat direct-property streaming', () => {
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.messages = [
       { role: 'user', content: 'First side question' },
-      { role: 'assistant', content: 'First side answer' },
+      { role: 'assistant', content: 'First side answer', __openclaw: { runId: 'side-first' } },
       { role: 'user', content: 'Follow-up side question' },
     ];
+    chat.runTimings = [{
+      id: 'side-first', sessionId: 'session-1', clientTurnId: 'side-first', state: 'completed',
+      startedAt: 1_000, endedAt: 8_000, executionTiming: { startedAt: 1_000, endedAt: 8_000 },
+    }];
     chat.isStreaming = true;
     document.body.append(chat);
 
@@ -530,7 +556,6 @@ describe('justdo-chat direct-property streaming', () => {
     expect(
       chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator'),
     ).toHaveLength(1);
-
     const transcript = createChatTranscriptState('agent:main:justdo:side-chat');
     chat.activeTurn = beginAssistantTurn(
       transcript,
@@ -543,6 +568,7 @@ describe('justdo-chat direct-property streaming', () => {
     expect(
       chat.shadowRoot?.querySelectorAll('.chat-reading-indicator, .chat-working-indicator'),
     ).toHaveLength(1);
+    expect(chat.shadowRoot?.querySelector('.active-turn__footer')?.textContent ?? '').not.toContain('Worked for 7s');
   });
 
   test('renders an isolated active turn with the normal Thinking, Tool, and Content timeline', async () => {

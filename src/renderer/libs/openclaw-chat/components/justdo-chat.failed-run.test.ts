@@ -414,6 +414,7 @@ describe('justdo-chat failed runs', () => {
         modelRef: 'zcode/glm-5.3-flash',
         startedAt: 1_000,
         endedAt: 6_000,
+        executionTiming: { startedAt: 1_000, endedAt: 6_000 },
         state: 'failed',
       },
     ];

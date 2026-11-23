@@ -1,4 +1,4 @@
-import type { SessionRunTiming } from '@shared/cowork/sessionRun';
+import type { RunExecutionTiming, SessionRunTiming } from '@shared/cowork/sessionRun';
 import {
   isGatewayInjectedModelRef,
   modelRefFromIdentity,
@@ -9,44 +9,30 @@ import type { AssistantTurnTiming } from '../chat-transcript-state';
 
 export interface ActiveTurnFooter {
   completedAt: number | null;
-  durationMs: number;
+  durationMs?: number;
   running: boolean;
   status: 'running' | 'completed' | 'failed' | 'aborted';
   modelRef?: string;
 }
 
-/** Resolve live and durable timing without allowing an older run to override a newer one. */
+type ActiveDisplayTiming = AssistantTurnTiming & { executionTiming?: RunExecutionTiming };
+
+/** Only the receipt for the displayed run can supply its elapsed time. */
 export function selectActiveTurnTiming(
   controllerTurn: AssistantTurnTiming | null,
-  latestRunTiming: SessionRunTiming | null,
-  hasActiveTurn: boolean,
-): AssistantTurnTiming | SessionRunTiming | null {
-  if (!controllerTurn) return latestRunTiming;
-  if (!latestRunTiming) return controllerTurn;
-  if (
-    latestRunTiming.rootRunId === controllerTurn.runId ||
-    latestRunTiming.clientTurnId === controllerTurn.runId
-  ) {
-    // Main owns lifecycle timing. Only Gateway owns the model actually used;
-    // the receipt may contain a selection captured before a live switch.
-    return {
-      ...controllerTurn,
-      startedAt: latestRunTiming.startedAt,
-      endedAt: latestRunTiming.endedAt,
-      status:
-        latestRunTiming.state === 'completed'
-          ? 'final'
-          : latestRunTiming.state === 'failed'
-            ? 'error'
-            : latestRunTiming.state,
-    };
-  }
-  if (!hasActiveTurn) return latestRunTiming;
-  const controllerRunning = controllerTurn.status === 'running';
-  const durableRunning = latestRunTiming.state === 'running';
-  if (controllerRunning !== durableRunning)
-    return controllerRunning ? controllerTurn : latestRunTiming;
-  return latestRunTiming.startedAt > controllerTurn.startedAt ? latestRunTiming : controllerTurn;
+  receipt: SessionRunTiming | null,
+): ActiveDisplayTiming | null {
+  if (!controllerTurn || !receipt || (receipt.rootRunId ?? receipt.clientTurnId) !== controllerTurn.runId)
+    return controllerTurn;
+  const status = receipt.state === 'completed' ? 'final'
+    : receipt.state === 'failed' ? 'error'
+    : receipt.state === 'aborted' ? 'aborted' : controllerTurn.status;
+  return {
+    ...controllerTurn,
+    startedAt: receipt.startedAt,
+    status,
+    executionTiming: receipt.executionTiming,
+  };
 }
 
 /**
@@ -88,7 +74,7 @@ export function resolveActiveTurnModel(
  * last visible row is Thinking or Tool rather than Content.
  */
 export function projectActiveTurnFooter(
-  turn: AssistantTurnTiming | SessionRunTiming | null,
+  turn: ActiveDisplayTiming | SessionRunTiming | null,
   now = Date.now(),
 ): ActiveTurnFooter | null {
   if (!turn) return null;
@@ -101,11 +87,13 @@ export function projectActiveTurnFooter(
         : turn.status === 'error'
           ? 'failed'
           : turn.status;
-  const completedAt = running ? null : (turn.endedAt ?? turn.startedAt);
-  const durationEnd = running ? Math.max(now, turn.startedAt) : (completedAt ?? turn.startedAt);
+  const execution = turn.executionTiming;
+  const completedAt = running ? null : execution?.endedAt ?? ('state' in turn ? null : turn.endedAt ?? null);
+  const durationMs = running ? Math.max(0, now - turn.startedAt)
+    : execution ? execution.endedAt - execution.startedAt : undefined;
   return {
     completedAt,
-    durationMs: Math.max(0, durationEnd - turn.startedAt),
+    ...(durationMs !== undefined ? { durationMs } : {}),
     running,
     status,
     ...(!('state' in turn) && turn.modelRef ? { modelRef: turn.modelRef } : {}),

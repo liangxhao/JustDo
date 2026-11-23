@@ -1240,8 +1240,10 @@ function renderGroupFooter(
     group.durationMs >= 0
       ? formatActiveTurnDuration(group.durationMs)
       : null;
+  const durationKey = group.runState === 'aborted' ? 'coworkRunAbortedDuration'
+    : group.runState === 'failed' ? 'coworkRunFailedDuration' : 'coworkRunWorkedDuration';
   const durationLabel = duration
-    ? i18nService.t('coworkRunWorkedDuration').replace('{duration}', duration)
+    ? i18nService.t(durationKey).replace('{duration}', duration)
     : '';
   return html`
     <div class="chat-group__footer">

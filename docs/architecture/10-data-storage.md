@@ -319,6 +319,8 @@ Plan 的 segments 表，也不探测并销毁旧 handoff 表。旧环境由启�
 
 ## 4. 会话与运行回执
 
+`cowork_session_runs` 的可空 `execution_started_at`、`execution_ended_at` 保存匹配原生 run 的整轮终态时间，供桌面页脚读取。旧回执缺少这对字段时省略耗时。运行协调、发送接纳和历史正文仍由原有时间及各自的所有者管理。复制已结算回执时保留该字段对，改绑原生 run 时清除它。
+
 通用 CLI、ACP 与 Codex app-server 入站会话共用 `cowork_external_sessions`，新建一律
 使用 `source='cli'`。历史 `source='multica'` 仅保留已有映射、墓碑与原生身份，不转换
 命名空间、不按裸 UUID 猜测旧 scope，也不再提供专用客户端后端。同一个产品会话

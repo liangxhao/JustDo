@@ -24,7 +24,11 @@ test('upgrades existing run receipts and retains content-free retry associations
   const cowork = new CoworkStore(initial.getDatabase());
   const session = cowork.createSession('Retry', '/tmp');
   const timing = cowork.beginSessionRun({ sessionId: session.id, clientTurnId: 'retry-root', startedAt: 1 });
-  initial.getDatabase().exec('ALTER TABLE cowork_session_runs DROP COLUMN automatic_error_retry');
+  initial.getDatabase().exec(`
+    ALTER TABLE cowork_session_runs DROP COLUMN automatic_error_retry;
+    ALTER TABLE cowork_session_runs DROP COLUMN execution_started_at;
+    ALTER TABLE cowork_session_runs DROP COLUMN execution_ended_at;
+  `);
   initial.close();
 
   const upgraded = SqliteStore.create(directory);
@@ -35,14 +39,17 @@ test('upgrades existing run receipts and retains content-free retry associations
   };
   const store = new CoworkStore(upgraded.getDatabase());
   expect(store.getSessionRun(timing.id)?.automaticErrorRetry).toBeUndefined();
+  expect(store.getSessionRun(timing.id)?.executionTiming).toBeUndefined();
   store.setSessionRunAutomaticErrorRetry(timing.clientTurnId, metadata);
-  store.finishSessionRun(timing.id, 'failed', 2);
+  store.finishSessionRun(timing.id, 'failed', 9000);
+  store.recordSessionRunExecutionTiming(session.id, timing.clientTurnId, { startedAt: 10, endedAt: 210 });
   upgraded.close();
 
   const reopened = SqliteStore.create(directory);
   try {
     expect(new CoworkStore(reopened.getDatabase()).getSessionRun(timing.id)).toMatchObject({
-      state: 'failed', automaticErrorRetry: metadata,
+      state: 'failed', automaticErrorRetry: metadata, endedAt: 9000,
+      executionTiming: { startedAt: 10, endedAt: 210 },
     });
     const reopenedCowork = new CoworkStore(reopened.getDatabase());
     reopenedCowork.setSessionRunAutomaticErrorRetry(timing.clientTurnId, {
