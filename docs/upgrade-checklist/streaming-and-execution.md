@@ -23,9 +23,75 @@
 - [ ] `<think>` 等 inline 标签覆盖跨包、属性、Markdown 代码与不闭合标签；
       原生 reasoning 字段保持独立，未闭合私有 Thinking 不作为正文 flush。
       reconnect 按 keyed owner 恢复，超大正文保留身份事实，不恢复 run 累计正文副本。
+- [ ] 在 Chrome 侧栏实际消费 Main 转发的事件，覆盖迟订阅、累计 commentary 与分段历史
+      交错、只追加未落盘尾段、完整历史接管和不同 scope 的相同文字。桌面 Stop 后侧栏
+      及时停止计时，迟到进度不会复活；模型、时间和复制只出现在最后一条正文的页脚。
+- [ ] 展示层按原生可见性和 `internal_system` 来源过滤内部输入，桌面、侧栏和历史接管
+      保持一致，用户或助手写下相同文案仍可见。真实失败只展示一次，并保留先前有效的
+      partial、工具和交付件；验证实时错误、原生终态和随后历史投影同时到达。
+- [ ] 普通 MCP `image` 工具结果使用认证 `artifacts.download` 懒加载原生 artifact，核对
+      物理会话、连接代次、MIME 和大小。实时缺元数据时允许既定历史补全，刷新不重复显示，
+      越界、断线或 ID 失效不使用文本中的路径或 Base64 兜底。SVG 保留原始字节，工具
+      图片不进入助手交付列表。
+- [ ] 同一原生交付的 `MEDIA` 原件与托管副本只显示一张可用卡片，副本生成失败仍可
+      打开已核实原件。仅同名但无法证明同一交付的文件分组显示，打开和下载保持独立。
+      用当前会话的托管文档验证另存、旧/外部地址拒绝，播放验证单段 Range 和换会话释放。
 
-依据：[聊天渲染](../architecture/15-chat-rendering.md)、
+依据：[聊天渲染](../architecture/15-chat-rendering.md)、[媒体与文件工具](../architecture/chat-runtime-presentation.md#5-媒体与文件工具)、
 [028 审计](../features/execution/session-diagnostics.md)、[补丁总账](../../scripts/patches/v2026.10.7/README.md)。
+
+## 首发、重连与整轮结算
+
+- [ ] 普通桌面新会话的临时占位不发会话级订阅、历史或状态查询。提升为实际会话后，
+      用当前认证连接、真实 sessionKey 和消息订阅确认准入；无待恢复运行时，单次委托
+      首发可与 `chat.startup`／历史并行。被动子任务查询让出首条传输回执，保留发起和
+      停止所需的定点核验。切会话时废弃旧结果，已有会话沿原准入流程。
+- [ ] 在附件/App 上下文准备、重复 yield、等子任务回交及接收回执丢失时验证发送和 Stop。
+      Stop 绑定已确认的前台运行或阻止尚未提交的准备。上一条结果不明时保留原输入身份，
+      新输入仍按原生发送或排队准入，迟到旧 history/tool/ACK 不接管新草稿或当前运行。
+- [ ] 自动重试仅认领有精确整轮失败证据及登记原因的前驱；测试桌面、CLI、入站 ACP、
+      通用 app-server 和普通 Chrome 共用的链预算与未知 ACK，以及与 Goal 竞争时只有
+      一个后继。原生回传、子任务、Team、Workflow、cron 和网页发起任务沿各自 owner。
+      桌面重连用同 run/session、revision/generation、可信 `endedAt` 和原生成功
+      yield/paused 证据释放现有重试认领（若返回 `stopReason`，须为 `end_turn`），
+      由原生继续子任务回交。身份不明时继续核对原运行，Stop 取消未派发项。
+- [ ] 验收原生子任务结算的全部已交付、部分未交付、仍有同级运行、显式 yield 及准备
+      派发期间送达。只转交仍应回报的结果，检查重复唤醒和重启后的结算证据；子任务列表
+      读取失败保留上次权威结果，独立验证成功空列表和旧父会话/连接响应失效。模型校验
+      回归父运行的插件清单已退役，读取当前有效模型清单，实际启动仍保留父运行权限。
+
+依据：[聊天渲染](../architecture/15-chat-rendering.md)、[自动重试](../features/execution/automatic-error-retry.md)、
+[助手与子任务](../features/assistants/profiles-and-subagents.md)、[补丁总账](../../scripts/patches/v2026.10.7/README.md)。
+
+## 已登记错误的自动续跑
+
+- [ ] 以 [规则注册表](../../src/main/engine/openclaw/automaticErrorRetry/rules.ts)和
+      [原生错误识别](../../src/main/engine/openclaw/automaticErrorRetry/failureCode.ts)为准，
+      逐规则核对旧版与目标版的错误生产者、Gateway 终态、历史回执和应用匹配结果。
+      对照下表在目标冻结产物上验证真实命中及相近错误不命中，报告逐条记录「仍适用 / 需适配 /
+      可退役 / 未验证」、脱敏原生证据和复验结果。只有证实目标版原生已覆盖或该失败路径
+      已移除，且没有留下等价的未恢复终态，才可退役对应规则。
+
+| 当前规则 | 目标版本逐项复核 | 需确认不触发续跑的场景 |
+| --- | --- | --- |
+| 连续相同工具失败 `openclaw_repeated_tool_error` | 触发原生重复工具失败保护，检查同一 run 最后一条 assistant 的 `stopReason:error` 与该 `errorCode`，以及 `runtimeServices.executionFailure` 返回的精确身份与错误码。确认续跑沿用原会话但不原样重试失败调用。 | 原生在同一 run 通过改变方案恢复、单次工具失败、较早 attempt 的错误、旧 run，或用户和助手正文引用同一报错。 |
+| 上下文溢出 `context_overflow` | 用模型返回 HTTP 400、`context_length_exceeded` 的场景触发；原生压缩及恢复结束后仍失败时，核对 `phase:error`、`executionSettled:true`、`livenessState:blocked`、`errorObservation.failoverReason:context_overflow`，并验证同轮 `executionFailure` 身份匹配且错误码为 `null`、`context_overflow` 或 `context_length_exceeded` 时的映射。 | 只有 HTTP 状态、报错正文或 `agent.wait` 失败；普通压缩失败、原生压缩已恢复、取消、超时或压缩后会话身份变更。 |
+| 会话读取许可失效 `session_reader_not_current` | 核对 `Session reader operation is no longer current` 及其已知前缀、包装。若只有 `chat.error`，以精确 `agent.wait` 已结束失败及 `sessions.describe` 的 SID、revision、`lastRunId` 补证；`executionFailure` 身份匹配且无结构化错误码时，核对当前分支最后的原始输入幂等键与其后同 run 的 `run-failed-before-reply` 精确回执。续跑仍关联原始输入。 | 只有错误气泡，缺原输入或原生自定义回执，历史正文伪装成回执，或较新输入、分支和 run 已接管。 |
+| 会话历史索引重建 `session_transcript_projection_rebuilding` | 核对本轮实时整轮失败的 `error` 精确为 `Session transcript projection is rebuilding: <sessionId>`，其中 SID 与本轮一致。若目标版增加原生恢复，分别验证原 run 恢复和原生仍以该错误结算。后者走共用额度，同一前驱只准入一个后继。 | 读取历史窗口变化 `Session transcript history window changed: <sessionId>`、其他 SID、普通历史查询失败、未结算、让出、超时或旧 run 被替换。 |
+
+- [ ] 核对 `runtimeServices.executionFailure` 在目标 SDK 下仍按精确 sessionKey、SID、
+      revision 和 run 读回，读取前后身份核验与 `identityMatched` 语义保持有效。读取失败或证据
+      不足时保留原失败。适配新增错误码或原生文案时，保留同等原生身份和结算证明，避免
+      通过通配文案、HTTP 状态或扩大重试范围补齐。验证默认阶梯等待、关闭重试、跨规则
+      沿用同一额度、未知 ACK 占用额度、Stop／新输入取消未派发后继及 Goal 单后继。
+      成功仅隐藏匹配的中间报错和内部反馈，保留原失败回执及已有成果，额度耗尽展示
+      最后一次实际失败。
+
+若以 `v2026.11.7` 为目标，优先核对两处源码差异。`reply-turn-admission-lifecycle.ts` 有
+`Session reader operation is no longer current. Retry the turn.` 分支，当前精确匹配不接受
+该变体。用目标 Gateway 分别确认 WS、wait 与历史回执实际输出。历史索引重建仍有同名异常，
+`attempt-session-projection-recovery.ts` 已有原生等待后再打开的路径，分别验证原生成功接管
+和失败终态仍可由应用接续。这两处的实际产物行为待验收。
 
 ## 长参数与真实活动
 
@@ -60,9 +126,10 @@ SDK 用例另行验证 `tool_call → show_widget` 的 70 KiB HTML 参数缓冲�
 
 ## 格式纠正、Goal 与问答
 
-- [ ] 对照 029：完成且可信的派发前拒绝才进入同一原生 Agent 循环纠正，最多两次额外
-      请求并计入原生预算；不重放此前已完成工具，不回到外层 attempt 开启新纠正链。
-      JSON producer 整批拒绝与 schema 批次允许有效 siblings 执行分别验证。
+- [ ] 对照 029：完成且可信的派发前拒绝才进入同一原生 Agent 循环纠正，额外请求
+      上限按目标版本总账核验并计入原生预算。覆盖普通 Completions 工具前 commentary
+      后出现坏 JSON、显式 final 和未闭合流。区分 JSON producer 整批拒绝与 schema
+      批次允许有效 siblings 执行；已完成工具不会重放，外层 attempt 不开启新纠正链。
 - [ ] JSON/对象格式纠正仅准入原生事实确认的初始模型候选与完整响应，当前响应的已执行
       调用、已提交片段和执行批次均为零；有可见正文时逐块确认 commentary 身份。
       未完成流、refusal、已提交异步片段、取消、模型变更或已发生终止交付均不取得纠正机会；
@@ -76,6 +143,13 @@ SDK 用例另行验证 `tool_call → show_widget` 的 70 KiB HTML 参数缓冲�
 - [ ] `GOAL_CONTINUATION_DEFERRED` 是提交前拒绝；超时或 ACK 失配则保留原候选 runId
       与 `identityPending`，用精确 wait/回执核对。累计 `continuationTurns` 只在接纳时增加，
       重连不重置，配置 0 禁止自动追加；Stop 和旧 revision 围栏跨退避保留。
+- [ ] 工具已完成、原生补答耗尽且只产出 Thinking 或空回复时，保留真实失败终态和精确
+      前驱，验证同一失败前驱只准入一个后继、工具只执行一次。对照普通失败、用户暂停和
+      Stop，确保特殊失败处理不会额外恢复这些运行。
+- [ ] 已交付成果的精确 Goal 自动后继先成功更新完成，再单独调用
+      `finish_goal_turn({ goalId, reply: "none" })`。验证直接调用和原生 Tool Search 封装
+      都可按原生 `terminate` 契约结束且不补写答复；新成果仍正常交付。普通用户回合、错误
+      Goal 或 revision、Code Mode 伪结果、含非终止结果的混合批次、取消或超时不获静默结束授权。
 - [ ] ask_user_question 默认启用配置的超时（当前默认十分钟）；超时返回原工具结果后
       当前轮继续。点击单题/多题弹窗的 × 取消时，开启和关闭超时两种设置都立即解除提问，清除计时器，
       不提交答案、不触发 Stop/Goal 暂停；问答结束本身不提前创建 Goal 后继轮。
@@ -91,5 +165,8 @@ SDK 用例另行验证 `tool_call → show_widget` 的 70 KiB HTML 参数缓冲�
 - [ ] 诊断导出保留历史运行、晚到日志、来源/行号索引和采集缺口；部分扫描不显示完整。
       取消、切会话和窗口关闭后迟到结果不覆盖新报告。不因缺少 hook 日志断言阶段未发生，
       不新增私有 loop-exit 补丁或直接扫描 transcript。
+- [ ] 右键导出独立从认证 Gateway 分页读取选定会话，覆盖未打开的会话、已截断消息补全、
+      读页失败和取消，验证失败时不会产出看似完整的文件。诊断包另核对运行、请求和
+      时间范围，注明原生历史或观测缺口。见[会话导出](../features/app/navigation-and-session-list.md#导出对话)。
 
 依据：[会话诊断](../features/execution/session-diagnostics.md)。

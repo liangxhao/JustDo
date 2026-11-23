@@ -18,6 +18,16 @@
       删除接口、固定拒绝的退役 handler、同步转异步和 Promise 返回都须显式处置。
 - [ ] 追踪变更到真实生产消费者：Main adapter → shared contract → typed IPC/preload →
       Renderer/插件。SDK 还需检查实际 owner、worker、异步调用和注册/停用收尾。
+- [ ] 会话控制或启动观察的 SDK 变更须跟到 Goal、运行注册和插件 RPC 调用方。核对原生
+      启动准入、禁止绕过准入注册、精确清理回执、调用者既有 scope，以及启动观察中的
+      有限截止时间、`null`、字段缺失和 owner 失效。启动预算与实际执行超时分别验证。
+      若以 `v2026.11.7` 为目标，按其 SDK 迁移指南核对 `runAttempt` 内注册与精确清理、
+      `dispatchGatewayMethod` 的 manifest 声明与调用者权限、`startDeadlineAtMs` 的
+      缺省语义。Goal 原生接线仍读取旧 `chatAbortControllers` / `chatQueuedTurns`，
+      目标版需用实际 handler 验证新 owner 下的排队和原子准入。
+      同时盘点同步会话读取与写入接口的退役，核对异步 worker 入口及读取后身份重验。
+      `before_prompt_build`／`agent_turn_prepare` 的 transcript 内容可能已冻结，用目标
+      SDK 验证插件通过返回值贡献提示词，原始历史与后续派发的 transcript 保持原样。
 - [ ] 每个模块写“已适配并验证 / 无需适配并验证 / 未验证 / 不适用”，引用精确源文件、
       API 名、测试文件与执行结果。不适用解释原因；未完成不得写成通过。
 - [ ] 每个实质变更至少有正向行为用例及相应负例。至少一层测试直接加载锁定原生
@@ -26,6 +36,8 @@
 - [ ] 配置必须覆盖真实同步器的登录、退出、有模型和无模型启动落盘结果，同时执行
       目标原生 schema **与 legacy-config 检测**；provider catchall 接受旧字段不代表
       CLI 允许启动。加入废弃字段负控、重复同步和可选插件/权限保留断言。
+      对仍承诺支持的回退来源，回归新版关闭可选服务后的实际落盘配置，例如实时语音
+      的省略与 `null`，用旧版真实加载验证；已迁移数据根另按存储契约记录支持范围。
       不保留未发布旧代码兼容分支；这不免除当前数据库升级。分别核对迁移升级安装、
       正常升级安装、首次安装和正常启动，并验证正常升级保留数据、原生备份与维护、
       原生版本变化、同版本但 schema 待更新、占用/损坏/取消及失败后重新检查。
@@ -69,32 +81,39 @@
 - [ ] Gateway 连接、认证、roles/scopes、能力协商、generation、订阅与错误。
 - [ ] 聊天发送/历史/完整消息/流式 Thinking、Content、Tool、分页、重连与资源。
 - [ ] 会话 create/describe/list/patch/reset/fork/delete、助手与角色文件。
-- [ ] 执行 whole-run、子任务、Goal、压缩、取消、审批、计划与提问。
-- [ ] Agent Team 协作、讨论与 holding 的身份、收据和停用后收尾。
-      显式两种模式的首次发送须核对真实 describe 活动聚合（含 queued/深层后代），
-      区分忙碌与未知；覆盖大量历史/无关根会话变化、祖先关系不完整、错 SID/revision、
-      连接替换、原生明确缺席和读取失败，未知不得当空闲或自动重发。
-      发送验收须逐项列出 Team 主会话、Team 助手单聊、Team 群聊、Workflow 主会话及
-      Workflow 节点，不能用同一普通聊天请求附加不同模式标记代替。覆盖首次与已有会话、
-      升级/重启后的下一轮、实际参与者与节点原生身份、排队/忙碌、未知结果及重复操作。
-      区分 Workflow 节点保存补充、同会话继续和新会话重跑；保存成功不等于当前运行已收到。
-      发送、发起清理和房间准入均不得扫描全局会话目录；已知 key 的用量、标题和 Goal
-      重放核对也使用精确 describe。测试断言不调用全局列表，缺失活动 run 列表仍为未知。
+- [ ] 执行 whole-run、子任务、Goal、压缩、取消、审批、计划与提问。按[自动续跑规则](streaming-and-execution.md#已登记错误的自动续跑)
+      审计原生错误生产者与应用匹配器，每个登记规则单列目标版本结论和验收证据。
+- [ ] Agent Team 协作、讨论与 holding 的身份、收据和停用后收尾。主聊天中两种模式
+      的首发均为带普通提示的 `chat.send`，沿用原生权限与 followup，真实业务提交
+      另由 `task_assistants`、`sessions_send`、`team_discussion` 等入口验证。主聊天提示、
+      成员单聊、群聊各自覆盖首次、已有会话、升级/重启之后和结果未知。仅组织者有权
+      创建协作批次，成员交接必须有同批真实回执，旧文本或 Stop 不创建新批次。
+      实际建房、成员单聊及旧回执收尾按各自 owner 核对原生活动，包含 queued、深层后代、
+      不完整关系、错 SID/revision、连接换代、明确缺席和读取失败。活动缺字段保持未知，
+      测试精确准入和清理不扫描全局目录；已知 key 的用量、标题和 Goal 重放核对仍使用
+      精确 `describe`。
       补充真实 Main Store → Adapter → Router → IPC 的组合验证：产品 ID 与原生 SID
       不同、未保存 native key 但已有原生历史、历史绑定及自定义助手分别覆盖。
       检查 create 成功响应与迟到 changed 通知在 describe 等待期间交错；只读重查必须
       有界、固定原生身份/代次，反复失效和未知提交不得放行或重发。原生补证使用实际
       事件帧，分别注明网络投递控制、Main 组合和完整桌面 UI 的验证范围。
-- [ ] Swarm Workflow/DAG/batch 的运行、并发、回执与清理。
+- [ ] Swarm Workflow/DAG/batch 的运行、并发、回执与清理。分别实跑主会话和节点，
+      区分保存补充、同会话继续和新会话重跑。覆盖已有会话缺少保存的原生绑定时的实际
+      节点投影、界面持续更新与切会话迟到通知。先验证节点可用工具，再验收交付阶段关闭
+      工具，直接从已有证据产生摘要和交付件。
 - [ ] cron 定时任务 CRUD、运行、delivery、owner、分页和结果。
 - [ ] Workboard 卡片/评论/派发、memory/search、artifacts/progressCard。
 - [ ] Skill inventory/启停/导入、Workshop 版本/变更/归档/恢复。
 - [ ] Extension inventory/安装/启停/卸载/审查、required/optional 插件状态。
 - [ ] 所有内置扩展的 SDK exports、注册、hooks、worker、工具和异步返回。
 - [ ] 模型目录、provider/auth、登录/内置模型、凭据轮换和配置生效。
+- [ ] 使用统计、可选活动上报与 `sessions.usage`。验证日期、物理会话身份、模型与来源
+      的使用量映射，原生错误或缺字段保持未知。上报按已有配置读取运行中的 Gateway，
+      不额外启动引擎或阻塞登录及发送。
 - [ ] 图片/视频/语音/STT/TTS/embedding/decision 的实际原生 provider 接缝。
 - [ ] MCP、MCP Apps、交互问题、Widget、draw.io 与认证 HTTP 资源。
-- [ ] 浏览器模式、profile、配对/relay、介入、录制及扩展 side chat。
+- [ ] 浏览器模式、profile、配对/relay、介入、录制、扩展 side chat 和网页按钮发起的
+      实际扩展 → Main → Gateway 组合验收。见[宿主专题](host-and-release.md#cliacp-与-chrome)。
 - [ ] Worktree 列表/删除/恢复/清理与异步任务；终端 open/attach/input/resize/close。
 - [ ] Config get/patch/hash、secrets/reload、suspend/restart 和可选状态保留。
 - [ ] 启动路由、历史 import/inspect/原生身份校验、数据存储及诊断。

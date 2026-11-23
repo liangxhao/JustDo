@@ -32,6 +32,9 @@ canonical owner 的导出和字节身份；运行显式 `storage-relocation.nati
       同步本目录和升级记录 README 的入口。不得仅引用旧 mock 或测试总数宣布兼容。
 - [ ] 保留当前工作区改动，在隔离 worktree 中升级。记录应用提交、旧/新 OpenClaw
       版本、目标平台、Node/Electron 约束以及本地插件版本，避免混入无关修改。
+- [ ] 以 `dev` 上次实际修改 `package.json.openclaw.version` 的提交为起点，回看之后的
+      故障、性能排查及验证，含跨越起点仍在处理的会话。用当前提交、功能契约和复现证据
+      核对已交付行为、待验证问题与仅在分支试验的方案，将影响升级的场景纳入本版验收。
 - [ ] 阅读旧版到目标版之间的 release notes、breaking changes 与实际代码差异。
       若使用上游 checkout，核对 tag/commit 与目标 npm 包；同时比较发布包的 dist、
       worker、CLI、SDK exports 和 manifest，不能只依据源码或发布说明。
@@ -98,15 +101,16 @@ canonical owner 的导出和字节身份；运行显式 `storage-relocation.nati
 
 ### 2.1 MCP Apps 原生生命周期
 
-MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视图停止本地交互，
-不保证后台取消；视图及临时授权按原生租约到期回收（当前创建后约十分钟）。
-工具调用格式纠正补丁 029 不提供 MCP Apps 生命周期能力。
+MCP Apps 使用原生认证 WS 接口。当前基线通过补丁 041 为已打开的视图续原生租约；
+关闭视图停止本地交互和续租，视图及临时授权在剩余租约到期后回收。
 完整契约见 [MCP Apps 宿主](../features/chat/mcp-apps.md#公开生命周期能力的边界)。
 
 - [ ] 下一次升级 OpenClaw 时删除 [039 跨模型视图补丁](../../scripts/patches/v2026.10.7/README.md#039-retained-mcp-app-view-after-a-model-change)。
       普通模型切换只更新当前会话，默认模型通过显式设置更新。用目标版本验证原 App 视图继续交互、
       已准备的上下文由新模型消费一次，并单独记录默认模型热更新后的视图行为。
-- [ ] 重读目标版本 WS 派发、App view/disposer、SDK 与方法描述，核对是否新增公开的精确请求取消、可确认的最终视图释放和多窗口隔离接口；有则通过公开接口接入，无则保留原生行为，不恢复补丁或访问私有 store。
+- [ ] 重读目标版本 WS 派发、App view/disposer、SDK 与方法描述，核对公开续租、精确
+      请求取消、可确认的最终视图释放和多窗口隔离。优先使用等价的公开能力，按补丁总账
+      核对 041 的删除条件，续租和视图恢复按[宿主专题](host-and-release.md#appswidget-与跨轮资源)验收。
 - [ ] 核对 TTL、授权范围、原生过期和后台收尾语义；分别测试本地 AbortSignal、已发出操作、等待审批/提问、断线、迟到响应，不把取消 ACK 当成副作用回滚。
 - [ ] 验证原生 view/launch/history/formResource 返回形态，普通工具 descriptor 与问题预览引用各从认证来源准入，不要求已删除的 `appIdentity` / `hostLeaseId`。
 - [ ] 回归精确 `updateId` 清理、文件 ETag/订阅、旧 session/incarnation/generation 拒绝、跨窗口影响及未知结果不重试；核对冷启动 draw.io 三种导出仍不依赖公网资源。
@@ -151,7 +155,8 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       truncated 标记及取消。缺失一页不是消息被删除；完整消息读取不能吞掉独立 commentary。
 - [ ] 覆盖分页期间追加消息、分支 leaf 变化、reset/fork、冷归档读取和读失败重试。
       当前会话/连接/历史 generation 变化后旧读取失效；读取失败保留已显示内容，
-      不提交空成功快照，也不在首次权威读取完成前开放发送或导出。
+      不提交空成功快照。已有会话的发送和导出仍受各自的权威历史门禁，普通新会话的
+      首条发送按[流式专题](streaming-and-execution.md#首发重连与整轮结算)单独验收。
 - [ ] 工具 input、失败 detail 和 compaction detail 仅凭原生身份有界补取。超大结果、
       补取超限或临时失败保留可诊断占位，不根据「已截断」文字猜原文或永久空结果。
 - [ ] 实时用户气泡、`session.message` 和历史接管按原生身份/幂等键去重。
@@ -173,8 +178,10 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       HTML 链接。Markdown/错误/工具输出继续清洗，媒体与路径经受控打开通路。
 - [ ] 验证向上阅读暂停跟随、历史窗口锚点、搜索定位、选择/引用、窄窗口、主题与
       独立工作区。不能让流更新强拉到底部、跳到其他消息或反复重建工具详情。
-- [ ] 模型、时长和用量以实际原生 run/history 为准；fallback 后不继续显示发送前选择。
-      最近请求的上下文占用与累计 Token 分开，过期/未知预算不显示为准确值。
+- [ ] 模型和用量以实际原生 run/history 为准；fallback 后显示实际模型，最近请求的
+      上下文占用与累计 Token 分开，过期或未知预算不得显示为准确值。桌面整轮耗时用
+      同一原生 run 的可信终态起止时间，只显示在该轮最后一条可见回复或失败行。缺少
+      时间或归属证据时省略，迟到终态在下次权威刷新后补齐，覆盖停止、刷新和旧历史。
 
 实现与回归入口：`src/renderer/libs/openclaw-chat/{gateway,model,pipeline,components}/`
 及 Cowork chat/composer；完整契约见[聊天渲染](../architecture/15-chat-rendering.md)。
@@ -221,8 +228,10 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] 摘要按当前会话展示 Goal objective、任务进度、子智能体、输出、来源、
       Swarm Workflow 与 Agent Team；无关会话和旧 generation 的数据不能出现。
       Goal、present_plan 和 progress card 不混用生命周期或入口。
-- [ ] 对照 `progressCard.changed/get/refresh` 的能力声明、revision 与异步回执。
-      null、读取失败或旧 revision 不沿用旧卡冒充最新；刷新不制造用户消息或清空草稿。
+- [ ] 对照 `progressCard.changed` 与 `progressCard.get` 的 revision 和作用域。手动刷新
+      绕过缓存执行只读 `get`，不会调用可能发起模型工作的原生 `refresh`。暂态失败保留
+      已确认卡片并显示错误，明确 `null` 或撤权时清理，同 revision 可确认刷新，旧结果
+      不接管。
 - [ ] 输出通过认证 `artifacts.list(sessionKey,messageRole:'assistant')` 与助手明确
       交付引用形成；工具 Write 参数、任意触及文件和用户附件不冒充助手交付。
       核对 artifact ID、附件身份、message seq、managed-media 伴生关联与截断补全。
@@ -257,13 +266,22 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       generic durable task registry 接线，也不连接后补发 abort 冒充恢复准入。
 - [ ] 覆盖权限应用失败、模型不可用、首事件前取消、断线后迟到接收、后台会话停止、
       自动重连和退出期间的排队重启。旧 generation 的通知不能更新新运行或重启已退出应用。
+- [ ] 逐项验证原生重启恢复、登记错误的自动重试和 Goal 后继轮，含同一前驱的竞争、
+      yield 后重连及用户 Stop。对[每条已登记的错误](streaming-and-execution.md#已登记错误的自动续跑)
+      分别记录目标版本是否仍适用、是否需适配或可退役，附实际错误码、原生回执和正反例证据。
 
 ### 6.2 权限、交互与目标模式
 
 - [ ] ask/auto/full 正确映射 guarded/workspace/full；新会话默认与当前会话权限分开。
       活动 run 期间变更显示 pending，原生回读失败禁止发送，不用全局 full 兜底。
+- [ ] 登录、退出和配置同步保留桌面内嵌 Agent 的 `tools.exec.notifyOnExit:false` 政策，
+      真实后台命令完成不会唤起额外模型轮次，原生查询、等待和取消仍可用。外部执行器
+      继续按自身配置，历史内部完成通知按来源识别。
 - [ ] structured question 与 automation approval 核对 request/run/session 身份、
       用户选择、超时、停止、重连和重复回答；运行参数的等待期限仍实际生效。
+- [ ] 并发子执行、Team 或 Workflow 的同名问题按原生 request 分开展示，权限审批暂时
+      隐藏问题时保留草稿。多窗同答只允许一个请求提交，未知答复只读核对 pending，停掉
+      一名成员不结算其他成员。缺 SID 的受管审批仍限单次决定，不借用当前会话授权。
 - [ ] Goal 创建、暂停、显式继续、等待用户、完成/失败与预算限制逐状态验收。
       goalId fence、停止 latch 和自动续跑门禁有效，普通继续不能暗中恢复 paused goal。
 - [ ] Plan 生成、present_plan 读取、审批/拒绝/修改、批准后 reset 与实施交接验证同一
@@ -285,6 +303,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] 子会话 queued/running/done/failed/interrupted/killed/timeout、嵌套导航、取消、
       完整快照替换及旧响应隔离正确；不恢复旧结果重投递/忽略按钮，不伪造当前接口
       不再暴露的 deliveryStatus、等待原因和 diffStat。
+- [ ] `sessions_spawn(visible:true)` 的可见子会话按实际助手、工作目录和权限核对
+      继续对话，输入仅进入该子会话。回归隐藏或身份不匹配的拒绝、首条任务归属，以及
+      Stop 仅作用于该子会话及其受管后代，父会话可继续使用。
 - [ ] 普通 SubAgent、原生 Swarm 分组、可选 Agent Team 与 Swarm Workflow 独立。
       不把长期助手 roster 自动加入跨角色 allowlist，不用原生 `agents team create`
       直接替代产品房间。累计 usage 与本轮上下文快照不能混用。
@@ -312,6 +333,13 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] Worktree 的 `sessions.create(worktree:true)`、可见子会话接纳、继续已有身份、
       `worktrees.list/restore/remove/gc` 及引用保护正常。未知创建不再分配第二个 checkout；
       `worktreePreserved` 或未知删除不直接删目录/分支。当前 Worktree 会话仍限制复制/fork。
+- [ ] 无提交分支只在原生明确拒绝且回读确认会话不存在时，提供用户确认的初始提交。
+      取消保留草稿、附件和 Worktree 选择，确认后保护无关暂存项，提交成功才重走原生
+      创建；已有本地 HEAD 无远程分支仍可创建。加入未知创建和提交失败的负例。
+- [ ] 已有普通会话更改 cwd 必须确认当前会话及后代空闲，提交前复核原目录、原生绑定
+      和最新回执。覆盖忙碌、未知提交、待审计划、Worktree 及外部会话的拒绝。新发送或
+      新终端应用新 cwd 与原生 mode/root，旧 PTY、角色和历史保留原身份，迟到发送意图
+      的 `expectedWorkspaceRoot` 失效，历史相对链接以点击时所属会话目录解析。
 - [ ] 原生全局 worktreeRoot/acceleration 通过带 `baseHash` 的配置 patch 保存并回读，
       只影响新分配；配置同步不覆盖这些非产品副本字段，冲突/超时不自动重放写入。
 - [ ] Review 以 `sessions.describe/diff` 和前后 incarnation 核对真实 checkout。
@@ -353,6 +381,12 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       `skills.workshop.autonomous.mode`，未设置时应用显式 off，保留用户明确选择。
 - [ ] 原生结果已清理、Gateway 离线、历史单页失败和助手软删除分别显示真实状态，
       不创建空 transcript 或用空列表认定全部任务已删。
+- [ ] 运行中重启 Gateway，核对原生 job/run 回执与实例更换，确保记录明确中断、同一
+      失败只出现一次；无法确认归因时保留实际错误。长时记忆维护任务回归投递与执行结果
+      的独立展示，原生未返回的写入统计保持未知。
+- [ ] 「完整会话」用精确原生会话读取历史，验收 `openclaw.nested-tool.v1` 的调用及结果
+      配对、过程折叠、未知形态保留。「运行详情」独立展示已有回执和投递状态，缺 transcript
+      仍可查看。执行失败、整体完成未知、投递错误或诊断告警的 `NO_REPLY` 结果继续显示。
 
 入口：`src/main/scheduler/`、`src/main/ipc/scheduledTask/`、
 `src/shared/scheduledTask/`、结果 Store 与 Renderer scheduled-tasks；
@@ -390,9 +424,10 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       安装时才启动 Gateway 的场景也要检查网络策略、原生重启要求和实际运行态收敛。
 - [ ] Windows 普通目录、junction、坏链接、恢复副本、worker/CLI 清理与真实原生
       卸载验证不跟随链接误删宿主 runtime；不放宽原生 hardlink/文件引用校验。
-- [ ] Skill 有效赢家以 `skills.status/update` 为准；测试同名来源、eligible 与 enabled
-      的区别、导入/删除、启停确认、文件 watcher 与迟到响应。关闭赢家不自动改用下一份。
-      041 发现刷新补丁已退役，不因短暂发现延迟恢复补丁或强制重启。
+- [ ] Skill 有效赢家按目标原生目录优先级与会话 cwd 核对，验证工程 `skills/`、
+      `.agents/skills/` 与其他同名来源、删除后的回落及 Windows 沙箱读取配套文件。
+      管理页的主助手清单与真实模型运行分别检查，区分 `eligible` 和 `enabled`，测新扫描、
+      watcher 延迟和启停后的迟到响应。关闭赢家不自动改用下一份；已退役的发现刷新补丁不恢复。
 - [ ] 验证 `skills_search/skills_read` 按需发现已安装技能：即使提示词目录因预算省略，
       仍可搜索并读取完整说明；覆盖元数据/有界正文搜索、完整读取超出搜索前缀的正文、
       禁用及禁止模型调用的技能过滤。用与产品导入相同的 `stateDir/skills` 位置验证。
@@ -404,6 +439,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       真实验证连接、工具/资源/提示发现、资源读取、
       调用、取消、timeout 与进程退出；Windows npm/npx、嵌套包 bin、中文/空格路径
       和 Chrome MCP 均要握手，不能把某条批处理诊断直接判为连接失败。
+- [ ] MCP 导入导出覆盖 `mcpServers` JSON 与 `servers` JSON/JSONC、含糊的 HTTP 类型
+      选择、同名跳过或改名、部分失败及新条目默认关闭。导出只接受可管理连接，默认清空
+      环境变量与请求头值，两类凭据独立确认才写入。回导检查待补凭据及原生测试连接。
 - [ ] Hook 文件、开关、数据库与配置事务一致，拒绝不支持的链接和半成品发布；
       父扩展变更刷新附带 Hook/MCP，不只翻转旧卡布尔值。
 - [ ] 市场默认无业务 provider 时显示未配置；只支持已接入的 extension/skill/mcp。
@@ -466,8 +504,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 
 - [ ] isolated/user/extension/embedded 四种模式分别检查原生配置、工具发现与实际
       操作；缺失/未知旧值的读取默认与非法写入校验分开。切换失败回滚，不偷偷切到
-      外部 Chrome 补缺能力。当前内置浏览器仍是真实 Electron webview guest，不能
-      把候选 WebContentsView 迁移写成已交付浏览器架构。
+      外部 Chrome 补缺能力。内置模式覆盖前台 Electron webview guest 与 Main 所有的
+      隐藏页面。普通会话默认前台、显式 `headless:true` 走后台，受信 cron 固定后台且
+      不抢焦点，无产品会话锚点的原生执行须显式选后台。验证各自的 target 和任务工作区。
 - [ ] user 模式实际通过 `browser.request`、existing-session driver 与随包 Chrome MCP
       触发 Chrome 授权；端口可达不等于授权成功。完整/最小/认证配置同步都保留
       正确 launcher、现有自定义 profile/default profile 与用户配置。
@@ -477,6 +516,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] 从桌面实际入口验证手动配对与自动发现/配对、Tab Access、Disconnect、worker
       重启、watchdog 重试和迟到响应撤销。CLI 根入口及完整依赖真实可运行；Gateway
       bundle 能启动不证明 CLI pairing 可用。配对凭据不进入桌面 Renderer 或日志。
+- [ ] 真实 Chrome relay 以两个标签验证授权 target、导航后的读取和用户焦点。导航中
+      失效的读取应取消或报告可重试，不能接纳新页面内容。上游受管无头浏览器单独验证
+      未选中标签的截图，记录有界面 Chrome 的实际支持范围。
 - [ ] relay 自动化与 Native Messaging/app-server 侧栏聊天分别验收。扩展 ID/Origin、
       capability、loopback 发现、初始化、会话列表/历史、流、附件、权限/模型和 stop
       正常；不把 Gateway token/relay key 暴露给 Side Panel，断线不自动重发消息。
@@ -486,11 +528,21 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       桌面成功不能替代扩展客户端回归。
 - [ ] 网页上下文仅在用户明确授权后采集，作为本轮 private untrusted context，不能
       当用户指令或持久用户正文；切会话/页面后不使用过时上下文或误发旧附件。
+      网页按钮发起任务也需走[宿主专题](host-and-release.md#cliacp-与-chrome)的连接授权、排队和回执用例。
 - [ ] 内置 guest 逐动作检查 task/profile/target/webContents、lease、文档和 frame。
       导航后旧 ref/授权失效；后台创建 Tab 不抢当前工作区，容量拒绝不留下外层虚假 Tab。
+- [ ] 前后台同 profile 实时共用登录与站点存储，不同 profile 隔离，页级存储仍独立。
+      关闭单个后台页不清理共享站点数据，后台页存活或创建中时验证手动清理冲突。
+      模型失败触发同 run 的原生重试时，重新经过最终工具权限 hook，撤销旧授权、待处理
+      文件选择器及下载效果，确认旧调用和迟到结果不能影响新准入。
+- [ ] 同一侧栏同时显示两个子执行时，各自浏览器目标、工具授权和工作目录按实际原生
+      运行隔离，Stop 只撤销所属资源。团队投递仍未确认时不借用来源会话代为建页。
 - [ ] 浏览器代理与非浏览器/Gateway 代理分别检查 system/direct/custom、认证挑战、
       新旧 partition、生效和 Cookie/profile 隔离。browserProxy 变化不重启 Gateway，
       浏览器网页不进入模型 outbound-header 注入通路。
+- [ ] Windows 企业认证使用安装版配置的同版本别名及当前 Chromium 进程，覆盖整页、
+      跨源 iframe 和普通 URL 内嵌。托管 ref 保持独立。回归配置地址、HTTPS 来源及
+      POST/预检约束，首屏不等认证进程，超时清理后由新连接恢复，失败时人工登录仍可用。
 - [ ] 上传、下载、PDF、剪贴板、摄像头/麦克风、定位/通知、HTTP auth 与证书错误
       保留来源确认、路径和取消边界；Agent 文件只使用真实工作区，下载拒绝覆盖并清理
       部分文件。本地与在线 PDF 统一验收 Chromium 原生查看器，检查内部流导航的精确放行及 PDF 工具栏打印。
@@ -503,6 +555,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 参考：[浏览器设置](../features/browser/browser-settings-design.md)、
 [扩展侧聊](../plugins/chrome-extensions/chrome-assistant/side-panel.md)、[app-server 协议](../app-server-api/README.md)、
 [人工介入](../features/browser/browser-intervention.md)、[操作录制](../features/browser/browser-operation-recording.md)。
+隔离探针复用 `scripts/test/browser/` 的 `verify-background-browser.cjs`、
+`verify-browser-cron.cjs`、`verify-browser-retry.cjs` 与 `browser-auth-transport-smoke.cjs`；
+企业认证另记录真实 Windows 安装版与内网整页/iframe 的验收范围。
 
 ## 11. 设置项、配置投影与认证切换
 
@@ -525,7 +580,8 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 | 电脑操控          | 显式启用、模型/本机准入、computer RPC/tool、dedup/heartbeat/release 和悬浮提示；展示关闭不冒充执行停止                                          |
 | 连接与集成        | MCP/外部 Agent/CLI/ACP/app-server 目录与配置、会话恢复、取消及协议子集；连接发现不自动取得执行授权                                              |
 | 消息通道          | 已接入 IM/channel 的配置、凭据、状态与权限；不因上游新增 channel 自动开放未适配能力                                                             |
-| 用量与存储        | 原生/服务端用量口径、加载失败、会话冷归档/存储状态及受保护清理；不是累计 transcript 缓存                                                        |
+| 使用统计          | 原生/服务端用量口径，累计用量与本轮预算分开；加载失败和缺统计保持未知                                                                            |
+| 会话存储          | 原生冷归档、活动根/固定配置目录、存储统计、缓存/升级备份清理与迁移，按各自 owner 验证                                                             |
 | 关于与帮助        | 应用与运行时版本、更新/诊断入口、错误反馈；显示最终产物的真实版本，不取旧 vendor 文本                                                           |
 | 插件/任务专属设置 | Agent Team 全局/本团队覆盖、Swarm Workflow 批次预算与并发、cron/system-task 开关及 Extension 凭据；全局与局部所有者分开                         |
 
@@ -535,7 +591,8 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       即时保存与页底统一保存的既有语义不被改成仅本地成功。
 - [ ] null、0、缺字段、空字符串和显式 false 按各字段含义处理，不依据新上游默认
       重置旧用户选择。重点验证 timeout=0、thinking/model 继承、visibility、可选插件
-      disable 与 `skills.workshop.autonomous.mode`。
+      disable、`skills.workshop.autonomous.mode` 与 `automaticErrorRetry.maxContinuations`。
+      自动续跑的次数保存在应用设置，0 停用，缺值依当前默认，显式次数不投影到 Gateway。
 - [ ] 完整配置、无模型最小配置、正常保存、登录、Token 轮换与退出同步分别验证。
       保留非受管权限、原生 `meta.migrations`、env、Worktree 设置与用户可选开关；
       受管 OpenAI/QuickJS/浏览器/TypeSafe 等按各自契约投影，不删除其他 deny/allowlist。
@@ -544,6 +601,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] builtin 模型发现/mtoken→JWT/SecretRef、轮换/过期/退出与用户 provider 独立；
       未解析 SecretRef 拒绝，敏感字段不进入 Renderer 清单或日志。登录 SDK 与内置
       模型换证仍使用统一 MAC 获取契约，无 UUID/device-ID 回退。
+- [ ] 增加首个、删除最后一个及重新添加自定义语言模型时，核对同 Gateway 的配置生效与
+      进程身份，实际新任务使用所选模型。Gateway 离线时已保存的视频目录仍可首屏读取，
+      本地设置可读不等于原生视频运行可用。
 - [ ] 通用 Extension 凭据只接受当前 manifest 声明字段/env，分别检查替代变量组、
       系统环境来源、保存应用和冲突；不向空 schema 写虚构 apiKey。
 - [ ] UI 使用匹配的 zh/en 文案，设置搜索/导航仍执行离开保护。持久 UI 偏好经
@@ -565,6 +625,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
       重新可用恢复偏好；developer WebChat 遵循开发者开关。
 - [ ] 会话创建/重命名/置顶/分组/删除与活动状态更新正常。Chrome 与 CLI 来源组
       按真实创建来源投影，不凭标题/正文猜归属，扩展继续桌面会话不改原来源。
+- [ ] 普通及 Worktree 初始标题由 `sessions.create.displayName` 写入；自动/手动改名绑定
+      精确原生 SID/revision，迟到的自动标题不覆盖手动或替换后的会话。用原生列表或
+      `sessions_list` 回读，保留原生 `label` 优先级，外部及借用会话的名称留在产品侧。
 - [ ] 跨会话 `sessions.search` 命中携带原生 entry 与物理身份；等待历史就绪后定位，
       冷归档、分页、身份变化和迟到查询不滚动到其他对话。
 - [ ] 未读结果、任务状态、连接错误及插件启停通过既有 owner 更新；侧栏隐藏不终止
@@ -583,6 +646,9 @@ MCP Apps 使用原生认证 WS 接口，不使用生命周期补丁。关闭视�
 - [ ] 工作区拆出/收回移动同一文档与工具实例，不重开 PTY、guest、Monaco、Lit 或
       Graph，不丢附件/群聊 @/表单。子文档无应用 preload，窗口 IPC/guest host 绑定
       当前 generation，异常销毁撤销旧授权。
+- [ ] 首页临时会话提升为正式会话时，实际复用浏览器 guest、页面状态、未提交的表单
+      和滚动位置；交接期间撤销旧交互授权，成功后恢复，不触发重新导航。覆盖独立/隐藏
+      工作区及迟到事件，失败不把页面交给其他会话。
 - [ ] 主窗口最小化后独立工作区仍更新流、布局、菜单和终端；主题、OwnerDocument、
       ResizeObserver、调度、DPI、剪贴板和焦点使用真实展示文档。主窗口托盘/恢复、
       顶层审批引导、屏幕变化与退出清理分别验证。
@@ -615,20 +681,20 @@ MIT LICENSE。`upstream-source.json` 记录原始 tag、commit 和源文件 SHA-
 | 显式内网模型        | `openai-provider.ts`、`provider-policy-api.ts`、`model-auth-policy.ts`、`shared.ts`。保留原生 stream/replay/tool 语义；模型与地址由设置提供，无官网 catalog/自动发现/默认地址。检查模型级 API/baseUrl 优先于 provider 配置，未知模型不能被厂商 preset 重写。                                               |
 | 图像隔离            | `image-generation-provider.ts`、`intranet-config.ts`、`contracts/media-config.ts`。只使用 `models.providers.image-openai` 的地址/凭据；不借聊天 openai 或环境 Key。覆盖 generations、multipart edits、响应上限、私网显式允许和拒绝越界。                                                                   |
 | TTS                 | `speech-provider.ts`、`tts.ts`。显式地址、模型、音色、响应格式与能力专属凭据；无环境 Key/公网地址回退。覆盖内网任意模型/音色、额外参数、匿名服务、响应上限和释放。                                                                                                                                         |
-| 实时 STT            | `realtime-transcription-provider-factory.ts`。接受 HTTP(S) 与直接 WS(S) baseUrl，派生 `/realtime?intent=transcription` 时保留直接 WebSocket 协议，transport 与 header policy 使用同一地址。覆盖四种协议、并发端点、按 committed 链顺序输出、重连重置、最后 commit、溢出关闭；不借官网 profile 或环境 Key。 |
+| 实时 STT            | `realtime-transcription-provider-factory.ts`。按 `openai-transcription-realtime` 派生 WebSocket 端点，验证 HTTP(S) 与直接 WS(S) 配置、并发端点、committed 顺序、停止后的 final 和溢出关闭。transport 与 header policy 绑定同一地址。 |
 | 文件 STT            | `audio-transcription.ts`、`media-understanding-provider.ts`。原生 multipart `/audio/transcriptions`、模型、文件名/MIME、响应与释放；使用配置域凭据，显式账号 profile 在上传前拒绝；配置缺失在上传前拒绝，上传开始后的失败不能改服务重试。                                                                  |
 | Embedding           | `embedding-provider.ts`、`memory-embedding-adapter.ts`、`embedding-batch.ts`。显式 remote/provider 地址、原生凭据/目标绑定、模型前缀、cache identity、批次与总超时，不恢复官网默认地址。                                                                                                                   |
 | 视频合并            | `video-provider.ts` 注册仍叫 `video-openai` 的 provider，但所属插件是 `openai`。保留 `models.providers.video-openai`、模型 primary 和凭据域；单独关闭视频不得关闭 chat/image/TTS/STT。检查异步 Videos 提交/轮询/下载，未知提交不重试。                                                                     |
-| 官网 Realtime Voice | 原生 ChatGPT/Quicksilver/官网 RTC 源码不注册为能力。它与现有 TTS、实时 STT 和文件 STT 是不同入口；未经明确内网协议实现与验收，不能恢复注册。                                                                                                                                                               |
+| 实时语音对话        | 独立 `openai-voice-realtime` 受管 provider 经 Gateway relay 使用明确 WebSocket 服务。验证配置 hash、独立凭据、模型与音色、`inputTranscriptionModel`、VAD 双向音频和字幕、打断、原生助手委托及 session/call/run 归属。关闭或换代撤销旧结果，专用官网认证、RTC、私有 Worker 不恢复。 |
 
 API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是官网认证流程，
 不是内网鉴权。未解析 SecretRef 必须拒绝，不能转为字符串或泄露到日志。
 插件不导入应用 `src`；纯配置 ID 由插件 `contracts/` 拥有，应用 shared 只做门面。
 
-- [ ] 在本机测试服务验证图像 generations/edits、TTS、实时/文件 STT、embedding、
-      视频的请求地址、协议、不同凭据、冷发现与注册一致性，再在实际内网服务验证聊天、
-      图像、录音、文件转录、朗读与视频，记录实际输出及失败/取消。fixture 通过不代表
-      真实服务支持全部原生参数。
+- [ ] 对照[语音协议验证](../features/speech/speech-protocols.md#5-验证与当前限制)，逐项用
+      本机 HTTP/WS 服务验证文件转录、合成、实时听写、实时对话的独立传输、凭据隔离及
+      各自的停止、超时、结果失效和目标 SDK 注册；指定目标运行包，记录条件跳过。另验收
+      图像 generations/edits、embedding 和视频请求，以及实际内网模型、麦克风、扬声器和设备权限。
 - [ ] 视频设置、配置保存和导入仍仅支持 `video-openai`（所属插件 `openai`）；不恢复
       Kie、Z.AI、Novita 选项、固定厂商目录或已退役的自定义视频配置迁移。
 
@@ -649,11 +715,12 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 | 共享终端（020/021）                                | native PTY launch/close、cwd/shell/args、viewer ownership、buffer/offset 与 attach；欢迎文字只影响展示，删除候选需单独说明用户影响                                               |
 | 压缩/转发（022/原生）                              | operation-scoped 状态/取消覆盖准备与清理，自动恢复压缩生命周期；恢复调用者授权后仅退出源 transcript/CLI-history 写入 scope，目标保持自己的写入 claim                             |
 | 电脑提示/Windows 恢复（023/024）                   | 内容无关的 activity start/end/heartbeat/release 与真实操作分别验收；原生 recovery capture 保留获准目录 junction，不改文件链接、hardlink、相对/坏链接或授权                       |
-| SQLite 退休/历史发布（025/027；原 027 已原生覆盖） | 非阻塞 checkpoint 保留 stop/join；Windows canonical readiness 由原生物理键核对；deferred read 未就绪前不得发布成功或失败响应                                                     |
-| 流式交接（026/028/032）                            | attempt 级 finalize admission、消息 scope 与真实完成关联、长参数无正文进度及有界恢复；详见[流式专题](streaming-and-execution.md)                                                 |
-| 格式恢复/Goal（029/031）                           | 同一原生循环的两请求纠正上限与精确整轮结算；Goal 前驱、回交 owner 和累计次数原子准入，未知发送不重放                                                                             |
-| 手动 Apps（030）                                   | 手动准备与后续模型运行使用同一持久会话工作区，准备过程身份变化拒绝，下一轮不退役仍被使用的资源                                                                                   |
-| Windows 插件发布（033）                            | 同一事务、stage 与精确字节的有界 rename 恢复；禁止重放安装，详见[宿主专题](host-and-release.md)                                                                                  |
+| SQLite 退休/历史发布（025/027）                    | 非阻塞 checkpoint 保留 stop/join；Windows canonical readiness 由原生物理键核对；deferred read 未就绪前不得发布成功或失败响应                                                     |
+| 流式交接（026/028/032/034）                        | attempt 级 finalize admission、消息 scope 与真实完成关联、长参数无正文进度及有界恢复；详见[流式专题](streaming-and-execution.md)                                                 |
+| 格式恢复/Goal（029/031）                           | 同一原生循环按目标版本核对纠正预算和精确整轮结算；Goal 前驱、回交 owner 和累计次数原子准入，未知发送不重放                                                                       |
+| MCP Apps（030/039/041）                           | 手动准备与模型运行使用同一持久工作区；030 回归同 owner 资源，039 下次升级删除，041 用等价原生续租替换前验收超 TTL、关闭和权限撤销                                              |
+| 插件发布（033/040）                               | 同一事务、stage 与精确字节的有界 rename 恢复；在线卸载、停用和更新核对目标 rollback capture、其他 owner 与失败语义，详见[宿主专题](host-and-release.md)                          |
+| ACP、技能与子任务（036/037/038/042）               | ACP 完成后保留来源工具权利，按会话 cwd 解析技能，子任务模型校验使用有效插件清单，原生子任务回报按实际投递状态结算                                                 |
 
 - [ ] 以下均指 9.8 旧编号：删除的 002/003 由 Main MCP/Chrome 启动器及配置投影承载，
       真实连接回归仍必需；020/021 由完整本地 OpenAI 源码替换承载，027 由构建时共享 SDK 模块承载。
@@ -688,8 +755,9 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
       原包 `dist/build-info.json` 已同步为 Gateway bundle 根目录的 build-info companion，
       CLI 根入口及依赖完整，不靠运行时临时转译或补回单个缺文件恢复产物。
 - [ ] 本地替换预编译覆盖 main、setup、provider-policy/provider-contract、manifest
-      capability catalog 及 `openclaw.build.workerEntries`；当前 OpenAI 两个 worker、
-      相对 URL、`.js` exports、SDK aliases、第三方依赖、LICENSE/NOTICE 实际可加载。
+      capability catalog 及实际声明的 `openclaw.build.workerEntries`。辅助入口先在源码位置
+      编译，再验证冻结运行包能加载相对 URL、`.js` exports、SDK aliases 和第三方依赖。
+      语音协议 SDK 随各消费产物内联，保留法律文件，已退役的专用 Worker 不进入产物。
       上游已编译插件的 build 字段可能指向未发布 TS，不误套本地源码重编译要求。
 - [ ] CLI `plugins list --json` 与实际 Gateway inventory 只有一个已加载 openai，
       source 指向运行时外层 `dist/extensions/openai/index.js`，providerIds 含 openai 和
@@ -699,6 +767,9 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
       WASM、法律文件、ASAR 内外路径与最终安装资源；中文/空格安装目录和首次启动可用。
 - [ ] 安装版验证只读 loopback Renderer hosting、immutable asset 校验、CSP、导航
       guards、Widget/工作区 HTTP origin 和无继承 preload。开发 Vite 成功不能替代安装包。
+- [ ] 复用构建缓存时用同一目标源码、配方与 Node 身份验证缓存命中；输入变化或缓存
+      损坏必须重建受影响产物，再执行最终 freeze。Windows 安装器使用仓库校验的时钟
+      资源，常规离线打包验证该资源可用，由源码重新生成属于独立维护操作。
 
 ### 15.2 自动化检查入口
 
@@ -720,7 +791,7 @@ git diff --check
 | 范围                 | 当前可复用的测试入口                                                                                                                                                                                                                                                                                 |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 来源替换/预编译/裁剪 | `tests/openclaw/runtime/{native-extension-replacement,precompile-openclaw-extensions,sync-openclaw-runtime-resources,prune-openclaw-runtime}.test.ts`                                                                                                                                                |
-| SDK 与本地 OpenAI    | `tests/openclaw/runtime/shared-sdk-modules.test.ts`、`tests/openclaw/plugins/openai-native-composition.test.ts、plugins/extensions/openai/tests/intranet-config.test.ts`                                                                                                                             |
+| SDK 与本地 OpenAI    | `tests/openclaw/runtime/shared-sdk-modules.test.ts`、`tests/openclaw/plugins/openai-native-composition.test.ts`、`plugins/extensions/openai/tests/intranet-config.test.ts`                                                                                                                             |
 | 流/历史/过程         | chat `agent-event-reducer*`、`history-reconciler`、`chat-history-protocol`、`chunked-message-history`、`process-summary-takeover`、`chrome-extension-stream` 与 components streaming tests                                                                                                           |
 | 压缩/摘要            | chat `chat-controller.compaction*`、`chat-summary-resources`、`session-summary-resources`、`SessionSummaryPanel` / 资源列表 / `openSummaryResource`，当前补丁 `native-compaction-lifecycle`                                                                                                          |
 | 配置/执行/身份       | Main adapter、wire validator、permissions、Goal/Plan、config sync/logout、worktree/sandbox 领域测试及当前版本补丁测试                                                                                                                                                                                |
@@ -770,8 +841,11 @@ fixture、合成输入和本机测试服务不替代真实模型、设备或企�
 计时、停止后工具清理、重启后精确核对及安全人工重试。物理双屏、不同 DPI、系统
 中文输入法、原生剪贴板、麦克风/系统音频按平台另记，不能以合成事件宣称通过。
 
-诊断先查看 `%APPDATA%/<productName>/logs/main-YYYY-MM-DD.log` 与
-`%APPDATA%/<productName>/openclaw/logs/gateway.log`，必要时对照 `[gateway] log file:`
+启动与普通会话首响按[启动与首响基线](host-and-release.md#启动与首响基线)记录新旧产物的
+分段对照，旧版数据应在替换运行时前留存。
+
+诊断先查看活动数据根的 `logs/main-YYYY-MM-DD.log` 与 `openclaw/logs/gateway.log`。
+未搬迁时数据根默认为 `%APPDATA%/<productName>/`。必要时对照 `[gateway] log file:`
 指向的完整原生 JSON 日志及认证原生事件。简化日志缺行、控制台没有输出或 UI 已空闲
 均不构成结算证据。会话诊断只用已有连接及受限历史/日志接口，不为诊断启动 Gateway，
 不直接读取 transcript 文件；提交记录仅保存脱敏证据。见
