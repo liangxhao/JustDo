@@ -1288,7 +1288,7 @@ test('does not clear active metadata based on a stale local completion latch', a
   expect(request.mock.calls.some(([method]) => method === 'sessions.goal.clear')).toBe(false);
 });
 
-test('falls back to sessions.describe when the recovery session list is truncated', async () => {
+test.each([undefined, 500])('uses point recovery for small truncated lists (%s)', async nextOffset => {
   const { store } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   adapter.initialGatewayGoalRecoveryPending = false;
@@ -1296,7 +1296,13 @@ test('falls back to sessions.describe when the recovery session list is truncate
     if (method === 'automationPermission.info') {
       return { loaded: true, policyId: 'native-session-automation-permission' };
     }
-    if (method === 'sessions.list') return { sessions: [], hasMore: true };
+    if (method === 'sessions.list') {
+      return {
+        sessions: [{ key: 'agent:main:justdo:another-session' }],
+        hasMore: true,
+        nextOffset,
+      };
+    }
     if (method === 'sessions.describe') {
       return {
         session: {
@@ -1324,8 +1330,97 @@ test('falls back to sessions.describe when the recovery session list is truncate
   expect(request).toHaveBeenCalledWith('sessions.describe', {
     key: 'agent:main:justdo:session-1',
   });
+  expect(request.mock.calls.filter(([method]) => method === 'sessions.list')).toHaveLength(1);
   expect(continueGoal).toHaveBeenCalledOnce();
 });
+
+test.each(['current', 'invalidated', 'late'] as const)(
+  'uses only a timely and current recovery page to skip redundant session reads (%s)',
+  async pageState => {
+    const { store } = createEmptyStore();
+    const [session] = store.listSessions();
+    const ordinaryIds = Array.from({ length: 40 }, (_, index) => `ordinary-${index}`);
+    vi.spyOn(store, 'listSessions').mockReturnValue([
+      ...['first-missing', ...ordinaryIds, 'active-goal', 'unlisted'].map(id => ({ ...session, id })),
+      session,
+    ]);
+    const key = (id: string) => `agent:main:justdo:${id}`;
+    const goal = { schemaVersion: 1, id: 'goal-1', objective: 'Ship', status: 'active' };
+    const compactRow = (id: string) => ({
+      key: key(id), sessionId: `native-${id}`, rowMode: 'compact', archived: false,
+    });
+    const activeSession = { ...compactRow('active-goal'), goal };
+    const supplementalPage = {
+      sessions: [...ordinaryIds.map(compactRow), activeSession],
+      hasMore: false,
+      nextOffset: null,
+    };
+    let releasePage!: (page: typeof supplementalPage) => void;
+    const nextPage = new Promise<typeof supplementalPage>(resolve => { releasePage = resolve; });
+    let finishFirstDescribe!: (value: { session: null }) => void;
+    const firstDescribe = new Promise<{ session: null }>(resolve => { finishFirstDescribe = resolve; });
+    const request = vi.fn(async (method: string, params?: { key?: string; offset?: number }) => {
+      if (method === 'sessions.list') {
+        return params?.offset === 500 ? nextPage : {
+          sessions: [{ ...compactRow(session.id), hasActiveRun: false }],
+          hasMore: true,
+          nextOffset: 500,
+        };
+      }
+      if (method === 'sessions.describe') {
+        if (params?.key === key('first-missing')) return firstDescribe;
+        if (params?.key === activeSession.key) return { session: activeSession };
+        return { session: null };
+      }
+      throw new Error(`unexpected method ${method}`);
+    });
+    const adapter = new OpenClawRuntimeAdapter(store, {});
+    adapter.initialGatewayGoalRecoveryPending = false;
+    const internals = adapter as unknown as {
+      gatewayClient: GatewayClientLike | null;
+      gatewayClientGeneration: number;
+      invalidateRuntimeSessionSnapshot: () => void;
+      recoverActiveGoals: (generation: number) => Promise<void>;
+      goalContinuationCoordinator: { reconcileNativeObservation: () => Promise<void> };
+    };
+    internals.gatewayClient = { start: vi.fn(), stop: vi.fn(), request } as GatewayClientLike;
+    internals.gatewayClientGeneration = 4;
+    const reconcile = vi.spyOn(internals.goalContinuationCoordinator, 'reconcileNativeObservation')
+      .mockResolvedValue(undefined);
+
+    const recovery = internals.recoverActiveGoals(4);
+    await vi.waitFor(() => expect(request.mock.calls.slice(0, 3)).toEqual([
+      ['sessions.list', { rowMode: 'compact', limit: 500 }],
+      ['sessions.describe', { key: key('first-missing') }],
+      ['sessions.list', { rowMode: 'compact', limit: 500, offset: 500 }],
+    ]));
+    await expect(adapter.getSessionRuntimeStatus(session.id, { forceRefresh: true }))
+      .resolves.toMatchObject({ known: true, running: false });
+
+    if (pageState !== 'late') {
+      releasePage(supplementalPage);
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    if (pageState === 'invalidated') internals.invalidateRuntimeSessionSnapshot();
+    finishFirstDescribe({ session: null });
+    await recovery;
+    if (pageState === 'late') releasePage(supplementalPage);
+
+    expect(request.mock.calls.filter(([method]) => method === 'sessions.describe')
+      .map(([, params]) => params?.key)).toEqual([
+      key('first-missing'),
+      ...(pageState === 'current' ? [] : ordinaryIds.map(key)),
+      activeSession.key,
+      activeSession.key,
+      key('unlisted'),
+    ]);
+    expect(request.mock.calls.filter(([method, params]) => method === 'sessions.list' && params?.offset))
+      .toHaveLength(1);
+    expect(reconcile).toHaveBeenCalledExactlyOnceWith(
+      'active-goal', activeSession.key, expect.objectContaining({ id: goal.id }), activeSession,
+    );
+  },
+);
 
 test('restores a persisted completed execution instead of auto-running stale active metadata', async () => {
   const { store } = createEmptyStore();

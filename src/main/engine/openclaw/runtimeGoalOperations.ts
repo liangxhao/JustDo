@@ -28,10 +28,13 @@ import type { CoworkPreparedSession, CoworkPrepareSessionOptions } from '../type
 import {
   readActiveRunIds,
   RetainedSessionGoalMutation,
+  RUNTIME_SESSION_PAGE_SIZE,
   RuntimeSessionSnapshot,
 } from './runtimeAdapterSupport';
+import { OPENCLAW_COMPACT_SESSION_ROW_MODE, parseSessionsListPageV2026_10_6 } from './wire/v2026_10_6';
 export interface RuntimeGoalOperationsContext {
   readonly gatewayClientGeneration: number;
+  readonly runtimeSessionSnapshotGeneration: number;
   readonly appStartedAtMs: number;
   readonly store: CoworkStore;
   readonly gatewayClient: GatewayClientLike | null;
@@ -492,6 +495,50 @@ export async function performCompletedGoalReplacement(
   return { objective };
 }
 
+const MIN_UNLISTED_SESSIONS_FOR_GOAL_RECOVERY_PAGE = 32;
+
+function hasEnoughUnlistedManagedSessions(
+  sessions: ReturnType<CoworkStore['listSessions']>,
+  listed: ReadonlyMap<string, unknown>,
+): boolean {
+  let unlisted = 0;
+  for (const session of sessions) {
+    if (session.external) continue;
+    const key = buildManagedSessionKey(session.id, session.agentId || DEFAULT_MANAGED_AGENT_ID);
+    if (listed.has(key)) continue;
+    unlisted += 1;
+    if (unlisted >= MIN_UNLISTED_SESSIONS_FOR_GOAL_RECOVERY_PAGE) return true;
+  }
+  return false;
+}
+
+async function readGoalRecoveryNextPage(
+  client: GatewayClientLike,
+  offset: number,
+): Promise<ReadonlyMap<string, boolean> | undefined> {
+  try {
+    const page = parseSessionsListPageV2026_10_6(await client.request('sessions.list', {
+      rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE,
+      limit: RUNTIME_SESSION_PAGE_SIZE,
+      offset,
+    }));
+    if (page.hasMore && (page.nextOffset == null || page.nextOffset <= offset)) return;
+
+    const keysWithoutGoal = new Map<string, boolean>();
+    for (const row of page.sessions) {
+      const hasNoGoal = !keysWithoutGoal.has(row.key) &&
+        row.rowMode === OPENCLAW_COMPACT_SESSION_ROW_MODE &&
+        typeof row.sessionId === 'string' && Boolean(row.sessionId.trim()) &&
+        row.archived === false && row.goal === undefined;
+      keysWithoutGoal.set(row.key, hasNoGoal);
+    }
+    return keysWithoutGoal;
+  } catch {
+    // The existing per-key recovery remains available if this optional read fails.
+    return undefined;
+  }
+}
+
 export async function recoverActiveGoals(
   this: RuntimeGoalOperationsContext,
   generation: number,
@@ -518,6 +565,7 @@ export async function recoverActiveGoals(
     const decisionEpochs = new Map(managedSessions.map(session => [
       session.id, this.goalContinuationCoordinator.getDecisionEpoch(session.id),
     ]));
+    const snapshotGeneration = this.runtimeSessionSnapshotGeneration;
     const runtimeSnapshot = await this.getRuntimeSessionSnapshot(true);
     if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
     if (!runtimeSnapshot.known) {
@@ -525,6 +573,12 @@ export async function recoverActiveGoals(
       this.scheduleGoalRecovery(generation, options);
       return;
     }
+    const client = this.gatewayClient;
+    const nextPageIsCurrent = () =>
+      this.gatewayClient === client && this.gatewayClientGeneration === generation &&
+      this.runtimeSessionSnapshotGeneration === snapshotGeneration;
+    let nextOffset = runtimeSnapshot.nextOffset;
+    let keysWithoutGoal: ReadonlyMap<string, boolean> | undefined;
     let hadInspectionFailure = false;
     const runtimeRowsByKey = new Map(
       runtimeSnapshot.sessions
@@ -535,9 +589,10 @@ export async function recoverActiveGoals(
       if (generation !== this.gatewayClientGeneration || !this.gatewayClient) return;
       const decisionEpoch = decisionEpochs.get(session.id);
       if (this.goalContinuationCoordinator.getDecisionEpoch(session.id) !== decisionEpoch) continue;
+      const managedKey = buildManagedSessionKey(session.id, session.agentId || DEFAULT_MANAGED_AGENT_ID);
       const candidateKeys = [
         ...this.getSessionKeysForSession(session.id),
-        buildManagedSessionKey(session.id, session.agentId || DEFAULT_MANAGED_AGENT_ID),
+        managedKey,
         buildManagedSessionKey(session.id, DEFAULT_MANAGED_AGENT_ID),
       ];
       for (const candidateKey of new Set(candidateKeys)) {
@@ -549,10 +604,24 @@ export async function recoverActiveGoals(
           // A complete sessions.list response is authoritative. Only fall back to
           // per-key inspection when the Gateway reports that the list was truncated.
           if (!runtimeSnapshot.hasMore) continue;
+          const useNextPage = !session.external && candidateKey === managedKey;
+          if (useNextPage && keysWithoutGoal?.get(candidateKey) && nextPageIsCurrent()) continue;
           try {
-            result = await this.gatewayClient.request('sessions.describe', {
+            const pending = this.gatewayClient.request<typeof result>('sessions.describe', {
               key: candidateKey,
             });
+            if (useNextPage && nextOffset !== undefined && nextPageIsCurrent()) {
+              const offset = nextOffset;
+              nextOffset = undefined;
+              // A compact page costs more than a handful of point reads.
+              if (hasEnoughUnlistedManagedSessions(managedSessions, runtimeRowsByKey)) {
+                // Keep progressing with the exact reads while this optional page is in flight.
+                void readGoalRecoveryNextPage(client, offset).then(keys => {
+                  if (nextPageIsCurrent()) keysWithoutGoal = keys;
+                });
+              }
+            }
+            result = await pending;
           } catch (error) {
             hadInspectionFailure = true;
             coworkLog('WARN', 'GoalContinuation', 'Failed to inspect a goal during recovery', {

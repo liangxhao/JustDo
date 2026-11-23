@@ -210,6 +210,10 @@ error/aborted/cancelled/timed_out/timeoutPhase 不能借由残留 yielded 标记
 不会因为第一次只发现子任务而永远停住。sessions.describe 的 goalContinuation 观察只投影
 原生结算前驱和最后接纳回执；缺少精确前驱证据时保持 Waiting，idle/list 活动位不授权启动。
 
+列表首屏截断且缺少至少 32 个受管会话时，Main 在发出首个定点核对后按原生游标并行补读一页。
+后续尚未发起的定点读取可复用同一连接及目录代次的紧凑行。该行需精确匹配受管会话 key、
+具有原生会话 ID 且没有 Goal。未命中、有 Goal 或补页迟到、失败、失效时，沿用定点核对。
+
 用户输入在 pendingTurnStarts 登记时立即递增会话决策 epoch；每次异步返回、catch 和 finally
 都校验原 owner，旧退避不能覆盖新输入，也不能释放后继决策的 lane。
 

@@ -30,6 +30,7 @@ export const SUBAGENT_STATUS_CACHE_TTL_MS = 8_000;
 
 
 export const RUNTIME_SESSION_SNAPSHOT_TTL_MS = 2_000;
+export const RUNTIME_SESSION_PAGE_SIZE = 500;
 
 export const ASK_USER_TERMINAL_CACHE_SIZE = 256;
 
@@ -96,6 +97,7 @@ export type RuntimeSessionSnapshot = {
   known: boolean;
   sessions: Array<Record<string, unknown>>;
   hasMore: boolean;
+  nextOffset?: number;
 };
 
 export type PendingTurnStart = {

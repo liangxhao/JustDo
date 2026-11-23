@@ -4121,6 +4121,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
   private readonly runtimeGoalOperationsContext: RuntimeGoalOperationsContext =
     createPropertyContext<RuntimeGoalOperationsContext>({
       gatewayClientGeneration: { get: () => this.gatewayClientGeneration },
+      runtimeSessionSnapshotGeneration: { get: () => this.runtimeSessionSnapshotGeneration },
       store: { get: () => this.store },
       gatewayClient: { get: () => this.gatewayClient },
       getSessionKeysForSession: { get: () => this.getSessionKeysForSession.bind(this) },

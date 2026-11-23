@@ -9,6 +9,7 @@ import { isRetiredPluginReadError } from '../gateway/sessionReadRecovery';
 import type { GatewayClientLike, GatewayResponseContext } from '../gateway/types';
 import type { CoworkRuntimeStatusOptions } from '../types';
 import {
+  RUNTIME_SESSION_PAGE_SIZE,
   RUNTIME_SESSION_SNAPSHOT_TTL_MS,
   RUNTIME_STATUS_WARNING_INTERVAL_MS,
   RuntimeSessionSnapshot,
@@ -624,13 +625,14 @@ export async function getRuntimeSessionSnapshot(
           if (remaining !== undefined && remaining <= 0) throw new Error('Session snapshot recovery timed out');
           const args: Parameters<GatewayClientLike['request']> = ['sessions.list', {
             rowMode: OPENCLAW_COMPACT_SESSION_ROW_MODE,
-            limit: 500,
+            limit: RUNTIME_SESSION_PAGE_SIZE,
             ...(offset > 0 ? { offset } : {}),
           }];
           if (remaining !== undefined) args[2] = { timeoutMs: remaining, signal: AbortSignal.timeout(remaining) };
           const result = await client.request<{
             sessions?: Array<Record<string, unknown>>;
             hasMore?: boolean;
+            nextOffset?: number | null;
           }>(...args);
           if (!connectionCurrent() || snapshotGeneration !== this.runtimeSessionSnapshotGeneration) {
             return { known: false, sessions: [], hasMore: false };
@@ -646,8 +648,14 @@ export async function getRuntimeSessionSnapshot(
             ),
           );
           const hasMore =
-            result.hasMore === true || (result.hasMore === undefined && page.length >= 500);
-          if (!fullScan || !hasMore) return { known: true, sessions, hasMore };
+            result.hasMore === true ||
+            (result.hasMore === undefined && page.length >= RUNTIME_SESSION_PAGE_SIZE);
+          if (!fullScan || !hasMore) {
+            const { nextOffset } = result;
+            const canContinue = result.hasMore === true &&
+              typeof nextOffset === 'number' && Number.isSafeInteger(nextOffset) && nextOffset > offset;
+            return { known: true, sessions, hasMore, ...(canContinue ? { nextOffset } : {}) };
+          }
           if (page.length === 0) return { known: true, sessions, hasMore: true };
           offset += page.length;
         }
