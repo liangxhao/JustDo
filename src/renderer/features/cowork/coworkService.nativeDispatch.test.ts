@@ -87,7 +87,7 @@ afterEach(() => {
 });
 
 describe('actual service initial native handoff', () => {
-  it('keeps the main Stop control available after promotion while the initial dispatch is pending', async () => {
+  it('publishes the pending dispatch before promotion and releases it after the transport ACK', async () => {
     const fixture = setup();
     let acknowledge!: () => void;
     const admission = new Promise<void>(resolve => {
@@ -97,19 +97,35 @@ describe('actual service initial native handoff', () => {
       await admission;
       return { runId: request.clientTurnId };
     });
+    const onInitialDispatchPendingChange = vi.fn(() => store.getState().cowork.currentSessionId);
     const pending = coworkService.startSession(
       { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
-      { dispatchInitialTurn: dispatch },
+      {
+        beforeSessionSelected: vi.fn(),
+        dispatchInitialTurn: dispatch,
+        onInitialDispatchPendingChange,
+      },
     );
     fixture.deliver();
     await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
 
-    expect(store.getState().cowork.currentSessionId).toBe(canonical.id);
-    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
-    expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);
-
-    acknowledge();
-    await pending;
+    try {
+      expect(onInitialDispatchPendingChange.mock.calls).toEqual([[canonical.id, true]]);
+      expect(onInitialDispatchPendingChange.mock.results[0]?.value).toBe(temporary.id);
+      expect(store.getState().cowork.currentSessionId).toBe(canonical.id);
+      expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
+      expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);
+    } finally {
+      acknowledge();
+      await pending;
+    }
+    expect(onInitialDispatchPendingChange.mock.calls).toEqual([
+      [canonical.id, true],
+      [canonical.id, false],
+    ]);
+    expect(onInitialDispatchPendingChange.mock.invocationCallOrder[1]).toBeLessThan(
+      fixture.respond.mock.invocationCallOrder[0],
+    );
   });
 
   it('promotes the native session before one real transport call, even if the handoff repeats', async () => {
@@ -135,15 +151,35 @@ describe('actual service initial native handoff', () => {
     expect(fixture.unsubscribe).toHaveBeenCalledTimes(1);
   });
 
+  it('publishes no transport pending state for a Main-owned first send', async () => {
+    const fixture = setup();
+    fixture.start.mockResolvedValue({ success: true, session: canonical });
+    const onInitialDispatchPendingChange = vi.fn();
+
+    const result = await coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      { onInitialDispatchPendingChange },
+    );
+
+    expect(result).toMatchObject({ session: { id: canonical.id } });
+    expect(fixture.start).toHaveBeenCalledWith({
+      prompt: 'Synthetic',
+      clientTurnId: request.clientTurnId,
+    });
+    expect(onInitialDispatchPendingChange).not.toHaveBeenCalled();
+  });
+
   it('clears streaming for the promoted selection after a definite pre-send failure', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const fixture = setup(false);
+    const onInitialDispatchPendingChange = vi.fn();
     const pending = coworkService.startSession(
       { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
       {
         dispatchInitialTurn: async () => {
           throw Object.assign(new Error('Not ready'), { requestSent: false });
         },
+        onInitialDispatchPendingChange,
       },
     );
     fixture.deliver();
@@ -151,6 +187,10 @@ describe('actual service initial native handoff', () => {
     expect(fixture.respond).toHaveBeenCalledWith(
       expect.objectContaining({ success: false, requestSent: false }),
     );
+    expect(onInitialDispatchPendingChange.mock.calls).toEqual([
+      [canonical.id, true],
+      [canonical.id, false],
+    ]);
     expect(store.getState().cowork.currentSession?.id).toBe(canonical.id);
     expect(store.getState().cowork.isStreaming).toBe(false);
     expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(false);
@@ -160,12 +200,14 @@ describe('actual service initial native handoff', () => {
   it('retains the main Stop control when the initial dispatch outcome is unknown', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const fixture = setup(false);
+    const onInitialDispatchPendingChange = vi.fn();
     const pending = coworkService.startSession(
       { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
       {
         dispatchInitialTurn: async () => {
           throw Object.assign(new Error('request timeout: chat.send'), { requestSent: true });
         },
+        onInitialDispatchPendingChange,
       },
     );
     fixture.deliver();
@@ -174,6 +216,10 @@ describe('actual service initial native handoff', () => {
     expect(fixture.respond).toHaveBeenCalledWith(
       expect.objectContaining({ success: false, requestSent: true }),
     );
+    expect(onInitialDispatchPendingChange.mock.calls).toEqual([
+      [canonical.id, true],
+      [canonical.id, false],
+    ]);
     expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
     expect(store.getState().cowork.isStreaming).toBe(true);
     expect(store.getState().cowork.sessionRuntimeActivity[canonical.id]).toBe(true);

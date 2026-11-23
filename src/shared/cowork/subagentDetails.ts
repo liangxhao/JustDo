@@ -21,6 +21,7 @@ export const CoworkSubagentDetailsIpc = {
 
 export interface CoworkSubtaskChangedEvent {
   sessionId?: string;
+  visibleChildDiscovered?: true;
 }
 
 export interface CoworkSubagentDetailTask {

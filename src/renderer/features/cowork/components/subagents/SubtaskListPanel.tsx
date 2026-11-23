@@ -38,11 +38,14 @@ import {
 } from './subtaskPresentation';
 
 const SUBTASK_CHANGE_REFRESH_DELAY_MS = 100;
+const SLOW_SUBTASK_LIST_READ_MS = 200;
 
 interface SubtaskListPanelProps {
   sessionId: string;
   panelId?: string;
   isOpen: boolean;
+  initialDispatchPending?: boolean;
+  summaryVisible?: boolean;
   embedded?: boolean;
   portalTarget?: HTMLElement | null;
   parentRunning?: boolean;
@@ -68,6 +71,8 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   sessionId,
   panelId = 'cowork-subtask-list',
   isOpen,
+  initialDispatchPending = false,
+  summaryVisible = false,
   embedded = false,
   portalTarget,
   parentRunning = false,
@@ -80,6 +85,12 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
   const contextDocument = useOwnerDocument();
   const ownerDocument = portalTarget?.ownerDocument ?? contextDocument;
   const ownerWindow = (ownerDocument.defaultView ?? window) as Window & typeof globalThis;
+  const canReadSubtasks = !sessionId.startsWith('temp-');
+  const foreground = isOpen || summaryVisible;
+  const deferPassiveRefresh = initialDispatchPending && !foreground;
+  const refreshContextRef = useRef({ foreground, deferPassiveRefresh });
+  refreshContextRef.current = { foreground, deferPassiveRefresh };
+  const pendingNotificationRef = useRef<{ sessionId: string; urgent: boolean } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hasLoaded, setHasLoaded] = useState(false);
   const [loadError, setLoadError] = useState<SubagentReadFailure | null>(null);
@@ -160,6 +171,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
 
   const refresh = useCallback(
     async (force = false) => {
+      if (!canReadSubtasks) return;
       if (refreshInFlightRef.current?.sessionId === sessionId) {
         if (force) {
           refreshPendingRef.current = true;
@@ -173,19 +185,21 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
       refreshPendingRef.current = false;
       const refreshToken = { sessionId, generation: ++refreshGenerationRef.current };
       const lifecycleRequestSequence = ++lifecycleRequestSequenceRef.current;
+      const isCurrentRefresh = () =>
+        mountedRef.current &&
+        sessionIdRef.current === sessionId &&
+        refreshInFlightRef.current === refreshToken &&
+        refreshGenerationRef.current === refreshToken.generation;
       refreshInFlightRef.current = refreshToken;
       setIsLoading(true);
+      const foregroundRead = refreshContextRef.current.foreground;
+      const readStartedAt = performance.now();
       try {
         const result = force
           ? await window.electron.cowork.getSubTaskStatus(sessionId, true)
           : await window.electron.cowork.getSubTaskStatus(sessionId);
-        if (
-          result.success &&
-          mountedRef.current &&
-          sessionIdRef.current === sessionId &&
-          refreshInFlightRef.current === refreshToken &&
-          refreshGenerationRef.current === refreshToken.generation
-        ) {
+        if (!isCurrentRefresh()) return;
+        if (result.success) {
           const normalizedSubtasks = result.subagents.map(subtask => {
             const resolved = reconcileSubagentLabel(subtaskLabelsRef.current.get(subtask.id), {
               label: subtask.label,
@@ -209,23 +223,19 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
           onSubtasksChange?.(normalizedSubtasks);
           setHasLoaded(true);
           reportLoadError(null);
-        } else if (
-          !result.success &&
-          mountedRef.current &&
-          sessionIdRef.current === sessionId &&
-          refreshInFlightRef.current === refreshToken
-        ) {
+        } else {
           reportLoadError(result.reason ?? SubagentReadFailure.Unexpected);
         }
       } catch {
-        if (
-          mountedRef.current &&
-          sessionIdRef.current === sessionId &&
-          refreshInFlightRef.current === refreshToken
-        ) {
-          reportLoadError(SubagentReadFailure.Unexpected);
-        }
+        if (isCurrentRefresh()) reportLoadError(SubagentReadFailure.Unexpected);
       } finally {
+        const durationMs = Math.round(performance.now() - readStartedAt);
+        if (durationMs >= SLOW_SUBTASK_LIST_READ_MS) {
+          try {
+            const detail = JSON.stringify({ durationMs, embedded, foreground: foregroundRead, force });
+            window.electron?.log?.debug(`[SubtaskListPanel] Slow status read ${detail}`);
+          } catch { /* Logging cannot affect refresh state. */ }
+        }
         if (refreshInFlightRef.current === refreshToken) {
           refreshInFlightRef.current = null;
           if (mountedRef.current && sessionIdRef.current === sessionId) setIsLoading(false);
@@ -243,7 +253,7 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
         }
       }
     },
-    [onSubtasksChange, reportLoadError, sessionId],
+    [canReadSubtasks, embedded, onSubtasksChange, reportLoadError, sessionId],
   );
   refreshRef.current = force => void refresh(force);
 
@@ -265,47 +275,76 @@ const SubtaskListPanel: React.FC<SubtaskListPanelProps> = ({
     setDetailAncestors([]);
     reportLoadError(null);
     refreshPendingRef.current = false;
+    if (pendingNotificationRef.current?.sessionId !== sessionId) {
+      pendingNotificationRef.current = null;
+    }
     onSubtasksChange?.([]);
   }, [onSubtasksChange, reportLoadError, sessionId]);
 
   useEffect(() => {
-    void refresh();
+    if (!canReadSubtasks || deferPassiveRefresh) return;
+    // A read on resuming also covers notifications already waiting for the timer.
+    const force = pendingNotificationRef.current?.sessionId === sessionId;
+    pendingNotificationRef.current = null;
+    void refresh(force);
     const handleVisibilityChange = () => {
-      if (!ownerDocument.hidden) void refresh(true);
+      if (!ownerDocument.hidden && !refreshContextRef.current.deferPassiveRefresh) void refresh(true);
     };
     ownerDocument.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       ownerDocument.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [refresh, ownerDocument]);
+  }, [canReadSubtasks, deferPassiveRefresh, refresh, ownerDocument, sessionId]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => void refresh(), statusPollInterval);
+    if (!canReadSubtasks || deferPassiveRefresh) return;
+    const timer = window.setInterval(() => {
+      if (!refreshContextRef.current.deferPassiveRefresh) void refresh();
+    }, statusPollInterval);
     return () => window.clearInterval(timer);
-  }, [refresh, statusPollInterval]);
+  }, [canReadSubtasks, deferPassiveRefresh, refresh, statusPollInterval]);
 
   useEffect(() => {
+    if (!canReadSubtasks) return;
     const subscribe = window.electron.cowork.onSubtasksChanged;
     if (!subscribe) return;
     let timer: number | undefined;
     let active = true;
+    const canRefreshFromNotification = () => {
+      const pending = pendingNotificationRef.current;
+      return pending?.sessionId === sessionId &&
+        (pending.urgent || !refreshContextRef.current.deferPassiveRefresh);
+    };
+    const scheduleRefresh = () => {
+      if (timer !== undefined || !canRefreshFromNotification()) return;
+      timer = ownerWindow.setTimeout(() => {
+        timer = undefined;
+        if (!active || sessionIdRef.current !== sessionId || !canRefreshFromNotification()) return;
+        pendingNotificationRef.current = null;
+        refreshRef.current(true);
+      }, SUBTASK_CHANGE_REFRESH_DELAY_MS);
+    };
     const unsubscribe = subscribe(event => {
       if (!active || sessionIdRef.current !== sessionId || (event.sessionId && event.sessionId !== sessionId)) return;
       // Retire a pre-event response immediately, then combine notification
       // bursts without issuing one full native catalog read per notification.
       refreshGenerationRef.current += 1;
-      if (timer !== undefined) return;
-      timer = ownerWindow.setTimeout(() => {
-        timer = undefined;
-        if (active && sessionIdRef.current === sessionId) refreshRef.current(true);
-      }, SUBTASK_CHANGE_REFRESH_DELAY_MS);
+      const pending = pendingNotificationRef.current;
+      pendingNotificationRef.current = {
+        sessionId,
+        urgent: event.sessionId === sessionId || event.visibleChildDiscovered === true ||
+          (pending?.sessionId === sessionId && pending.urgent),
+      };
+      scheduleRefresh();
     });
+    // A retained panel can move to a different owner window before its timer fires.
+    scheduleRefresh();
     return () => {
       active = false;
       ownerWindow.clearTimeout(timer);
       unsubscribe();
     };
-  }, [sessionId, ownerWindow]);
+  }, [canReadSubtasks, sessionId, ownerWindow]);
 
   useEffect(() => {
     if (!isOpen || active.length === 0) return;

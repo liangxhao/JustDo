@@ -133,8 +133,8 @@ import FilePreviewDrawer, {
 import {
   type FilePreviewNavigationOptions,
   isFilePreviewWithinPath,
-  openResourceFilePreview,
   openManagedFilePreview,
+  openResourceFilePreview,
 } from '@/features/cowork/components/preview/filePreviewNavigation';
 import { IMAGE_PREVIEW_EVENT } from '@/features/cowork/components/preview/imageFilePreview';
 import { MessageFileLinkContext } from '@/features/cowork/components/preview/messageFileLinks';
@@ -579,6 +579,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     canonicalSessionId?: string;
     clientTurnId?: string;
   } | null>(null);
+  const [initialDispatchPendingSessionId, setInitialDispatchPendingSessionId] =
+    useState<string | null>(null);
   const {
     dialog: worktreeInitialCommitDialog,
     requestConfirmation: requestWorktreeInitialCommit,
@@ -1169,7 +1171,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
     attachments?: CoworkAttachmentPayload[],
     gatewayPrompt?: string,
     worktree?: boolean,
-    _pluginSubmission?: AppSubmission,
+    pluginSubmission?: AppSubmission,
     submission?: ComposerSubmissionMetadata,
   ): Promise<boolean | void> => {
     const modelRef = captureHomeComposerModelRef(store.getState(), currentAgentId);
@@ -1272,6 +1274,16 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       const sessionSkillIds = [...activeSkillIds];
 
       const initialGoal = inferInitialGoalObjective(prompt, true);
+      const outboundPrompt = gatewayPrompt ?? prompt;
+      const deferInitialSubtaskReads =
+        !worktree &&
+        !startInPlanMode &&
+        !appWorkspaceRequestId &&
+        !pluginSubmission &&
+        !initialGoal &&
+        !prompt.trimStart().startsWith('/') &&
+        !outboundPrompt.trimStart().startsWith('/') &&
+        !readAppInput(outboundPrompt);
       const tempSession: CoworkSession = {
         id: tempSessionId,
         title: fallbackTitle,
@@ -1342,6 +1354,15 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
             },
             {
               ...(worktree ? { isCurrent: () => !isPendingStartCancelled() } : {}),
+              onInitialDispatchPendingChange: deferInitialSubtaskReads
+                ? (sessionId, pending) => {
+                    if (pendingStartRef.current !== pendingStart) return;
+                    setInitialDispatchPendingSessionId(current => {
+                      if (pending) return sessionId;
+                      return current === sessionId ? null : current;
+                    });
+                  }
+                : undefined,
               dispatchInitialTurn: async (request, isTransportCancelled) => {
                 if (
                   isPendingStartCancelled() ||
@@ -1369,7 +1390,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       () => isPendingStartCancelled() || isTransportCancelled(),
                       nativeSessionId => {
                         unconfirmedInitialSessionId = request.sessionId;
-                        if (prompt.trimStart().startsWith('/') || readAppInput(gatewayPrompt ?? prompt) ||
+                        if (prompt.trimStart().startsWith('/') || readAppInput(outboundPrompt) ||
                           pendingMessageSubmissionsRef.current.has(request.sessionId)) return;
                         const operation = createSessionSubmission(originalDraftIsCurrent && canonicalDraftIsCurrent
                           ? () => originalDraftIsCurrent() && canonicalDraftIsCurrent()
@@ -1589,6 +1610,7 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       resolveStartSettled(cancelledStartStopped);
       if (pendingStartRef.current?.requestId === requestId) {
         pendingStartRef.current = null;
+        setInitialDispatchPendingSessionId(null);
       }
       isStartingRef.current = false;
     }
@@ -3472,6 +3494,8 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
                       sessionId={currentSession.id}
                       embedded
                       portalTarget={subagentsPortalTarget}
+                      initialDispatchPending={initialDispatchPendingSessionId === currentSession.id}
+                      summaryVisible={summaryVisibility.visible}
                       isOpen={
                         isSubagentsTabOpen &&
                         activeDisplayTabId === SUBAGENTS_DISPLAY_TAB_ID &&

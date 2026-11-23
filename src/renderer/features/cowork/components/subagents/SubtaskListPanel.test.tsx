@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
-import { SubagentReadFailure } from '@shared/cowork/subagentDetails';
+import { type CoworkSubtaskChangedEvent, SubagentReadFailure } from '@shared/cowork/subagentDetails';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { i18nService } from '@/services/i18n';
 
 import SessionSubtaskButton from './SessionSubtaskButton';
+import { ACTIVE_SUBAGENT_POLL_INTERVAL_MS } from './subagentPolling';
 import SubtaskListPanel from './SubtaskListPanel';
 
 afterEach(() => {
@@ -27,6 +28,136 @@ const installElectron = (
 };
 
 describe('SubtaskListPanel', () => {
+  it('reads a promoted session once after its pending first send releases background refresh', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+    let notify!: (event: CoworkSubtaskChangedEvent) => void;
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });
+    installElectron(read, vi.fn(), vi.fn(callback => { notify = callback; return vi.fn(); }));
+    const props = { isOpen: false, parentRunning: true, onClose: vi.fn() };
+
+    const view = render(<SubtaskListPanel {...props} sessionId="temp-first" />);
+    await act(() => vi.advanceTimersByTimeAsync(ACTIVE_SUBAGENT_POLL_INTERVAL_MS));
+    expect(read).not.toHaveBeenCalled();
+
+    view.rerender(<SubtaskListPanel {...props} sessionId="first" initialDispatchPending />);
+    act(() => {
+      notify({});
+      notify({});
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await act(() => vi.advanceTimersByTimeAsync(ACTIVE_SUBAGENT_POLL_INTERVAL_MS));
+    expect(read).not.toHaveBeenCalled();
+
+    view.rerender(<SubtaskListPanel {...props} sessionId="first" />);
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(read).toHaveBeenCalledExactlyOnceWith('first', true);
+  });
+
+  it.each(['summary', 'panel'])('loads tasks when the user opens the %s during first send', async surface => {
+    const task = {
+      id: 'child',
+      taskName: 'Research',
+      sessionKey: 'child-key',
+      label: 'Research',
+      labelSource: 'taskName',
+      status: 'running',
+    };
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [task] });
+    const onSubtasksChange = vi.fn();
+    installElectron(read);
+    const props = { sessionId: 'first', initialDispatchPending: true, onClose: vi.fn(), onSubtasksChange };
+
+    const view = render(<SubtaskListPanel {...props} isOpen={false} />);
+    expect(read).not.toHaveBeenCalled();
+    view.rerender(
+      <SubtaskListPanel {...props} isOpen={surface === 'panel'} summaryVisible={surface === 'summary'} />,
+    );
+
+    await waitFor(() =>
+      expect(onSubtasksChange).toHaveBeenLastCalledWith([expect.objectContaining(task)]),
+    );
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a same-session change', { sessionId: 'first' }],
+    ['a visible child discovery', { visibleChildDiscovered: true }],
+  ] as const)('refreshes for %s while the first send is pending', async (_label, event) => {
+    vi.useFakeTimers();
+    let notify!: (event: CoworkSubtaskChangedEvent) => void;
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });
+    installElectron(read, vi.fn(), vi.fn(callback => { notify = callback; return vi.fn(); }));
+    render(<SubtaskListPanel sessionId="first" initialDispatchPending isOpen={false} onClose={vi.fn()} />);
+
+    act(() => { notify(event); notify(event); });
+    await act(() => vi.advanceTimersByTimeAsync(100));
+
+    expect(read).toHaveBeenCalledExactlyOnceWith('first', true);
+  });
+
+  it('does not carry urgency to a new notification after the summary has refreshed', async () => {
+    vi.useFakeTimers();
+    let notify!: (event: CoworkSubtaskChangedEvent) => void;
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });
+    installElectron(read, vi.fn(), vi.fn(callback => { notify = callback; return vi.fn(); }));
+    const props = { sessionId: 'first', isOpen: false, onClose: vi.fn() };
+    const view = render(<SubtaskListPanel {...props} initialDispatchPending />);
+
+    act(() => notify({ visibleChildDiscovered: true }));
+    view.rerender(<SubtaskListPanel {...props} initialDispatchPending summaryVisible />);
+    view.rerender(<SubtaskListPanel {...props} initialDispatchPending />);
+    act(() => notify({}));
+    await act(() => vi.advanceTimersByTimeAsync(100));
+
+    expect(read).toHaveBeenCalledExactlyOnceWith('first', true);
+    view.rerender(<SubtaskListPanel {...props} />);
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenLastCalledWith('first', true);
+  });
+
+  it('rearms a visible-child refresh when a pending session moves to a different window', async () => {
+    vi.useFakeTimers();
+    let notify!: (event: CoworkSubtaskChangedEvent) => void;
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });
+    installElectron(read, vi.fn(), vi.fn(callback => { notify = callback; return vi.fn(); }));
+    const frame = document.createElement('iframe');
+    document.body.append(frame);
+    const target = frame.contentDocument!.body;
+    vi.spyOn(frame.contentWindow!, 'setTimeout').mockImplementation(window.setTimeout.bind(window));
+    vi.spyOn(frame.contentWindow!, 'clearTimeout').mockImplementation(window.clearTimeout.bind(window));
+    const props = { sessionId: 'first', isOpen: false, initialDispatchPending: true, onClose: vi.fn() };
+
+    try {
+      const view = render(<SubtaskListPanel {...props} />);
+      act(() => notify({ visibleChildDiscovered: true }));
+      view.rerender(<SubtaskListPanel {...props} portalTarget={target} />);
+      await act(() => vi.advanceTimersByTimeAsync(100));
+
+      expect(read).toHaveBeenCalledExactlyOnceWith('first', true);
+    } finally {
+      frame.remove();
+    }
+  });
+
+  it('keeps a deferred refresh from following the user to another session', async () => {
+    vi.useFakeTimers();
+    let notify!: (event: CoworkSubtaskChangedEvent) => void;
+    const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });
+    installElectron(read, vi.fn(), vi.fn(callback => { notify = callback; return vi.fn(); }));
+    const props = { isOpen: false, onClose: vi.fn() };
+    const view = render(<SubtaskListPanel {...props} sessionId="first" initialDispatchPending />);
+
+    act(() => notify({}));
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(read).not.toHaveBeenCalled();
+    view.rerender(<SubtaskListPanel {...props} sessionId="other" />);
+    await act(() => vi.advanceTimersByTimeAsync(100));
+
+    expect(read).toHaveBeenCalledExactlyOnceWith('other');
+  });
+
   it('combines task notification bursts within a fixed window', async () => {
     let notify!: (event: { sessionId?: string }) => void;
     const read = vi.fn().mockResolvedValue({ success: true, subagents: [] });

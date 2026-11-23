@@ -74,6 +74,7 @@ import { listenInitialSessionDispatch } from './nativeSessionDispatch';
 
 type StartSessionHooks = {
   beforeSessionSelected?: (session: CoworkSession, appWorkspaceAdopted?: true) => void;
+  onInitialDispatchPendingChange?: (sessionId: string, pending: boolean) => void;
   isCurrent?: () => boolean;
   dispatchInitialTurn?: (
     request: NativeSessionDispatchRequest,
@@ -869,6 +870,7 @@ export class CoworkService {
             nativeStart.sessionId = preparedSession.id;
             let provisionalActivityVersion: number | undefined;
             publishPromotedSession(preparedSession, () => {
+              hooks.onInitialDispatchPendingChange?.(preparedSession.id, true);
               dispatchedSessionId = preparedSession.id;
               // Promotion can beat the asynchronous session-activity hydration.
               // Preserve Stop while this exact initial submission awaits admission.
@@ -904,6 +906,8 @@ export class CoworkService {
                 this.clearSessionInProgress(preparedSession.id);
               }
               throw error;
+            } finally {
+              hooks.onInitialDispatchPendingChange?.(preparedSession.id, false);
             }
           })
         : undefined;

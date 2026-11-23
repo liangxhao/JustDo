@@ -1,5 +1,6 @@
 import { AskUserInteractionEvent } from '../../shared/cowork/interactions/askUserQuestion';
 import type { SessionRuntimeActivity } from '../../shared/cowork/sessionRun';
+import type { CoworkSubtaskChangedEvent } from '../../shared/cowork/subagentDetails';
 import type { OpenClawSkillSource } from '../../shared/plugins/skills';
 import type { PermissionMode } from '../../shared/security/approvals';
 
@@ -132,7 +133,7 @@ export interface CoworkRuntimeEvents {
   sessionDeleted: (sessionId: string) => void;
   cronChanged: (payload: unknown) => void;
   workboardChanged: (payload: unknown) => void;
-  taskChanged: (event: { sessionId?: string; visibleChildDiscovered?: true }) => void;
+  taskChanged: (event: CoworkSubtaskChangedEvent) => void;
 }
 
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
