@@ -109,17 +109,16 @@ export default function SkillWorkshopPanel(props: Props) {
   };
   return (
     <>
-      <div className="flex justify-end">
-        <button
-          ref={launcher}
-          type="button"
-          className={button}
-          aria-haspopup="dialog"
-          onClick={() => setOpen(true)}
-        >
-          {t('skillWorkshopTitle')}
-        </button>
-      </div>
+      <button
+        ref={launcher}
+        type="button"
+        className="inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
+      >
+        <SparklesIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+        {t('skillWorkshopTitle')}
+      </button>
       {open &&
         createPortal(
           <Modal
