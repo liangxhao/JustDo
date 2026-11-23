@@ -278,7 +278,12 @@ export const scheduledTaskTranslations = {
     cronDialogDateLabel: '日期',
     cronDialogWeekdayLabel: '星期',
     cronDialogMinuteLabel: '每小时的第几分钟',
-    cronDialogCronPlaceholder: 'Cron 表达式 (例如：0 9 * * *)',
+    cronDialogCronLabel: 'Cron 表达式',
+    cronDialogCronPlaceholder: '例如：0 9 * * *（每天 09:00）',
+    cronDialogCronFormatHint:
+      '依次填写：分钟 小时 日期 月份 星期，用空格分隔；也支持在最前面加“秒”。',
+    cronDialogCronExampleHint:
+      '* 表示不限。例如 0 9 * * * 表示每天 09:00 执行，后三个 * 依次表示不限日期、月份和星期。',
     cronDialogEnableImmediately: '立即启用',
     cronDialogEnableImmediatelyDesc: '创建后开始按计划运行',
     cronDialogSaveChanges: '保存更改',
@@ -673,7 +678,12 @@ export const scheduledTaskTranslations = {
     cronDialogDateLabel: 'Date',
     cronDialogWeekdayLabel: 'Day of week',
     cronDialogMinuteLabel: 'Minute of each hour',
-    cronDialogCronPlaceholder: 'Cron expression (e.g., 0 9 * * *)',
+    cronDialogCronLabel: 'Cron expression',
+    cronDialogCronPlaceholder: 'e.g., 0 9 * * * (every day at 09:00)',
+    cronDialogCronFormatHint:
+      'Enter minute, hour, day of month, month, and day of week, separated by spaces. You can also add seconds at the beginning.',
+    cronDialogCronExampleHint:
+      '* means any value. For example, 0 9 * * * runs every day at 09:00; the last three * allow any day of the month, month, and day of the week.',
     cronDialogEnableImmediately: 'Enable immediately',
     cronDialogEnableImmediatelyDesc: 'Start running on schedule after creation',
     cronDialogSaveChanges: 'Save Changes',

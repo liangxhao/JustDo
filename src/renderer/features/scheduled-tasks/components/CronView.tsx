@@ -1243,13 +1243,26 @@ export function CreateEditDialog({
                     </select>
                   </div>
                 ) : isCustomRecurrence ? (
-                  <input
-                    type="text"
-                    value={scheduleForm.customCron}
-                    onChange={e => setScheduleForm(s => ({ ...s, customCron: e.target.value }))}
-                    className={inputClass}
-                    placeholder={t('cronDialogCronPlaceholder')}
-                  />
+                  <div>
+                    <label htmlFor="scheduled-task-cron" className={labelClass}>
+                      {t('cronDialogCronLabel')}
+                    </label>
+                    <input
+                      id="scheduled-task-cron"
+                      type="text"
+                      value={scheduleForm.customCron}
+                      onChange={e => setScheduleForm(s => ({ ...s, customCron: e.target.value }))}
+                      className={inputClass}
+                      placeholder={t('cronDialogCronPlaceholder')}
+                      aria-describedby="scheduled-task-cron-format scheduled-task-cron-example"
+                    />
+                    <p id="scheduled-task-cron-format" className="mt-2 text-xs text-secondary">
+                      {t('cronDialogCronFormatHint')}
+                    </p>
+                    <p id="scheduled-task-cron-example" className="mt-1 text-xs text-secondary">
+                      {t('cronDialogCronExampleHint')}
+                    </p>
+                  </div>
                 ) : scheduleForm.recurrence === 'hourly' ? (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-secondary">{t('cronDialogMinuteLabel')}</span>
