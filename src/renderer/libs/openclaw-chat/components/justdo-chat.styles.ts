@@ -2114,6 +2114,7 @@ export const chatStyles = [
         opacity 150ms ease;
     }
 
+    .message-attachments--alternatives .message-attachment__open,
     .message-attachment:hover .message-attachment__open,
     .message-attachment:focus-visible .message-attachment__open {
       color: var(--justdo-chat-accent, #4f7cff);

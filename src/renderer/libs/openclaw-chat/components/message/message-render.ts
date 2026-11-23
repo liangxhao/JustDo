@@ -7,7 +7,10 @@ import '../webpage-embed/view';
  * Thinking and Tool presentation belongs exclusively to the canonical timeline.
  */
 import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
-import { unwrapAssistantDeliverableSource } from '@shared/openclaw/assistantDeliverables';
+import {
+  isLocalAssistantDeliverableSource,
+  unwrapAssistantDeliverableSource,
+} from '@shared/openclaw/assistantDeliverables';
 import { AssistantDeliverySaveError, parseManagedOutgoingMediaSource } from '@shared/openclaw/assistantMedia';
 import { isGatewayInjectedModelRef } from '@shared/providers/modelRef';
 import { html, nothing, type TemplateResult } from 'lit';
@@ -567,7 +570,7 @@ function renderAttachmentButton(
   const canSave = source && managed && sessionKey &&
     parseManagedOutgoingMediaSource(source, sessionKey) && engine?.saveAssistantDelivery;
   const canOpen = source && !managed;
-  const action = i18nService.t(canSave ? 'coworkSaveAttachment' : 'coworkOpenAttachment');
+  const action = i18nService.t(managed ? 'coworkSaveAttachment' : 'coworkOpenAttachment');
   const title = canOpen ? resolveAttachmentUrl(source, workingDirectory) : action;
   const openOptions = { workingDirectory };
   const onClick = async (event: Event) => {
@@ -616,7 +619,7 @@ function renderAttachmentButton(
           stroke-linecap="round"
           stroke-linejoin="round"
         >
-          <path d=${canSave ? 'M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4' : 'M7 17 17 7M7 7h10v10'}></path>
+          <path d=${managed ? 'M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4' : 'M7 17 17 7M7 7h10v10'}></path>
         </svg>
       </span>
     </button>
@@ -727,6 +730,47 @@ type BubbleContentItem =
   | Extract<MessageContentItem, { type: 'browser_recording' }>
   | Extract<MessageContentItem, { type: 'attachment' | 'attachment_error' }>;
 
+type AttachmentAlternatives = {
+  type: 'attachment-alternatives';
+  attachments: RenderableAttachment[];
+};
+type AttachmentItem = Extract<BubbleContentItem, { type: 'attachment' }>;
+
+function documentSource(attachment: RenderableAttachment): 'local' | 'managed' | null {
+  if (attachment.kind !== 'document') return null;
+  const source = attachment.url.trim();
+  if (parseManagedOutgoingMediaSource(source)) return 'managed';
+  return isLocalAssistantDeliverableSource(source) ? 'local' : null;
+}
+
+function groupAttachmentAlternatives(
+  items: readonly AttachmentItem[],
+): Array<AttachmentItem | AttachmentAlternatives> {
+  const sources = items.map(item => documentSource(item.attachment));
+  const groups = new Map<string, {
+    firstIndex: number;
+    attachments: RenderableAttachment[];
+    mixedSources: boolean;
+  }>();
+  for (const [index, { attachment }] of items.entries()) {
+    const source = sources[index];
+    if (!source) continue;
+    const group = groups.get(attachment.label);
+    if (group) {
+      group.mixedSources ||= source !== sources[group.firstIndex];
+      group.attachments.push(attachment);
+    } else {
+      groups.set(attachment.label, { firstIndex: index, attachments: [attachment], mixedSources: false });
+    }
+  }
+
+  return items.flatMap<AttachmentItem | AttachmentAlternatives>((item, index) => {
+    const group = sources[index] ? groups.get(item.attachment.label) : undefined;
+    if (!group?.mixedSources) return [item];
+    return group.firstIndex === index ? [{ type: 'attachment-alternatives', attachments: group.attachments }] : [];
+  });
+}
+
 function renderOrderedBubble(
   items: BubbleContentItem[],
   role: 'user' | 'assistant',
@@ -745,9 +789,22 @@ function renderOrderedBubble(
     .filter(Boolean)
     .join('\n');
   const dir = detectTextDirection(text);
-  const groupedItems: (BubbleContentItem | RenderableAttachment[])[] = [];
+  const groupedItems: (BubbleContentItem | RenderableAttachment[] | AttachmentAlternatives)[] = [];
+  let documentCards: AttachmentItem[] = [];
+  const flushDocumentCards = () => {
+    if (!documentCards.length) return;
+    if (documentCards.length === 1) groupedItems.push(documentCards[0]);
+    else groupedItems.push(...groupAttachmentAlternatives(documentCards));
+    documentCards = [];
+  };
   for (const item of items) {
     if (item.type === 'text' && !item.text?.trim()) continue;
+    if (role === 'assistant' && item.type === 'attachment' && item.attachment.kind === 'document') {
+      if (item.attachment.listMarker) flushDocumentCards();
+      documentCards.push(item);
+      continue;
+    }
+    flushDocumentCards();
     if (item.type === 'attachment' && item.attachment.kind === 'image') {
       const previous = groupedItems[groupedItems.length - 1];
       if (Array.isArray(previous) && previous.length < 3) {
@@ -759,6 +816,7 @@ function renderOrderedBubble(
       groupedItems.push(item);
     }
   }
+  flushDocumentCards();
 
   return html`
     <div class=${`chat-bubble chat-bubble--${role}`} dir=${dir}>
@@ -767,6 +825,14 @@ function renderOrderedBubble(
         ${groupedItems.map((item, index) => {
           if (Array.isArray(item)) {
             return renderMessageImages(item, role === 'assistant', workingDirectory);
+          }
+          if (item.type === 'attachment-alternatives') {
+            return html`<div class="message-attachments message-attachments--alternatives">
+              ${item.attachments.map(attachment => renderListedAttachment(
+                attachment,
+                renderAttachmentButton(attachment.label, attachment.url.trim(), workingDirectory, sessionKey),
+              ))}
+            </div>`;
           }
           if (item.type === 'text') {
             if (!item.text) return nothing;

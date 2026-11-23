@@ -1259,6 +1259,7 @@ describe('renderMessageBlock', () => {
 
     const mismatch = renderMessageBlock(group, { sessionKey: 'agent:main:other' });
     expect(stringifyTemplate(mismatch)).not.toContain('disabled');
+    expect(stringifyTemplate(mismatch)).toContain('另存附件');
     await collectTemplateFunctions(mismatch)[0](new Event('click'));
     expect(saveAssistantDelivery).not.toHaveBeenCalled();
     expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
@@ -1275,6 +1276,75 @@ describe('renderMessageBlock', () => {
       source, sessionKey, filename: 'result.pdf',
     });
     expect(dispatchEvent).not.toHaveBeenCalled();
+  });
+
+  test('groups same-name local and managed documents while keeping both actions', async () => {
+    const sessionKey = 'agent:main:fixture';
+    const filePath = 'C:/workspace/report.pdf';
+    const source = '/api/chat/media/outgoing/agent%3Amain%3Afixture/11111111-1111-4111-8111-111111111111/full';
+    const saveAssistantDelivery = vi.fn().mockResolvedValue({ success: true, canceled: true });
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', {
+      electron: { openclaw: { engine: { saveAssistantDelivery } } }, dispatchEvent,
+    });
+    const group = createGroup('assistant');
+    const message = {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: `MEDIA:${filePath}` },
+        { type: 'attachment', attachment: { kind: 'document', label: 'report.pdf', url: source } },
+      ],
+    };
+    group.messages[0].message = message;
+
+    const template = renderMessageBlock(group, { sessionKey });
+    const rendered = stringifyTemplate(template);
+    expect(rendered).toContain('message-attachments--alternatives');
+    expect(rendered.match(/class="message-attachment"/g)).toHaveLength(2);
+    expect(rendered).not.toMatch(/本地文件|托管副本|disabled/);
+    const [open, , save] = collectTemplateFunctions(template);
+    await open(new Event('click'));
+    await save(new Event('click'));
+    expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      type: 'cowork:preview-file', detail: { filePath, workingDirectory: undefined },
+    }));
+    expect(saveAssistantDelivery).toHaveBeenCalledExactlyOnceWith({ source, sessionKey, filename: 'report.pdf' });
+
+    group.messages[0].message = { ...message, openclawDelivery: { mediaUrls: [filePath] } };
+    const linked = stringifyTemplate(renderMessageBlock(group, { sessionKey }));
+    expect(linked).not.toContain('message-attachments--alternatives');
+    expect(linked.match(/class="message-attachment"/g)).toHaveLength(1);
+  });
+
+  test('keeps numbered MEDIA entries in order when a same-name managed document follows the list', () => {
+    const group = createGroup('assistant');
+    group.messages[0].message = {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: [
+            '1. MEDIA:C:/workspace/draft/report.pdf',
+            '2. MEDIA:C:/workspace/appendix.pdf',
+            '3. MEDIA:C:/workspace/final/report.pdf',
+          ].join('\n'),
+        },
+        {
+          type: 'attachment',
+          attachment: {
+            kind: 'document',
+            label: 'report.pdf',
+            url: '/api/chat/media/outgoing/agent%3Amain%3Afixture/11111111-1111-4111-8111-111111111111/full',
+          },
+        },
+      ],
+    };
+
+    const rendered = stringifyTemplate(renderMessageBlock(group));
+
+    const markers = [...rendered.matchAll(/class="message-attachment-list-item__marker"[^>]*>\s*(\d+\.)/g)];
+    expect(markers.map(match => match[1])).toEqual(['1.', '2.', '3.']);
+    expect(rendered.match(/class="message-attachment"/g)).toHaveLength(4);
   });
 
   test.each([
