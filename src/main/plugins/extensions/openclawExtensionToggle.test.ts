@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { expect, it, vi } from 'vitest';
 
 import { t } from '../../core/i18n';
@@ -12,6 +16,7 @@ function fixture() {
     withStoppedGatewayForMutation: vi.fn(),
     restartGateway: vi.fn(),
   };
+
   let enabled = false;
   const requestGateway = vi.fn(async (method: string, params?: { enabled?: boolean }) => {
     if (method === 'skills.update') enabled = params?.enabled === true;
@@ -40,6 +45,59 @@ function fixture() {
   return { manager, requestGateway, ordinaryRequest, runCommand, restartGatewayAfterMutation, deps };
 }
 
+it.each([
+  { name: 'enable an unrelated bundled extension', enabled: true, skip: true },
+  { name: 'disable an unrelated bundled extension', enabled: false, skip: true },
+  { name: 'a conflicting MCP declaration', mcpServers: { shared: { command: 'node' } } },
+  { name: 'a previous managed projection', projected: true, enabled: false },
+  { name: 'a broken ownership receipt', badReceipt: true },
+  { name: 'a slot-owning extension', kind: 'memory' },
+  { name: 'a package with another entry', multiple: true },
+  { name: 'another affected runtime owner', affectsAnother: true },
+  { name: 'a user-installed extension', origin: 'global' },
+  { name: 'an incomplete native receipt', incomplete: true },
+])('skips managed data sync only with confirmed negative evidence ($name)', async scenario => {
+  const f = fixture();
+  const id = 'sample-plugin';
+  const enabled = scenario.enabled ?? true;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-toggle-'));
+  try {
+    const directory = path.join(root, 'dist', 'extensions', id);
+    const configPath = path.join(root, 'openclaw.json');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'openclaw.plugin.json'), JSON.stringify({
+      id, kind: scenario.kind, mcpServers: scenario.mcpServers,
+    }));
+    fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify({
+      openclaw: { extensions: scenario.multiple ? ['./index.js', './other.js'] : ['./index.js'] },
+    }));
+    fs.writeFileSync(`${configPath}.plugin-data.json`, scenario.badReceipt ? '{' : JSON.stringify({
+      version: 1,
+      stateDirectory: root,
+      configPath,
+      entries: [{ kind: 'config', owner: scenario.projected ? id : 'another-plugin',
+        name: 'dataDirectory', dataId: 'same-data', hash: 'a'.repeat(64) }],
+    }));
+    f.requestGateway.mockResolvedValueOnce({
+      ok: true, restartRequired: false,
+      plugin: { id, origin: scenario.origin ?? 'bundled' },
+      ...(scenario.incomplete ? {} : { runtime: { pluginIds: scenario.affectsAnother ? [id, 'other'] : [id] } }),
+    } as Awaited<ReturnType<typeof f.requestGateway>>);
+    const manager = { ...f.manager, getRuntimeRoot: () => root, getStateDir: () => root, getConfigPath: () => configPath };
+    const service = new OpenClawExtensionImportService({
+      ...f.deps, getOpenClawEngineManager: () => manager as unknown as OpenClawEngineManager,
+    });
+
+    const result = await service.setEnabled(id, enabled);
+
+    expect(result.success).toBe(true);
+    expect(result.skipNativeMcpDataSync).toBe(scenario.skip);
+    expect(f.requestGateway).toHaveBeenCalledExactlyOnceWith('plugins.setEnabled', { pluginId: id, enabled }, { timeoutMs: 90_000 });
+    expect(f.restartGatewayAfterMutation).not.toHaveBeenCalled();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 it.each([
   ['agent-team', true],
   ['agent-team', false],

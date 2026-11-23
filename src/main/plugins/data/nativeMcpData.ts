@@ -80,6 +80,11 @@ function readReceipt(configPath: string, stateDirectory: string): Receipt | unde
   return { ...receipt, entries: receipt.entries.map(({ kind, owner, name, dataId, hash }) => ({ kind, owner, name, dataId, hash })) };
 }
 
+/** A disabled provider can still own a projected setting or a suspended server. */
+export function hasNativeMcpDataProjection(configPath: string, stateDirectory: string, pluginId: string): boolean {
+  return readReceipt(configPath, stateDirectory)?.entries.some(entry => entry.owner === pluginId) ?? false;
+}
+
 /** Generated defaults must never be rediscovered as operator-owned MCP definitions after uninstall. */
 export function ownedNativeMcpDataServerNames(configPath: string, stateDirectory: string): ReadonlySet<string> {
   const receipt = readReceipt(configPath, stateDirectory);

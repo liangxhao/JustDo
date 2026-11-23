@@ -193,6 +193,33 @@ test.each([1, 2])('reports the real reason and counts for %s rejected imports', 
   cleanup();
 });
 
+test('combines notifications during a toggle with the final authoritative list refresh', async () => {
+  const reply = deferred<ExtensionSetEnabledResult>();
+  const list = vi.fn().mockResolvedValueOnce({ success: true, extensions: [extension] })
+    .mockResolvedValue({ success: true, extensions: [{ ...extension, enabled: true }] });
+  let changed!: (event: ExtensionChangedEvent) => void;
+  Object.defineProperty(window, 'electron', {
+    configurable: true,
+    value: { extensions: {
+      list,
+      setEnabled: () => reply.promise,
+      onChanged: (listener: typeof changed) => {
+        changed = listener;
+        return () => undefined;
+      },
+    } },
+  });
+  render(<ExtensionsManager />);
+  fireEvent.click(await screen.findByRole('switch', { name: 'extensionEnable' }));
+
+  await act(async () => changed({ extensionId: extension.id, enabled: true }));
+  expect(list).toHaveBeenCalledOnce();
+  await act(async () => reply.resolve({ success: true }));
+
+  expect(await screen.findByRole('switch', { name: 'extensionDisable' })).toBeTruthy();
+  expect(list).toHaveBeenCalledTimes(2);
+});
+
 test('retains an extension failure after leaving the category and preserves the failed phase', async () => {
   const reply = deferred<ExtensionSetEnabledResult>();
   Object.defineProperty(window, 'electron', {

@@ -481,7 +481,7 @@ export const registerExtensionHandlers = ({
           let result;
           let refreshWarning = false;
           try {
-            result = await extensionImportService.setEnabled(
+            const { skipNativeMcpDataSync, ...toggleResult } = await extensionImportService.setEnabled(
               extensionId,
               request.enabled,
               typeof request.reviewToken === 'string'
@@ -489,7 +489,7 @@ export const registerExtensionHandlers = ({
                 : undefined,
               progress?.report,
             );
-            result = await applyNativeMcpData(result, progress?.report);
+            result = skipNativeMcpDataSync ? toggleResult : await applyNativeMcpData(toggleResult, progress?.report);
             withPluginOperationFailure(progress, result);
           } catch (error) {
             progress?.captureFailure();

@@ -45,10 +45,9 @@ describe('OpenClawExtensionImportService', () => {
       )
       .mockResolvedValue(inventory);
     const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      getOpenClawEngineManager: () => ({ getStateDir: () => fixtureRoot }) as OpenClawEngineManager,
       requestGateway,
     });
-    vi.spyOn(service, 'listInstalled').mockReturnValue([]);
 
     const first = service.listCatalog();
     const concurrent = service.listCatalog();
@@ -63,26 +62,45 @@ describe('OpenClawExtensionImportService', () => {
   it('shares native discovery while projecting current configuration separately for each caller', async () => {
     let publish!: (value: unknown) => void;
     let managed = true;
+    const configPath = path.join(fixtureRoot, 'openclaw.json');
+    const directory = path.join(fixtureRoot, 'dist', 'extensions', 'typesafe');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, 'openclaw.plugin.json'), JSON.stringify({
+      id: 'typesafe',
+      configSchema: { properties: { timeoutMs: { type: 'integer' } } },
+      uiHints: { timeoutMs: { configurable: true } },
+    }));
+    const setTimeoutConfig = (timeoutMs: number) => fs.writeFileSync(configPath, JSON.stringify({
+      plugins: { entries: { typesafe: { config: { timeoutMs } } } },
+    }));
+    setTimeoutConfig(100);
     const requestGateway = vi.fn().mockImplementation(() => new Promise(resolve => { publish = resolve; }));
     const service = new OpenClawExtensionImportService({
-      getOpenClawEngineManager: () => ({}) as OpenClawEngineManager,
+      getOpenClawEngineManager: () => ({
+        getStateDir: () => fixtureRoot, getBaseDir: () => fixtureRoot,
+        getRuntimeRoot: () => fixtureRoot, getConfigPath: () => configPath,
+      }) as OpenClawEngineManager,
       getManagedPluginIds: () => managed ? ['typesafe'] : [],
       requestGateway,
     });
-    vi.spyOn(service, 'listInstalled').mockReturnValue([]);
 
     const notification = service.listCatalog();
     const discovery = service.prepareCatalog();
     expect(requestGateway).toHaveBeenCalledOnce();
     publish({
-      plugins: [{ id: 'typesafe', installed: true, enabled: true, state: 'enabled' }],
+      plugins: [{ id: 'typesafe', origin: 'bundled', installed: true, enabled: true, state: 'enabled' }],
       diagnostics: [], mutationAllowed: true,
     });
-    await expect(notification).resolves.toMatchObject([{ managed: true, canToggle: false }]);
+    await expect(notification).resolves.toMatchObject([{
+      managed: true, canToggle: false, configurationFields: [{ path: 'timeoutMs', value: 100 }],
+    }]);
     const project = await discovery;
     managed = false;
+    setTimeoutConfig(200);
 
-    expect(project()).toMatchObject([{ managed: false, canToggle: true }]);
+    expect(project()).toMatchObject([{
+      managed: false, canToggle: true, configurationFields: [{ path: 'timeoutMs', value: 200 }],
+    }]);
     expect(requestGateway).toHaveBeenCalledOnce();
   });
 
@@ -101,10 +119,9 @@ describe('OpenClawExtensionImportService', () => {
     );
     const service = new OpenClawExtensionImportService({
       getOpenClawEngineManager: () =>
-        ({ getStatus: () => ({ phase: 'ready' }) }) as OpenClawEngineManager,
+        ({ getStatus: () => ({ phase: 'ready' }), getStateDir: () => fixtureRoot }) as OpenClawEngineManager,
       requestGateway,
     });
-    vi.spyOn(service, 'listInstalled').mockReturnValue([]);
 
     const before = service.listCatalog();
     const mutation = service.setEnabled('example', true);
@@ -722,6 +739,7 @@ describe('OpenClawExtensionImportService', () => {
         getGatewayProcessId: vi.fn<() => number | null>(() => 123),
         getGatewayProcessGeneration: vi.fn(() => 1),
         getConfigPath: () => path.join(fixtureRoot, 'openclaw.json'),
+        getStateDir: () => fixtureRoot,
         startGateway: vi.fn(),
         restartGateway: vi.fn(),
       };
@@ -812,18 +830,11 @@ describe('OpenClawExtensionImportService', () => {
           diagnostics: [],
           mutationAllowed: true,
         });
-        f.listInstalled.mockReturnValue([
-          {
-            id: plugin.id,
-            name: plugin.name,
-            description: '',
-            version: '2.0.0',
-            installPath: path.join(fixtureRoot, 'installed-plugin'),
-            enabled: true,
-            missingRequirements: [],
-            configurationFields: [],
-          },
-        ]);
+        const directory = path.join(fixtureRoot, 'extensions', 'installed-plugin');
+        fs.mkdirSync(directory, { recursive: true });
+        fs.writeFileSync(path.join(directory, 'openclaw.plugin.json'), JSON.stringify({
+          id: plugin.id, name: plugin.name, version: '2.0.0',
+        }));
 
         const catalog = await f.service.listCatalog();
 

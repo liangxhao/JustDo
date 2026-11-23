@@ -182,6 +182,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
   const [deletePluginData, setDeletePluginData] = useState(false);
   const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
   const [togglingExtensionId, setTogglingExtensionId] = useState<string | null>(null);
+  const toggleAwaitingMain = useRef(false);
   const [pendingCapabilityReview, setPendingCapabilityReview] = useState<{
     extension: InstalledOpenClawExtension;
     review: OpenClawPluginCapabilityReview;
@@ -279,7 +280,9 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
           extension.id === event.extensionId ? { ...extension, enabled: event.enabled } : extension,
         ),
       );
-      refresh.request();
+      // The open toggle reads the full catalog after Main completes. A change
+      // received before that read is already covered by it.
+      if (!toggleAwaitingMain.current) refresh.request();
     });
     const stopReadiness = window.electron.appPlugins?.onChanged(() => {
       if (inventoryUnavailable.current) void loadExtensions();
@@ -663,6 +666,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
       Awaited<ReturnType<typeof window.electron.extensions.setEnabled>> | undefined;
     try {
       setTogglingExtensionId(extension.id);
+      toggleAwaitingMain.current = true;
       setActionOutcome(null);
       const result = await window.electron.extensions.setEnabled(
         {
@@ -698,6 +702,7 @@ const ExtensionsManager: React.FC<ExtensionsManagerProps> = ({
             : i18nService.t('extensionStatusUpdateFailed'),
       });
     } finally {
+      toggleAwaitingMain.current = false;
       operation.stage(PluginOperationStage.REFRESHING_INVENTORY);
       const inventory = await loadExtensions({ reportFailure: false });
       if (mutationResult?.success) {

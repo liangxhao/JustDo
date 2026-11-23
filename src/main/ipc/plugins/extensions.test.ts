@@ -300,6 +300,22 @@ test('a rejected enable request publishes the observed setting instead of the re
   });
 });
 
+test('publishes an unrelated bundled toggle without waiting for managed MCP discovery', async () => {
+  const sync = vi.fn(async () => true);
+  const f = fixture(undefined, undefined, undefined, undefined, undefined, sync);
+  f.service.setEnabled.mockResolvedValue({ success: true, skipNativeMcpDataSync: true });
+  f.service.listCatalog.mockResolvedValue([{ id: 'feature-plugin', enabled: true }]);
+
+  await expect(handlers.get(ExtensionIpc.SetEnabled)!(f.event, {
+    extensionId: 'feature-plugin', enabled: true,
+  })).resolves.toEqual({ success: true });
+
+  expect(sync).not.toHaveBeenCalled();
+  expect(f.peer.send).toHaveBeenCalledExactlyOnceWith(ExtensionIpc.Changed, {
+    extensionId: 'feature-plugin', enabled: true,
+  });
+});
+
 test('publishes an enabled extension only after its managed MCP configuration applies', async () => {
   let finishProjection!: (changed: boolean) => void;
   const sync = vi.fn(() => new Promise<boolean>(resolve => { finishProjection = resolve; }));

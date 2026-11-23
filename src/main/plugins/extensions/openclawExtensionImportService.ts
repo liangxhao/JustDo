@@ -39,6 +39,7 @@ import { restrictCredentialFile } from '../../openclaw/config/models/providerSec
 import type { OpenClawConfigMutationContext } from '../../openclaw/config/openclawConfigSyncService';
 import { requireOpenClawCliExecutable } from '../../openclaw/runtime/launch/cliNodeRuntime';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
+import { hasNativeMcpDataProjection } from '../data/nativeMcpData';
 import {
   inspectPluginData,
   preparePluginDataRemoval,
@@ -591,6 +592,41 @@ const findBundledExtensionDirectory = (
   return pluginDirectory;
 };
 
+type NativeToggleReceipt = {
+  ok: boolean;
+  restartRequired: boolean;
+  warnings?: string[];
+  plugin?: { id?: unknown; origin?: unknown; kind?: unknown };
+  runtime?: { pluginIds?: unknown };
+};
+
+type ExtensionToggleResult = ExtensionSetEnabledResult & { skipNativeMcpDataSync?: true };
+
+/** Use the existing native receipt to exclude a bundled toggle from data reconciliation. */
+const isBundledToggleWithoutMcpData = (
+  manager: OpenClawEngineManager,
+  extensionId: string,
+  receipt: NativeToggleReceipt,
+): boolean => {
+  const affected = receipt.runtime?.pluginIds;
+  if (receipt.ok !== true || receipt.restartRequired !== false || receipt.plugin?.id !== extensionId ||
+      receipt.plugin.origin !== 'bundled' || receipt.plugin.kind !== undefined ||
+      !Array.isArray(affected) || affected.length !== 1 || affected[0] !== extensionId) return false;
+  try {
+    const directory = findBundledExtensionDirectory(manager, extensionId);
+    if (!directory) return false;
+    const manifest = readJsonRecord(path.join(directory, OPENCLAW_PLUGIN_MANIFEST));
+    const pkg = readJsonRecord(path.join(directory, 'package.json'));
+    const entries = isRecord(pkg.openclaw) ? pkg.openclaw.extensions : undefined;
+    return manifest.id === extensionId && !Object.hasOwn(manifest, 'kind') &&
+      !Object.hasOwn(manifest, 'mcpServers') &&
+      Array.isArray(entries) && entries.length === 1 && typeof entries[0] === 'string' && !!entries[0].trim() &&
+      !hasNativeMcpDataProjection(manager.getConfigPath(), manager.getStateDir(), extensionId);
+  } catch {
+    return false;
+  }
+};
+
 const findInstalledExtensionPath = (
   extensionsRoot: string,
   extensionId: string,
@@ -630,6 +666,25 @@ const readDotEnvKeys = (filePath: string): Set<string> => {
   return keys;
 };
 
+const readExtensionConfiguration = (manager: OpenClawEngineManager) => {
+  const config = readJsonRecord(manager.getConfigPath());
+  let dotenvKeys: Set<string> | undefined;
+  return {
+    config,
+    getDotEnvKeys: () => dotenvKeys ??= new Set([
+      ...readDotEnvKeys(path.join(manager.getBaseDir(), '.env')),
+      ...readDotEnvKeys(path.join(manager.getStateDir(), '.env')),
+    ]),
+  };
+};
+
+type ExtensionConfiguration = ReturnType<typeof readExtensionConfiguration>;
+
+type LocalExtensionMetadata = Pick<InstalledOpenClawExtension, 'id' | 'name' | 'description' | 'version'> & {
+  installPath: string;
+  manifest: Record<string, unknown>;
+};
+
 const collectProviderEnvGroups = (manifest: Record<string, unknown>): string[][] => {
   const groups: string[][] = [];
   const addEnvVars = (envVars: unknown): void => {
@@ -661,7 +716,7 @@ type ExtensionConfigurationState = {
 };
 
 const getExtensionConfigurationState = (
-  manager: OpenClawEngineManager,
+  { config, getDotEnvKeys }: ExtensionConfiguration,
   extensionId: string,
   manifest: Record<string, unknown>,
 ): ExtensionConfigurationState => {
@@ -684,7 +739,6 @@ const getExtensionConfigurationState = (
       isRecord(properties[key]) &&
       ['integer', 'number'].includes(String(properties[key].type)),
   );
-  const config = readJsonRecord(manager.getConfigPath());
   const pluginsConfig = isRecord(config.plugins) ? config.plugins : {};
   const pluginEntries = isRecord(pluginsConfig.entries) ? pluginsConfig.entries : {};
   const pluginEntry = isRecord(pluginEntries[extensionId]) ? pluginEntries[extensionId] : {};
@@ -699,13 +753,7 @@ const getExtensionConfigurationState = (
     return { fields: [], missingRequirements: [] };
   const configuredEnv = isRecord(config.env) ? config.env : {};
   const configuredEnvVars = isRecord(configuredEnv.vars) ? configuredEnv.vars : {};
-  const dotenvKeys = new Set<string>();
-  for (const envPath of [
-    path.join(manager.getBaseDir(), '.env'),
-    path.join(manager.getStateDir(), '.env'),
-  ]) {
-    for (const key of readDotEnvKeys(envPath)) dotenvKeys.add(key);
-  }
+  const dotenvKeys = getDotEnvKeys();
   const isEnvConfigured = (name: string): boolean =>
     hasConfiguredValue(process.env[name]) ||
     hasConfiguredValue(configuredEnvVars[name]) ||
@@ -801,8 +849,7 @@ const getExtensionConfigurationState = (
   return { fields, missingRequirements: [...new Set(missingRequirements)] };
 };
 
-const isExtensionEnabled = (manager: OpenClawEngineManager, extensionId: string): boolean => {
-  const config = readJsonRecord(manager.getConfigPath());
+const isExtensionEnabled = (config: Record<string, unknown>, extensionId: string): boolean => {
   const pluginsConfig = isRecord(config.plugins) ? config.plugins : {};
   const pluginEntries = isRecord(pluginsConfig.entries) ? pluginsConfig.entries : {};
   // OpenClaw folds policy keys while retaining the manifest ID for runtime identity.
@@ -1268,7 +1315,7 @@ export class OpenClawExtensionImportService {
     };
   }
 
-  listInstalled(): InstalledOpenClawExtension[] {
+  private readLocalExtensions(): LocalExtensionMetadata[] {
     const manager = this.deps.getOpenClawEngineManager();
     const extensionsDir = path.join(manager.getStateDir(), 'extensions');
     if (!fs.existsSync(extensionsDir)) return [];
@@ -1285,10 +1332,10 @@ export class OpenClawExtensionImportService {
           const manifest = manifestPath ? readJsonRecord(manifestPath) : {};
           const packagePath = path.join(installPath, 'package.json');
           const packageJson = fs.existsSync(packagePath) ? readJsonRecord(packagePath) : undefined;
-          const configurationState = getExtensionConfigurationState(manager, id, manifest);
           return [
             {
               id,
+              manifest,
               name:
                 typeof manifest.name === 'string' && manifest.name.trim()
                   ? manifest.name.trim()
@@ -1301,9 +1348,6 @@ export class OpenClawExtensionImportService {
                     ? packageJson.version
                     : undefined,
               installPath,
-              enabled: isExtensionEnabled(manager, id),
-              missingRequirements: configurationState.missingRequirements,
-              configurationFields: configurationState.fields,
             },
           ];
         } catch (error) {
@@ -1317,8 +1361,15 @@ export class OpenClawExtensionImportService {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  listInstalled(): InstalledOpenClawExtension[] {
+    const local = this.readLocalExtensions();
+    if (!local.length) return [];
+    const configuration = readExtensionConfiguration(this.deps.getOpenClawEngineManager());
+    return local.map(entry => this.projectPackageEntry(entry, entry.id, configuration));
+  }
+
   private async readPackageOwnership(
-    local: InstalledOpenClawExtension[],
+    local: ReadonlyArray<Pick<InstalledOpenClawExtension, 'id' | 'installPath'>>,
   ): Promise<ExtensionPackageOwnership[]> {
     const multiple = local.filter(entry => hasMultipleRuntimeEntries(entry.installPath));
     if (!multiple.length) return [];
@@ -1337,20 +1388,15 @@ export class OpenClawExtensionImportService {
   }
 
   private projectPackageEntry(
-    local: InstalledOpenClawExtension,
+    { manifest, ...local }: LocalExtensionMetadata,
     pluginId: string,
+    snapshot: ExtensionConfiguration,
   ): InstalledOpenClawExtension {
-    const manager = this.deps.getOpenClawEngineManager();
-    const manifestPath = findSupportedPluginManifestPath(local.installPath);
-    const configuration = getExtensionConfigurationState(
-      manager,
-      pluginId,
-      manifestPath ? readJsonRecord(manifestPath) : {},
-    );
+    const configuration = getExtensionConfigurationState(snapshot, pluginId, manifest);
     return {
       ...local,
       id: pluginId,
-      enabled: isExtensionEnabled(manager, pluginId),
+      enabled: isExtensionEnabled(snapshot.config, pluginId),
       configurationFields: configuration.fields,
       missingRequirements: configuration.missingRequirements,
     };
@@ -1359,17 +1405,20 @@ export class OpenClawExtensionImportService {
   private async resolveInstalledExtension(
     extensionId: string,
   ): Promise<InstalledOpenClawExtension | undefined> {
-    const local = this.listInstalled();
+    const local = this.readLocalExtensions();
     const direct = local.find(entry => entry.id === extensionId);
-    if (direct) return direct;
-    const packages = await this.readPackageOwnership(local);
-    const owners = packages.filter(owner => owner.pluginIds.includes(extensionId));
-    if (owners.length !== 1) return undefined;
-    const installed = local.find(
-      entry =>
-        entry.id === owners[0].ownerId && sameInstallPath(entry.installPath, owners[0].installPath),
-    );
-    return installed ? this.projectPackageEntry(installed, extensionId) : undefined;
+    let installed = direct;
+    if (!installed) {
+      const packages = await this.readPackageOwnership(local);
+      const owners = packages.filter(owner => owner.pluginIds.includes(extensionId));
+      if (owners.length !== 1) return undefined;
+      installed = local.find(
+        entry =>
+          entry.id === owners[0].ownerId && sameInstallPath(entry.installPath, owners[0].installPath),
+      );
+    }
+    return installed ? this.projectPackageEntry(installed, extensionId,
+      readExtensionConfiguration(this.deps.getOpenClawEngineManager())) : undefined;
   }
 
   listCatalog(): Promise<InstalledOpenClawExtension[]> {
@@ -1442,7 +1491,7 @@ export class OpenClawExtensionImportService {
         canToggle: !this.deps.getManagedPluginIds?.().includes(extension.id),
       }));
     }
-    const localExtensions = this.listInstalled();
+    const localExtensions = this.readLocalExtensions();
     const packages = await this.readPackageOwnership(localExtensions);
     if (
       !connectedOnly &&
@@ -1474,14 +1523,14 @@ export class OpenClawExtensionImportService {
     // can run this synchronous read after settings application or rollback;
     // mutation notifications already holding that queue project directly.
     return () => {
-      const localById = new Map(localExtensions.map(extension => [
-        extension.id, this.projectPackageEntry(extension, extension.id),
-      ]));
+      const localById = new Map(localExtensions.map(extension => [extension.id, extension]));
+      let configuration: ExtensionConfiguration | undefined;
+      const snapshot = () => configuration ??= readExtensionConfiguration(manager);
       for (const owner of packages) {
         const local = localById.get(owner.ownerId);
         if (!local) continue;
         for (const pluginId of owner.pluginIds)
-          localById.set(pluginId, this.projectPackageEntry(local, pluginId));
+          localById.set(pluginId, local);
       }
       const managedIds = new Set(this.deps.getManagedPluginIds?.() ?? []);
 
@@ -1494,12 +1543,11 @@ export class OpenClawExtensionImportService {
             plugin.origin === 'bundled'
               ? findBundledExtensionDirectory(manager, plugin.id)
               : undefined;
-          const bundledConfiguration = bundledDirectory
-            ? getExtensionConfigurationState(
-                manager,
-                plugin.id,
-                readJsonRecord(path.join(bundledDirectory, OPENCLAW_PLUGIN_MANIFEST)),
-              )
+          const manifest = local?.manifest ?? (bundledDirectory
+            ? readJsonRecord(path.join(bundledDirectory, OPENCLAW_PLUGIN_MANIFEST))
+            : undefined);
+          const configurationState = manifest
+            ? getExtensionConfigurationState(snapshot(), plugin.id, manifest)
             : undefined;
           const description =
             normalizeMetadataText(plugin.description) ??
@@ -1531,9 +1579,8 @@ export class OpenClawExtensionImportService {
             removable: result.mutationAllowed && plugin.removable === true && !managed,
             canToggle: result.mutationAllowed && !managed,
             managed,
-            missingRequirements:
-              local?.missingRequirements ?? bundledConfiguration?.missingRequirements ?? [],
-            configurationFields: local?.configurationFields ?? bundledConfiguration?.fields ?? [],
+            missingRequirements: configurationState?.missingRequirements ?? [],
+            configurationFields: configurationState?.fields ?? [],
           } satisfies InstalledOpenClawExtension;
         })
         .sort((a, b) => a.name.localeCompare(b.name));
@@ -1567,7 +1614,7 @@ export class OpenClawExtensionImportService {
     if (!pluginDirectory) return { success: false, error: 'Extension is not installed.' };
     const manifestPath = findSupportedPluginManifestPath(pluginDirectory);
     const manifest = manifestPath ? readJsonRecord(manifestPath) : {};
-    const fields = getExtensionConfigurationState(manager, extensionId, manifest).fields;
+    const fields = getExtensionConfigurationState(readExtensionConfiguration(manager), extensionId, manifest).fields;
     const fieldsByPath = new Map<string, OpenClawExtensionConfigurationField>();
     for (const field of fields) {
       const paths = field.environmentVariables?.map(name => `env.vars.${name}`) ?? [field.path];
@@ -2311,7 +2358,7 @@ export class OpenClawExtensionImportService {
     enabled: boolean,
     reviewToken?: string,
     onProgress?: OperationProgress,
-  ): Promise<ExtensionSetEnabledResult> {
+  ): Promise<ExtensionToggleResult> {
     onProgress?.(PluginOperationStage.QUEUED);
     return this.runMutationExclusive(() =>
       this.setEnabledExclusive(extensionId, enabled, reviewToken, onProgress),
@@ -2324,7 +2371,7 @@ export class OpenClawExtensionImportService {
     const manager = this.deps.getOpenClawEngineManager();
     const bundled = findBundledExtensionDirectory(manager, extensionId);
     return bundled && readExtensionId(bundled) === extensionId
-      ? isExtensionEnabled(manager, extensionId)
+      ? isExtensionEnabled(readJsonRecord(manager.getConfigPath()), extensionId)
       : undefined;
   }
 
@@ -2338,7 +2385,7 @@ export class OpenClawExtensionImportService {
       connectedGatewayRequest?: NonNullable<OpenClawExtensionImportServiceDeps['requestGateway']>;
       deferRuntimeConvergence?: (receipt: { restartRequired: boolean }) => void;
     },
-  ): Promise<ExtensionSetEnabledResult> {
+  ): Promise<ExtensionToggleResult> {
     let currentStage: PluginOperationStage = PluginOperationStage.VALIDATING;
     const onProgress: OperationProgress = stage => {
       currentStage = stage;
@@ -2400,11 +2447,7 @@ export class OpenClawExtensionImportService {
     if (requestGateway) {
       try {
         onProgress?.(enabled ? PluginOperationStage.ENABLING : PluginOperationStage.DISABLING);
-        const result = await this.requestPluginMutation<{
-          ok: true;
-          restartRequired: boolean;
-          warnings?: string[];
-        }>(
+        const result = await this.requestPluginMutation<NativeToggleReceipt>(
           'plugins.setEnabled',
           {
             pluginId: extensionId,
@@ -2473,7 +2516,13 @@ export class OpenClawExtensionImportService {
         }
         return skillSyncError
           ? { success: false, error: skillSyncError }
-          : { success: true, warnings: result.warnings };
+          : {
+              success: true,
+              warnings: result.warnings,
+              ...(!networkPolicyChanged && isBundledToggleWithoutMcpData(manager, extensionId, result)
+                ? { skipNativeMcpDataSync: true as const }
+                : {}),
+            };
       } catch (error) {
         if (isGatewayUnavailableError(error)) {
           if (isRecord(error) && 'gatewayCode' in error)
