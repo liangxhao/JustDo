@@ -11,6 +11,7 @@ import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { mcpToolAppResourceUri } from '../../../shared/plugins/mcpAppCapabilities';
 import { mainProcessMcpProbeFetch } from '../../core/network/mainProcessFetch';
 import { applyDependencyManagerConfigEnv } from '../../core/runtime/dependencyManagerConfig';
+import { appendPythonRuntimeToEnv } from '../../core/runtime/pythonRuntime';
 import type { McpServerRecord } from './mcpStore';
 
 const MCP_PROBE_TIMEOUT_MS = 8_000;
@@ -139,6 +140,7 @@ const createTransport = (server: McpServerRecord, transportFetch?: FetchLike): T
       throw new Error('stdio MCP server command is required');
     }
     const env = { ...getDefaultEnvironment() };
+    appendPythonRuntimeToEnv(env);
     applyDependencyManagerConfigEnv(env);
     Object.assign(env, server.env ?? {});
     return new StdioClientTransport({

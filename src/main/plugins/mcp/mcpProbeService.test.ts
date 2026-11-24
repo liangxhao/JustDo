@@ -1,16 +1,41 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import type { StdioServerParameters } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import type { McpServerRecord } from './mcpStore';
 
 const mocks = vi.hoisted(() => ({
   mcpProbeFetch: vi.fn(),
+  stdioLaunch: vi.fn<(options: StdioServerParameters) => void>(),
   transportFetch: undefined as unknown,
   eventSourceFetch: undefined as unknown,
   tools: [] as unknown[],
 }));
 
+vi.mock('electron', () => ({
+  app: {
+    isPackaged: true,
+    getAppPath: () => path.join(process.resourcesPath, 'app.asar'),
+    getPath: () => path.join(process.resourcesPath, 'user-data'),
+  },
+}));
+
 vi.mock('../../core/network/mainProcessFetch', () => ({
   mainProcessMcpProbeFetch: mocks.mcpProbeFetch,
+}));
+
+vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
+  getDefaultEnvironment: () => ({ PATH: 'C:\\Windows\\System32' }),
+  StdioClientTransport: class {
+    constructor(options: StdioServerParameters) {
+      mocks.stdioLaunch(options);
+    }
+
+    async close() {}
+  },
 }));
 
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
@@ -64,23 +89,54 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
 
 import { probeMcpServer, readMcpResource } from './mcpProbeService';
 
-const buildServer = (transportType: 'http' | 'sse'): McpServerRecord => ({
+const buildServer = (transportType: McpServerRecord['transportType']): McpServerRecord => ({
   id: 'mcp-server',
   name: 'MCP server',
   description: '',
   enabled: true,
   transportType,
-  url: 'https://mcp.example/api',
-  headers: { Authorization: 'Bearer server-token' },
+  ...(transportType === 'stdio'
+    ? { command: 'python' }
+    : { url: 'https://mcp.example/api', headers: { Authorization: 'Bearer server-token' } }),
   isBuiltIn: false,
   createdAt: 1,
   updatedAt: 1,
 });
 
 beforeEach(() => {
+  mocks.stdioLaunch.mockClear();
   mocks.transportFetch = undefined;
   mocks.eventSourceFetch = undefined;
   mocks.tools = [];
+});
+
+test('starts a user MCP test with bundled Python ahead of the system PATH', async () => {
+  const resourcesPath = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-probe-resources-'));
+  const pythonRoot = path.join(resourcesPath, 'python-win');
+  try {
+    fs.mkdirSync(pythonRoot);
+    vi.stubGlobal(
+      'process',
+      Object.create(process, {
+        platform: { value: 'win32' },
+        resourcesPath: { value: resourcesPath },
+      }),
+    );
+
+    const result = await probeMcpServer({ ...buildServer('stdio'), env: { MCP_MODE: 'custom' } });
+
+    expect(result.available).toBe(true);
+    const launch = mocks.stdioLaunch.mock.calls[0]?.[0];
+    expect(launch?.command).toBe('python');
+    const pathEntries = launch?.env?.PATH?.split(';');
+    expect(pathEntries?.[0]).toBe(pythonRoot);
+    expect(pathEntries).toContain('C:\\Windows\\System32');
+    expect(launch?.env?.MCP_MODE).toBe('custom');
+  } finally {
+    vi.unstubAllGlobals();
+    fs.rmdirSync(pythonRoot);
+    fs.rmdirSync(resourcesPath);
+  }
 });
 
 test('projects interactive capability without copying unrelated tool metadata', async () => {

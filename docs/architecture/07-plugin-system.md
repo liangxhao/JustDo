@@ -444,6 +444,7 @@ MCP 的传输支持状态使用原生清单的 `unsupported` 标记；`hasStdioT
 请求 timeout 按单 server override 优先于全局默认投影为 requestTimeoutMs；连接建立 timeout 是另一概念。Extension 自带 MCP 的配置由父插件拥有，不套用户 server 的默认设置。
 
 probe/readResource 在 Main 使用真实 transport。HTTP/SSE probe 保持流式响应、禁止自动重定向并使用网络策略；stdio command/env 属于执行输入，敏感值不能进入 UI 诊断或日志。
+Windows 上，自建 stdio MCP 的测试和资源读取复用 Gateway 的内置 Python 环境构造函数，将内置解释器及其脚本目录加入子进程 `PATH`，再应用连接显式配置的环境变量。
 
 Extension MCP 卡片提供参数、单项测试和全部测试入口。手动测试与 MCP 自动启用开关独立，关闭的条目也纳入测试。Main 按完整扩展/server ID 重新读取原生配置并核对归属，只连接所选 server；错误归属、不受支持或无法取得当前归属的父扩展默认定义不能启动 transport。配置优先使用原生 merged MCP 定义；被禁用过滤时，完整原生连接覆盖仍优先，仅有禁用标记则读取原生加载器解析的父扩展默认定义，不拼接另一份配置。
 
