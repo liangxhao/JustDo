@@ -4,7 +4,8 @@ import {
   WebLaunchLimits,
   type WebLaunchOutputStatus,
 } from '../../../plugins/chrome-extensions/chrome-assistant/contracts/webLaunch';
-import { getAssistantDeliverables, unwrapAssistantDeliverableSource } from '../../shared/openclaw/assistantDeliverables';
+import { getWebLaunchAssistantDeliverables } from '../../shared/chrome/chromeExtensionDeliverables';
+import { unwrapAssistantDeliverableSource } from '../../shared/openclaw/assistantDeliverables';
 import { filterMediaDirectiveLines } from '../../shared/openclaw/mediaDirectives';
 import type { GatewayClientLike } from '../engine/gateway/types';
 import type { OpenClawRuntimeAdapter } from '../engine/openclaw/openclawRuntimeAdapter';
@@ -69,7 +70,7 @@ function projectMedia(messages: Record<string, unknown>[], nativeSources = deliv
     }) },
   }] : messages;
   for (const message of rows) {
-    for (const delivery of getAssistantDeliverables(message)) {
+    for (const delivery of getWebLaunchAssistantDeliverables(message)) {
       if (deliveries.size === WebLaunchLimits.resultArtifacts) break;
       if (deliveries.has(delivery.source)) continue;
       const artifact = publicWebLaunchArtifact(delivery);

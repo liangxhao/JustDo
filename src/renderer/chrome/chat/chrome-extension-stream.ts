@@ -16,6 +16,7 @@ import { createRunActivity, type RunActivity } from '@/libs/openclaw-chat/model/
 import { projectChromeExtensionActivity } from './chrome-extension-activity';
 import { prepareChromeExtensionStreamEvent } from './chrome-extension-display';
 
+export { isOmittedChromeDeliveryText } from './chrome-extension-display';
 export { foldChromeExtensionEntries, isChromeQuestionTool } from './chrome-extension-timeline';
 export { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 

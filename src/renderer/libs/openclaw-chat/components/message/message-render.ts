@@ -48,7 +48,7 @@ import { i18nService } from '@/services/i18n';
 import { readTranscriptIdentity } from '../../model/history/transcript-identity';
 import { renderBrowserAnnotation } from './browser-annotation-message';
 import { renderBrowserRecording } from './browser-recording-message';
-import { renderMessageFileIcon } from './message-file-icon';
+import { renderAttachmentActionIcon, renderMessageFileIcon } from './message-file-icon';
 import { renderThinkingContent } from './thinking-content';
 
 type AssistantCanvasItem = Extract<MessageContentItem, { type: 'canvas' }>;
@@ -609,18 +609,7 @@ function renderAttachmentButton(
         <span class="message-attachment__name">${label}</span>
       </span>
       <span class="message-attachment__open" aria-hidden="true">
-        <svg
-          viewBox="0 0 24 24"
-          width="14"
-          height="14"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.6"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d=${managed ? 'M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4' : 'M7 17 17 7M7 7h10v10'}></path>
-        </svg>
+        ${renderAttachmentActionIcon(Boolean(managed))}
       </span>
     </button>
   `;

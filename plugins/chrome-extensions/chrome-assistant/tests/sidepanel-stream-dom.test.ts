@@ -953,6 +953,58 @@ describe('extension streaming DOM', () => {
     expect(document.querySelectorAll('.message.assistant')).toHaveLength(1);
   });
 
+  it('keeps only the historical attachment when a MEDIA-only live reply settles', async () => {
+    const { thread, respond, emit } = await mountThread();
+    const local = './out/report.pdf';
+    const managed = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
+    const text = `MEDIA: ${local}`;
+    const cards = () => document.querySelectorAll('button.chrome-delivery-card');
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    emit(1, 'assistant', { text });
+    await vi.waitFor(() => expect(cards()).toHaveLength(1));
+
+    const history = {
+      ...thread,
+      turns: [{ ...thread.turns[0], items: [...thread.turns[0].items,
+        {
+          type: 'agentMessage', text,
+          rawMessage: {
+            role: 'assistant', content: [{ type: 'text', text }],
+            openclawDelivery: { mediaUrls: [local, managed] },
+            __chromeExtensionOmitDeliveryMedia: true,
+          },
+        },
+        {
+          type: 'agentMessage', text: '',
+          rawMessage: {
+            role: 'assistant',
+            content: [{ type: 'attachment', attachment: { kind: 'document', label: 'report.pdf', url: managed } }],
+            openclawDelivery: { mediaUrls: [managed] },
+          },
+        },
+      ] }],
+    };
+    mock.request.mockImplementation((method: string) =>
+      method === 'thread/resume' ? Promise.resolve({ thread: history }) : respond(method),
+    );
+    mock.notify('chrome/thread/updated', { threadId: 'one', thread: history });
+    await vi.waitFor(() => expect(cards()[0]?.getAttribute('aria-label')).toBe('Download report.pdf'));
+    expect(cards()).toHaveLength(1);
+    expect(document.querySelectorAll('.message.assistant')).toHaveLength(1);
+
+    const historyReads = () => mock.request.mock.calls.filter(([method]) => method === 'thread/resume').length;
+    const readsBeforeCompletion = historyReads();
+    mock.notify('turn/completed', {
+      threadId: 'one', turn: { id: 'run-1', status: 'completed', executionSettled: true, error: null },
+    });
+    await vi.waitFor(() => {
+      expect(historyReads()).toBeGreaterThan(readsBeforeCompletion);
+      expect(cards()).toHaveLength(1);
+      expect(cards()[0]?.getAttribute('aria-label')).toBe('Download report.pdf');
+      expect(document.querySelectorAll('.message.assistant')).toHaveLength(1);
+    });
+  });
+
   it('renders cumulative commentary once when native history splits it into rich segments', async () => {
     const { thread, emit } = await mountThread();
     const preamble = (seq: number, itemId: string, progressText: string) => emit(seq, 'item', {

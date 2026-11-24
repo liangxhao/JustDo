@@ -1,6 +1,9 @@
 import {
   type AssistantDeliverable,
-  getAssistantDeliverables,
+  getChromeAssistantDeliverables,
+  getChromeDeliveryMediaUrls,
+} from '@shared/chrome/chromeExtensionDeliverables';
+import {
   isLocalAssistantDeliverableSource,
   unwrapAssistantDeliverableSource,
 } from '@shared/openclaw/assistantDeliverables';
@@ -16,7 +19,7 @@ import {
 } from '@/libs/openclaw-chat/components/markdown/markdown-file-links';
 import { renderBrowserAnnotation } from '@/libs/openclaw-chat/components/message/browser-annotation-message';
 import { renderBrowserRecording } from '@/libs/openclaw-chat/components/message/browser-recording-message';
-import { renderMessageFileIcon } from '@/libs/openclaw-chat/components/message/message-file-icon';
+import { renderAttachmentActionIcon, renderMessageFileIcon } from '@/libs/openclaw-chat/components/message/message-file-icon';
 import { renderCompactionMessage } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
 import { projectProgressReceipt } from '@/libs/openclaw-chat/model/tools/progress-receipt';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
@@ -40,6 +43,7 @@ const renderMessageMarkdown = createMarkdownRenderer(markdown =>
 const incompleteMessageStatuses = new Set([
   'streaming', 'inProgress', 'running', 'unknown', 'interrupted',
 ]);
+const deliveryReference = (source: string) => unwrapAssistantDeliverableSource(source.trim());
 
 export function isIncompleteFileLinkSource(entry: {
   status?: string;
@@ -172,17 +176,18 @@ export function renderRichContent(
   }
   const raw = entry.rawMessage ?? { role: entry.role, content: entry.text };
   const content = normalizeMessage(raw).content.slice();
-  const deliverables = new Map(
-    (entry.role === 'assistant' ? getAssistantDeliverables(raw) : []).map(delivery => [
-      delivery.source,
-      delivery,
-    ]),
-  );
+  const deliverables = new Map<string, AssistantDeliverable>();
+  for (const delivery of entry.role === 'assistant' ? getChromeAssistantDeliverables(raw) : []) {
+    const reference = deliveryReference(delivery.source);
+    if (!deliverables.has(reference)) deliverables.set(reference, delivery);
+  }
+  const contentReferences = new Set(content.flatMap(item =>
+    item.type === 'attachment' ? [deliveryReference(item.attachment.url)] : [],
+  ));
   for (const media of getTranscriptMedia(raw)) {
-    if (
-      isTranscriptImage(media) &&
-      !content.some(item => item.type === 'attachment' && item.attachment.url === media.path)
-    ) {
+    const reference = deliveryReference(media.path);
+    if (isTranscriptImage(media) && !contentReferences.has(reference)) {
+      contentReferences.add(reference);
       content.push({
         type: 'attachment',
         attachment: {
@@ -193,9 +198,8 @@ export function renderRichContent(
       });
     }
   }
-  for (const delivery of deliverables.values()) {
-    if (content.some(item => item.type === 'attachment' && item.attachment.url === delivery.source))
-      continue;
+  for (const [reference, delivery] of deliverables) {
+    if (contentReferences.has(reference)) continue;
     content.push({
       type: 'attachment',
       attachment: {
@@ -206,18 +210,58 @@ export function renderRichContent(
       },
     });
   }
-  const delivery = raw.openclawDelivery as { mediaUrls?: unknown } | undefined;
-  const omitted =
-    raw.__chromeExtensionOmitDeliveryMedia === true && Array.isArray(delivery?.mediaUrls)
-      ? new Set(delivery.mediaUrls)
-      : new Set();
+  const manifestReferences = new Set(entry.role === 'assistant'
+    ? getChromeDeliveryMediaUrls(raw).map(deliveryReference)
+    : []);
+  const shownDeliveries = new Set<string>();
   const canOpenMessageFile =
     entry.role === 'user' || entry.role === 'assistant' ? openMessageFile : undefined;
   const incomplete = entry.role === 'assistant' && isIncompleteFileLinkSource(entry);
   let images: HTMLElement | null = null;
+  type DocumentCard = { node: HTMLElement; name: string; managed: boolean };
+  const documentCards: DocumentCard[] = [];
+  const flushDocumentCards = () => {
+    if (!documentCards.length) return;
+    const groups = new Map<string, { cards: DocumentCard[]; mixedSources: boolean }>();
+    for (const card of documentCards) {
+      const group = groups.get(card.name);
+      if (group) {
+        group.mixedSources ||= card.managed !== group.cards[0].managed;
+        group.cards.push(card);
+      } else groups.set(card.name, { cards: [card], mixedSources: false });
+    }
+    for (const card of documentCards) {
+      const group = groups.get(card.name);
+      if (!group?.mixedSources) host.append(card.node);
+      else if (card === group.cards[0]) {
+        const options = document.createElement('div');
+        options.className = 'chrome-delivery-options';
+        options.append(...group.cards.map(item => item.node));
+        host.append(options);
+      }
+    }
+    documentCards.length = 0;
+  };
   for (const item of content) {
-    if (item.type === 'attachment' && omitted.has(item.attachment.url)) continue;
-    const delivery = item.type === 'attachment' ? deliverables.get(item.attachment.url) : undefined;
+    const reference = item.type === 'attachment' ? deliveryReference(item.attachment.url) : undefined;
+    const delivery = reference === undefined ? undefined : deliverables.get(reference);
+    if (reference !== undefined) {
+      if (manifestReferences.has(reference) && (!delivery || raw.__chromeExtensionOmitDeliveryMedia === true)) continue;
+      if (delivery) {
+        if (shownDeliveries.has(reference)) continue;
+        shownDeliveries.add(reference);
+      }
+    }
+    if (item.type === 'attachment' && item.attachment.kind === 'document' &&
+        delivery?.kind === 'document' && canOpenDeliverySource(delivery.source)) {
+      images = null;
+      if (item.attachment.listMarker) flushDocumentCards();
+      const node = document.createElement('div');
+      renderDelivery(node, delivery, openDelivery);
+      documentCards.push({ node, name: delivery.name, managed: Boolean(parseManagedOutgoingMediaSource(deliveryReference(delivery.source))) });
+      continue;
+    }
+    flushDocumentCards();
     if (
       item.type === 'attachment' &&
       (item.attachment.kind === 'image' || delivery?.kind === 'image')
@@ -236,8 +280,9 @@ export function renderRichContent(
         img,
         delivery ? unwrapAssistantDeliverableSource(delivery.source) : item.attachment.url,
         loadImage,
+        Boolean(delivery && openDelivery),
       );
-      if (delivery && openDelivery && canOpenDeliverySource(delivery.source)) {
+      if (delivery && openDelivery) {
         const actions = document.createElement('div');
         renderDelivery(actions, delivery, openDelivery);
         host.append(actions);
@@ -264,6 +309,7 @@ export function renderRichContent(
         loadImage,
       );
   }
+  flushDocumentCards();
 }
 
 function renderMessageFileLinks(
@@ -317,17 +363,18 @@ function renderDelivery(
   openDelivery?: (source: string) => Promise<void>,
 ) {
   const document = host.ownerDocument;
-  const button =
-    openDelivery && canOpenDeliverySource(delivery.source)
-      ? document.createElement('button')
-      : null;
+  const button = openDelivery ? document.createElement('button') : null;
   const card = button ?? document.createElement('div');
+  const managed = Boolean(parseManagedOutgoingMediaSource(deliveryReference(delivery.source)));
   card.className = 'chrome-delivery-card';
   card.title = delivery.name;
   render(
     html`
       ${renderMessageFileIcon(delivery.name)}
       <span class="chrome-delivery-card__name">${delivery.name}</span>
+      ${button ? html`<span class="chrome-delivery-card__action" aria-hidden="true">
+        ${renderAttachmentActionIcon(managed)}
+      </span>` : ''}
     `,
     card,
   );
@@ -335,28 +382,25 @@ function renderDelivery(
   if (!button || !openDelivery) return;
 
   button.type = 'button';
-  button.setAttribute('aria-label', `${i18nService.t('coworkOpenAttachment')} ${delivery.name}`);
+  button.setAttribute('aria-label', `${i18nService.t(managed ? 'messageDownload' : 'coworkOpenAttachment')} ${delivery.name}`);
   const status = document.createElement('span');
   status.className = 'chrome-delivery-card__status';
   status.setAttribute('role', 'status');
   host.append(status);
   button.addEventListener('click', async () => {
-    if (button.disabled || !button.isConnected) return;
+    if (button.hasAttribute('aria-busy') || !button.isConnected) return;
     status.textContent = '';
-    button.disabled = true;
+    if (!canOpenDeliverySource(delivery.source)) {
+      status.textContent = i18nService.t('coworkUnsupportedFileOpenFailed');
+      return;
+    }
     button.setAttribute('aria-busy', 'true');
     try {
       await openDelivery(delivery.source);
     } catch {
-      if (button.isConnected)
-        status.textContent = i18nService
-          .t('coworkAttachmentUnavailable')
-          .replace('{filename}', delivery.name);
+      if (button.isConnected) status.textContent = i18nService.t('coworkUnsupportedFileOpenFailed');
     } finally {
-      if (button.isConnected) {
-        button.disabled = false;
-        button.removeAttribute('aria-busy');
-      }
+      if (button.isConnected) button.removeAttribute('aria-busy');
     }
   });
 }
@@ -365,16 +409,25 @@ function hydrateImage(
   img: HTMLImageElement,
   source: string,
   loadImage: (source: string) => Promise<string>,
+  hideUntilLoaded = false,
 ) {
-  const originalAlt = img.alt;
   let pending = false;
   let loaded = false;
   let lastAttempt = 0;
   img.removeAttribute('src');
   img.classList.add('chat-bubble__image');
+  if (hideUntilLoaded) {
+    img.hidden = true;
+    img.addEventListener('load', () => {
+      img.hidden = false;
+    });
+  }
   img.addEventListener('error', () => {
     loaded = false;
-    img.alt = i18nService.t('coworkImagePreviewOpenFailed');
+    if (hideUntilLoaded) {
+      img.hidden = true;
+      img.removeAttribute('src');
+    }
   });
   img.tabIndex = 0;
   img.title = i18nService.t('coworkImageOpenPreviewHint');
@@ -388,13 +441,12 @@ function hydrateImage(
       : loadImage(source);
     void ready
       .then(url => {
-        if (!/^(?:https?:|data:image\/)/i.test(url)) throw new Error('Invalid image source');
-        img.alt = originalAlt;
+        if (!/^(?:https?:|data:image\/)/i.test(url)) return;
         img.src = url;
         loaded = true;
       })
       .catch(() => {
-        img.alt = i18nService.t('coworkImagePreviewOpenFailed');
+        // Background preview loading does not change the file card or report an error.
       })
       .finally(() => {
         pending = false;

@@ -1,8 +1,26 @@
+import { getChromeDeliveryMediaUrls } from '@shared/chrome/chromeExtensionDeliverables';
 import type { ChromeExtensionStreamEvent } from '@shared/chrome/chromeExtensionStream';
+import { unwrapAssistantDeliverableSource } from '@shared/openclaw/assistantDeliverables';
+import { filterMediaDirectiveLines } from '@shared/openclaw/mediaDirectives';
 
+import { getTranscriptMedia, isTranscriptImage } from '@/libs/openclaw-chat/attachments';
 import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
 import { stripSilentReplySuffixFromText } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+
+/** The original text still participates in stream reconciliation. */
+export function isOmittedChromeDeliveryText(entry: {
+  text: string;
+  rawMessage?: Record<string, unknown>;
+}): boolean {
+  const raw = entry.rawMessage;
+  if (raw?.__chromeExtensionOmitDeliveryMedia !== true) return false;
+  if (Array.isArray(raw.content) && raw.content.some(block => block?.type !== 'text')) return false;
+  const references = new Set(getChromeDeliveryMediaUrls(raw).map(unwrapAssistantDeliverableSource));
+  return references.size > 0 &&
+    !filterMediaDirectiveLines(entry.text, source => references.has(unwrapAssistantDeliverableSource(source))).trim() &&
+    !getTranscriptMedia(raw).some(media => isTranscriptImage(media) && !references.has(unwrapAssistantDeliverableSource(media.path)));
+}
 
 function hidden(text: string): boolean {
   const trimmed = text.trim();

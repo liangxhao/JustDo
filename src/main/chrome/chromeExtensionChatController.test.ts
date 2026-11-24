@@ -1128,6 +1128,63 @@ describe('ChromeExtensionChatController', () => {
     },
   );
 
+  it.each(['blocks', 'fallback', 'partial delivery'])('keeps one delivery row without an attachment failure notice (%s)', async shape => {
+    const local = './out/report.pdf';
+    const otherLocal = './archive/report.pdf';
+    const managed = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
+    const text = `Generated the report.\nMEDIA: ${local}`;
+    const partial = shape === 'partial delivery';
+    const controller = new ChromeExtensionChatController({
+      ensureEngineRunning: vi.fn(),
+      getRouter: vi.fn(),
+      getRuntime: () => ({
+        ensureReady: vi.fn(async () => undefined),
+        getSessionKeysForSession: () => ['agent:main'],
+        fetchSessionHistoryByKey: vi.fn(async () => ({ messages: [{
+          role: 'assistant',
+          ...(shape === 'fallback' ? { text } : {}),
+          ...(partial ? { openclawDelivery: { mediaUrls: [local, otherLocal] } } : {}),
+          content: [
+            ...(shape === 'fallback' ? [] : [
+              { type: 'text', text },
+              { type: 'text', text: `MEDIA: ${local}` },
+            ]),
+            { type: 'attachment', attachment: { kind: 'document', label: 'report.pdf', url: managed } },
+            { type: 'attachment_error', attachment: { code: 'file-not-found', kind: 'document', label: 'report.pdf' } },
+          ],
+        }] })),
+      }) as never,
+      getStore: () => ({
+        getSession: () => ({ id: 'session-1', source: CoworkSessionSource.ChromeExtension }),
+      }) as never,
+    });
+
+    const messages = await controller.getMessages('session-1');
+
+    expect(messages).toHaveLength(shape === 'fallback' ? 2 : 3);
+    expect(messages[0]).toMatchObject({
+      role: 'assistant', text: expect.stringContaining('Generated the report.'),
+      rawMessage: { __chromeExtensionOmitDeliveryMedia: true },
+    });
+    if (shape !== 'fallback') {
+      expect(messages[1]).toMatchObject({
+        role: 'assistant', text: `MEDIA: ${local}`,
+        rawMessage: { __chromeExtensionOmitDeliveryMedia: true },
+      });
+    }
+    expect(messages.at(-1)).toMatchObject({
+      role: 'assistant',
+      rawMessage: {
+        openclawDelivery: { mediaUrls: [managed, local, ...(partial ? [otherLocal] : [])] },
+        content: [
+          { type: 'attachment', attachment: { url: managed, label: 'report.pdf' } },
+          { type: 'attachment', attachment: { url: local, label: 'report.pdf' } },
+          ...(partial ? [{ type: 'attachment', attachment: { url: otherLocal, label: 'report.pdf' } }] : []),
+        ],
+      },
+    });
+  });
+
   it('preserves interleaved assistant content block order and thinking counts', async () => {
     const controller = new ChromeExtensionChatController({
       ensureEngineRunning: vi.fn(),

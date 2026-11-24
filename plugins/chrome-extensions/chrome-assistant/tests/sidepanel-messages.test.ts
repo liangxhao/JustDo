@@ -103,7 +103,10 @@ describe('side panel process presentation matches the desktop', () => {
 
     const card = messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card[title="Quarterly report.pdf"]')!;
     expect(card.querySelector('[data-file-icon-kind="pdf"] svg')).not.toBeNull();
-    expect(messages.querySelector('div.chrome-delivery-card[title="archive.zip"]')).not.toBeNull();
+    const remoteCard = messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card[title="archive.zip"]')!;
+    expect(remoteCard.disabled).toBe(false);
+    remoteCard.click();
+    expect(openDelivery).not.toHaveBeenCalled();
     expect(messages.querySelector('.chrome-delivery-card[title="user.pdf"]')).toBeNull();
     expect(messages.querySelectorAll('.chrome-delivery-card')).toHaveLength(5);
     expect(messages.querySelectorAll('.chat-bubble__images img')).toHaveLength(2);
@@ -127,11 +130,12 @@ describe('side panel process presentation matches the desktop', () => {
 
     card.click();
     card.click();
-    expect(card.disabled).toBe(true);
+    expect(card.getAttribute('aria-busy')).toBe('true');
+    expect(card.disabled).toBe(false);
     expect(openDelivery).toHaveBeenCalledExactlyOnceWith('first-thread', source);
     rejectOpen(new Error('Private path used by the system opener'));
-    await vi.waitFor(() => expect(card.disabled).toBe(false));
-    expect(card.parentElement?.querySelector('[role="status"]')?.textContent).toContain('summary.pdf');
+    await vi.waitFor(() => expect(card.hasAttribute('aria-busy')).toBe(false));
+    expect(card.parentElement?.querySelector('[role="status"]')?.textContent).toBe('Unable to open this file');
     expect(messages.textContent).not.toContain('Private path');
 
     card.click();
@@ -140,6 +144,130 @@ describe('side panel process presentation matches the desktop', () => {
     await Promise.resolve();
     expect(messages.textContent).toContain('Another conversation');
     expect(messages.querySelector('.chrome-delivery-card__status')).toBeNull();
+  });
+
+  it('renders one card for the same reference and clears its old warning on a successful retry', async () => {
+    const source = './out/report.pdf';
+    const distinct = './archive/report.pdf';
+    const text = `MEDIA: ${source}\nMEDIA: "${source}"\nMEDIA: ${distinct}`;
+    openDelivery.mockRejectedValueOnce(new Error('File not found'));
+
+    renderer.render([answer('files', text)], 'thread-files');
+    const cards = [...messages.querySelectorAll<HTMLButtonElement>('button.chrome-delivery-card')];
+    expect(cards).toHaveLength(2);
+    expect(cards.every(card => card.title === 'report.pdf')).toBe(true);
+    const feedback = () => [...messages.querySelectorAll('.chrome-delivery-card__status')].map(node => node.textContent);
+    expect(feedback()).toEqual(['', '']);
+    cards[0].click();
+    await vi.waitFor(() => expect(feedback()).toEqual(['Unable to open this file', '']));
+    cards[0].click();
+    await vi.waitFor(() => expect(cards[0].hasAttribute('aria-busy')).toBe(false));
+    expect(feedback()).toEqual(['', '']);
+    cards[1].click();
+    expect(openDelivery.mock.calls).toEqual([['thread-files', source], ['thread-files', source], ['thread-files', distinct]]);
+  });
+
+  it('keeps one preview when a quoted MEDIA image repeats legacy metadata with a generic MIME type', () => {
+    const source = './preview.png';
+    const text = `MEDIA: "${source}"`;
+    renderer.render([{
+      ...answer('image', text),
+      rawMessage: {
+        role: 'assistant', content: text, MediaPath: source, MediaType: 'application/octet-stream',
+      },
+    }], 'thread-files');
+
+    expect(messages.querySelectorAll('.chat-bubble__images img')).toHaveLength(1);
+    expect(messages.querySelectorAll('button.chrome-delivery-card')).toHaveLength(1);
+    expect(readImage.mock.calls).toEqual([['thread-files', source]]);
+  });
+
+  it.each(['read', 'decode'])('only reports an image attachment error after a card click (%s)', async stage => {
+    const source = './preview.png';
+    if (stage === 'read') readImage.mockRejectedValueOnce(new Error('File not found'));
+    openDelivery.mockRejectedValueOnce(new Error('File not found'));
+    renderer.render([answer('image', `MEDIA: ${source}`)], 'thread-files');
+
+    const image = messages.querySelector<HTMLImageElement>('.chat-bubble__image')!;
+    const card = messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card')!;
+    const feedback = () => messages.querySelector('.chrome-delivery-card__status')?.textContent;
+    if (stage === 'decode') {
+      await vi.waitFor(() => expect(image.hasAttribute('src')).toBe(true));
+      image.dispatchEvent(new Event('error'));
+    }
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
+    expect(readImage).toHaveBeenCalledWith('thread-files', source);
+    expect(image.alt).toBe('preview.png');
+    expect(image.hidden).toBe(true);
+    expect(image.hasAttribute('src')).toBe(false);
+    expect(card.disabled).toBe(false);
+    expect(openDelivery).not.toHaveBeenCalled();
+    expect(feedback()).toBe('');
+
+    card.click();
+    expect(openDelivery).toHaveBeenCalledWith('thread-files', source);
+    await vi.waitFor(() => expect(feedback()).toBe('Unable to open this file'));
+  });
+
+  it('uses one managed card for a native delivery alias and groups unresolved same-name references', () => {
+    const local = './out/report.pdf';
+    const managed = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
+    const content = [
+      { type: 'text', text: `MEDIA: ${local}` },
+      { type: 'attachment', attachment: { kind: 'document', label: 'report.pdf', url: managed } },
+    ];
+    const entry = { ...answer('files', ''), rawMessage: { role: 'assistant', content } };
+    renderer.render([entry], 'thread-files');
+
+    const group = messages.querySelector('.chrome-delivery-options')!;
+    const cards = [...group.querySelectorAll<HTMLButtonElement>('button.chrome-delivery-card')];
+    expect(cards).toHaveLength(2);
+    const icons = cards.map(card => card.querySelector('.chrome-delivery-card__action path')?.getAttribute('d'));
+    expect(icons.every(Boolean)).toBe(true);
+    expect(icons[0]).not.toEqual(icons[1]);
+    cards.forEach(card => card.click());
+    expect(openDelivery.mock.calls).toEqual([['thread-files', local], ['thread-files', managed]]);
+
+    renderer.render([{
+      ...entry, rawMessage: { ...entry.rawMessage, openclawDelivery: { mediaUrls: [local] } },
+    }], 'thread-files');
+    expect(messages.querySelector('.chrome-delivery-options')).toBeNull();
+    expect(messages.querySelectorAll('button.chrome-delivery-card')).toHaveLength(1);
+    expect(messages.querySelector('.assistant-content')?.textContent?.match(/report\.pdf/g)).toHaveLength(1);
+    messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card')!.click();
+    expect(openDelivery).toHaveBeenLastCalledWith('thread-files', managed);
+  });
+
+  it('preserves distinct local sources in a partial native delivery and groups the same-name choices', () => {
+    const first = './out/report.pdf';
+    const second = './archive/report.pdf';
+    const unmatched = './out/appendix.pdf';
+    const managed = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
+    renderer.render([{
+      ...answer('partial', ''),
+      rawMessage: {
+        role: 'assistant',
+        openclawDelivery: { mediaUrls: [first, unmatched, second] },
+        content: [
+          { type: 'text', text: `MEDIA: ${first}\nMEDIA: ${unmatched}\nMEDIA: ${second}` },
+          { type: 'attachment', attachment: { kind: 'document', label: 'report.pdf', url: managed } },
+          { type: 'attachment_error', attachment: { code: 'file-not-found', kind: 'document', label: 'report.pdf' } },
+        ],
+      },
+    }], 'thread-files');
+
+    const group = messages.querySelector('.chrome-delivery-options');
+    const cards = [...group!.querySelectorAll<HTMLButtonElement>('button.chrome-delivery-card')];
+    expect(cards.map(card => card.title)).toEqual(['report.pdf', 'report.pdf', 'report.pdf']);
+    const body = messages.querySelector('.assistant-content')?.textContent ?? '';
+    expect(body.match(/\w+\.pdf/g)).toEqual(['report.pdf', 'report.pdf', 'report.pdf', 'appendix.pdf']);
+    expect(body).not.toMatch(/file not found|attachment unavailable/i);
+    cards.forEach(card => card.click());
+    messages.querySelector<HTMLButtonElement>('button.chrome-delivery-card[title="appendix.pdf"]')!.click();
+    expect(openDelivery.mock.calls).toEqual([
+      ['thread-files', first], ['thread-files', second], ['thread-files', managed], ['thread-files', unmatched],
+    ]);
   });
 
   it('opens exact file links in message text while leaving external links, tools and code examples alone', () => {

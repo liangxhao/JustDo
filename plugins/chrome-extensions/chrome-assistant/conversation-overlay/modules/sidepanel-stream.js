@@ -110,10 +110,10 @@ function readableToolValue(value) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     const parts = value.flatMap((entry) => {
-      const record5 = asRecord2(entry);
-      if (!record5) return typeof entry === "string" ? [entry] : [];
-      if (typeof record5.text === "string") return [record5.text];
-      return record5.content === void 0 ? [] : [readableToolValue(record5.content)];
+      const record6 = asRecord2(entry);
+      if (!record6) return typeof entry === "string" ? [entry] : [];
+      if (typeof record6.text === "string") return [record6.text];
+      return record6.content === void 0 ? [] : [readableToolValue(record6.content)];
     });
     if (parts.length > 0) return parts.join("\n");
   }
@@ -150,12 +150,12 @@ function outputIndicatesToolFailure(output) {
   }
   try {
     const parsed = JSON.parse(trimmed);
-    const record5 = asRecord2(parsed);
-    if (!record5) return false;
-    if (record5.isError === true || record5.is_error === true) return true;
-    if (typeof record5.error === "string") return Boolean(record5.error.trim());
-    if (record5.error === true || record5.error && typeof record5.error === "object") return true;
-    const status = typeof record5.status === "string" ? record5.status.trim().toLowerCase() : "";
+    const record6 = asRecord2(parsed);
+    if (!record6) return false;
+    if (record6.isError === true || record6.is_error === true) return true;
+    if (typeof record6.error === "string") return Boolean(record6.error.trim());
+    if (record6.error === true || record6.error && typeof record6.error === "object") return true;
+    const status = typeof record6.status === "string" ? record6.status.trim().toLowerCase() : "";
     return status === "error" || status === "failed" || status === "timeout";
   } catch {
     return false;
@@ -534,11 +534,24 @@ var readQuestionResult = (value) => {
 };
 
 // src/renderer/libs/openclaw-chat/attachments.ts
+var IMAGE_PATH_PATTERN = /\.(?:apng|avif|bmp|gif|heic|heif|ico|jpe?g|png|svg|tiff?|webp)(?:[?#].*)?$/iu;
+function isTranscriptImage(media) {
+  const mimeType = media.mimeType?.trim().toLowerCase();
+  if (mimeType) {
+    if (mimeType.startsWith("image/")) return true;
+    if (mimeType !== "application/octet-stream" && mimeType !== "binary/octet-stream") {
+      return false;
+    }
+  }
+  const kind = media.kind?.trim().toLowerCase();
+  if (kind) return kind === "image";
+  return IMAGE_PATH_PATTERN.test(media.path);
+}
 function asRecord3(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
-function readCanonicalTranscriptMedia(record5) {
-  const metadata = asRecord3(record5.__openclaw);
+function readCanonicalTranscriptMedia(record6) {
+  const metadata = asRecord3(record6.__openclaw);
   if (!Array.isArray(metadata?.media)) return [];
   return metadata.media.map((value) => {
     const media = asRecord3(value);
@@ -563,25 +576,25 @@ function readTrimmedString(value) {
 }
 function getTranscriptMedia(message) {
   if (!message || typeof message !== "object" || Array.isArray(message)) return [];
-  const record5 = message;
-  const canonical = readCanonicalTranscriptMedia(record5);
-  const paths = readStringArray(record5.MediaPaths);
-  const urls = readStringArray(record5.MediaUrls);
-  const types = readStringArray(record5.MediaTypes);
+  const record6 = message;
+  const canonical = readCanonicalTranscriptMedia(record6);
+  const paths = readStringArray(record6.MediaPaths);
+  const urls = readStringArray(record6.MediaUrls);
+  const types = readStringArray(record6.MediaTypes);
   const count2 = Math.max(
     canonical.length,
     paths.length,
     urls.length,
     types.length,
-    record5.MediaPath || record5.MediaUrl || record5.MediaType ? 1 : 0
+    record6.MediaPath || record6.MediaUrl || record6.MediaType ? 1 : 0
   );
   return Array.from({ length: count2 }, (_, index) => {
     const fact = canonical[index];
-    const legacyPath = readTrimmedString(paths[index] ?? (index === 0 ? record5.MediaPath : null));
-    const legacyUrl = readTrimmedString(urls[index] ?? (index === 0 ? record5.MediaUrl : null));
+    const legacyPath = readTrimmedString(paths[index] ?? (index === 0 ? record6.MediaPath : null));
+    const legacyUrl = readTrimmedString(urls[index] ?? (index === 0 ? record6.MediaUrl : null));
     const path = fact?.path || legacyPath || legacyUrl;
     if (!path) return void 0;
-    const legacyType = readTrimmedString(types[index] ?? (index === 0 ? record5.MediaType : null));
+    const legacyType = readTrimmedString(types[index] ?? (index === 0 ? record6.MediaType : null));
     return {
       path,
       ...fact?.mimeType || legacyType ? { mimeType: fact?.mimeType || legacyType } : {},
@@ -663,12 +676,12 @@ function getDecodeCache(exclude) {
   }
   return cache;
 }
-function decode(string, exclude) {
+function decode(string2, exclude) {
   if (typeof exclude !== "string") {
     exclude = decode.defaultChars;
   }
   const cache = getDecodeCache(exclude);
-  return string.replace(/(%[a-f0-9]{2})+/gi, function(seq) {
+  return string2.replace(/(%[a-f0-9]{2})+/gi, function(seq) {
     let result = "";
     for (let i = 0, l = seq.length; i < l; i += 3) {
       const b1 = parseInt(seq.slice(i + 1, i + 3), 16);
@@ -749,7 +762,7 @@ function getEncodeCache(exclude) {
   }
   return cache;
 }
-function encode(string, exclude, keepEscaped) {
+function encode(string2, exclude, keepEscaped) {
   if (typeof exclude !== "string") {
     keepEscaped = exclude;
     exclude = encode.defaultChars;
@@ -759,11 +772,11 @@ function encode(string, exclude, keepEscaped) {
   }
   const cache = getEncodeCache(exclude);
   let result = "";
-  for (let i = 0, l = string.length; i < l; i++) {
-    const code2 = string.charCodeAt(i);
+  for (let i = 0, l = string2.length; i < l; i++) {
+    const code2 = string2.charCodeAt(i);
     if (keepEscaped && code2 === 37 && i + 2 < l) {
-      if (/^[0-9a-f]{2}$/i.test(string.slice(i + 1, i + 3))) {
-        result += string.slice(i, i + 3);
+      if (/^[0-9a-f]{2}$/i.test(string2.slice(i + 1, i + 3))) {
+        result += string2.slice(i, i + 3);
         i += 2;
         continue;
       }
@@ -774,9 +787,9 @@ function encode(string, exclude, keepEscaped) {
     }
     if (code2 >= 55296 && code2 <= 57343) {
       if (code2 >= 55296 && code2 <= 56319 && i + 1 < l) {
-        const nextCode = string.charCodeAt(i + 1);
+        const nextCode = string2.charCodeAt(i + 1);
         if (nextCode >= 56320 && nextCode <= 57343) {
-          result += encodeURIComponent(string[i] + string[i + 1]);
+          result += encodeURIComponent(string2[i] + string2[i + 1]);
           i++;
           continue;
         }
@@ -784,7 +797,7 @@ function encode(string, exclude, keepEscaped) {
       result += "%EF%BF%BD";
       continue;
     }
-    result += encodeURIComponent(string[i]);
+    result += encodeURIComponent(string2[i]);
   }
   return result;
 }
@@ -2174,12 +2187,12 @@ Ruler.prototype.push = function(ruleName, fn, options) {
   });
   this.__cache__ = null;
 };
-Ruler.prototype.enable = function(list2, ignoreInvalid) {
-  if (!Array.isArray(list2)) {
-    list2 = [list2];
+Ruler.prototype.enable = function(list3, ignoreInvalid) {
+  if (!Array.isArray(list3)) {
+    list3 = [list3];
   }
   const result = [];
-  list2.forEach(function(name2) {
+  list3.forEach(function(name2) {
     const idx = this.__find__(name2);
     if (idx < 0) {
       if (ignoreInvalid) {
@@ -2193,21 +2206,21 @@ Ruler.prototype.enable = function(list2, ignoreInvalid) {
   this.__cache__ = null;
   return result;
 };
-Ruler.prototype.enableOnly = function(list2, ignoreInvalid) {
-  if (!Array.isArray(list2)) {
-    list2 = [list2];
+Ruler.prototype.enableOnly = function(list3, ignoreInvalid) {
+  if (!Array.isArray(list3)) {
+    list3 = [list3];
   }
   this.__rules__.forEach(function(rule) {
     rule.enabled = false;
   });
-  this.enable(list2, ignoreInvalid);
+  this.enable(list3, ignoreInvalid);
 };
-Ruler.prototype.disable = function(list2, ignoreInvalid) {
-  if (!Array.isArray(list2)) {
-    list2 = [list2];
+Ruler.prototype.disable = function(list3, ignoreInvalid) {
+  if (!Array.isArray(list3)) {
+    list3 = [list3];
   }
   const result = [];
-  list2.forEach(function(name2) {
+  list3.forEach(function(name2) {
     const idx = this.__find__(name2);
     if (idx < 0) {
       if (ignoreInvalid) {
@@ -5529,15 +5542,15 @@ LinkifyIt.prototype.matchAtStart = function matchAtStart(text3) {
   this.__compiled__[match2.schema].normalize(match2, this);
   return match2;
 };
-LinkifyIt.prototype.tlds = function tlds(list2, keepOld) {
-  list2 = Array.isArray(list2) ? list2 : [list2];
+LinkifyIt.prototype.tlds = function tlds(list3, keepOld) {
+  list3 = Array.isArray(list3) ? list3 : [list3];
   if (!keepOld) {
-    this.__tlds__ = list2.slice();
+    this.__tlds__ = list3.slice();
     this.__tlds_replaced__ = true;
     compile(this);
     return this;
   }
-  this.__tlds__ = this.__tlds__.concat(list2).sort().filter(function(el, idx, arr) {
+  this.__tlds__ = this.__tlds__.concat(list3).sort().filter(function(el, idx, arr) {
     return el !== arr[idx - 1];
   }).reverse();
   compile(this);
@@ -5599,14 +5612,14 @@ function mapDomain(domain, callback) {
   const encoded = map(labels, callback).join(".");
   return result + encoded;
 }
-function ucs2decode(string) {
+function ucs2decode(string2) {
   const output = [];
   let counter = 0;
-  const length = string.length;
+  const length = string2.length;
   while (counter < length) {
-    const value = string.charCodeAt(counter++);
+    const value = string2.charCodeAt(counter++);
     if (value >= 55296 && value <= 56319 && counter < length) {
-      const extra = string.charCodeAt(counter++);
+      const extra = string2.charCodeAt(counter++);
       if ((extra & 64512) == 56320) {
         output.push(((value & 1023) << 10) + (extra & 1023) + 65536);
       } else {
@@ -5755,13 +5768,13 @@ var encode2 = function(input) {
   return output.join("");
 };
 var toUnicode = function(input) {
-  return mapDomain(input, function(string) {
-    return regexPunycode.test(string) ? decode2(string.slice(4).toLowerCase()) : string;
+  return mapDomain(input, function(string2) {
+    return regexPunycode.test(string2) ? decode2(string2.slice(4).toLowerCase()) : string2;
   });
 };
 var toASCII = function(input) {
-  return mapDomain(input, function(string) {
-    return regexNonASCII.test(string) ? "xn--" + encode2(string) : string;
+  return mapDomain(input, function(string2) {
+    return regexNonASCII.test(string2) ? "xn--" + encode2(string2) : string2;
   });
 };
 var punycode = {
@@ -6057,16 +6070,16 @@ MarkdownIt.prototype.configure = function(presets) {
   }
   return this;
 };
-MarkdownIt.prototype.enable = function(list2, ignoreInvalid) {
+MarkdownIt.prototype.enable = function(list3, ignoreInvalid) {
   let result = [];
-  if (!Array.isArray(list2)) {
-    list2 = [list2];
+  if (!Array.isArray(list3)) {
+    list3 = [list3];
   }
   ["core", "block", "inline"].forEach(function(chain) {
-    result = result.concat(this[chain].ruler.enable(list2, true));
+    result = result.concat(this[chain].ruler.enable(list3, true));
   }, this);
-  result = result.concat(this.inline.ruler2.enable(list2, true));
-  const missed = list2.filter(function(name2) {
+  result = result.concat(this.inline.ruler2.enable(list3, true));
+  const missed = list3.filter(function(name2) {
     return result.indexOf(name2) < 0;
   });
   if (missed.length && !ignoreInvalid) {
@@ -6074,16 +6087,16 @@ MarkdownIt.prototype.enable = function(list2, ignoreInvalid) {
   }
   return this;
 };
-MarkdownIt.prototype.disable = function(list2, ignoreInvalid) {
+MarkdownIt.prototype.disable = function(list3, ignoreInvalid) {
   let result = [];
-  if (!Array.isArray(list2)) {
-    list2 = [list2];
+  if (!Array.isArray(list3)) {
+    list3 = [list3];
   }
   ["core", "block", "inline"].forEach(function(chain) {
-    result = result.concat(this[chain].ruler.disable(list2, true));
+    result = result.concat(this[chain].ruler.disable(list3, true));
   }, this);
-  result = result.concat(this.inline.ruler2.disable(list2, true));
-  const missed = list2.filter(function(name2) {
+  result = result.concat(this.inline.ruler2.disable(list3, true));
+  const missed = list3.filter(function(name2) {
     return result.indexOf(name2) < 0;
   });
   if (missed.length && !ignoreInvalid) {
@@ -6393,6 +6406,22 @@ function partitionTaggedReasoning(source) {
 }
 
 // src/shared/openclaw/mediaDirectives.ts
+function filterMediaDirectiveLines(text3, remove) {
+  let fence2 = "";
+  return text3.split(/\r?\n/u).filter((line) => {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/u.exec(line);
+    if (marker) {
+      if (!fence2) fence2 = marker[1];
+      else if (marker[1][0] === fence2[0] && marker[1].length >= fence2.length && !marker[2].trim()) {
+        fence2 = "";
+      }
+      return true;
+    }
+    if (fence2) return true;
+    const source = /^ {0,3}(?:(?:-|\d+\.)[\t ]+)?MEDIA[\t ]*:[\t ]*(.+)$/iu.exec(line)?.[1].trim();
+    return !source || !remove(source);
+  }).join("\n");
+}
 function splitMediaFromOutput(text3) {
   if (!text3) return { text: "" };
   let audioAsVoice = false;
@@ -6605,9 +6634,9 @@ function asToolRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function unwrapToolMessage(value) {
-  const record5 = asToolRecord(value);
-  if (!record5) return null;
-  return asToolRecord(record5.message) ?? record5;
+  const record6 = asToolRecord(value);
+  if (!record6) return null;
+  return asToolRecord(record6.message) ?? record6;
 }
 
 // src/renderer/libs/openclaw-chat/model/tools/tool-presentation.ts
@@ -7735,11 +7764,11 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
 function extractMessageText(message) {
   if (typeof message === "string") return message;
   if (!message || typeof message !== "object" || Array.isArray(message)) return "";
-  const record5 = message;
-  if (typeof record5.text === "string") return record5.text;
-  if (typeof record5.content === "string") return record5.content;
-  if (!Array.isArray(record5.content)) return "";
-  return record5.content.map((block2) => {
+  const record6 = message;
+  if (typeof record6.text === "string") return record6.text;
+  if (typeof record6.content === "string") return record6.content;
+  if (!Array.isArray(record6.content)) return "";
+  return record6.content.map((block2) => {
     if (!block2 || typeof block2 !== "object" || Array.isArray(block2)) return "";
     const value = block2;
     return typeof value.text === "string" ? value.text : "";
@@ -8223,6 +8252,36 @@ function readTerminalDecision(data) {
   return action === "commit" || action === "rollback";
 }
 
+// src/shared/openclaw/assistantDeliverables.ts
+function parseUrl(value) {
+  try {
+    return new URL(value);
+  } catch {
+    return void 0;
+  }
+}
+function unwrapAssistantDeliverableSource(source) {
+  if (/^(?:"[^"]+"|'[^']+'|<[^<>]+>)$/u.test(source)) return source.slice(1, -1);
+  return source;
+}
+function isLocalAssistantDeliverableSource(raw) {
+  const source = unwrapAssistantDeliverableSource(raw);
+  if (!source || /^[\\/]{2}/u.test(source) || /[\x00-\x1f\x7f]/u.test(source) || source.startsWith("/api/chat/media/")) return false;
+  if (/^(?:file|localfile):/iu.test(source)) {
+    const url = parseUrl(source);
+    return !!url && (!url.hostname || url.hostname === "localhost");
+  }
+  return /^[a-z]:[\\/]/iu.test(source) || !/^[a-z][\w+.-]*:/iu.test(source);
+}
+
+// src/shared/chrome/chromeExtensionDeliverables.ts
+var record2 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+var list2 = (value) => Array.isArray(value) ? value : [];
+var string = (value) => typeof value === "string" ? value.trim() : "";
+function getChromeDeliveryMediaUrls(message) {
+  return [...new Set(list2(record2(record2(message)?.openclawDelivery)?.mediaUrls).map(string).filter(Boolean))];
+}
+
 // src/shared/openclaw/runFailureDisplay.ts
 var FAILED_RUN_MESSAGE_FLAG = "__justdoFailedRunMessage";
 var FAILED_RUN_MESSAGE_ID = "__justdoFailedRunMessageId";
@@ -8340,7 +8399,7 @@ var attributes = /* @__PURE__ */ new Set([
   "data-cy",
   "class"
 ]);
-function record2(v, keys, booleans) {
+function record3(v, keys, booleans) {
   return Object.fromEntries(
     Object.entries(object(v) ?? {}).filter(
       ([key, value]) => keys.has(key) && (typeof value === "string" || booleans && typeof value === "boolean")
@@ -8378,8 +8437,8 @@ function parseElementDetails(value) {
       ] : [];
     });
   if (v.attributes)
-    result.attributes = record2(v.attributes, attributes, false);
-  if (v.state) result.state = record2(v.state, states, true);
+    result.attributes = record3(v.attributes, attributes, false);
+  if (v.state) result.state = record3(v.state, states, true);
   if (Array.isArray(v.context))
     result.context = array(v.context, 3).flatMap((item) => {
       const c = object(item);
@@ -8436,7 +8495,7 @@ function parseInteraction(value) {
   if (observed)
     result.observed = {
       ...typeof observed.url === "string" ? { url: text2(observed.url, 800) } : {},
-      ...observed.state ? { state: record2(observed.state, states, true) } : {},
+      ...observed.state ? { state: record3(observed.state, states, true) } : {},
       ...Array.isArray(observed.messages) ? { messages: array(observed.messages, 5).map((item) => text2(item)) } : {}
     };
   return result;
@@ -8697,14 +8756,14 @@ var BROWSER_DISPLAY_LENGTH_PREFIX = "display-metadata-length:";
 var boundedDisplayString = (value, maxLength) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, maxLength) : "";
 var parseDisplayRect = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record5 = value;
-  const values = [record5.x, record5.y, record5.width, record5.height];
+  const record6 = value;
+  const values = [record6.x, record6.y, record6.width, record6.height];
   if (!values.every((item) => typeof item === "number" && Number.isFinite(item))) return null;
   return {
-    x: Math.max(-1e5, Math.min(1e5, record5.x)),
-    y: Math.max(-1e5, Math.min(1e5, record5.y)),
-    width: Math.max(0, Math.min(1e5, record5.width)),
-    height: Math.max(0, Math.min(1e5, record5.height))
+    x: Math.max(-1e5, Math.min(1e5, record6.x)),
+    y: Math.max(-1e5, Math.min(1e5, record6.y)),
+    width: Math.max(0, Math.min(1e5, record6.width)),
+    height: Math.max(0, Math.min(1e5, record6.height))
   };
 };
 var parseDisplayAnnotations = (value) => {
@@ -8713,8 +8772,8 @@ var parseDisplayAnnotations = (value) => {
     if (!Array.isArray(parsed)) return [];
     return parsed.slice(0, 4).flatMap((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-      const record5 = item;
-      const elementRecord = record5.element && typeof record5.element === "object" && !Array.isArray(record5.element) ? record5.element : null;
+      const record6 = item;
+      const elementRecord = record6.element && typeof record6.element === "object" && !Array.isArray(record6.element) ? record6.element : null;
       const rect = elementRecord ? parseDisplayRect(elementRecord.rect) : null;
       const element = elementRecord && rect ? {
         tag: boundedDisplayString(elementRecord.tag, 40).toLowerCase(),
@@ -8727,11 +8786,11 @@ var parseDisplayAnnotations = (value) => {
       } : void 0;
       return [
         {
-          id: boundedDisplayString(record5.id, 80),
-          title: boundedDisplayString(record5.title, 120),
-          displayUrl: boundedDisplayString(record5.displayUrl, 300),
-          markedRegionCount: typeof record5.markedRegionCount === "number" && Number.isFinite(record5.markedRegionCount) ? Math.max(0, Math.min(8, Math.floor(record5.markedRegionCount))) : 0,
-          ...boundedDisplayString(record5.comment, 2e3) ? { comment: boundedDisplayString(record5.comment, 2e3) } : {},
+          id: boundedDisplayString(record6.id, 80),
+          title: boundedDisplayString(record6.title, 120),
+          displayUrl: boundedDisplayString(record6.displayUrl, 300),
+          markedRegionCount: typeof record6.markedRegionCount === "number" && Number.isFinite(record6.markedRegionCount) ? Math.max(0, Math.min(8, Math.floor(record6.markedRegionCount))) : 0,
+          ...boundedDisplayString(record6.comment, 2e3) ? { comment: boundedDisplayString(record6.comment, 2e3) } : {},
           ...element?.tag ? { element } : {}
         }
       ];
@@ -8896,28 +8955,6 @@ function parseCoworkSessionKey(sessionKey) {
   return agentId && sessionId ? { agentId, sessionId } : null;
 }
 
-// src/shared/openclaw/assistantDeliverables.ts
-function parseUrl(value) {
-  try {
-    return new URL(value);
-  } catch {
-    return void 0;
-  }
-}
-function unwrapAssistantDeliverableSource(source) {
-  if (/^(?:"[^"]+"|'[^']+'|<[^<>]+>)$/u.test(source)) return source.slice(1, -1);
-  return source;
-}
-function isLocalAssistantDeliverableSource(raw) {
-  const source = unwrapAssistantDeliverableSource(raw);
-  if (!source || /^[\\/]{2}/u.test(source) || /[\x00-\x1f\x7f]/u.test(source) || source.startsWith("/api/chat/media/")) return false;
-  if (/^(?:file|localfile):/iu.test(source)) {
-    const url = parseUrl(source);
-    return !!url && (!url.hostname || url.hostname === "localhost");
-  }
-  return /^[a-z]:[\\/]/iu.test(source) || !/^[a-z][\w+.-]*:/iu.test(source);
-}
-
 // src/renderer/app/shell/startup/initialization/startupLanguage.ts
 async function resolveStartupLanguage(readLocale) {
   const fallback = () => navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
@@ -9080,12 +9117,12 @@ var isLocalTtsVoiceId = (modelId, value) => typeof value === "number" && Number.
 var MAX_TRANSCRIPTION_AUDIO_BYTES = 25 * 1024 * 1024;
 
 // src/shared/speech/onlineSpeechModels.ts
-var record3 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
+var record4 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
 var boundedText = (value, limit = 256) => typeof value === "string" && Boolean(value.trim()) && value.length <= limit && !/[\u0000-\u001f\u007f]/.test(value);
 var normalizeOnlineSpeechVoiceSelection = (value, legacyVoice) => {
   if (value === void 0)
     return boundedText(legacyVoice) ? { kind: "preset", voiceId: legacyVoice.trim() } : null;
-  const input = record3(value);
+  const input = record4(value);
   if (!input) return null;
   if (input.kind === "preset" && boundedText(input.voiceId) && Object.keys(input).length === 2)
     return { kind: "preset", voiceId: input.voiceId.trim() };
@@ -15141,8 +15178,6 @@ var scheduledTaskTranslations = {
     cronGroupSystemDescription: "\u7531\u7CFB\u7EDF\u529F\u80FD\u81EA\u52A8\u7EF4\u62A4\uFF0C\u7528\u4E8E\u4FDD\u969C\u6838\u5FC3\u80FD\u529B\u6B63\u5E38\u8FD0\u884C",
     cronSearchPlaceholder: "\u641C\u7D22\u4EFB\u52A1\u540D\u79F0\u6216\u5185\u5BB9",
     cronFilterAll: "\u5168\u90E8",
-    cronFailedAttention: "\u6709 {count} \u4E2A\u4EFB\u52A1\u6700\u8FD1\u8FD0\u884C\u5931\u8D25\uFF0C\u9700\u8981\u68C0\u67E5",
-    cronViewFailed: "\u67E5\u770B\u5931\u8D25",
     cronNoMatches: "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u4EFB\u52A1",
     cronClearFilters: "\u6E05\u9664\u7B5B\u9009",
     cronCardRunNow: "\u7ACB\u5373\u8FD0\u884C",
@@ -15499,8 +15534,6 @@ var scheduledTaskTranslations = {
     cronGroupSystemDescription: "Maintained automatically to support core features",
     cronSearchPlaceholder: "Search task name or content",
     cronFilterAll: "All",
-    cronFailedAttention: "{count} tasks failed recently and need attention",
-    cronViewFailed: "View failed",
     cronNoMatches: "No tasks match these filters",
     cronClearFilters: "Clear filters",
     cronCardRunNow: "Run Now",
@@ -20741,6 +20774,13 @@ var isTruncatedHistoryMessage = (message) => {
 };
 
 // src/renderer/chrome/chat/chrome-extension-display.ts
+function isOmittedChromeDeliveryText(entry) {
+  const raw = entry.rawMessage;
+  if (raw?.__chromeExtensionOmitDeliveryMedia !== true) return false;
+  if (Array.isArray(raw.content) && raw.content.some((block2) => block2?.type !== "text")) return false;
+  const references = new Set(getChromeDeliveryMediaUrls(raw).map(unwrapAssistantDeliverableSource));
+  return references.size > 0 && !filterMediaDirectiveLines(entry.text, (source) => references.has(unwrapAssistantDeliverableSource(source))).trim() && !getTranscriptMedia(raw).some((media) => isTranscriptImage(media) && !references.has(unwrapAssistantDeliverableSource(media.path)));
+}
 function hidden(text3) {
   const trimmed = text3.trim();
   return Boolean(trimmed) && ("NO_REPLY".startsWith(trimmed.toUpperCase()) || stripHeartbeatTokenForDisplay(trimmed).shouldSkip);
@@ -20814,23 +20854,23 @@ function readScalar(value) {
   return null;
 }
 function readTranscriptIdentity(message) {
-  const record5 = asRecord7(message);
-  if (!record5) return null;
-  const interruptedOverlayId = readScalar(record5.__justdoInterruptedOverlayId);
+  const record6 = asRecord7(message);
+  if (!record6) return null;
+  const interruptedOverlayId = readScalar(record6.__justdoInterruptedOverlayId);
   if (interruptedOverlayId) {
     return { kind: "durable-id", value: `interrupted:${interruptedOverlayId}` };
   }
-  const failedRunMessageId = readScalar(record5[FAILED_RUN_MESSAGE_ID]);
+  const failedRunMessageId = readScalar(record6[FAILED_RUN_MESSAGE_ID]);
   if (failedRunMessageId) {
     return { kind: "durable-id", value: `failed-run:${failedRunMessageId}` };
   }
-  const marker = asRecord7(record5.__openclaw);
+  const marker = asRecord7(record6.__openclaw);
   const openClawId = readScalar(marker?.id);
   if (openClawId) return { kind: "openclaw-id", value: openClawId };
   const openClawSeq = readScalar(marker?.seq);
   if (openClawSeq) return { kind: "openclaw-seq", value: openClawSeq };
   for (const key of ["entryId", "messageId", "id", "seq"]) {
-    const value = readScalar(record5[key]);
+    const value = readScalar(record6[key]);
     if (value) return { kind: "durable-id", value: `${key}:${value}` };
   }
   return null;
@@ -20841,17 +20881,17 @@ function asRecord8(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function readActiveTurnMessageRunId(message) {
-  const record5 = asRecord8(message);
-  const nested = asRecord8(record5?.message);
+  const record6 = asRecord8(message);
+  const nested = asRecord8(record6?.message);
   const nestedOpenClaw = asRecord8(nested?.__openclaw);
-  const openClaw = asRecord8(record5?.__openclaw);
+  const openClaw = asRecord8(record6?.__openclaw);
   for (const candidate of [
     nested?.runId,
     nested?.run_id,
     nestedOpenClaw?.runId,
     nestedOpenClaw?.run_id,
-    record5?.runId,
-    record5?.run_id,
+    record6?.runId,
+    record6?.run_id,
     openClaw?.runId,
     openClaw?.run_id
   ]) {
@@ -21078,7 +21118,7 @@ function foldCompletedProcessRows(rows, options = {}) {
         if (summary) row = { ...row, item: summary };
       }
       const answer = answerSources[index];
-      if (index < finalIndex && !(answer && visibleAnswerSources.has(answer.key)) && !options.keepVisibleKeys?.has(row.item.key) && canFold(row.item, options.foldUnresolvedTools)) {
+      if (index < finalIndex && !(answer && visibleAnswerSources.has(answer.key)) && !(row.item.kind === "history-message" && row.item.runReceiptId) && !options.keepVisibleKeys?.has(row.item.key) && canFold(row.item, options.foldUnresolvedTools)) {
         prefix.push(row);
       } else {
         flushPrefix();
@@ -21179,7 +21219,7 @@ function prepareVisibleTimelineRows(items, options) {
       continue;
     }
     if (role !== "assistant") continue;
-    row.showFooter = !laterAssistantMessageInTurn;
+    row.showFooter = Boolean(row.item.runReceiptId) || !laterAssistantMessageInTurn;
     laterAssistantMessageInTurn = true;
   }
   if (options?.suppressTrailingAssistantFooter) {
@@ -21188,20 +21228,21 @@ function prepareVisibleTimelineRows(items, options) {
       if (row.item.kind !== "history-message") continue;
       const role = historyMessageRole(row.item);
       if (role === "user") break;
-      if (role === "assistant" || isFailedRunMessage(row.item.message)) row.showFooter = false;
+      if (!row.item.runReceiptId && (role === "assistant" || isFailedRunMessage(row.item.message)))
+        row.showFooter = false;
     }
   }
   return rows;
 }
 
 // src/renderer/chrome/chat/chrome-extension-timeline.ts
-function record4(value) {
+function record5(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function isChromeQuestionTool(item) {
   if (item.toolName !== ASK_USER_QUESTION_TOOL_NAME) return false;
   if (item.status === "completed") return item.isError !== true && parseQuestionResult(item.questionResult) !== null;
-  return ["running", "inProgress", "cancelled", "interrupted", "failed"].includes(String(item.status)) && parseQuestions(record4(item.input)?.questions) !== null;
+  return ["running", "inProgress", "cancelled", "interrupted", "failed"].includes(String(item.status)) && parseQuestions(record5(item.input)?.questions) !== null;
 }
 function processStatus(value) {
   if (value === "completed") return "completed";
@@ -21233,7 +21274,7 @@ function asProcessItem(item) {
 }
 function historyMessage(entry) {
   const outer = entry.rawMessage ?? {};
-  const nested = record4(outer.message);
+  const nested = record5(outer.message);
   const source = nested ?? outer;
   const display = entry.display;
   const message = {
@@ -21245,7 +21286,7 @@ function historyMessage(entry) {
   };
   if (entry.role === "compaction" && display?.kind) {
     message.__openclaw = {
-      ...record4(source.__openclaw),
+      ...record5(source.__openclaw),
       kind: display.kind,
       ...display.phase ? { phase: display.phase } : {}
     };
@@ -21883,5 +21924,6 @@ export {
   ChromeExtensionStream,
   foldChromeExtensionEntries,
   isChromeQuestionTool,
+  isOmittedChromeDeliveryText,
   isPresentPlanToolName
 };

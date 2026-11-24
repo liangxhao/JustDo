@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { getChromeAssistantDeliverables, getChromeDeliveryMediaUrls } from '../../shared/chrome/chromeExtensionDeliverables';
 import type { ChromeExtensionMessageDisplay } from '../../shared/chrome/chromeExtensionDisplay';
 import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExtensionStream';
 import { parseCoworkAttachments } from '../../shared/cowork/attachments';
@@ -15,7 +16,7 @@ import type { SessionRunTiming } from '../../shared/cowork/sessionRun';
 import { CoworkSessionSource } from '../../shared/cowork/sessionSource';
 import { SessionWorkspaceFailure, type SetSessionWorkspaceInput } from '../../shared/cowork/sessionWorkspace';
 import { normalizeAgentEvent, normalizeChatEvent } from '../../shared/openclaw/agentEvent';
-import { getAssistantDeliverables, unwrapAssistantDeliverableSource } from '../../shared/openclaw/assistantDeliverables';
+import { unwrapAssistantDeliverableSource } from '../../shared/openclaw/assistantDeliverables';
 import type {
   OpenClawAssistantMediaRequest,
   OpenClawAssistantMediaResult,
@@ -254,6 +255,10 @@ const projectRichHistory = (
     if (text) entries.push({ role: 'assistant', text, display: presentation.display });
   }
   if (!isRecord(message) || !['user', 'assistant'].includes(String(message.role))) return entries;
+  if (Array.isArray(message.content) && message.content.length > 0 &&
+      message.content.every(block => isRecord(block) && block.type === 'attachment_error')) {
+    return entries;
+  }
   const content = Array.isArray(message.content)
     ? message.content.filter(
         block =>
@@ -285,16 +290,7 @@ const projectRichHistory = (
   );
   if (isRecord(message.__openclaw) && Array.isArray(message.__openclaw.media))
     media.__openclaw = { media: message.__openclaw.media };
-  const delivery = isRecord(message.openclawDelivery) ? message.openclawDelivery : null;
-  const mediaUrls = Array.isArray(delivery?.mediaUrls)
-    ? [
-        ...new Set(
-          delivery.mediaUrls.flatMap(value =>
-            typeof value === 'string' && value.trim() ? [value.trim()] : [],
-          ),
-        ),
-      ]
-    : [];
+  const mediaUrls = getChromeDeliveryMediaUrls(message);
   if (mediaUrls.length) media.openclawDelivery = { mediaUrls };
   // A thinking/tool-only block must not gain an empty content bubble merely
   // because the original message carries a delivery at its end.
@@ -374,22 +370,23 @@ const extractChromeExtensionHistoryEntries = (messages: unknown[]): ExtensionHis
       // The general chat projector intentionally coalesces assistant text/thinking
       // and appends embedded tools. The extension process timeline instead needs
       // the original content-block order and one countable entry per block.
-      const delivery = isRecord(message.openclawDelivery) ? message.openclawDelivery : null;
-      const originalSources = Array.isArray(delivery?.mediaUrls)
-        ? delivery.mediaUrls.filter(value => typeof value === 'string' && value.trim()) : [];
-      const hasDelivery = originalSources.length > 0;
-      const deliverables = hasDelivery ? getAssistantDeliverables(message) : [];
+      const originalSources = getChromeDeliveryMediaUrls(message);
+      const deliverables = getChromeAssistantDeliverables(message);
+      const hasDelivery = deliverables.length > 0;
       const deliveredSources = new Set(deliverables.map(deliverable => deliverable.source));
       // Earlier text can still mention the original MEDIA aliases. Keep both
       // forms out of those segments so only the final delivery row shows files.
-      const omittedDelivery = hasDelivery
-        ? { openclawDelivery: { mediaUrls: [...new Set([...originalSources, ...deliveredSources])] } }
-        : {};
+      const omittedSources = [...new Set([...originalSources, ...deliveredSources])];
+      const omittedReferences = new Set(omittedSources.map(unwrapAssistantDeliverableSource));
+      const omittedDelivery = hasDelivery ? { openclawDelivery: { mediaUrls: omittedSources } } : {};
       const entries = message.content.flatMap((block, index) => {
+        // Keep original text blocks for the live/history reconciliation. The
+        // side panel hides a text row whose media are rendered in the footer.
         if (hasDelivery && isRecord(block) &&
             ['attachment', 'audio', 'video', 'file', 'image'].includes(String(block.type)) &&
-            getAssistantDeliverables({ role: 'assistant', content: [block] }).some(item => deliveredSources.has(item.source)))
-          return [];
+            getChromeAssistantDeliverables({ role: 'assistant', content: [block] }).some(
+              item => omittedReferences.has(unwrapAssistantDeliverableSource(item.source)),
+            )) return [];
         return withSource(
           projectRichHistory(
             {
@@ -986,7 +983,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     await verifyNative();
     const delivery = messages.flatMap(message =>
       message.role === 'assistant'
-        ? getAssistantDeliverables(message.rawMessage ?? { role: message.role, text: message.text })
+        ? getChromeAssistantDeliverables(message.rawMessage ?? { role: message.role, text: message.text })
         : [],
     ).find(candidate => candidate.source === source);
     if (!delivery) throw new Error('Delivery is not referenced in this conversation.');

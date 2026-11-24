@@ -34,3 +34,18 @@ export function renderMessageFileIcon(fileName: string): TemplateResult {
     </span>
   `;
 }
+
+export function renderAttachmentActionIcon(managed: boolean): TemplateResult {
+  return html`<svg
+    viewBox="0 0 24 24"
+    width="14"
+    height="14"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <path d=${managed ? 'M12 3v12m-5-5 5 5 5-5M5 17v4h14v-4' : 'M7 17 17 7M7 7h10v10'}></path>
+  </svg>`;
+}

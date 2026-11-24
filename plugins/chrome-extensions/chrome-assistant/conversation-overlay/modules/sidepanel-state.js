@@ -1,5 +1,5 @@
 import { sidePanelText as t } from './sidepanel-i18n.js';
-import { foldChromeExtensionEntries, isChromeQuestionTool, isPresentPlanToolName } from './sidepanel-stream.js';
+import { foldChromeExtensionEntries, isChromeQuestionTool, isOmittedChromeDeliveryText, isPresentPlanToolName } from './sidepanel-stream.js';
 
 const TOOL_TITLES = {
   api: 'API',
@@ -280,6 +280,7 @@ export function messagesFromThread(thread, options = {}) {
             ...(item.display ? { display: item.display } : {}),
           });
       } else if (item.type === 'agentMessage' && typeof item.text === 'string') {
+        if (isOmittedChromeDeliveryText(item)) continue;
         flushProcesses();
         entries.push({
           role: 'assistant',

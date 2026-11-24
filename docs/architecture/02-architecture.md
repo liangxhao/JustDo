@@ -113,6 +113,8 @@ Main 的 `core/` 分为 app、window、network、runtime、filesystem、developm
 其中 `chat/` 管理侧栏流、活动、显示、时间线和富内容适配，`questions/` 管理问答
 挂载与专属样式；测试随实现维护。通用聊天归约、过程折叠和展示组件继续由
 `libs/openclaw-chat/` 提供，构建脚本在 `scripts/chrome/` 组装为扩展的离线模块。
+侧栏和 Main 共同使用的 Chrome 附件解析与选择规则归 `src/shared/chrome/`，
+本地附件引用的通用校验由桌面和 Chrome 共享。
 扩展包不能反向导入应用 `src`。
 
 桌面上的扩展安装说明、版本、配对和连接测试属于桌面设置功能，继续位于
