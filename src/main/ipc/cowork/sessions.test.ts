@@ -1,3 +1,5 @@
+import os from 'node:os';
+
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { appendBehaviorPluginPrompt, type BehaviorResourceParticipant, behaviorSessionParticipants, type BehaviorSubmissionParticipant } from '../../../../tests/plugins/host/mainBehaviorParticipants';
@@ -221,9 +223,13 @@ test.each(['copy', 'fork'] as const)('%s verifies only the source conversation a
   expect(requestGateway).not.toHaveBeenCalled();
 });
 
-test.each(['present', 'missing', 'removed-during-defaults', 'database-error'])(
+test.each(['present', 'missing-workspace', 'missing', 'removed-during-defaults', 'database-error'])(
   'returns an explicit product session lookup result for %s', async kind => {
-    const session = { id: 'selected', historyBinding: { sessionKey: 'native-key' } };
+    const session = {
+      id: 'selected',
+      cwd: kind === 'missing-workspace' ? process.execPath : os.tmpdir(),
+      historyBinding: { sessionKey: 'native-key' },
+    };
     const getSession = vi.fn().mockReturnValue(kind === 'missing' ? null : session);
     if (kind === 'removed-during-defaults') getSession.mockReturnValueOnce(session).mockReturnValue(null);
     if (kind === 'database-error') getSession.mockImplementation(() => { throw new Error('Database read failed'); });
@@ -234,8 +240,20 @@ test.each(['present', 'missing', 'removed-during-defaults', 'database-error'])(
       setSessionPermissionMode: vi.fn(),
     });
     const read = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:get')![1] as IpcHandler;
-    await expect(read(null, 'selected')).resolves.toEqual(kind === 'present' ? { success: true, session }
-      : { success: false, error: kind === 'database-error' ? 'Database read failed' : 'Session not found.' });
+    if (kind === 'present' || kind === 'missing-workspace') {
+      await expect(read(null, 'selected')).resolves.toEqual({
+        success: true,
+        session: {
+          ...session,
+          historyBinding: { ...session.historyBinding, workspaceUnavailable: kind === 'missing-workspace' },
+        },
+      });
+    } else {
+      await expect(read(null, 'selected')).resolves.toEqual({
+        success: false,
+        error: kind === 'database-error' ? 'Database read failed' : 'Session not found.',
+      });
+    }
   },
 );
 

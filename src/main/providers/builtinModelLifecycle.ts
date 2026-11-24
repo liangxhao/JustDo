@@ -24,14 +24,24 @@ type BuiltinModelLifecycleDependencies = {
   syncOpenClawConfig: (options: { reason: string }) => Promise<OpenClawConfigSyncResult>;
   notifyCatalogChanged: () => void;
   notifyRuntimeModelsChanged: () => void;
+  scheduleCatalogRetry?: () => void;
 };
 
 export class BuiltinModelLifecycle {
   private generation = 0;
+  private catalogRetryNeeded = false;
   private configSyncQueue: Promise<void> = Promise.resolve();
   private logoutCatalog: Promise<void> | null = null;
 
   constructor(private readonly dependencies: BuiltinModelLifecycleDependencies) {}
+
+  loadStartupCatalog(access: BuiltinModelAccess): Promise<void> {
+    return this.syncCatalog(access, ++this.generation);
+  }
+
+  needsCatalogRetry(): boolean {
+    return this.catalogRetryNeeded;
+  }
 
   refreshAfterLogin(): Promise<void> {
     return this.refresh(BuiltinModelAccess.Enabled, BuiltinModelSyncReason.AuthLogin);
@@ -56,7 +66,7 @@ export class BuiltinModelLifecycle {
     reason: string,
   ): Promise<void> {
     const generation = ++this.generation;
-    const catalog = syncBuiltinModelProvider(this.dependencies.getStore(), { access });
+    const catalog = this.syncCatalog(access, generation);
     if (access === BuiltinModelAccess.Disabled) this.logoutCatalog = catalog;
     await catalog;
     if (this.logoutCatalog === catalog) this.logoutCatalog = null;
@@ -65,6 +75,13 @@ export class BuiltinModelLifecycle {
     }
     this.dependencies.notifyCatalogChanged();
     await this.applyConfig(generation, reason);
+  }
+
+  private async syncCatalog(access: BuiltinModelAccess, generation: number): Promise<void> {
+    const retryNeeded = await syncBuiltinModelProvider(this.dependencies.getStore(), { access });
+    if (generation !== this.generation) return;
+    this.catalogRetryNeeded = retryNeeded;
+    if (retryNeeded) this.dependencies.scheduleCatalogRetry?.();
   }
 
   private async applyConfig(

@@ -2178,7 +2178,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.plugins.entries['embedded-browser']).toEqual({ enabled: false });
   });
 
-  test('preserves discoverable custom plugins while removing stale registrations', () => {
+  test('preserves discoverable custom plugins while removing stale registrations', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-plugin-inventory-'));
     temporaryDirectories.push(directory);
     const configPath = path.join(directory, 'openclaw.json');
@@ -2236,10 +2236,27 @@ describe('OpenClaw auth logout config sync', () => {
     existing.plugins.deny = ['removed-plugin'];
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
 
-    expect(
-      writeMinimalConfig(configPath, 'cowork-config-change', 'ask', BrowserMode.Isolated, agents)
-        .ok,
-    ).toBe(true);
+    setStoreGetter(() => ({ get: () => ({}) }) as never);
+    const sync = new OpenClawConfigSync({
+      getAppPluginDefaults: () => appNativePolicies,
+      engineManager: {
+        getConfigPath: () => configPath,
+        getStateDir: () => directory,
+        getDesiredVersion: () => '2026.6.11',
+      },
+      getCoworkConfig: () => ({
+        workingDirectory: path.join(directory, 'workspace'),
+        executionMode: 'local',
+        agentEngine: 'openclaw',
+        permissionMode: 'ask',
+      }),
+      getBrowserMode: () => BrowserMode.Isolated,
+      getAgents: () => agents.map(agent => ({ ...agent, model: '' })),
+    } as never);
+    const workspaceInventory = await sync.prepareWorkspaceExtensionInventory();
+    expect(sync.sync('cowork-config-change', new Set(), new Set(), {
+      workspaceInventory,
+    }).ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.plugins.load).toEqual({ paths: [externalPluginDir] });
     expect(config.plugins.entries['external-plugin']).toEqual({ enabled: false });
@@ -3453,6 +3470,17 @@ test.each(['full', 'minimal'])(
       expect(config.plugins.entries.openai.enabled).toBe(true);
       expect(JSON.stringify(config)).not.toContain('isolated-video-key');
     }
+    const before = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(sync.sync('cowork-config-change', new Set(), new Set(), {
+      workspaceInventory: { workspace: new Map(), configured: new Map() },
+    }).ok).toBe(true);
+    const withIncompleteInventory = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(withIncompleteInventory.agents.defaults.mediaModels.video).toEqual(
+      before.agents.defaults.mediaModels.video,
+    );
+    expect(withIncompleteInventory.models.providers['video-openai']).toEqual(
+      before.models.providers['video-openai'],
+    );
     category = {
       defaultProviderId: undefined,
       providers: (category as { providers: unknown }).providers,

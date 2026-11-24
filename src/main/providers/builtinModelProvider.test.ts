@@ -3,11 +3,15 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { startLocalModelServer } from '../../../tests/fixtures/localModelServer';
 import { mainProcessFetch } from '../core/network/mainProcessFetch';
 import type { SqliteStore } from '../data/sqliteStore';
+import { BuiltinModelAuthCoordinator } from './builtinModelAuthCoordinator';
 import {
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
+  setActiveBuiltinModelDevelopmentApiKey,
 } from './builtinModelCredential';
+import { BuiltinModelCredentialMonitor } from './builtinModelCredentialMonitor';
+import { BuiltinModelLifecycle } from './builtinModelLifecycle';
 import { BuiltinModelAccess, syncBuiltinModelProvider } from './builtinModelProvider';
 
 const testProviderConfig = vi.hoisted(() => ({ enabled: true, baseUrl: 'http://127.0.0.1:1/v1' }));
@@ -172,6 +176,88 @@ describe('syncBuiltinModelProvider', () => {
       models: [],
       embeddingModels: [],
     });
+  });
+
+  test.each([
+    { error: 'not a directory' },
+    { data: [{ id: 'unrelated' }, { name: 'missing id' }] },
+  ])('retains the last catalog when required discovery returns an invalid list', async payload => {
+    const model = { defaultModel: 'selected', defaultModelProvider: 'builtin_models' };
+    const builtin = {
+      apiKey: '',
+      enabled: true,
+      baseUrl: testProviderConfig.baseUrl,
+      models: [{ id: 'selected', name: 'Selected', enabled: true }],
+      embeddingModels: [{ id: 'embedding', name: 'Embedding' }],
+    };
+    const set = vi.fn();
+    const store = { get: () => ({ model, providers: { builtin_models: builtin } }), set } as unknown as SqliteStore;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => payload }));
+
+    const retryNeeded = await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+    expect(set.mock.calls[0][1]).toMatchObject({ model, providers: { builtin_models: builtin } });
+    expect(retryNeeded).toBe(false);
+    const [line] = vi.mocked(console.warn).mock.calls[0];
+    expect(JSON.parse(String(line).slice('[BuiltinModelAuth] '.length))).toMatchObject({
+      event: 'discovery.failed', reason: 'response-invalid-shape',
+    });
+  });
+
+  test('repairs an empty catalog after a required startup discovery failure with the same credential', async () => {
+    vi.useFakeTimers();
+    const credential = setActiveBuiltinModelDevelopmentApiKey('fixture-key')!;
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('offline at startup'))
+      .mockRejectedValueOnce(new Error('still offline'))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: 'recovered-model' }] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) });
+    vi.stubGlobal('fetch', fetchMock);
+    let config = {};
+    const store = { get: () => config, set: (_key: string, next: object) => { config = next; } } as unknown as SqliteStore;
+    const notifyCatalogChanged = vi.fn();
+    const lifecycle = new BuiltinModelLifecycle({
+      getStore: () => store,
+      syncOpenClawConfig: vi.fn(async () => ({ success: true })),
+      notifyCatalogChanged,
+      notifyRuntimeModelsChanged: vi.fn(),
+      scheduleCatalogRetry: () => monitor.scheduleCatalogRetry(),
+    });
+    const coordinator = new BuiltinModelAuthCoordinator({
+      exchange: async () => credential,
+      getActive: () => credential,
+      getAuthSessionId: () => 'session',
+      needsCatalogRetry: () => lifecycle.needsCatalogRetry(),
+      login: () => lifecycle.refreshAfterLogin(),
+      rotate: () => lifecycle.refreshAfterCredentialRotation(),
+      logout: () => lifecycle.refreshAfterLogout(),
+    });
+    const monitor = new BuiltinModelCredentialMonitor({
+      userInfoPath: 'fixture',
+      refresh: () => coordinator.refreshInBackground(),
+      needsCatalogRetry: () => lifecycle.needsCatalogRetry(),
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+    });
+    try {
+      await lifecycle.loadStartupCatalog(BuiltinModelAccess.Enabled);
+      expect(config).toMatchObject({ providers: { builtin_models: { models: [] } } });
+      coordinator.initialize(credential);
+      monitor.start(credential);
+
+      await vi.advanceTimersByTimeAsync(90_000);
+
+      expect(config).toMatchObject({
+        providers: { builtin_models: { models: [{ id: 'recovered-model' }] } },
+      });
+      expect(fetchMock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+        '/v1/models', '/v1/models', '/v1/models', '/v1/model/info',
+      ]);
+      expect(notifyCatalogChanged).toHaveBeenCalledTimes(2);
+    } finally {
+      monitor.stop();
+      vi.useRealTimers();
+    }
   });
 
   beforeEach(() => {

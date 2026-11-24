@@ -34,6 +34,7 @@ import {
   type PermissionMode,
 } from '../../../shared/security/approvals';
 import { t } from '../../core/i18n';
+import { isHistoryWorkspaceAvailable } from '../../cowork/sessions/historyWorkspace';
 import { createNativeChildSessionDiscovery } from '../../cowork/sessions/nativeChildSessionDiscovery';
 import { copyCoworkSession, forkCoworkSession, type SessionBranchOperationDependencies } from '../../cowork/sessions/sessionBranchOperations';
 import { deleteBoundNativeSession } from '../../cowork/sessions/sessionDeletion';
@@ -1200,6 +1201,14 @@ export const registerCoworkSessionHandlers = ({
       let session = store.getSession(sessionId);
       if (session?.historyBinding && store.applyHistorySessionDefaults?.(sessionId))
         session = store.getSession(sessionId);
+      if (session?.historyBinding) {
+        const { cwd } = session;
+        const workspaceUnavailable = !(await isHistoryWorkspaceAvailable(cwd));
+        session = store.getSession(sessionId);
+        if (session?.historyBinding && session.cwd === cwd) {
+          session = { ...session, historyBinding: { ...session.historyBinding, workspaceUnavailable } };
+        }
+      }
       if (!session) return { success: false, error: 'Session not found.' };
       return { success: true, session };
     } catch (error) {

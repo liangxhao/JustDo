@@ -23,12 +23,11 @@ function fixture() {
   let currentWindow = window;
   let session = {
     id: 'history',
-    cwd: path.join(os.tmpdir(), 'missing-startup-workspace'),
+    cwd: path.join(process.execPath, 'history-workspace'),
     status: 'idle',
     historyBinding: {
       sessionKey: 'agent:main:justdo:history',
       nativeSessionId: 'native-1',
-      workspaceUnavailable: true,
     },
   };
   let open = false;
@@ -85,14 +84,21 @@ test('only a selected existing directory updates a still-idle imported conversat
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-test.each(['busy', 'identity', 'window'])(
-  'a %s change during folder selection prevents a stale update',
+test.each(['busy', 'identity', 'window', 'directory-check'])(
+  'a %s change during workspace recovery prevents a stale update',
   async kind => {
     const h = fixture();
     select.mockImplementation(async () => {
       if (kind === 'busy') h.makeBusy();
       else if (kind === 'window') h.replaceWindow();
-      else h.replace();
+      else if (kind === 'identity') h.replace();
+      else {
+        vi.spyOn(fs.promises, 'stat').mockImplementationOnce(async () => {
+          await Promise.resolve();
+          h.makeBusy();
+          throw Object.assign(new Error('Workspace not found'), { code: 'ENOENT' });
+        });
+      }
       return { canceled: false, filePaths: [os.tmpdir()] };
     });
     expect((await h.call({ sessionId: 'history' })).success).toBe(false);

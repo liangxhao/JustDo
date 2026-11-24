@@ -179,6 +179,7 @@ import { projectLoggedOutOpenClawConfig } from './models/authScopedProjection';
 import { revokeBuiltinCredentialFile, syncBuiltinCredentialFile } from './models/builtinCredentialFile';
 import { containsBuiltinCredentialRef } from './models/builtinSecretProjection';
 import { restrictCredentialFile, syncProviderSecretFile } from './models/providerSecretFile';
+import { collectWorkspaceExtensionInventory, type WorkspaceExtensionInventory } from './plugins/extensionInventory';
 import { mergeNativeMcpOverrides } from './plugins/nativeMcpOverrides';
 
 export type ModelDefaultsConfigPublication = {
@@ -273,11 +274,33 @@ export class OpenClawConfigSync {
     this.getWindowsSandboxEnvironment = deps.getWindowsSandboxEnvironment ?? (() => ({}));
   }
 
+  prepareWorkspaceExtensionInventory(): Promise<WorkspaceExtensionInventory> {
+    const stateDir = this.engineManager.getStateDir();
+    let existingConfig: Record<string, unknown> = {};
+    try {
+      existingConfig = configRecord(JSON.parse(fs.readFileSync(this.engineManager.getConfigPath(), 'utf8')));
+    } catch {
+      // The projection handles configuration reads and their errors independently.
+    }
+    const projectedConfig = {
+      agents: { defaults: { workspace: resolveManagedAgentWorkspaceRoot(stateDir) } },
+    };
+    const configured = this.getCoworkConfig().workingDirectory ?? '';
+    const resolved = configured.trim() ? path.resolve(configured.trim()) : path.join(stateDir, 'workspace');
+    const agents = this.getAgents?.() ?? [];
+    const workspaceDirs = [...new Set([configured, resolved])].flatMap(mainWorkspaceDir =>
+      [existingConfig, projectedConfig].flatMap(config =>
+        listKnownOpenClawWorkspaceDirs({ stateDir, mainWorkspaceDir, agents, existingConfig: config }),
+      ),
+    );
+    return collectWorkspaceExtensionInventory(workspaceDirs, configRecord(existingConfig.plugins));
+  }
+
   sync(
     reason: string,
     extensionMcpNames: ReadonlySet<string> = new Set(),
     retiredMcpNames: ReadonlySet<string> = new Set(),
-    context?: { restoreDecisionModelSnapshot?: boolean },
+    context?: { restoreDecisionModelSnapshot?: boolean; workspaceInventory?: WorkspaceExtensionInventory },
   ): OpenClawConfigSyncResult {
     if (reason === BuiltinModelSyncReason.AuthLogout) return this.syncLoggedOutConfig();
     this.decisionSecretsChanged = false;
@@ -317,7 +340,7 @@ export class OpenClawConfigSync {
       else if (this.decisionSelection) this.decisionSelectionToRelease = this.decisionSelection;
       this.restoreDecisionSnapshotRequested = context?.restoreDecisionModelSnapshot === true;
       this.decisionSelection = selection;
-      const result = this.syncConfiguration(reason, extensionMcpNames, retiredMcpNames);
+      const result = this.syncConfiguration(reason, extensionMcpNames, retiredMcpNames, context?.workspaceInventory);
       if (!result.ok) return result;
       if (!selection) this.restoreUnmanagedDecision = undefined;
       this.decisionSelectionToRelease = undefined;
@@ -544,7 +567,12 @@ export class OpenClawConfigSync {
     };
   }
 
-  private applyManagedRuntimeConfiguration(config: Record<string, unknown>, configPath: string): void {
+  private applyManagedRuntimeConfiguration(
+    config: Record<string, unknown>,
+    configPath: string,
+    workspaceInventory: WorkspaceExtensionInventory | undefined,
+    previousConfig?: Record<string, unknown> | null,
+  ): void {
     this.nativeMcpDataReceipt = projectNativeMcpData(config, this.getNativeMcpDataBindings?.() ?? [],
       this.engineManager.getStateDir(), configPath,
       new Set(this.getMcpServers?.().map(server => server.name)));
@@ -592,7 +620,11 @@ export class OpenClawConfigSync {
         agents: this.getAgents?.() ?? [],
         existingConfig: config,
       }),
+      workspaceInventory,
     );
+    if (this.nativeVideoSelection && availableExtensionIds === null && previousConfig) {
+      captureNativeVideoConfiguration(previousConfig)(config);
+    }
     const videoSecretsChanged = applyNativeVideoConfiguration(
       config,
       this.nativeVideoSelection,
@@ -621,6 +653,7 @@ export class OpenClawConfigSync {
     reason: string,
     extensionMcpNames: ReadonlySet<string>,
     retiredMcpNames: ReadonlySet<string>,
+    workspaceInventory: WorkspaceExtensionInventory | undefined,
   ): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
     const isAuthLogin = reason === BuiltinModelSyncReason.AuthLogin;
@@ -667,7 +700,7 @@ export class OpenClawConfigSync {
       // No API/model configured yet (fresh install). Write a minimal config so
       // the gateway can start; it just won't have a model provider until the
       // user configures one.
-      return this.writeMinimalConfig(configPath, reason, extensionMcpNames, retiredMcpNames);
+      return this.writeMinimalConfig(configPath, reason, extensionMcpNames, retiredMcpNames, workspaceInventory);
     }
 
     const allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> =
@@ -804,6 +837,7 @@ export class OpenClawConfigSync {
         agents: this.getAgents?.() ?? [],
         existingConfig,
       }),
+      workspaceInventory,
     );
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(
@@ -1017,7 +1051,7 @@ export class OpenClawConfigSync {
         },
       };
     }
-    this.applyManagedRuntimeConfiguration(configToPersist, configPath);
+    this.applyManagedRuntimeConfiguration(configToPersist, configPath, workspaceInventory, existingConfig);
     const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
     const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
     if (configChanged) {
@@ -1194,6 +1228,7 @@ export class OpenClawConfigSync {
     reason: string,
     extensionMcpNames: ReadonlySet<string>,
     retiredMcpNames: ReadonlySet<string>,
+    workspaceInventory: WorkspaceExtensionInventory | undefined,
   ): OpenClawConfigSyncResult {
     const coworkConfig = this.getCoworkConfig();
     const configuredWorkspaceDir = (coworkConfig.workingDirectory || '').trim();
@@ -1381,7 +1416,7 @@ export class OpenClawConfigSync {
         previousConfig.meta,
       );
     }
-    this.applyManagedRuntimeConfiguration(minimalConfig, configPath);
+    this.applyManagedRuntimeConfiguration(minimalConfig, configPath, workspaceInventory);
     minimalConfig = projectManagedOpenClawExecNotifications(
       projectManagedOpenClawBrowserConfig(withComputerControlPolicy(minimalConfig)),
     );
@@ -1405,7 +1440,7 @@ export class OpenClawConfigSync {
           const sanitizedConfig = withComputerControlPolicy(
             buildLoginScopedOpenClawConfig(existing, minimalConfig),
           );
-          this.applyManagedRuntimeConfiguration(sanitizedConfig, configPath);
+          this.applyManagedRuntimeConfiguration(sanitizedConfig, configPath, workspaceInventory);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
           if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
             this.publishConfigFile(configPath, sanitizedContent);
@@ -1504,6 +1539,7 @@ export class OpenClawConfigSync {
                 agents: this.getAgents?.() ?? [],
                 existingConfig: canonicalExisting,
               }),
+              workspaceInventory,
             );
             const mergedBrowserConfig = projectManagedOpenClawBrowserConfig(
               withMemorySearch(
@@ -1585,7 +1621,7 @@ export class OpenClawConfigSync {
               ),
             );
             const mergedConfig = projectManagedOpenClawExecNotifications(mergedBrowserConfig);
-            this.applyManagedRuntimeConfiguration(mergedConfig, configPath);
+            this.applyManagedRuntimeConfiguration(mergedConfig, configPath, workspaceInventory);
             const configToWrite = withComputerControlPolicy(mergedConfig);
             const mergedContent = `${JSON.stringify(configToWrite, null, 2)}\n`;
             if (hasOpenClawConfigChanged(currentContent, configToWrite)) {

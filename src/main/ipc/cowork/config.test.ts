@@ -9,6 +9,7 @@ const temporaryDirectories: string[] = [];
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     const relative = path.relative(path.resolve(os.tmpdir()), path.resolve(directory));
     if (
@@ -215,18 +216,31 @@ describe('cowork config IPC', () => {
     const previous = createWorkspaceFixture();
     const selected = createWorkspaceFixture();
     currentConfig = { ...baseConfig, workingDirectory: previous.directory };
+    const removeMarker = Promise.withResolvers<void>();
+    const unlink = fs.promises.unlink.bind(fs.promises);
+    const pendingUnlink = vi.spyOn(fs.promises, 'unlink').mockImplementationOnce(async file => {
+      await removeMarker.promise;
+      await unlink(file);
+    });
     syncOpenClawConfig.mockImplementation(async () => {
       expect(fs.existsSync(selected.marker)).toBe(false);
       expect(currentConfig.workingDirectory).toBe(selected.directory);
       return { success: true, changed: true };
     });
 
-    const result = await handlers.get('cowork:config:set')?.(
+    const update = handlers.get('cowork:config:set')?.(
       {},
       { workingDirectory: selected.directory },
     );
 
-    expect(result).toEqual({ success: true });
+    try {
+      await vi.waitFor(() => expect(pendingUnlink).toHaveBeenCalledWith(selected.marker));
+      expect(currentConfig.workingDirectory).toBe(previous.directory);
+      expect(syncOpenClawConfig).not.toHaveBeenCalled();
+    } finally {
+      removeMarker.resolve();
+    }
+    await expect(update).resolves.toEqual({ success: true });
     expect(fs.existsSync(previous.marker)).toBe(true);
     expect(syncOpenClawConfig).toHaveBeenCalledOnce();
   });
@@ -234,9 +248,9 @@ describe('cowork config IPC', () => {
   it('keeps the previous directory and avoids Gateway changes when legacy cleanup is denied', async () => {
     const selected = createWorkspaceFixture();
     const previous = { ...currentConfig };
-    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
-      throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
-    });
+    vi.spyOn(fs.promises, 'unlink').mockRejectedValue(
+      Object.assign(new Error('permission denied'), { code: 'EACCES' }),
+    );
 
     const result = await handlers.get('cowork:config:set')?.(
       {},
@@ -248,6 +262,7 @@ describe('cowork config IPC', () => {
       error: expect.stringContaining(selected.marker),
     });
     expect(currentConfig).toEqual(previous);
+    expect(setConfig).not.toHaveBeenCalled();
     expect(fs.existsSync(selected.marker)).toBe(true);
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
     expect(handleEngineConfigChanged).not.toHaveBeenCalled();
@@ -255,6 +270,8 @@ describe('cowork config IPC', () => {
 
   it('cleans the effective default directory when the stored directory is reset', async () => {
     const selected = createWorkspaceFixture();
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('JUSTDO_DEV_WORKSPACE_DIR', selected.directory);
     setConfig.mockImplementationOnce((update: Partial<CoworkConfig>) => {
       currentConfig = { ...currentConfig, ...update, workingDirectory: selected.directory };
     });
@@ -382,6 +399,7 @@ describe('cowork config IPC', () => {
   });
 
   it('does not claim an app-only retry preference was saved when persistence fails', async () => {
+    const previous = currentAgentRuntimeSettings;
     const next = createDefaultAgentRuntimeSettings();
     next.automaticErrorRetry.maxContinuations = 2;
     setAgentRuntimeSettings.mockImplementationOnce(() => {
@@ -392,7 +410,7 @@ describe('cowork config IPC', () => {
 
     expect(result).toEqual({ success: false, error: 'write failed' });
     expect(syncOpenClawConfig).not.toHaveBeenCalled();
-    expect(currentAgentRuntimeSettings.automaticErrorRetry.maxContinuations).toBe(1);
+    expect(currentAgentRuntimeSettings).toEqual(previous);
   });
 
   it('rejects an invalid retry budget before persistence or native synchronization', async () => {

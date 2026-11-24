@@ -192,9 +192,9 @@ export function renderCoworkHomeWorkspace({
                       placeholder={i18nService.t('coworkPlaceholder')}
                       size="large"
                       workingDirectory={config.workingDirectory}
-                      onWorkingDirectoryChange={async (dir: string) => {
-                        await coworkService.updateConfig({ workingDirectory: dir });
-                      }}
+                      onWorkingDirectoryChange={dir =>
+                        coworkService.updateConfig({ workingDirectory: dir })
+                      }
                       showFolderSelector={true}
                       showModelSelector={true}
                     />

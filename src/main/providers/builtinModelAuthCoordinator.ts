@@ -12,6 +12,7 @@ type Dependencies = {
   getAuthSessionId: () => string | null;
   publishCredential?: (credential: BuiltinModelCredential, authSessionId: string) => void;
   onBackgroundError?: (error: unknown) => void;
+  needsCatalogRetry?: () => boolean;
   login: () => Promise<void>;
   rotate: () => Promise<void>;
   invalidate?: () => void;
@@ -120,8 +121,10 @@ export class BuiltinModelAuthCoordinator {
 
   private async applyDecision(decision: RefreshDecision): Promise<void> {
     if (!this.isCurrent(decision)) return;
-    const { credential, authSessionId, refreshCatalog } = decision;
+    const { credential, authSessionId } = decision;
     if (!credential && decision.generation === this.explicitLogout?.generation) return;
+    const refreshCatalog = decision.refreshCatalog ||
+      (credential !== null && this.dependencies.needsCatalogRetry?.() === true);
     if (!refreshCatalog && this.applied !== undefined &&
       credential?.accessToken === this.applied?.accessToken &&
       (!credential || (authSessionId !== null && authSessionId === this.appliedAuthSessionId))) return;
@@ -147,7 +150,7 @@ export class BuiltinModelAuthCoordinator {
       }
     } catch (error) {
       writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ApplicationFailed, {
-        ...decisionDiagnostics(decision),
+        ...decisionDiagnostics({ ...decision, refreshCatalog }),
         errorCode: getBuiltinModelAuthErrorCode(error),
       });
       throw error;

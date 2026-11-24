@@ -745,6 +745,53 @@ test('keeps a startup draft editable without submitting or discovering slash com
   await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
 });
 
+test('keeps the home draft editable and waits to send while the working directory changes', async () => {
+  vi.stubGlobal('electron', {
+    extensions: {
+      list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
+      onChanged: () => () => {},
+    },
+    localAsr: { getStatus: vi.fn().mockResolvedValue({ available: false }) },
+    localSpeechModels: { onChanged: () => () => {} },
+  });
+  const models = [{ id: 'draft-model', name: 'Draft model', providerKey: 'draft-provider' }];
+  store.dispatch(setAvailableModels(models));
+  store.dispatch(setSelectedModel(models[0]));
+  const onSubmit = vi.fn(() => false);
+  const applyDirectory = Promise.withResolvers<boolean>();
+  const onWorkingDirectoryChange = vi.fn(() => applyDirectory.promise);
+  const composer = (cwd: string) => (
+    <Provider store={store}>
+      <CoworkPromptInput
+        size="large"
+        showFolderSelector
+        workingDirectory={cwd}
+        onWorkingDirectoryChange={onWorkingDirectoryChange}
+        onSubmit={onSubmit}
+      />
+    </Provider>
+  );
+  const view = render(composer('C:/old-project'));
+  const folderButton = screen.getByRole('button', { name: i18nService.t('workspacePickerTitle') });
+  fireEvent.click(folderButton.querySelector('[role="button"]')!);
+  expect(onWorkingDirectoryChange).toHaveBeenCalledExactlyOnceWith('');
+  expect(folderButton.getAttribute('aria-busy')).toBe('true');
+
+  const input = screen.getByRole('textbox');
+  fireEvent.change(input, { target: { value: 'Keep this draft' } });
+  const send = screen.getByRole('button', { name: i18nService.t('coworkSendMessage') });
+  expect(send).toHaveProperty('disabled', true);
+  fireEvent.keyDown(input, { key: 'Enter' });
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(input).toHaveProperty('value', 'Keep this draft');
+
+  view.rerender(composer('C:/default-project'));
+  await act(async () => applyDirectory.resolve(true));
+  expect(folderButton.getAttribute('aria-busy')).toBe('false');
+  fireEvent.click(send);
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
+});
+
 test('keeps model clicks immediate and skips intermediate choices while native confirmation is pending', async () => {
   const models = ['Current', 'First', 'Intermediate', 'Latest'].map(name => ({
     id: name.toLowerCase(),

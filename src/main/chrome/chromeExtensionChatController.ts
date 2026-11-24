@@ -38,7 +38,10 @@ import { projectPersistedAppServerRetryTurns } from '../clients/appServer/protoc
 import { createAppServerHistoryReader } from '../clients/appServer/protocol/appServerHistoryReader';
 import { AppServerErrorCode, AppServerRpcError } from '../clients/appServer/protocol/appServerProtocol';
 import type { AppServerRetryTurn, AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
-import { resolveTaskWorkingDirectory } from '../core/filesystem/taskWorkspace';
+import {
+  resolveExistingTaskWorkingDirectory,
+  resolveTaskWorkingDirectory,
+} from '../core/filesystem/taskWorkspace';
 import { t } from '../core/i18n';
 import type { CoworkSession, CoworkStore } from '../data/coworkStore';
 import type { CoworkEngineRouter } from '../engine';
@@ -1136,20 +1139,13 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
       if (!matches) throw new AppServerRpcError(AppServerErrorCode.InvalidParams,
         'Browser conversations use the task directory selected in the desktop app.');
     }
-    const selectedCwd = options.selectedWorkspace ? this.canonicalWorkspace(options.cwd ?? '') : undefined;
+    const selectedCwd = options.selectedWorkspace
+      ? await resolveExistingTaskWorkingDirectory(options.cwd ?? '')
+      : undefined;
     options.selectedWorkspace?.assertCurrent();
     const session = this.createSession(limit(title, 50) || `New ${PRODUCT_NAME} chat`, selectedCwd);
     if (options.model) this.deps.getStore().updateSession(session.id, { modelRef: options.model });
     return this.getThread(session.id);
-  }
-
-  private canonicalWorkspace(cwd: string): string {
-    if (!path.isAbsolute(cwd) || cwd.includes('\0')) throw new Error('Select an existing task folder.');
-    const canonical = fs.realpathSync.native(cwd);
-    if (!fs.statSync(canonical).isDirectory() ||
-      (process.platform === 'win32' && path.parse(canonical).root === canonical))
-      throw new Error('Select an existing task folder.');
-    return canonical;
   }
 
   private recentWorkspaces(): string[] {
@@ -1166,11 +1162,11 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     if (options.recentCwd !== undefined) {
       if (!this.recentWorkspaces().includes(options.recentCwd))
         throw new Error('This folder is no longer in recent browser workspaces.');
-      return this.canonicalWorkspace(options.recentCwd);
+      return resolveExistingTaskWorkingDirectory(options.recentCwd);
     }
     if (!this.deps.selectDirectory) throw new Error('Folder selection is unavailable.');
     const selected = await this.deps.selectDirectory(options.defaultPath);
-    return selected ? this.canonicalWorkspace(selected) : null;
+    return selected ? resolveExistingTaskWorkingDirectory(selected) : null;
   }
 
   async setThreadWorkspace(input: SetSessionWorkspaceInput, isCurrent: () => boolean) {

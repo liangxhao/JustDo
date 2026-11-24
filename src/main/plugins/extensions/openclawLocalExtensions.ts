@@ -1,159 +1,27 @@
 import { app } from 'electron';
 import fs from 'fs';
-import JSON5 from 'json5';
 import path from 'path';
 
 import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
+import {
+  inspectOpenClawExtensionDirectory,
+  isMissingPathError,
+  isRuntimeBundledSource,
+  type OpenClawExtensionInventory,
+} from './openclawExtensionInventory.cjs';
+
+export {
+  inspectOpenClawExtensionCandidate,
+  inspectOpenClawExtensionDirectory,
+  type OpenClawExtensionInventory,
+} from './openclawExtensionInventory.cjs';
 
 const LOCAL_EXTENSIONS_DIR = path.join('plugins', 'extensions');
 const LOCAL_EXTENSION_METADATA_FILES = ['prune-policy.json'];
-const AGENT_PLUGIN_MANIFEST_SCHEMA = 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json';
-
-// Runtime replacements are assembled with locked dependencies at build time.
-// Only their compiled runtime manifest establishes availability.
-const isRuntimeBundledSource = (extensionDir: string): boolean => {
-  try {
-    const pkg = JSON.parse(fs.readFileSync(path.join(extensionDir, 'package.json'), 'utf8'));
-    return pkg?.openclaw?.runtimeBundled === true;
-  } catch {
-    return false;
-  }
-};
 
 const isPathInside = (parentDir: string, childPath: string): boolean => {
   const relative = path.relative(parentDir, childPath);
   return relative.length > 0 && !relative.startsWith('..') && !path.isAbsolute(relative);
-};
-
-export type OpenClawExtensionInventory = {
-  complete: boolean;
-  ids: string[];
-};
-
-const isMissingPathError = (error: unknown): boolean =>
-  Boolean(
-    error &&
-    typeof error === 'object' &&
-    'code' in error &&
-    (error.code === 'ENOENT' || error.code === 'ENOTDIR'),
-  );
-
-export const inspectOpenClawExtensionCandidate = (
-  extensionDir: string,
-  { manifestOnly = false }: { manifestOnly?: boolean } = {},
-): OpenClawExtensionInventory => {
-  try {
-    const nativeManifestPath = path.join(extensionDir, 'openclaw.plugin.json');
-    const manifestPath = [
-      nativeManifestPath,
-      path.join(extensionDir, '.codex-plugin', 'plugin.json'),
-      path.join(extensionDir, '.cursor-plugin', 'plugin.json'),
-      path.join(extensionDir, '.claude-plugin', 'plugin.json'),
-    ].find(candidate => fs.existsSync(candidate));
-    let manifest: unknown;
-    if (manifestPath) {
-      manifest = JSON5.parse(fs.readFileSync(manifestPath, 'utf8'));
-    } else {
-      const agentManifestPath = path.join(extensionDir, 'plugin.json');
-      if (fs.existsSync(agentManifestPath)) {
-        const agentManifest = JSON.parse(fs.readFileSync(agentManifestPath, 'utf8')) as unknown;
-        if (
-          agentManifest &&
-          typeof agentManifest === 'object' &&
-          !Array.isArray(agentManifest) &&
-          (agentManifest as Record<string, unknown>).$schema === AGENT_PLUGIN_MANIFEST_SCHEMA
-        ) {
-          manifest = agentManifest;
-        }
-      }
-    }
-    if (manifest === undefined) {
-      if (manifestOnly) return { complete: false, ids: [] };
-      const hasManifestlessBundleMarker = [
-        'skills',
-        'commands',
-        'agents',
-        path.join('hooks', 'hooks.json'),
-        '.mcp.json',
-        '.lsp.json',
-        'settings.json',
-      ].some(candidate => fs.existsSync(path.join(extensionDir, candidate)));
-      if (!hasManifestlessBundleMarker) return { complete: false, ids: [] };
-      const id =
-        path
-          .basename(extensionDir)
-          .trim()
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/-+/g, '-')
-          .replace(/^-+|-+$/g, '') || 'bundle-plugin';
-      return { complete: true, ids: [id] };
-    }
-    if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
-      const record = manifest as Record<string, unknown>;
-      if (manifestPath === nativeManifestPath) {
-        const id = record.id;
-        return typeof id === 'string' && id.trim()
-          ? { complete: true, ids: [id.trim()] }
-          : { complete: false, ids: [] };
-      }
-      const bundleName =
-        typeof record.name === 'string' && record.name.trim()
-          ? record.name
-          : path.basename(extensionDir);
-      const slug = bundleName
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '');
-      return { complete: true, ids: [slug || 'bundle-plugin'] };
-    }
-    return { complete: false, ids: [] };
-  } catch {
-    return { complete: false, ids: [] };
-  }
-};
-
-export const inspectOpenClawExtensionDirectory = (
-  extensionsDir: string,
-  options: {
-    excludeRuntimeBundledSources?: boolean;
-    ignoredFileNames?: readonly string[];
-  } = {},
-): OpenClawExtensionInventory => {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(extensionsDir, { withFileTypes: true });
-  } catch (error) {
-    return { complete: isMissingPathError(error), ids: [] };
-  }
-
-  const ids = new Set<string>();
-  let complete = true;
-  for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue;
-    if (entry.isFile() && options.ignoredFileNames?.includes(entry.name)) continue;
-    const extensionDir = path.join(extensionsDir, entry.name);
-    let isDirectory = entry.isDirectory();
-    if (entry.isSymbolicLink()) {
-      try {
-        isDirectory = fs.statSync(extensionDir).isDirectory();
-      } catch {
-        complete = false;
-        continue;
-      }
-    }
-    if (!isDirectory) {
-      complete = false;
-      continue;
-    }
-    if (options.excludeRuntimeBundledSources && isRuntimeBundledSource(extensionDir)) continue;
-    const candidate = inspectOpenClawExtensionCandidate(extensionDir);
-    candidate.ids.forEach(id => ids.add(id));
-    if (!candidate.complete) complete = false;
-  }
-  return { complete, ids: [...ids].sort() };
 };
 
 const findLocalExtensionsSourceDir = (): string | null => {

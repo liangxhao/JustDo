@@ -31,7 +31,7 @@ const createHarness = () => {
 
 describe('BuiltinModelLifecycle', () => {
   beforeEach(() => {
-    syncBuiltinModelProviderMock.mockReset().mockResolvedValue();
+    syncBuiltinModelProviderMock.mockReset().mockResolvedValue(false);
     vi.spyOn(console, 'info').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
@@ -41,7 +41,7 @@ describe('BuiltinModelLifecycle', () => {
     ['refreshAfterLogout', BuiltinModelAccess.Disabled, 'auth-logout'],
   ] as const)('publishes the local catalog before Gateway finishes %s', async (method, access, reason) => {
     const harness = createHarness();
-    const persistCatalog = Promise.withResolvers<void>();
+    const persistCatalog = Promise.withResolvers<boolean>();
     const applyConfig = Promise.withResolvers<{ success: true; configSynced: true; hostPolicyVerified: true }>();
     syncBuiltinModelProviderMock.mockReturnValueOnce(persistCatalog.promise);
     harness.syncOpenClawConfig.mockReturnValueOnce(applyConfig.promise);
@@ -50,7 +50,7 @@ describe('BuiltinModelLifecycle', () => {
     expect(syncBuiltinModelProviderMock).toHaveBeenCalledWith(harness.store, { access });
     expect(harness.notifyCatalogChanged).not.toHaveBeenCalled();
     const logoutCatalog = harness.lifecycle.waitForLogoutCatalog();
-    persistCatalog.resolve();
+    persistCatalog.resolve(false);
     await logoutCatalog;
     await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason }));
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
@@ -81,6 +81,7 @@ describe('BuiltinModelLifecycle', () => {
     syncBuiltinModelProviderMock.mockImplementationOnce(async () => {
       await discovery;
       catalog = 'new';
+      return false;
     });
     const harness = createHarness();
     const projectedCatalogs: string[] = [];
@@ -136,23 +137,24 @@ describe('BuiltinModelLifecycle', () => {
   });
 
   test('does not sync or notify from an enabled refresh superseded by logout', async () => {
-    let releaseLogin: (() => void) | undefined;
+    let releaseLogin: ((retryNeeded: boolean) => void) | undefined;
     syncBuiltinModelProviderMock
       .mockImplementationOnce(
         () =>
-          new Promise<void>(resolve => {
+          new Promise<boolean>(resolve => {
             releaseLogin = resolve;
           }),
       )
-      .mockResolvedValueOnce();
+      .mockResolvedValueOnce(false);
     const harness = createHarness();
 
     const login = harness.lifecycle.refreshAfterLogin();
     const logout = harness.lifecycle.refreshAfterLogout();
-    releaseLogin?.();
+    releaseLogin?.(true);
 
     await expect(login).resolves.toBeUndefined();
     await expect(logout).resolves.toBeUndefined();
+    expect(harness.lifecycle.needsCatalogRetry()).toBe(false);
     expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
     expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-logout' });
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();

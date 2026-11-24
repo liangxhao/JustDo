@@ -1,12 +1,10 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { CoworkPlanHandoffState } from '../../../shared/cowork/interactions/planHandoff';
 import {
   SessionWorkspaceFailure,
   type SetSessionWorkspaceInput,
   type SetSessionWorkspaceResult,
 } from '../../../shared/cowork/sessionWorkspace';
+import { resolveExistingTaskWorkingDirectory } from '../../core/filesystem/taskWorkspace';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import type { CoworkEngineRouter } from './coworkEngineRouter';
 
@@ -55,8 +53,7 @@ export function createSessionWorkspaceUpdater(
       input.expectedCwd.length > 32768 ||
       typeof input.cwd !== 'string' ||
       !input.cwd.trim() ||
-      input.cwd.length > 32768 ||
-      !path.isAbsolute(input.cwd.trim())
+      input.cwd.length > 32768
     )
       return fail(SessionWorkspaceFailure.Invalid);
     const store = deps.getCoworkStore();
@@ -91,23 +88,17 @@ export function createSessionWorkspaceUpdater(
       if (router.hasUnconfirmedSessionPreparation(session.id))
         return fail(SessionWorkspaceFailure.PreparationUnknown);
       if (blocked()) return fail(SessionWorkspaceFailure.Busy);
+      const originalIdentity = identity(session);
+      const originalRun = JSON.stringify(store.getLatestSessionRun(session.id));
       let cwd: string;
       try {
-        cwd = fs.realpathSync.native(input.cwd.trim());
-        if (
-          !fs.statSync(cwd).isDirectory() ||
-          (process.platform === 'win32' && path.parse(cwd).root === cwd)
-        )
-          return fail(SessionWorkspaceFailure.Invalid);
+        cwd = await resolveExistingTaskWorkingDirectory(input.cwd.trim());
       } catch {
         return fail(SessionWorkspaceFailure.Invalid);
       }
-      const originalIdentity = identity(session);
-      const originalRun = JSON.stringify(store.getLatestSessionRun(session.id));
       const status = await router.getSessionRuntimeStatus(session.id, {
         targeted: true,
         includeSubagents: true,
-        forceRefresh: true,
       });
       const current = store.getSession(session.id);
       if (

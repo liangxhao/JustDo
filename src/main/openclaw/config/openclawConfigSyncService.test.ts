@@ -488,6 +488,9 @@ describe('OpenClawConfigSyncService', () => {
       getWindowsSandboxEnvironment: vi.fn(() => ({})),
     } as never);
     const configSync = {
+      prepareWorkspaceExtensionInventory: vi.fn(async () => ({
+        workspace: new Map(), configured: new Map(),
+      })),
       syncModelDefaults: vi.fn(() => ({
         result: {
           ok: !options.syncError,
@@ -917,7 +920,9 @@ describe('OpenClawConfigSyncService', () => {
       changed: true,
     });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
-    expect(harness.configSync.sync).toHaveBeenCalledWith('test', new Set(), new Set());
+    expect(harness.configSync.sync).toHaveBeenCalledWith('test', new Set(), new Set(), {
+      workspaceInventory: expect.anything(),
+    });
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
@@ -1222,14 +1227,18 @@ describe('OpenClawConfigSyncService', () => {
       configSynced: true,
     });
     expect(result).not.toHaveProperty('hostPolicyVerified');
-    expect(harness.configSync.sync).toHaveBeenCalledWith('startup', new Set(), new Set());
+    expect(harness.configSync.sync).toHaveBeenCalledWith('startup', new Set(), new Set(), {
+      workspaceInventory: expect.anything(),
+    });
   });
 
   it('passes authoritative native extension names through configuration projection', async () => {
     const names = new Set(['extension-server']);
     const harness = createHarness({ getExtensionMcpServerNames: async () => names });
     await expect(harness.service.syncConfig({ reason: 'preserve-extension', retiredMcpServerNames: ['old-user-server'] })).resolves.toMatchObject({ success: true });
-    expect(harness.configSync.sync).toHaveBeenCalledWith('preserve-extension', names, new Set(['old-user-server']));
+    expect(harness.configSync.sync).toHaveBeenCalledWith('preserve-extension', names, new Set(['old-user-server']), {
+      workspaceInventory: expect.anything(),
+    });
   });
 
   it('preserves unrelated native MCP definitions during import compensation', async () => {
@@ -1269,7 +1278,10 @@ describe('OpenClawConfigSyncService', () => {
       'app-config-change',
       new Set(),
       new Set(),
-      ...(restoreDecisionModelSnapshot === true ? [{ restoreDecisionModelSnapshot: true }] : []),
+      {
+        ...(restoreDecisionModelSnapshot === true ? { restoreDecisionModelSnapshot: true } : {}),
+        workspaceInventory: expect.anything(),
+      },
     );
   });
 
@@ -2020,6 +2032,21 @@ describe('OpenClawConfigSyncService', () => {
     await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({ success: true });
 
     expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'exec.approvals.set')).toHaveLength(1);
+  });
+
+  it('leaves the published configuration alone when the Gateway changes during workspace discovery', async () => {
+    const harness = createHarness();
+    harness.configSync.prepareWorkspaceExtensionInventory.mockImplementationOnce(async () => {
+      harness.advanceProcessGeneration();
+      return { workspace: new Map(), configured: new Map() };
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'cowork-config-change' }))
+      .resolves.toMatchObject({ success: false, changed: false, configSynced: false });
+
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.engineManager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -3235,6 +3262,7 @@ describe('OpenClawConfigSyncService', () => {
       expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
       expect(getExtensionMcpServerNames).not.toHaveBeenCalled();
       expect(getNativeMcpDataBindings).not.toHaveBeenCalled();
+      expect(harness.configSync.prepareWorkspaceExtensionInventory).not.toHaveBeenCalled();
       expect(harness.engineManager.setGatewayLaunchEnvVars).not.toHaveBeenCalled();
       expect(harness.requestGateway.mock.calls).toEqual([
         ['config.get'],

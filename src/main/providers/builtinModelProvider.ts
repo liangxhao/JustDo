@@ -57,11 +57,6 @@ type AppConfig = {
   providers?: Record<string, ProviderConfig>;
 };
 
-type BuiltinProviderFile = {
-  enabled?: boolean;
-  baseUrl?: string;
-};
-
 export const BuiltinModelAccess = {
   Enabled: 'enabled',
   Disabled: 'disabled',
@@ -80,13 +75,13 @@ type BuiltinModelSyncState = {
 
 const syncStateByStore = new WeakMap<SqliteStore, BuiltinModelSyncState>();
 
-const beginBuiltinModelSync = (store: SqliteStore, shouldFetch: boolean): BuiltinModelSyncState => {
+const beginBuiltinModelSync = (store: SqliteStore, controller: AbortController | null): BuiltinModelSyncState => {
   const previousState = syncStateByStore.get(store);
   previousState?.controller?.abort();
 
   const nextState = {
     generation: (previousState?.generation ?? 0) + 1,
-    controller: shouldFetch ? new AbortController() : null,
+    controller,
   };
   syncStateByStore.set(store, nextState);
   return nextState;
@@ -94,13 +89,6 @@ const beginBuiltinModelSync = (store: SqliteStore, shouldFetch: boolean): Builti
 
 const isCurrentBuiltinModelSync = (store: SqliteStore, state: BuiltinModelSyncState): boolean =>
   syncStateByStore.get(store)?.generation === state.generation;
-
-export function readBuiltinModelProviderFile(): BuiltinProviderFile | null {
-  return {
-    enabled: BUILTIN_MODEL_PROVIDER_CONFIG.enabled,
-    baseUrl: normalizeModelProviderBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl),
-  };
-}
 
 type BuiltinModels = {
   chatModels: ProviderModel[];
@@ -125,8 +113,11 @@ class BuiltinModelDiscoveryHttpError extends Error {
   }
 }
 
+class BuiltinModelDiscoveryShapeError extends Error {}
+
 const discoveryFailureReason = (phase: DiscoveryDiagnostic['phase'], error: unknown) =>
   phase === 'request' ? BuiltinModelAuthDiagnosticReason.NetworkFailure
+    : error instanceof BuiltinModelDiscoveryShapeError ? BuiltinModelAuthDiagnosticReason.ResponseInvalidShape
     : error instanceof SyntaxError ? BuiltinModelAuthDiagnosticReason.ResponseInvalidJson
       : BuiltinModelAuthDiagnosticReason.ResponseUnreadable;
 
@@ -149,8 +140,16 @@ async function fetchBuiltinModels(
   if (!modelsResponse.ok) {
     throw new BuiltinModelDiscoveryHttpError(modelsResponse.status);
   }
-  const listedModels = parseProviderModelsResponse(await modelsResponse.json());
-  if (listedModels.length === 0) return { chatModels: [], embeddingModels: [] };
+  const payload: unknown = await modelsResponse.json();
+  const data = (payload as { data?: unknown } | null)?.data;
+  if (
+    !Array.isArray(data) ||
+    data.some((entry: { id?: unknown } | null) => typeof entry?.id !== 'string' || !entry.id.trim())
+  ) {
+    throw new BuiltinModelDiscoveryShapeError('Invalid model list.');
+  }
+  if (data.length === 0) return { chatModels: [], embeddingModels: [] };
+  const listedModels = parseProviderModelsResponse(payload);
 
   diagnostic.phase = 'request';
   let infoById = new Map<string, DiscoveredProviderModel>();
@@ -194,25 +193,26 @@ async function fetchBuiltinModels(
   };
 }
 
+/** Returns whether required discovery failed and no cached catalog is available. */
 export async function syncBuiltinModelProvider(
   store: SqliteStore,
   options: SyncBuiltinModelProviderOptions,
-): Promise<void> {
-  const fileConfig = readBuiltinModelProviderFile();
+): Promise<boolean> {
+  const baseUrl = normalizeModelProviderBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl);
   const credential = getActiveBuiltinModelCredential();
-  const shouldEnable =
+  const discovery =
     options?.access === BuiltinModelAccess.Enabled &&
-    fileConfig?.enabled === true &&
-    Boolean(fileConfig.baseUrl) &&
-    credential !== null;
-  const syncState = beginBuiltinModelSync(store, shouldEnable);
+    BUILTIN_MODEL_PROVIDER_CONFIG.enabled && baseUrl && credential
+      ? { credential, controller: new AbortController() }
+      : null;
+  const syncState = beginBuiltinModelSync(store, discovery?.controller ?? null);
   const persist = async (
     models: ProviderModel[],
     embeddingModels: ProviderModel[],
     catalogLoaded = false,
   ) =>
     enqueueAppConfigUpdate(async () => {
-      if (!isCurrentBuiltinModelSync(store, syncState)) return;
+      if (!isCurrentBuiltinModelSync(store, syncState)) return false;
       const appConfig = store.get<AppConfig>('app_config') || {};
       const providers = { ...(appConfig.providers ?? {}) };
       const previousBuiltinApiKey = providers[ProviderName.BuiltinModels]?.apiKey?.trim() || '';
@@ -226,14 +226,14 @@ export async function syncBuiltinModelProvider(
           }
         : undefined;
 
-      if (!shouldEnable || !fileConfig?.baseUrl || !credential) {
+      if (!discovery) {
         delete providers[ProviderName.BuiltinModels];
         store.set('app_config', {
           ...appConfig,
           ...(sanitizedApi ? { api: sanitizedApi } : {}),
           providers,
         });
-        return;
+        return false;
       }
 
       const previousModels = providers[ProviderName.BuiltinModels]?.models ?? [];
@@ -254,7 +254,7 @@ export async function syncBuiltinModelProvider(
       providers[ProviderName.BuiltinModels] = {
         enabled: true,
         apiKey: '',
-        baseUrl: fileConfig.baseUrl,
+        baseUrl,
         apiFormat: 'openai',
         readonly: true,
         models,
@@ -286,16 +286,16 @@ export async function syncBuiltinModelProvider(
         api: {
           ...appConfig.api,
           key: shouldClearLegacyApiKey ? '' : appConfig.api?.key || '',
-          baseUrl: appConfig.api?.baseUrl || fileConfig.baseUrl,
+          baseUrl: appConfig.api?.baseUrl || baseUrl,
         },
         model: nextModel,
         providers,
       });
+      return !catalogLoaded && models.length === 0 && embeddingModels.length === 0;
     });
 
-  if (!shouldEnable || !fileConfig?.baseUrl || !credential) {
-    await persist([], []);
-    return;
+  if (!discovery) {
+    return persist([], []);
   }
 
   let models: ProviderModel[] = [];
@@ -306,12 +306,12 @@ export async function syncBuiltinModelProvider(
   try {
     const fetchedModels = await fetchBuiltinModels(
       store,
-      fileConfig.baseUrl,
-      credential,
-      syncState.controller!.signal,
+      baseUrl,
+      discovery.credential,
+      discovery.controller.signal,
       diagnostic,
     );
-    if (!isCurrentBuiltinModelSync(store, syncState)) return;
+    if (!isCurrentBuiltinModelSync(store, syncState)) return false;
     models = fetchedModels.chatModels;
     embeddingModels = fetchedModels.embeddingModels;
     catalogLoaded = true;
@@ -331,7 +331,7 @@ export async function syncBuiltinModelProvider(
       chatModelCount: models.length, embeddingModelCount: embeddingModels.length,
     });
   } catch (error) {
-    if (!isCurrentBuiltinModelSync(store, syncState)) return;
+    if (!isCurrentBuiltinModelSync(store, syncState)) return false;
     writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.DiscoveryFailed, {
       generation: syncState.generation, elapsedMs: Date.now() - startedAt,
       discoveryStage: 'models', errorCode: getBuiltinModelAuthErrorCode(error),
@@ -340,5 +340,5 @@ export async function syncBuiltinModelProvider(
       ...(error instanceof BuiltinModelDiscoveryHttpError ? { httpStatus: error.httpStatus } : {}),
     });
   }
-  await persist(models, embeddingModels, catalogLoaded);
+  return persist(models, embeddingModels, catalogLoaded);
 }

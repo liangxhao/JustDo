@@ -194,6 +194,7 @@ test('projects external origins and historical identities and hides holding sess
   });
   expect(directory[1]).toMatchObject({ source: 'chrome-extension' });
   expect(directory[2]).toMatchObject({ nativeSessionKey: 'agent:main:historical' });
+  expect(store.getSession('historical')?.historyBinding).not.toHaveProperty('workspaceUnavailable');
   expect(summaries).toEqual([
     expect.objectContaining({
       id: 'historical',

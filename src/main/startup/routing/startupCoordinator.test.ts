@@ -1436,11 +1436,11 @@ test('missing workspaces remain recoverable metadata, contribute to the result, 
     const cowork = new CoworkStore(store.getDatabase());
     expect(cowork.getSession('cache')).toMatchObject({
       cwd: missingWorkspace,
-      historyBinding: { workspaceUnavailable: true },
+      historyBinding: { availability: 'cache' },
     });
     expect(cowork.getSession('native')).toMatchObject({
       cwd: validWorkspace,
-      historyBinding: { workspaceUnavailable: false },
+      historyBinding: { availability: 'native' },
     });
     cowork.setConfig({ permissionMode: 'ask' });
     expect(cowork.applyHistorySessionDefaults('native')).toBe(true);
@@ -1615,7 +1615,7 @@ test('an empty historical workspace is preserved for folder selection rather tha
     expect(new CoworkStore(target.getDatabase()).getSession('native')).toMatchObject({
       title: '原生标题',
       cwd: '',
-      historyBinding: { nativeSessionId: 'original-native', workspaceUnavailable: true },
+      historyBinding: { nativeSessionId: 'original-native' },
     });
   } finally {
     target.close();

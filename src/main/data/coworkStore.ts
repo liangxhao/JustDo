@@ -1,5 +1,4 @@
 import Database from 'better-sqlite3';
-import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -838,7 +837,7 @@ export class CoworkStore {
       agentId: row.agent_id || 'main',
       ...(row.model_ref?.trim() ? { modelRef: row.model_ref.trim() } : {}),
       ...(this.isSessionBranchPending(id) ? { branchCreationPending: true } : {}),
-      ...this.getHistorySessionPresentation(row.id, row.cwd),
+      ...this.getHistorySessionBinding(row.id),
       ...(row.native_session_key ? { nativeSessionKey: row.native_session_key } : {}),
       ...(row.native_parent_session_id
         ? { nativeParentSessionId: row.native_parent_session_id }
@@ -1083,10 +1082,7 @@ export class CoworkStore {
     })();
   }
 
-  private getHistorySessionPresentation(
-    sessionId: string,
-    cwd?: string,
-  ): {
+  private getHistorySessionBinding(sessionId: string): {
     nativeSessionKey?: string;
     historyBinding?: HistorySessionBinding;
   } {
@@ -1109,19 +1105,14 @@ export class CoworkStore {
       throw error;
     }
     if (!row) return {};
-    const historyBinding: HistorySessionBinding = {
-      sessionKey: row.session_key,
-      nativeSessionId: row.native_session_id,
-      availability: row.availability,
+    return {
+      nativeSessionKey: row.session_key,
+      historyBinding: {
+        sessionKey: row.session_key,
+        nativeSessionId: row.native_session_id,
+        availability: row.availability,
+      },
     };
-    if (cwd !== undefined) {
-      try {
-        historyBinding.workspaceUnavailable = !fs.statSync(cwd).isDirectory();
-      } catch {
-        historyBinding.workspaceUnavailable = true;
-      }
-    }
-    return { nativeSessionKey: row.session_key, historyBinding };
   }
 
   resetRunningSessions(): number {

@@ -26,6 +26,7 @@ type UnwatchFile = (
 type BuiltinModelCredentialMonitorDependencies = {
   userInfoPath: string;
   refresh: () => Promise<BuiltinModelCredential | null>;
+  needsCatalogRetry?: () => boolean;
   onError?: (error: unknown) => void;
   watchIntervalMs?: number;
   watchFile?: WatchFile;
@@ -43,6 +44,7 @@ export class BuiltinModelCredentialMonitor {
   private started = false;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private expiryTimer: ReturnType<typeof setTimeout> | null = null;
+  private catalogRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private refreshTail: Promise<void> = Promise.resolve();
 
   private readonly fileListener = (): void => {
@@ -66,6 +68,7 @@ export class BuiltinModelCredentialMonitor {
       this.fileListener,
     );
     this.scheduleExpiryRefresh(initialCredential);
+    this.scheduleCatalogRetry();
   }
 
   stop(): void {
@@ -85,11 +88,21 @@ export class BuiltinModelCredentialMonitor {
     this.scheduleRefresh(ERROR_RETRY_MS);
   }
 
+  scheduleCatalogRetry(): void {
+    if (!this.started || this.catalogRetryTimer || !this.dependencies.needsCatalogRetry?.()) return;
+    this.catalogRetryTimer = setTimeout(() => {
+      this.catalogRetryTimer = null;
+      if (this.dependencies.needsCatalogRetry?.()) this.enqueueRefresh();
+    }, LOGIN_RETRY_MS);
+  }
+
   private clearTimers(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
     if (this.expiryTimer) clearTimeout(this.expiryTimer);
+    if (this.catalogRetryTimer) clearTimeout(this.catalogRetryTimer);
     this.debounceTimer = null;
     this.expiryTimer = null;
+    this.catalogRetryTimer = null;
   }
 
   private scheduleRefresh(delayMs: number): void {

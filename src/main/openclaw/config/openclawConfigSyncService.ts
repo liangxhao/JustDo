@@ -791,6 +791,7 @@ export class OpenClawConfigSyncService {
     const preflightLifecycleGeneration = engineManager.getGatewayLifecycleGeneration();
     const preflightAuthSessionId = this.deps.getModelAuthSessionId?.() ?? null;
     const preflightIsCurrent = (): boolean =>
+      this.deps.getOpenClawEngineManager() === engineManager &&
       engineManager.getStatus().phase === statusBeforeSync.phase &&
       engineManager.getGatewayProcessGeneration() === preflightProcessGeneration &&
       engineManager.getGatewayLifecycleGeneration() === preflightLifecycleGeneration &&
@@ -849,23 +850,20 @@ export class OpenClawConfigSyncService {
         );
       }
     }
+    const configSync = this.getConfigSync();
+    const workspaceInventory = await configSync.prepareWorkspaceExtensionInventory();
     if (!preflightIsCurrent()) return preflightUnconfirmed();
     const reloadGeneration = engineManager.getGatewayConfigReloadGeneration();
     const processGenerationBeforeSync = engineManager.getGatewayProcessGeneration();
     const lifecycleGenerationBeforeSync = engineManager.getGatewayLifecycleGeneration();
-    const configSync = this.getConfigSync();
     const retiredMcpNames = new Set(options.retiredMcpServerNames);
     const preservedMcpNames = options.preservedMcpServerNames?.length
       ? new Set([...extensionMcpNames, ...options.preservedMcpServerNames])
       : extensionMcpNames;
-    const syncResult = options.restoreDecisionModelSnapshot === true
-      ? configSync.sync(
-          options.reason,
-          preservedMcpNames,
-          retiredMcpNames,
-          { restoreDecisionModelSnapshot: true },
-        )
-      : configSync.sync(options.reason, preservedMcpNames, retiredMcpNames);
+    const syncResult = configSync.sync(options.reason, preservedMcpNames, retiredMcpNames, {
+      ...(options.restoreDecisionModelSnapshot === true ? { restoreDecisionModelSnapshot: true } : {}),
+      workspaceInventory,
+    });
     if (!syncResult.ok) {
       return failApplication({
         success: false,

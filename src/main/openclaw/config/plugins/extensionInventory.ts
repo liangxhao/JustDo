@@ -1,3 +1,5 @@
+import { Worker } from 'node:worker_threads';
+
 import { app } from 'electron';
 import fs from 'fs';
 import os from 'os';
@@ -9,15 +11,22 @@ import {
   hasBundledOpenClawExtension,
   inspectBundledOpenClawExtensions,
   inspectLocalOpenClawExtensions,
-  inspectOpenClawExtensionCandidate,
   inspectOpenClawExtensionDirectory,
 } from '../../../plugins/extensions';
+import {
+  inspectConfiguredPluginPath,
+  type OpenClawExtensionInventory,
+} from '../../../plugins/extensions/openclawExtensionInventory.cjs';
 import { isRecord } from '../configShape';
 
-export type ConfiguredPluginInventory = {
-  complete: boolean;
-  ids: string[];
+export type WorkspaceExtensionInventory = {
+  workspace: Map<string, OpenClawExtensionInventory>;
+  configured: Map<string, OpenClawExtensionInventory>;
 };
+
+const WORKSPACE_EXTENSION_INVENTORY_TIMEOUT_MS = 5_000;
+const incompleteInventory: OpenClawExtensionInventory = { complete: false, ids: [] };
+let retiringInventoryWorker: Worker | null = null;
 
 export const listInstalledOpenClawExtensionIds = (stateDir: string): string[] =>
   inspectOpenClawExtensionDirectory(path.join(stateDir, 'extensions')).ids;
@@ -29,70 +38,70 @@ export const resolveConfiguredPluginPath = (value: string): string => {
   return path.resolve(expanded);
 };
 
-export const isMissingConfiguredPluginPath = (error: unknown): boolean =>
-  Boolean(
-    error &&
-    typeof error === 'object' &&
-    'code' in error &&
-    (error.code === 'ENOENT' || error.code === 'ENOTDIR'),
-  );
-
-export const hasCompatiblePluginBundleManifest = (pluginDir: string): boolean => {
-  for (const relativeManifestPath of [
-    path.join('.codex-plugin', 'plugin.json'),
-    path.join('.claude-plugin', 'plugin.json'),
-    path.join('.cursor-plugin', 'plugin.json'),
-  ]) {
-    try {
-      if (fs.statSync(path.join(pluginDir, relativeManifestPath)).isFile()) return true;
-    } catch (error) {
-      // A non-missing error means the candidate cannot be inventoried safely.
-      if (!isMissingConfiguredPluginPath(error)) return true;
-    }
-  }
-  return false;
-};
-
-export const inspectConfiguredPluginPaths = (
-  plugins: Record<string, unknown>,
-): ConfiguredPluginInventory => {
+const getConfiguredPluginPaths = (plugins: Record<string, unknown>): string[] => {
   const load = isRecord(plugins.load) ? plugins.load : {};
   const loadPaths = Array.isArray(load.paths)
     ? load.paths.filter(
         (value): value is string => typeof value === 'string' && Boolean(value.trim()),
       )
     : [];
+  return [...new Set(loadPaths.map(resolveConfiguredPluginPath))];
+};
+
+const workspaceExtensionDirectory = (workspaceDir: string): string =>
+  path.join(workspaceDir, '.openclaw', 'extensions');
+
+export async function collectWorkspaceExtensionInventory(
+  workspaceDirs: readonly string[],
+  plugins: Record<string, unknown>,
+): Promise<WorkspaceExtensionInventory> {
+  const unavailable = { workspace: new Map(), configured: new Map() };
+  if (retiringInventoryWorker) return unavailable;
+  try {
+    return await new Promise<WorkspaceExtensionInventory>(resolve => {
+      const worker = new Worker(path.join(__dirname, 'extensionInventoryWorker.cjs'), {
+        workerData: {
+          workspace: [...new Set(workspaceDirs.map(workspaceExtensionDirectory))],
+          configured: getConfiguredPluginPaths(plugins),
+        },
+      });
+      const finish = (inventory: WorkspaceExtensionInventory) => {
+        clearTimeout(timeout);
+        resolve(inventory);
+      };
+      const timeout = setTimeout(() => {
+        // A synchronous OS read can outlive the deadline. Avoid starting further
+        // workers until this one exits.
+        retiringInventoryWorker = worker;
+        void worker.terminate().catch(() => {});
+        worker.unref();
+        finish(unavailable);
+      }, WORKSPACE_EXTENSION_INVENTORY_TIMEOUT_MS);
+      worker.once('message', finish);
+      worker.once('error', () => finish(unavailable));
+      worker.once('exit', () => {
+        if (retiringInventoryWorker === worker) retiringInventoryWorker = null;
+        finish(unavailable);
+      });
+    });
+  } catch {
+    return unavailable;
+  }
+}
+
+const inspectConfiguredPluginPaths = (
+  plugins: Record<string, unknown>,
+  inventory?: WorkspaceExtensionInventory,
+): OpenClawExtensionInventory => {
   const ids = new Set<string>();
   let complete = true;
 
-  for (const configuredPath of loadPaths) {
-    const existingPath = resolveConfiguredPluginPath(configuredPath);
-    let stats: fs.Stats;
-    try {
-      stats = fs.statSync(existingPath);
-    } catch (error) {
-      if (isMissingConfiguredPluginPath(error)) continue;
-      complete = false;
-      continue;
-    }
-    if (!stats.isDirectory()) {
-      // Standalone plugin files may export an id that cannot be inferred without executing code.
-      complete = false;
-      continue;
-    }
-
-    const directInventory = inspectOpenClawExtensionCandidate(existingPath);
-    if (directInventory.complete) {
-      directInventory.ids.forEach(id => ids.add(id));
-      continue;
-    }
-    if (hasCompatiblePluginBundleManifest(existingPath)) {
-      complete = false;
-      continue;
-    }
-    const rootInventory = inspectOpenClawExtensionDirectory(existingPath);
-    rootInventory.ids.forEach(id => ids.add(id));
-    if (!rootInventory.complete) complete = false;
+  for (const pluginPath of getConfiguredPluginPaths(plugins)) {
+    const result = inventory
+      ? inventory.configured.get(pluginPath) ?? incompleteInventory
+      : inspectConfiguredPluginPath(pluginPath);
+    result.ids.forEach(id => ids.add(id));
+    complete &&= result.complete;
   }
 
   return { complete, ids: [...ids].sort() };
@@ -102,14 +111,18 @@ export const listAvailableOpenClawExtensionIds = (
   stateDir: string,
   plugins: Record<string, unknown>,
   workspaceDirs: readonly string[] = [],
+  inventory?: WorkspaceExtensionInventory,
 ): string[] | null => {
   const bundledInventory = inspectBundledOpenClawExtensions();
   const localInventory = inspectLocalOpenClawExtensions();
   const installedInventory = inspectOpenClawExtensionDirectory(path.join(stateDir, 'extensions'));
-  const workspaceInventories = workspaceDirs.map(workspaceDir =>
-    inspectOpenClawExtensionDirectory(path.join(workspaceDir, '.openclaw', 'extensions')),
-  );
-  const configuredInventory = inspectConfiguredPluginPaths(plugins);
+  const workspaceInventories = workspaceDirs.map(workspaceDir => {
+    const directory = workspaceExtensionDirectory(workspaceDir);
+    return inventory
+      ? inventory.workspace.get(directory) ?? incompleteInventory
+      : inspectOpenClawExtensionDirectory(directory);
+  });
+  const configuredInventory = inspectConfiguredPluginPaths(plugins, inventory);
   if (
     !bundledInventory.complete ||
     bundledInventory.ids.length === 0 ||

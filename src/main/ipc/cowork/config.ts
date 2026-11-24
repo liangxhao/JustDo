@@ -14,7 +14,7 @@ import {
 } from '../../../shared/integrations/externalAgents';
 import { SessionStorageIpc } from '../../../shared/openclaw/sessionStorage';
 import { isPermissionMode, type PermissionMode } from '../../../shared/security/approvals';
-import type { CoworkStore } from '../../data/coworkStore';
+import { type CoworkStore, getDefaultWorkingDirectory } from '../../data/coworkStore';
 import type { CoworkAgentEngine, CoworkEngineRouter } from '../../engine';
 import { removeLegacyWorkspaceSetupFile } from '../../openclaw/config/agents/legacyWorkspaceSetupCleanup';
 import type {
@@ -398,16 +398,15 @@ export const registerCoworkConfigHandlers = ({
           };
           const store = getCoworkStore();
           const previous = store.getConfig();
+          const workspace = normalized.workingDirectory === undefined
+            ? previous.workingDirectory
+            : normalized.workingDirectory || getDefaultWorkingDirectory();
+          const workspaceChanged = workspace !== previous.workingDirectory;
+          if (workspaceChanged) {
+            await removeLegacyWorkspaceSetupFile(workspace);
+          }
           store.setConfig(normalized);
           const next = store.getConfig();
-          if (next.workingDirectory !== previous.workingDirectory) {
-            try {
-              removeLegacyWorkspaceSetupFile(next.workingDirectory);
-            } catch (error) {
-              store.setConfig(previous);
-              throw error;
-            }
-          }
 
           if (agentEngine !== undefined && agentEngine !== previous.agentEngine) {
             getCoworkEngineRouter().handleEngineConfigChanged(agentEngine);
@@ -419,8 +418,7 @@ export const registerCoworkConfigHandlers = ({
             (normalized.sandboxNetworkEnabled !== undefined &&
               normalized.sandboxNetworkEnabled !== previous.sandboxNetworkEnabled) ||
             (agentEngine !== undefined && agentEngine !== previous.agentEngine) ||
-            (normalized.workingDirectory !== undefined &&
-              normalized.workingDirectory !== previous.workingDirectory);
+            workspaceChanged;
           if (shouldSync) {
             const syncResult = await syncOpenClawConfig({
               reason: 'cowork-config-change',

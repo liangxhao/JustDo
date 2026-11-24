@@ -45,7 +45,11 @@ export default defineConfig({
     electron([
       {
         // 主进程入口文件
-        entry: { main: 'src/main/main.ts', application: 'src/main/application.ts' },
+        entry: {
+          main: 'src/main/main.ts',
+          application: 'src/main/application.ts',
+          extensionInventoryWorker: 'src/main/openclaw/config/plugins/extensionInventoryWorker.cjs',
+        },
         vite: {
           root: projectRoot,
           resolve: { alias: {
@@ -96,6 +100,7 @@ export default defineConfig({
               output: {
                 // Keep CJS format (default), but load via ESM loader.mjs
                 codeSplitting: true,
+                entryFileNames: chunk => chunk.name === 'extensionInventoryWorker' ? '[name].cjs' : '[name].js',
               },
             },
           },

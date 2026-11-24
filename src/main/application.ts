@@ -347,7 +347,7 @@ import {
 } from './providers/builtinModelCredential';
 import { BuiltinModelCredentialMonitor } from './providers/builtinModelCredentialMonitor';
 import { BuiltinModelLifecycle } from './providers/builtinModelLifecycle';
-import { BuiltinModelAccess, syncBuiltinModelProvider } from './providers/builtinModelProvider';
+import { BuiltinModelAccess } from './providers/builtinModelProvider';
 import { BuiltinModelTokenExchange } from './providers/builtinModelTokenExchange';
 import {
   resolveRawApiConfig,
@@ -1062,6 +1062,7 @@ const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
       syncOpenClawConfig,
       notifyCatalogChanged: () => notifyModelChange(BuiltinModelIpc.Changed),
       notifyRuntimeModelsChanged,
+      scheduleCatalogRetry: () => builtinModelCredentialMonitor?.scheduleCatalogRetry(),
     });
   }
   return builtinModelLifecycle;
@@ -1092,6 +1093,7 @@ const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
       );
     },
     onBackgroundError: error => builtinModelCredentialMonitor?.retryAfterError(error),
+    needsCatalogRetry: () => getBuiltinModelLifecycle().needsCatalogRetry(),
     login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
     rotate: () => getBuiltinModelLifecycle().refreshAfterCredentialRotation(),
     invalidate: () => {
@@ -2998,9 +3000,9 @@ if (agentBridgeArgv) {
     }
     if (appShutdown.isQuitting()) return;
 
-    await syncBuiltinModelProvider(store, {
-      access: builtinModelCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
-    });
+    await getBuiltinModelLifecycle().loadStartupCatalog(
+      builtinModelCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
+    );
     if (appShutdown.isQuitting()) return;
 
     const coworkEngineRouter = getCoworkEngineRouter();
@@ -3047,7 +3049,7 @@ if (agentBridgeArgv) {
     initialization.reportActivity(AppInitializationActivity.DefaultFiles);
     await initialization.runOptionalTask('synchronize assistant configuration', async () => {
       try {
-        removeLegacyWorkspaceSetupFile(getCoworkStore().getConfig().workingDirectory);
+        await removeLegacyWorkspaceSetupFile(getCoworkStore().getConfig().workingDirectory);
       } catch (error) {
         startupSync = {
           success: false,
@@ -3201,6 +3203,7 @@ if (agentBridgeArgv) {
     builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
       userInfoPath: resolveOutboundHeaderUserInfoPath(),
       refresh: () => getBuiltinModelAuthCoordinator().refreshInBackground(),
+      needsCatalogRetry: () => getBuiltinModelLifecycle().needsCatalogRetry(),
     });
     getBuiltinModelAuthCoordinator().initialize(
       startupSync?.success ? builtinModelCredential : null,

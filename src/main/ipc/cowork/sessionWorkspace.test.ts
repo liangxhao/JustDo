@@ -21,6 +21,7 @@ import { registerSessionWorkspaceHandler } from './sessionWorkspace';
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }));
   handlers.clear();
 });
@@ -110,7 +111,6 @@ test('saves an existing Unicode folder without replacing native identity or movi
   expect(f.getSessionRuntimeStatus).toHaveBeenCalledWith('session', {
     targeted: true,
     includeSubagents: true,
-    forceRefresh: true,
   });
   expect(f.onSessionsChanged).toHaveBeenCalledOnce();
 });
@@ -185,6 +185,28 @@ test('rejects stale picker values and product identity changes while status is i
   });
   await expect(f.set()).resolves.toEqual({ success: false, reason: 'changed' });
   expect(f.updateSession).not.toHaveBeenCalled();
+});
+
+test('keeps a newer directory if path resolution for an earlier selection is still pending', async () => {
+  const f = setup();
+  const canonical = fs.realpathSync.native(f.input.cwd);
+  const resolution = Promise.withResolvers<string>();
+  vi.spyOn(fs.promises, 'realpath').mockReturnValueOnce(resolution.promise);
+
+  const earlier = f.set();
+  const newerCwd = path.join(f.root, 'newest');
+  fs.mkdirSync(newerCwd);
+  try {
+    await expect(f.set({ ...f.input, cwd: newerCwd })).resolves.toEqual({
+      success: true,
+      cwd: fs.realpathSync.native(newerCwd),
+    });
+  } finally {
+    resolution.resolve(canonical);
+  }
+
+  await expect(earlier).resolves.toEqual({ success: false, reason: 'changed' });
+  expect(f.updateSession).toHaveBeenCalledOnce();
 });
 
 test('rejects a newly reserved run or plan while the native idle read is in flight', async () => {

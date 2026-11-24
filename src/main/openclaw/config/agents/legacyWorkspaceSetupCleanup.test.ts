@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe('legacy workspace setup cleanup', () => {
-  it('removes only the exact marker in the selected project, including Chinese and spaces', () => {
+  it('removes only the exact marker in the selected project, including Chinese and spaces', async () => {
     const main = writeWorkspaceFile('角色 home');
     const unrelated = writeWorkspaceFile('unrelated');
     const role = path.dirname(main);
@@ -66,7 +66,7 @@ describe('legacy workspace setup cleanup', () => {
     const siblingAttestation = writeWorkspaceFile('', '角色 home.attested');
     const stateAttestation = writeWorkspaceFile('state/workspace-attestations', 'abc.attested');
 
-    removeLegacyWorkspaceSetupFile(role);
+    await removeLegacyWorkspaceSetupFile(role);
 
     expect(fs.existsSync(main)).toBe(false);
     for (const file of [...retained, siblingAttestation, stateAttestation, unrelated]) {
@@ -74,28 +74,28 @@ describe('legacy workspace setup cleanup', () => {
     }
   });
 
-  it('remains idempotent when the marker or project directory is absent', () => {
+  it('remains idempotent when the marker or project directory is absent', async () => {
     const marker = writeWorkspaceFile('project');
     const workspace = path.dirname(marker);
-    const unlink = vi.spyOn(fs, 'unlinkSync');
-    removeLegacyWorkspaceSetupFile(workspace);
-    removeLegacyWorkspaceSetupFile(workspace);
-    removeLegacyWorkspaceSetupFile(withinTemporaryRoot('missing'));
+    const unlink = vi.spyOn(fs.promises, 'unlink');
+    await removeLegacyWorkspaceSetupFile(workspace);
+    await removeLegacyWorkspaceSetupFile(workspace);
+    await removeLegacyWorkspaceSetupFile(withinTemporaryRoot('missing'));
 
     expect(unlink).toHaveBeenCalledTimes(1);
     expect(unlink).toHaveBeenCalledWith(marker);
     expect(console.info).toHaveBeenCalledOnce();
-    expect(console.info).toHaveBeenCalledWith(`[OpenClaw] Removed legacy workspace setup file: ${marker}`);
+    expect(console.info).toHaveBeenCalledWith(`[OpenClaw] Removed legacy workspace setup file: ${JSON.stringify(marker)}`);
   });
 
-  it('preserves the exact selected directory instead of trimming its path', () => {
+  it('preserves the exact selected directory instead of trimming its path', async () => {
     const selectedDirectory = withinTemporaryRoot('project ');
     if (process.platform === 'win32') {
-      const inspect = vi.spyOn(fs, 'lstatSync').mockImplementation(() => {
-        throw Object.assign(new Error('missing'), { code: 'ENOENT' });
-      });
+      const inspect = vi.spyOn(fs.promises, 'lstat').mockRejectedValue(
+        Object.assign(new Error('missing'), { code: 'ENOENT' }),
+      );
 
-      removeLegacyWorkspaceSetupFile(selectedDirectory);
+      await removeLegacyWorkspaceSetupFile(selectedDirectory);
 
       expect(inspect).toHaveBeenCalledExactlyOnceWith(path.join(selectedDirectory, LEGACY_FILE));
       return;
@@ -103,38 +103,38 @@ describe('legacy workspace setup cleanup', () => {
     const selected = writeWorkspaceFile('project ');
     const neighboring = writeWorkspaceFile('project');
 
-    removeLegacyWorkspaceSetupFile(selectedDirectory);
+    await removeLegacyWorkspaceSetupFile(selectedDirectory);
 
     expect(fs.existsSync(selected)).toBe(false);
     expect(fs.readFileSync(neighboring, 'utf8')).toBe(`Preserved contents: ${LEGACY_FILE}`);
   });
 
-  it('skips empty paths and rejects relative paths without inspecting the process directory', () => {
-    const inspect = vi.spyOn(fs, 'lstatSync');
+  it('skips empty paths and rejects relative paths without inspecting the process directory', async () => {
+    const inspect = vi.spyOn(fs.promises, 'lstat');
 
-    removeLegacyWorkspaceSetupFile('');
-    removeLegacyWorkspaceSetupFile('  ');
-    expect(() => removeLegacyWorkspaceSetupFile('relative-project'))
-      .toThrow(LegacyWorkspaceSetupCleanupError);
-    expect(() => removeLegacyWorkspaceSetupFile('~/project'))
-      .toThrow(LegacyWorkspaceSetupCleanupError);
+    await removeLegacyWorkspaceSetupFile('');
+    await removeLegacyWorkspaceSetupFile('  ');
+    await expect(removeLegacyWorkspaceSetupFile('relative-project'))
+      .rejects.toThrow(LegacyWorkspaceSetupCleanupError);
+    await expect(removeLegacyWorkspaceSetupFile('~/project'))
+      .rejects.toThrow(LegacyWorkspaceSetupCleanupError);
 
     expect(inspect).not.toHaveBeenCalled();
   });
 
-  it('preserves a directory with the marker name and reports the exact blocked path', () => {
+  it('preserves a directory with the marker name and reports the exact blocked path', async () => {
     const target = withinTemporaryRoot('project', LEGACY_FILE);
     fs.mkdirSync(target, { recursive: true });
     const child = writeWorkspaceFile(path.join('project', LEGACY_FILE), 'retained.txt');
 
-    expect(() => removeLegacyWorkspaceSetupFile(path.dirname(target)))
-      .toThrow(`legacyWorkspaceSetupCleanupFailed: ${target}`);
+    await expect(removeLegacyWorkspaceSetupFile(path.dirname(target)))
+      .rejects.toThrow(`legacyWorkspaceSetupCleanupFailed: ${target}`);
 
     expect(fs.statSync(target).isDirectory()).toBe(true);
     expect(fs.readFileSync(child, 'utf8')).toBe('Preserved contents: retained.txt');
   });
 
-  it('rejects a symbolic link without following or deleting it', () => {
+  it('rejects a symbolic link without following or deleting it', async () => {
     const workspace = withinTemporaryRoot('project');
     const outside = withinTemporaryRoot('outside');
     fs.mkdirSync(workspace, { recursive: true });
@@ -142,30 +142,21 @@ describe('legacy workspace setup cleanup', () => {
     const preserved = writeWorkspaceFile('outside', 'retained.txt');
     const target = path.join(workspace, LEGACY_FILE);
     fs.symlinkSync(outside, target, process.platform === 'win32' ? 'junction' : 'dir');
-    const unlink = vi.spyOn(fs, 'unlinkSync');
+    const unlink = vi.spyOn(fs.promises, 'unlink');
 
-    expect(() => removeLegacyWorkspaceSetupFile(workspace))
-      .toThrow(LegacyWorkspaceSetupCleanupError);
+    await expect(removeLegacyWorkspaceSetupFile(workspace))
+      .rejects.toThrow(LegacyWorkspaceSetupCleanupError);
 
     expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
     expect(fs.readFileSync(preserved, 'utf8')).toBe('Preserved contents: retained.txt');
     expect(unlink).not.toHaveBeenCalled();
   });
 
-  it('preserves the marker and original cause when removal is denied', () => {
+  it('preserves the marker and original cause when removal is denied', async () => {
     const marker = writeWorkspaceFile('project');
     const failure = Object.assign(new Error('permission denied'), { code: 'EACCES' });
-    vi.spyOn(fs, 'unlinkSync').mockImplementation(() => { throw failure; });
-    let caught: unknown;
-
-    try {
-      removeLegacyWorkspaceSetupFile(path.dirname(marker));
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(caught).toBeInstanceOf(LegacyWorkspaceSetupCleanupError);
-    expect(caught).toMatchObject({
+    vi.spyOn(fs.promises, 'unlink').mockRejectedValue(failure);
+    await expect(removeLegacyWorkspaceSetupFile(path.dirname(marker))).rejects.toMatchObject({
       name: 'LegacyWorkspaceSetupCleanupError',
       message: `legacyWorkspaceSetupCleanupFailed: ${marker}`,
       cause: failure,

@@ -30,6 +30,7 @@ export default function SessionWorkspacePicker({
   const pendingRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const titleKey = saving ? 'workspacePickerApplying' : 'sessionWorkspaceChange';
   const selectFolder = async (nextCwd: string) => {
     if (disabled || pendingRef.current || nextCwd === cwd) return;
     pendingRef.current = true;
@@ -61,8 +62,9 @@ export default function SessionWorkspacePicker({
         disabled={disabled || saving}
         onClick={() => setOpen(value => !value)}
         aria-label={i18nService.t('sessionWorkspaceChange')}
-        title={i18nService.t(disabled ? 'sessionWorkspaceBusy' : 'sessionWorkspaceChange')}
+        title={i18nService.t(disabled ? 'sessionWorkspaceBusy' : titleKey)}
         aria-haspopup="dialog"
+        aria-busy={saving}
         aria-expanded={open && !disabled && !saving}
         className="inline-flex h-7 w-8 items-center justify-center rounded-lg text-secondary transition-colors hover:bg-surface-raised hover:text-primary disabled:opacity-40"
       >
