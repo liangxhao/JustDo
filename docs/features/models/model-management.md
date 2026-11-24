@@ -132,7 +132,7 @@ Kie、Z.AI、Novita 不在受支持的视频提供方中，即使安装对应插
 
 ### 视频配置发布与回滚
 
-保存的视频条目带有 `nativeVideoProvider`，由应用配置同步器在启动、设置保存及登录状态变化时投影到 `agents.defaults.mediaModels.video` 和原生 `models.providers.<id>`，并启用所选插件。非空 API Key 通过权限受限的 `extension-secrets.json` 文件 SecretRef 提供给运行时；Gateway 配置不包含明文凭据。清空视频适配器的 API Key 会移除其运行时凭据引用。该适配器的地址和凭据独立于聊天和图像模型。浏览其他供应商不会改变默认选择；多个供应商条目可保存独立地址和凭据，但仅所选默认条目投影到运行时。
+保存的视频条目带有 `nativeVideoProvider`，由应用配置同步器在启动、设置保存及登录时投影到 `agents.defaults.mediaModels.video` 和原生 `models.providers.<id>`，并启用所选插件。非空 API Key 通过权限受限的 `extension-secrets.json` 文件 SecretRef 提供给运行时；Gateway 配置不包含明文凭据。清空视频适配器的 API Key 会移除其运行时凭据引用。该适配器的地址和凭据独立于聊天和图像模型。浏览其他供应商不会改变默认选择；多个供应商条目可保存独立地址和凭据，但仅所选默认条目投影到运行时。
 
 取消默认视频模型、删除最后一个默认模型或删除全部供应商会清除受管默认选择，并停止使用视频能力；共享 OpenAI 插件保持启用，聊天、图像及语音能力不受影响。它没有预设默认模型，取消默认后不会自动选择一个模型。视频设置回滚只恢复视频默认选择和独立配置域，不覆盖共享 OpenAI 插件的启用状态或其它能力配置。导入导出沿用加密凭据流程并保留原生服务商标记。
 

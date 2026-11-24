@@ -408,8 +408,8 @@ Runtime Services 通过公开 `before_prompt_build` 为非 ACP 助手追加稳�
 `transcripts`、`mobile_ui`、`intent`、`secrets`、`conversations_send`、`conversations_list`、
 `conversations_turn`。
 
-完整配置、无模型配置及登录/退出同步均直接使用该名单，不合并旧配置的
-全局禁用项。电脑控制继续根据插件开关额外加入或移除 `computer`；其他权限策略保持原有规则。
+完整配置、无模型配置及登录同步均直接使用该名单，不合并旧配置的
+全局禁用项。退出登录沿用已发布的工具和会议配置。电脑控制继续根据插件开关额外加入或移除 `computer`；其他权限策略保持原有规则。
 
 同步同时将 `transcripts` 直接设为 `{ enabled: false }`，关闭原生会议记录、自动采集和
 会议纪要持久化，不合并旧会议配置。普通聊天历史继续由原生会话存储拥有。
@@ -420,7 +420,7 @@ Runtime Services 通过公开 `before_prompt_build` 为非 ACP 助手追加稳�
 `intent` 禁用不取消已有常驻规则或关闭 memory-core 的匹配钩子；普通记忆工具保持原有策略。
 `secrets` 工具禁用不关闭底层凭据解析、刷新及模型认证所用的 exec/file SecretRef。
 
-配置同步只更新受管的 `meta.lastTouchedVersion` 并删除不再支持的 `lastTouchedAt`，保留 Gateway 写入的 `meta.migrations` 等原生元数据。完整配置、最小配置及认证切换都遵循这一规则，避免抹掉迁移回执后让 Gateway 再次写入并触发无意义重载。
+配置同步只更新受管的 `meta.lastTouchedVersion` 并删除不再支持的 `lastTouchedAt`，保留 Gateway 写入的 `meta.migrations` 等原生元数据。完整配置、最小配置及登录同步都遵循这一规则，避免抹掉迁移回执后让 Gateway 再次写入并触发无意义重载。
 
 ```mermaid
 sequenceDiagram

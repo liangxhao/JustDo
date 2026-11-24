@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { BuiltinModelSyncReason } from '../../../../shared/providers/builtinModels';
-import { buildAuthScopedOpenClawConfig } from '../models/authScopedProjection';
+import { buildLoginScopedOpenClawConfig } from '../models/authScopedProjection';
 import {
   buildManagedOpenClawExecutionToolConfig,
   projectManagedOpenClawExecNotifications,
@@ -44,21 +43,19 @@ describe('managed exec completion notification policy', () => {
       .toMatchObject({ notifyOnExit: false, backgroundMs: 900, timeoutSec: 37 });
   });
 
-  test.each([BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout])(
-    'prevents existing per-agent overrides from restoring notifications on %s', reason => {
-      const existing = configuration();
-      const snapshot = structuredClone(existing);
-      const result = buildAuthScopedOpenClawConfig(existing, {}, reason);
-      expect(result.tools).toMatchObject({
-        exec: { notifyOnExit: false, backgroundMs: 900, timeoutSec: 37 },
-      });
-      expect(result.agents).toMatchObject({ entries: {
-        main: { tools: { exec: { notifyOnExit: false, timeoutSec: 41 } } },
-        researcher: { tools: { exec: { notifyOnExit: false, backgroundMs: 50 } } },
-        external: existing.agents.entries.external,
-      } });
-      expect(result.service).toEqual({ notifyOnExit: true });
-      expect(existing).toEqual(snapshot);
-    },
-  );
+  test('prevents existing per-agent overrides from restoring notifications on login', () => {
+    const existing = configuration();
+    const snapshot = structuredClone(existing);
+    const result = buildLoginScopedOpenClawConfig(existing, {});
+    expect(result.tools).toMatchObject({
+      exec: { notifyOnExit: false, backgroundMs: 900, timeoutSec: 37 },
+    });
+    expect(result.agents).toMatchObject({ entries: {
+      main: { tools: { exec: { notifyOnExit: false, timeoutSec: 41 } } },
+      researcher: { tools: { exec: { notifyOnExit: false, backgroundMs: 50 } } },
+      external: existing.agents.entries.external,
+    } });
+    expect(result.service).toEqual({ notifyOnExit: true });
+    expect(existing).toEqual(snapshot);
+  });
 });

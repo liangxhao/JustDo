@@ -24,7 +24,6 @@ import {
   listManagedOpenClawPluginIds,
   OpenClawConfigSync,
   type OpenClawConfigSyncResult,
-  verifyLoggedOutOpenClawConfig,
 } from './openclawConfigSync';
 import { OPENCLAW_MANAGED_TOOL_DENY } from './policies/executionPolicyProjection';
 
@@ -219,13 +218,19 @@ describe('native configuration publication contracts', () => {
   const paths = [
     { name: 'full', configured: true, existing: true, reason: 'settings' },
     { name: 'fresh minimal', configured: false, existing: false, reason: 'startup' },
-    { name: 'auth minimal', configured: false, existing: true, reason: BuiltinModelSyncReason.AuthLogout },
+    { name: 'auth logout', configured: false, existing: true, reason: BuiltinModelSyncReason.AuthLogout },
     { name: 'preserved minimal', configured: false, existing: true, reason: 'settings' },
   ];
 
   test.each(paths)('$name restricts before writing and skips an unchanged publication', contract => {
     const fixture = createConfigurationFixture(contract.configured, 'local',
-      contract.existing ? { gateway: { mode: 'local' } } : undefined);
+      contract.existing ? {
+        gateway: { mode: 'local', bind: 'loopback' },
+        transcripts: { enabled: false },
+        ...(contract.reason === BuiltinModelSyncReason.AuthLogout && {
+          models: { providers: { builtin_models: { models: [{ id: 'builtin-chat' }] } } },
+        }),
+      } : undefined);
     const events: string[] = [];
     const write = fs.writeFileSync;
     const rename = fs.renameSync;
@@ -265,7 +270,13 @@ describe('native configuration publication contracts', () => {
     (['permission', 'rename', 'readback'] as const).map(failure => ({ ...contract, failure })),
   ))('$name reports $failure failure without claiming a successful publication', contract => {
     const fixture = createConfigurationFixture(contract.configured, 'local',
-      contract.existing ? { gateway: { mode: 'local' } } : undefined);
+      contract.existing ? {
+        gateway: { mode: 'local', bind: 'loopback' },
+        transcripts: { enabled: false },
+        ...(contract.reason === BuiltinModelSyncReason.AuthLogout && {
+          models: { providers: { builtin_models: { models: [{ id: 'builtin-chat' }] } } },
+        }),
+      } : undefined);
     const original = contract.existing ? fs.readFileSync(fixture.configPath, 'utf8') : undefined;
     const rename = fs.renameSync;
     const restrict = providerSecretFile.restrictCredentialFile;
@@ -340,8 +351,9 @@ test('keeps Gateway listener configuration stable when the first custom model is
   expect(fixture.sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 
   configured = false;
+  const customProviders = fixture.read().models.providers;
   expect(fixture.sync.sync(BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
-  expect(fixture.read().models.providers).toBeUndefined();
+  expect(fixture.read().models.providers).toEqual(customProviders);
   expect(fixture.read().gateway).toEqual(initialGateway);
 
   configured = true;
@@ -675,13 +687,18 @@ test.each(['full', 'minimal'])('%s config applies live Control UI preferences ac
     existing.gateway.customSetting = 'preserve-me';
     fs.writeFileSync(configPath, JSON.stringify(existing));
     const result = sync.sync(update.reason);
-    expect(result).toMatchObject({ ok: true, configChanged: true });
     const next = readConfig();
+    if (update.reason === BuiltinModelSyncReason.AuthLogout) {
+      expect(result).toMatchObject({ ok: true, configChanged: false });
+      expect(next).toEqual(existing);
+      continue;
+    }
+    expect(result).toMatchObject({ ok: true, configChanged: true });
     expect(next.gateway.controlUi.enabled).toBe(update.enabled);
     expect(next.gateway.controlUi.allowExternalEmbedUrls).toBe(update.enabled);
     expect(next.gateway.controlUi.basePath).toBe('/console');
     expect(next.gateway.controlUi.allowedOrigins).toEqual(['http://custom.test']);
-    if (mode === 'minimal' || update.reason === BuiltinModelSyncReason.AuthLogin || update.reason === BuiltinModelSyncReason.AuthLogout) {
+    if (mode === 'minimal' || update.reason === BuiltinModelSyncReason.AuthLogin) {
       expect(next.gateway.customSetting).toBe('preserve-me');
     }
   }
@@ -773,7 +790,6 @@ test.each(['full', 'minimal'])(
       'startup',
       'app-config-change',
       BuiltinModelSyncReason.AuthLogin,
-      BuiltinModelSyncReason.AuthLogout,
     ]) {
       const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       existing.tools.allow = ['read', ...deniedTools];
@@ -827,7 +843,7 @@ test.each(['full', 'minimal'])(
       .toMatchObject({ cyberFailover: { mode: 'off' } });
     for (const reason of [
       'startup', 'app-config-change',
-      BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout,
+      BuiltinModelSyncReason.AuthLogin,
     ]) {
       const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       existing.agents.defaults.embeddedAgent = {
@@ -1074,6 +1090,7 @@ const writeMinimalConfig = (
       getAppPluginPolicy: () => ({ skills: ['agent-team'], sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'], surfaces: { 'agent-team': { silentReply: { group: 'allow' } } } }),
     engineManager: {
       getDesiredVersion: () => '2026.6.11',
+      getConfigPath: () => configPath,
       getStateDir: () => path.dirname(configPath),
     },
     getCoworkConfig: () => ({
@@ -1091,6 +1108,7 @@ const writeMinimalConfig = (
       mode: localTtsConfig ? 'local' : 'online',
     }),
   } as never);
+  if (reason === BuiltinModelSyncReason.AuthLogout) return sync.sync(reason);
   return (
     sync as unknown as {
       writeMinimalConfig: (path: string, syncReason: string) => OpenClawConfigSyncResult;
@@ -1099,12 +1117,7 @@ const writeMinimalConfig = (
 };
 
 test.each(
-  (['full', 'minimal'] as const).flatMap(mode =>
-    [BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout].map(reason => ({
-      mode,
-      reason,
-    })),
-  ),
+  (['full', 'minimal'] as const).map(mode => ({ mode, reason: BuiltinModelSyncReason.AuthLogin })),
 )(
   '$mode $reason projects a missing native browser root without selecting a managed default',
   ({ mode, reason }) => {
@@ -1368,7 +1381,6 @@ describe('OpenClaw auth logout config sync', () => {
         'startup',
         'settings',
         BuiltinModelSyncReason.AuthLogin,
-        BuiltinModelSyncReason.AuthLogout,
       ]) {
         const existing = fs.existsSync(configPath)
           ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
@@ -1753,7 +1765,6 @@ describe('OpenClaw auth logout config sync', () => {
   test.each([
     BuiltinModelSyncReason.ManualRefresh,
     BuiltinModelSyncReason.AuthLogin,
-    BuiltinModelSyncReason.AuthLogout,
   ])('forces the managed heartbeat off in the final no-model config for %s', reason => {
     const configPath = writeExistingBuiltinConfig();
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -2482,7 +2493,7 @@ describe('OpenClaw auth logout config sync', () => {
   });
 
   test.each([undefined, 'off', 'auto', 'propose'])(
-    'auth sync defaults only missing skill mode (%s)',
+    'logout preserves the explicitly authored skill mode (%s)',
     mode => {
       const configPath = writeExistingBuiltinConfig();
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -2490,7 +2501,7 @@ describe('OpenClaw auth logout config sync', () => {
       fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
       expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
       expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).skills.workshop.autonomous.mode).toBe(
-        mode ?? 'off',
+        mode,
       );
     },
   );
@@ -2563,56 +2574,65 @@ describe('OpenClaw auth logout config sync', () => {
     },
   );
 
-  test('removes the built-in provider placeholder before its environment variable is revoked', () => {
+  test('logout removes only built-in authentication and model references', () => {
     const configPath = writeExistingBuiltinConfig();
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.memory = {
+      citations: 'off',
+      search: {
+        enabled: true, provider: 'openai',
+        remote: { apiKey: { source: 'exec', provider: 'justdo-builtin', id: 'model-api-key' } },
+      },
+    };
+    existing.secrets.providers['justdo-builtin'] = { source: 'exec', command: 'credential-reader' };
+    existing.mcp = { servers: { custom: { command: 'node', args: ['server.cjs'] } } };
+    existing.tools = { exec: { mode: 'ask', host: 'gateway' } };
+    existing.session = { maintenance: { maxEntries: 20 } };
+    existing.plugins.entries['runtime-services'] = { enabled: true, config: { replySpeech: { enabled: true } } };
+    existing.plugins.entries.custom_plugin.config.label = 'Example mentioning justdo_login';
+    existing.agents.defaults.subagents.model = 'builtin_models/chat-model';
+    existing.agents.defaults.models = {
+      'builtin_models/chat-model': {},
+      'custom-provider/custom-model': { alias: 'custom' },
+    };
+    fs.writeFileSync(configPath, JSON.stringify(existing));
 
     const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout);
 
-    expect(result.ok).toBe(true);
-    const content = fs.readFileSync(configPath, 'utf8');
-    expect(content).not.toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
-    const config = JSON.parse(content);
+    expect(result).toMatchObject({ ok: true, configChanged: true, requiresGatewayRestart: false });
+    const expected = structuredClone(existing);
+    delete expected.models.providers;
+    delete expected.agents.defaults.model;
+    delete expected.agents.entries.main.model;
+    delete expected.agents.defaults.models['builtin_models/chat-model'];
+    delete expected.agents.defaults.subagents.model;
+    delete expected.secrets.providers.justdo_login;
+    delete expected.secrets.providers['justdo-builtin'];
+    expected.memory.search = { enabled: false };
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(expected);
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout)).toMatchObject({
+      ok: true, configChanged: false,
+    });
+  });
+
+  test('withdraws the built-in configuration even when the credential snapshot is locked', () => {
+    const configPath = writeExistingBuiltinConfig();
+    const credentials = path.join(path.dirname(configPath), 'credentials');
+    fs.mkdirSync(credentials);
+    const snapshot = path.join(credentials, 'credentials.json');
+    fs.writeFileSync(snapshot, 'synthetic snapshot');
+    const unlink = fs.unlinkSync;
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(file => {
+      if (file === snapshot) throw Object.assign(new Error('fixture lock'), { code: 'EPERM' });
+      unlink(file);
+    });
+
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout)).toMatchObject({
+      ok: false, configChanged: true, error: 'Failed to revoke the built-in model credential snapshot.',
+    });
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.models.providers).toBeUndefined();
-    expect(config.agents.defaults.model).toBeUndefined();
-    expect(config.agents.defaults).not.toHaveProperty('memorySearch');
-    expect(config.memory.search).toEqual({ enabled: false });
-    expect(config.agents.defaults.timeoutSeconds).toBe(
-      createDefaultAgentRuntimeSettings().agent.runTimeoutSeconds,
-    );
-    expect(config.agents.defaults.maxConcurrent).toBeUndefined();
-    expect(config.agents.defaults.subagents).toMatchObject({
-      allowAgents: ['worker'],
-      announceTimeoutMs: 90_000,
-      requireAgentId: true,
-    });
-    expect(config.agents.defaults.systemAgent).toEqual({ agentId: 'main' });
-    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
-    expect(config.agents.ownership).toBe('explicit');
-    expect(config.agents.entries.main).toEqual({
-      reasoningDefault: 'stream',
-      heartbeat: { every: '0m' },
-      workspace: path.join(path.dirname(configPath), 'agent-workspaces', 'main'),
-      cwd: path.join(path.dirname(configPath), 'workspace'),
-    });
-    expect(Object.keys(config.agents.entries)).toEqual(['main']);
-    expect(config.plugins.entries.custom_plugin).toEqual({
-      enabled: true,
-      config: { mode: 'keep-me' },
-    });
-    expect(config.skills.entries.docx).toEqual({ enabled: false });
-    expect(config.secrets.providers).toEqual({
-      operator_secrets: {
-        source: 'file',
-        path: path.join(path.dirname(configPath), 'operator-secrets.json'),
-        mode: 'json',
-      },
-    });
-    expect(config.session.maintenance).toEqual({
-      mode: 'enforce',
-      pruneAfter: '365d',
-      maxEntries: 500,
-    });
-    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
+    expect(config.secrets.providers).not.toHaveProperty('justdo_login');
   });
 
   test('keeps the existing preservation behavior for non-logout minimal syncs', () => {
@@ -2637,30 +2657,21 @@ describe('OpenClaw auth logout config sync', () => {
     });
   });
 
-  test('minimal logout withdraws managed providers and their model references', () => {
+  test('logout preserves custom providers and removes only built-in fallback routes', () => {
     const configPath = writeExistingMixedProviderConfig();
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.agents.defaults.model.fallbacks = ['builtin_models/builtin-model', 'other/model'];
+    fs.writeFileSync(configPath, JSON.stringify(existing));
 
-    const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout);
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout).ok).toBe(true);
 
-    expect(result.ok).toBe(true);
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    expect(config.models.providers).toBeUndefined();
-    expect(config.agents.defaults.model).toBeUndefined();
-    expect(config.agents.defaults.timeoutSeconds).toBe(
-      createDefaultAgentRuntimeSettings().agent.runTimeoutSeconds,
-    );
-    expect(config.agents.entries.main.model).toBeUndefined();
-    expect(config.agents.entries.worker.model).toBeUndefined();
-    expect(config.gateway).toEqual({ mode: 'local', bind: 'loopback', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
-    expect(config.customFeature).toEqual({ enabled: true });
-    expect(config.secrets.providers).toEqual({
-      operator_secrets: {
-        source: 'file',
-        path: path.join(path.dirname(configPath), 'operator-secrets.json'),
-        mode: 'json',
-      },
+    expect(config.models.providers).toEqual({ 'custom-provider': existing.models.providers['custom-provider'] });
+    expect(config.agents.defaults.model).toEqual({
+      primary: 'custom-provider/custom-model', fallbacks: ['other/model'],
     });
-    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({ ok: true });
+    expect(config.agents.entries.main).toEqual(existing.agents.entries.main);
+    expect(config.agents.entries.worker.model).toBeUndefined();
   });
 
   test('minimal login without fetched models removes obsolete provider refs', () => {
@@ -2681,26 +2692,19 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.customFeature).toEqual({ enabled: true });
   });
 
-  test('rejects a logout config that still contains the built-in provider', () => {
-    const configPath = writeExistingBuiltinConfig();
-
-    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({
-      ok: false,
-      error: expect.stringContaining('built-in authentication placeholder remains'),
-    });
-  });
-
-  test('rejects stale built-in agent model references after provider removal', () => {
+  test('preserves the published config when an external field still needs the built-in SecretRef', () => {
     const configPath = writeExistingBuiltinConfig();
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    config.models = {};
-    delete config.secrets;
-    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+    config.plugins.entries.custom_plugin.config.apiKey = {
+      source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT',
+    };
+    const original = JSON.stringify(config);
+    fs.writeFileSync(configPath, original);
 
-    expect(verifyLoggedOutOpenClawConfig(configPath)).toEqual({
-      ok: false,
-      error: expect.stringContaining('default built-in model reference remains'),
+    expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout)).toMatchObject({
+      ok: false, configChanged: false, error: expect.stringContaining('references the built-in model credential'),
     });
+    expect(fs.readFileSync(configPath, 'utf8')).toBe(original);
   });
 
   test('builds canonical Agent entries with a custom fallback', () => {
@@ -2755,7 +2759,10 @@ describe('OpenClaw auth logout config sync', () => {
     expect(Object.keys(result.entries)).toEqual(['main']);
   });
 
-  test('rejects an application-reserved display-name provider without changing config', () => {
+  test.each([
+    { displayName: 'JustDo', providerId: 'opencode', fallback: undefined },
+    { displayName: 'Company-Models', providerId: 'company-models', fallback: 'company-models/custom-model' },
+  ])('withdraws a built-in default while preserving $displayName', ({ displayName, providerId, fallback }) => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-full-auth-logout-'));
     temporaryDirectories.push(directory);
     const stateDir = path.join(directory, 'state');
@@ -2776,7 +2783,7 @@ describe('OpenClaw auth logout config sync', () => {
               apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
               models: [{ id: 'chat-model' }],
             },
-            opencode: {
+            [providerId]: {
               apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
               models: [{ id: 'custom-model' }],
             },
@@ -2807,7 +2814,7 @@ describe('OpenClaw auth logout config sync', () => {
           apiKey: 'custom-secret',
           baseUrl: 'https://custom.example/v1',
           apiFormat: 'openai' as const,
-          displayName: 'JustDo',
+          displayName,
           models: [{ id: 'custom-model', name: 'Custom Model' }],
         },
       },
@@ -2851,16 +2858,12 @@ describe('OpenClaw auth logout config sync', () => {
 
     const result = sync.sync(BuiltinModelSyncReason.AuthLogout);
 
-    expect(result.ok).toBe(false);
-    expect(result.configChanged).toBe(false);
-    expect(result.error).toContain(
-      'custom provider name "JustDo" conflicts with an application-managed provider id',
-    );
+    expect(result).toMatchObject({ ok: true, configChanged: true });
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.models.mode).toBe('replace');
-    expect(config.models.providers.builtin_models).toBeDefined();
-    expect(config.models.providers.opencode).toBeDefined();
-    expect(config.agents.defaults.model.primary).toBe('builtin_models/chat-model');
+    expect(config.models.providers.builtin_models).toBeUndefined();
+    expect(config.models.providers[providerId]).toBeDefined();
+    expect(config.agents.defaults.model?.primary).toBe(fallback);
     expect(config.customFeature).toEqual({
       enabled: true,
       nested: { value: 'preserve-me' },
@@ -3620,7 +3623,6 @@ test.each(['full', 'minimal'])(
       'startup',
       'app-config-change',
       BuiltinModelSyncReason.AuthLogin,
-      BuiltinModelSyncReason.AuthLogout,
     ]) {
       expect(sync.sync(reason).ok).toBe(false);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));

@@ -25,9 +25,9 @@ import {
 import {
   applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
-  buildAuthScopedOpenClawConfig,
   buildBuiltinMemorySearchConfig,
   buildDefaultOpenClawPluginEntries,
+  buildLoginScopedOpenClawConfig,
   buildManagedBundledExtensionEntries,
   buildManagedExternalAgentEntries,
   buildManagedOpenClawAcpConfig,
@@ -137,7 +137,6 @@ export {
   removeUnavailableOpenClawPluginRegistrations,
   resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-  verifyLoggedOutOpenClawConfig,
 } from './openclawConfigBuilders';
 
 import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
@@ -155,6 +154,7 @@ import {
   type ExternalAgentSettings,
 } from '../../../shared/integrations/externalAgents';
 import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
+import { OpenClawProviderId } from '../../../shared/providers';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { t } from '../../core/i18n';
 import type { Agent, CoworkConfig } from '../../data/coworkStore';
@@ -175,7 +175,9 @@ import { buildAgentEntry, buildManagedAgentEntries } from '../models/openclawAge
 import { getBuiltinCredentialNodeRuntimeSource } from '../runtime/launch/electronNodeRuntime';
 import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agents/agentWorkspace';
 import { seedMainRoleFiles } from './agents/mainRoleFiles';
-import { syncBuiltinCredentialFile } from './models/builtinCredentialFile';
+import { projectLoggedOutOpenClawConfig } from './models/authScopedProjection';
+import { revokeBuiltinCredentialFile, syncBuiltinCredentialFile } from './models/builtinCredentialFile';
+import { containsBuiltinCredentialRef } from './models/builtinSecretProjection';
 import { restrictCredentialFile, syncProviderSecretFile } from './models/providerSecretFile';
 import { mergeNativeMcpOverrides } from './plugins/nativeMcpOverrides';
 
@@ -277,6 +279,7 @@ export class OpenClawConfigSync {
     retiredMcpNames: ReadonlySet<string> = new Set(),
     context?: { restoreDecisionModelSnapshot?: boolean },
   ): OpenClawConfigSyncResult {
+    if (reason === BuiltinModelSyncReason.AuthLogout) return this.syncLoggedOutConfig();
     this.decisionSecretsChanged = false;
     this.videoSecretsChanged = false;
     this.speechSecretsChanged = false;
@@ -338,6 +341,75 @@ export class OpenClawConfigSync {
             : 'decisionModelConfigurationInvalid',
         ),
       };
+    }
+  }
+
+  private syncLoggedOutConfig(): OpenClawConfigSyncResult {
+    const configPath = this.engineManager.getConfigPath();
+    let temporaryPath: string | undefined;
+    try {
+      // Even a locked snapshot must not keep its provider configured in Gateway.
+      let secretsChanged = false;
+      let revokeFailed = false;
+      try {
+        secretsChanged = revokeBuiltinCredentialFile(this.engineManager.getStateDir());
+      } catch {
+        revokeFailed = true;
+      }
+      let content: string;
+      try {
+        content = fs.readFileSync(configPath, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || revokeFailed) throw error;
+        return { ok: true, changed: secretsChanged, configChanged: false, requiresGatewayRestart: false,
+          configPath, configMissing: true };
+      }
+      let existing: unknown;
+      try {
+        existing = JSON.parse(content);
+      } catch {
+        throw new Error('The existing native configuration is invalid.');
+      }
+      if (!isRecord(existing)) throw new Error('The existing native configuration is unavailable.');
+      const next = projectLoggedOutOpenClawConfig(existing, () => {
+        const { config, providerMetadata } = resolveRawApiConfig();
+        if (!config) return undefined;
+        const { providerId, sessionModelId, primaryModel } = buildProviderSelection({
+          apiKey: config.apiKey, apiType: config.apiType, baseURL: config.baseURL,
+          modelId: config.model, providerName: providerMetadata?.providerName ?? '',
+          displayName: providerMetadata?.displayName,
+        });
+        const providers = configRecord(configRecord(existing.models).providers);
+        const models = configRecord(providers[providerId]).models;
+        if (providerId !== OpenClawProviderId.BuiltinModels && Array.isArray(models) &&
+            models.some(model => isRecord(model) && model.id === sessionModelId)) return primaryModel;
+        return undefined;
+      });
+      if (containsBuiltinCredentialRef(next)) {
+        throw new Error('The native configuration still references the built-in model credential.');
+      }
+      const changed = !isDeepStrictEqual(existing, next);
+      if (changed) {
+        temporaryPath = `${configPath}.tmp-${randomUUID()}`;
+        this.writeConfigTemporaryFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
+        if (fs.readFileSync(configPath, 'utf8') !== content)
+          throw new Error('The native configuration changed before logout publication.');
+        fs.renameSync(temporaryPath, configPath);
+        temporaryPath = undefined;
+      }
+      const verified = changed
+        ? buildVerifiedConfigSyncResult(configPath, next, true, true)
+        : { ok: true, changed: false, configChanged: false, requiresGatewayRestart: false, configPath };
+      if (!verified.ok) return verified;
+      if (revokeFailed) return { ...verified, ok: false, error: 'Failed to revoke the built-in model credential snapshot.' };
+      return { ...verified, changed: changed || secretsChanged, secretsChanged };
+    } catch (error) {
+      return {
+        ok: false, changed: false, configChanged: false, requiresGatewayRestart: false, configPath,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      if (temporaryPath && fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
     }
   }
 
@@ -551,8 +623,7 @@ export class OpenClawConfigSync {
     retiredMcpNames: ReadonlySet<string>,
   ): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
-    const isAuthLifecycleSync =
-      reason === BuiltinModelSyncReason.AuthLogin || reason === BuiltinModelSyncReason.AuthLogout;
+    const isAuthLogin = reason === BuiltinModelSyncReason.AuthLogin;
     let currentContent = '';
     let existingConfig: Record<string, unknown> | null = null;
     let existingPlugins: Record<string, unknown> = {};
@@ -807,7 +878,9 @@ export class OpenClawConfigSync {
           // Seed main in its role home explicitly; never scaffold task projects.
           // Native skipBootstrap preserves injection of existing role/project files.
           skipBootstrap: true,
-          subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
+          subagents: buildManagedOpenClawSubagentConfig(
+            agentRuntimeSettings, Object.hasOwn(allProvidersMap, OpenClawProviderId.BuiltinModels),
+          ),
         },
         ...this.buildAgentsEntries(
           primaryModel,
@@ -901,8 +974,8 @@ export class OpenClawConfigSync {
     // IM channel config syncing removed — channels disabled pending future adaptation
 
     const scopedConfig =
-      isAuthLifecycleSync && existingConfig
-        ? buildAuthScopedOpenClawConfig(existingConfig, managedConfig, reason)
+      isAuthLogin && existingConfig
+        ? buildLoginScopedOpenClawConfig(existingConfig, managedConfig)
         : managedConfig;
     let preparedSecrets: ReturnType<typeof syncProviderSecretFile>;
     try {
@@ -1200,7 +1273,7 @@ export class OpenClawConfigSync {
             systemAgent: { agentId: 'main' },
             heartbeat: buildManagedOpenClawHeartbeatConfig(),
             compaction: buildManagedOpenClawCompactionConfig(),
-            subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
+            subagents: buildManagedOpenClawSubagentConfig(agentRuntimeSettings, false),
             workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
             cwd: resolvedWorkspaceDir,
             skipBootstrap: true,
@@ -1324,14 +1397,13 @@ export class OpenClawConfigSync {
       );
     };
 
-    const isAuthLifecycleSync =
-      reason === BuiltinModelSyncReason.AuthLogin || reason === BuiltinModelSyncReason.AuthLogout;
-    if (isAuthLifecycleSync && currentContent && currentContent !== nextContent) {
+    const isAuthLogin = reason === BuiltinModelSyncReason.AuthLogin;
+    if (isAuthLogin && currentContent && currentContent !== nextContent) {
       try {
         const existing = previousConfig;
         if (isRecord(existing)) {
           const sanitizedConfig = withComputerControlPolicy(
-            buildAuthScopedOpenClawConfig(existing, minimalConfig, reason),
+            buildLoginScopedOpenClawConfig(existing, minimalConfig),
           );
           this.applyManagedRuntimeConfiguration(sanitizedConfig, configPath);
           const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
@@ -1357,11 +1429,7 @@ export class OpenClawConfigSync {
     // user configuration), don't downgrade it to the minimal version.
     // Check for models (API configured), plugin entries, or gateway.mode already set.
     // Authentication sync was sanitized above so unrelated user-owned config survives.
-    if (
-      reason !== BuiltinModelSyncReason.AuthLogout &&
-      currentContent &&
-      currentContent !== nextContent
-    ) {
+    if (currentContent && currentContent !== nextContent) {
       try {
         const existing = previousConfig;
         if (isRecord(existing)) {
@@ -1400,7 +1468,7 @@ export class OpenClawConfigSync {
               compaction: buildManagedOpenClawCompactionConfig(),
               subagents: mergeManagedOpenClawSubagentConfig(
                 existingDefaults.subagents,
-                buildManagedOpenClawSubagentConfig(agentRuntimeSettings),
+                buildManagedOpenClawSubagentConfig(agentRuntimeSettings, false),
               ),
               workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
               cwd: resolvedWorkspaceDir,

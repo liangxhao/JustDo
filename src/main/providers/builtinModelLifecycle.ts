@@ -29,6 +29,7 @@ type BuiltinModelLifecycleDependencies = {
 export class BuiltinModelLifecycle {
   private generation = 0;
   private configSyncQueue: Promise<void> = Promise.resolve();
+  private logoutCatalog: Promise<void> | null = null;
 
   constructor(private readonly dependencies: BuiltinModelLifecycleDependencies) {}
 
@@ -38,6 +39,10 @@ export class BuiltinModelLifecycle {
 
   refreshAfterLogout(): Promise<void> {
     return this.refresh(BuiltinModelAccess.Disabled, BuiltinModelSyncReason.AuthLogout);
+  }
+
+  async waitForLogoutCatalog(): Promise<void> {
+    await this.logoutCatalog;
   }
 
   refreshAfterCredentialRotation(): Promise<void> {
@@ -51,7 +56,10 @@ export class BuiltinModelLifecycle {
     reason: string,
   ): Promise<void> {
     const generation = ++this.generation;
-    await syncBuiltinModelProvider(this.dependencies.getStore(), { access });
+    const catalog = syncBuiltinModelProvider(this.dependencies.getStore(), { access });
+    if (access === BuiltinModelAccess.Disabled) this.logoutCatalog = catalog;
+    await catalog;
+    if (this.logoutCatalog === catalog) this.logoutCatalog = null;
     if (generation !== this.generation) {
       return;
     }
@@ -77,7 +85,10 @@ export class BuiltinModelLifecycle {
     }
     if (generation !== this.generation) return;
 
-    if (syncResult.success && syncResult.hostPolicyVerified && !syncResult.gatewayRestartDeferred) {
+    const projectionConfirmed = reason === BuiltinModelSyncReason.AuthLogout
+      ? syncResult.configSynced
+      : syncResult.hostPolicyVerified;
+    if (syncResult.success && projectionConfirmed && !syncResult.gatewayRestartDeferred) {
       this.dependencies.notifyRuntimeModelsChanged();
     }
     if (!syncResult.success) writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ConfigSyncFailed, {

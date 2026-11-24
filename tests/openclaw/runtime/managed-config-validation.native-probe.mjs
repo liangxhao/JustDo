@@ -75,7 +75,7 @@ const results = input.map(({ label, config, previousConfig }) => {
     const plan = reload.plan(changedPaths, { previousConfig, candidateConfig: config });
     reloadPlan = { changedPaths, restartGateway: plan.restartGateway,
       restartReasons: plan.restartReasons, hotReasons: plan.hotReasons,
-      restartServices: [...plan.restartServices] };
+      restartServices: [...plan.restartServices], reloadPlugins: plan.reloadPlugins };
   }
   return { label, schemaSuccess: parsed.success,
     schemaIssues: parsed.success ? [] : parsed.error.issues.map(issue => ({

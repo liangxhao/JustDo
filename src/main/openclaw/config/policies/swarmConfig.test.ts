@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
 import { createDefaultAgentRuntimeSettings } from '../../../../shared/agents/agentRuntimeSettings';
-import { BuiltinModelSyncReason } from '../../../../shared/providers/builtinModels';
 import {
-  buildAuthScopedOpenClawConfig,
+  buildLoginScopedOpenClawConfig,
   mergeManagedOpenClawSwarmConfig,
 } from '../openclawConfigBuilders';
 
@@ -20,21 +19,17 @@ describe('managed Swarm capacity', () => {
     expect(existing.maxConcurrent).toBe(2);
   });
 
-  test.each([BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout])(
-    'refreshes managed Swarm values on %s while preserving per-agent overrides',
-    reason => {
-      const swarm = createDefaultAgentRuntimeSettings().swarm;
-      const override = { swarm: { enabled: false, maxConcurrent: 2 } };
-      const result = buildAuthScopedOpenClawConfig(
-        {
-          agents: { entries: { main: {}, researcher: { tools: override } } },
-          tools: { swarm: { maxConcurrent: 1, futureOption: true }, custom: true },
-        },
-        { tools: { swarm } },
-        reason,
-      );
-      expect(result.tools).toMatchObject({ swarm: { ...swarm, futureOption: true }, custom: true });
-      expect(result.agents).toMatchObject({ entries: { researcher: { tools: override } } });
-    },
-  );
+  test('refreshes managed Swarm values on login while preserving per-agent overrides', () => {
+    const swarm = createDefaultAgentRuntimeSettings().swarm;
+    const override = { swarm: { enabled: false, maxConcurrent: 2 } };
+    const result = buildLoginScopedOpenClawConfig(
+      {
+        agents: { entries: { main: {}, researcher: { tools: override } } },
+        tools: { swarm: { maxConcurrent: 1, futureOption: true }, custom: true },
+      },
+      { tools: { swarm } },
+    );
+    expect(result.tools).toMatchObject({ swarm: { ...swarm, futureOption: true }, custom: true });
+    expect(result.agents).toMatchObject({ entries: { researcher: { tools: override } } });
+  });
 });

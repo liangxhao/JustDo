@@ -1,9 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
 import { createDefaultAgentRuntimeSettings } from '../../../../shared/agents/agentRuntimeSettings';
-import { BuiltinModelSyncReason } from '../../../../shared/providers/builtinModels';
 import {
-  buildAuthScopedOpenClawConfig,
+  buildLoginScopedOpenClawConfig,
   mergeManagedOpenClawCodeModeConfig,
 } from '../openclawConfigBuilders';
 
@@ -27,24 +26,20 @@ describe('managed Code Mode configuration', () => {
     },
   );
 
-  test.each([BuiltinModelSyncReason.AuthLogin, BuiltinModelSyncReason.AuthLogout])(
-    'retains model and agent overrides on %s',
-    reason => {
-      const codeMode = mergeManagedOpenClawCodeModeConfig(undefined);
-      const agents = {
-        defaults: { models: { 'custom/model': { codeMode: false } } },
-        entries: { main: {}, researcher: { tools: { codeMode: { enabled: false } } } },
-      };
-      const result = buildAuthScopedOpenClawConfig(
-        { agents, tools: { codeMode: { executor: 'node', timeoutMs: 20000 }, custom: true } },
-        { tools: { codeMode } },
-        reason,
-      );
-      expect(result.tools).toMatchObject({
-        codeMode: { ...codeMode, timeoutMs: 20000 },
-        custom: true,
-      });
-      expect(result.agents).toMatchObject(agents);
-    },
-  );
+  test('retains model and agent overrides on login', () => {
+    const codeMode = mergeManagedOpenClawCodeModeConfig(undefined);
+    const agents = {
+      defaults: { models: { 'custom/model': { codeMode: false } } },
+      entries: { main: {}, researcher: { tools: { codeMode: { enabled: false } } } },
+    };
+    const result = buildLoginScopedOpenClawConfig(
+      { agents, tools: { codeMode: { executor: 'node', timeoutMs: 20000 }, custom: true } },
+      { tools: { codeMode } },
+    );
+    expect(result.tools).toMatchObject({
+      codeMode: { ...codeMode, timeoutMs: 20000 },
+      custom: true,
+    });
+    expect(result.agents).toMatchObject(agents);
+  });
 });

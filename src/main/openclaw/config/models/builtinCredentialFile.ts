@@ -248,14 +248,12 @@ export function syncBuiltinCredentialFile(
   };
   visit(next);
   const directory = path.join(stateDir, 'credentials');
-  const credentialFile = path.join(directory, CREDENTIAL_FILE_NAME);
   if (!referenced) {
     // Logout removes the snapshot so the old JWT cannot be resolved again.
-    const existed = fs.existsSync(credentialFile) || fs.existsSync(path.join(directory, LEGACY_CREDENTIAL_FILE_NAME));
-    revokeBuiltinCredentialFile(stateDir);
+    const revoked = revokeBuiltinCredentialFile(stateDir);
     const providers = (next.secrets as { providers?: Record<string, unknown> } | undefined)?.providers;
     if (providers) delete providers[BUILTIN_SECRET_SOURCE];
-    return { config: next, secretsChanged: existed };
+    return { config: next, secretsChanged: revoked };
   }
   if (!credential || credential.expiresAt <= Date.now() / 1000 + 15) {
     writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotPublicationFailed, {
@@ -318,7 +316,7 @@ export function syncBuiltinCredentialFile(
 }
 
 /** Revoke captured exec providers before awaiting catalog/config cleanup. */
-export function revokeBuiltinCredentialFile(stateDir: string): void {
+export function revokeBuiltinCredentialFile(stateDir: string): boolean {
   let firstError: unknown;
   let changed = false;
   for (const name of [CREDENTIAL_FILE_NAME, LEGACY_CREDENTIAL_FILE_NAME]) {
@@ -333,4 +331,5 @@ export function revokeBuiltinCredentialFile(stateDir: string): void {
   }
   if (changed) writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.SnapshotRevoked, { changed: true });
   if (firstError) throw firstError;
+  return changed;
 }

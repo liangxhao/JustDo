@@ -149,7 +149,7 @@ sequenceDiagram
 
 `openai-transcription-realtime` 采用 gateway-relay、brain=none 的 transcription-only 会话，当前使用原生支持的 G711 μ-law / 8 kHz 输入。Main 限定调用 Renderer 所有权，event 按 transcriptionSessionId 匹配；这条链路与完整录音 HTTP 分开准入。设备丢失、权限失败、设置变化、导航或卸载关闭相应原生会话，正常停止按原生约定等待尾音结果，迟到事件不能写入另一草稿。
 
-仅实时转录绑定投影到本地 OpenAI 扩展自有的 `config.transcription`。选择 IPC 只传模型/绑定引用，端点与凭据由 Main 读取；凭据通过声明的 `transcription.apiKey` SecretRef 水合。配置同步、启动及登录退出重建该配置，不依赖可选 `voice-call` 插件。切换为 HTTP、本地、关闭输入或删除所选模型会撤下原生转录配置，不借用附件转录或回复朗读的选择。
+仅实时转录绑定投影到本地 OpenAI 扩展自有的 `config.transcription`。选择 IPC 只传模型/绑定引用，端点与凭据由 Main 读取；凭据通过声明的 `transcription.apiKey` SecretRef 水合。配置同步、启动及登录重建该配置，退出保留现有绑定。实时转录不依赖可选 `voice-call` 插件。切换为 HTTP、本地、关闭输入或删除所选模型会撤下原生转录配置，不借用附件转录或回复朗读的选择。
 
 适配器通过原生 `resolveConfig` 动态读取自己的输入配置，明确撤下的配置不能回退到其它原生配置或默认模型。Main 按实际输入配置和目录判定准入，在创建 Talk 会话时明确指定适配器和模型。输入框在相关配置或引擎就绪后刷新状态；用户开启输入后保留麦克风入口，暂不可用时禁用并给出设置提示，仍可进入语音设置。旧探测不得覆盖新状态，听写和录音结果始终只写草稿。
 

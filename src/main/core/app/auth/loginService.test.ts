@@ -6,7 +6,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import { LOGIN_STORAGE_CONFIG } from '../../../../config/loginStorage';
 import type { AuthState } from '../../../../shared/app/auth';
-import { AuthErrorCode, AuthLoginPhase, AuthStatus, AuthSyncStatus } from '../../../../shared/app/auth';
+import { AuthErrorCode, AuthLoginPhase, AuthOperation, AuthStatus, AuthSyncStatus } from '../../../../shared/app/auth';
 import {
   getOutboundHeaderUserInfo,
   publishOutboundHeaderUserInfoCache,
@@ -39,8 +39,9 @@ afterEach(() => {
 });
 
 function setup(
-  { seedStore, ...adapterOverrides }: Partial<LoginSdkAdapter> & {
+  { seedStore, waitForLogoutCatalog, ...adapterOverrides }: Partial<LoginSdkAdapter> & {
     seedStore?: (store: LoginUserInfoStore, file: string) => void;
+    waitForLogoutCatalog?: () => Promise<void>;
   } = {},
   publishCommittedHeaders?: (values: Readonly<Record<string, unknown>>) => void,
 ) {
@@ -67,6 +68,7 @@ function setup(
     adapter,
     onLoginCommitted,
     onLogoutCommitted,
+    waitForLogoutCatalog,
     ...(publishCommittedHeaders ? { publishCommittedHeaders } : { onHeadersCommitted }),
     onStateChanged: state => changes.push(state),
   });
@@ -187,6 +189,35 @@ test('logout deletes all login fields before cleanup and stays signed out if run
   expect((await context.service.retrySync()).success).toBe(true);
   expect(context.onLogoutCommitted).toHaveBeenCalledTimes(2);
   expect(fs.existsSync(context.file)).toBe(false);
+});
+
+test('finishes local and SDK logout while Gateway cleanup is still pending', async () => {
+  const waitForLogoutCatalog = vi.fn(async () => {});
+  const context = setup({ logout: vi.fn(async () => undefined), waitForLogoutCatalog });
+  await context.service.login();
+  const catalog = Promise.withResolvers<void>();
+  const cleanup = Promise.withResolvers<void>();
+  waitForLogoutCatalog.mockReturnValueOnce(catalog.promise);
+  context.onLogoutCommitted.mockReturnValueOnce(cleanup.promise);
+
+  await expect(context.service.logout()).resolves.toMatchObject({
+    success: true,
+    state: { status: AuthStatus.SignedOut, operation: AuthOperation.Idle, syncStatus: AuthSyncStatus.Pending },
+  });
+  expect(context.store.read()).toBeNull();
+  expect(context.adapter.logout).toHaveBeenCalledOnce();
+
+  const signIn = context.service.login();
+  await vi.waitFor(() => expect(waitForLogoutCatalog).toHaveBeenCalledTimes(2));
+  expect(context.store.read()).toBeNull();
+  catalog.resolve();
+  await expect(signIn).resolves.toMatchObject({ success: true });
+  cleanup.reject(new Error('late cleanup failed'));
+  await cleanup.promise.catch(() => {});
+  expect(context.service.getState()).toMatchObject({
+    status: AuthStatus.SignedIn,
+    syncStatus: AuthSyncStatus.Completed,
+  });
 });
 
 test('replacing an account finishes logout before persisting the new identity', async () => {

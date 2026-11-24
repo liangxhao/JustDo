@@ -1136,6 +1136,7 @@ const getLoginService = (): LoginService => {
     adapter: createLoginSdkAdapter({ getParentWindow: () => mainWindow }),
     onLoginCommitted: finishLoginSync,
     onLogoutCommitted: refreshAfterLogout,
+    waitForLogoutCatalog: () => getBuiltinModelLifecycle().waitForLogoutCatalog(),
     publishCommittedHeaders: publishOutboundHeaderUserInfoCache,
     onStateChanged: state => {
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {

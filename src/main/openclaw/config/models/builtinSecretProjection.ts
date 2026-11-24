@@ -19,6 +19,7 @@ export const containsBuiltinModelRef = (value: unknown): boolean => {
 export const BUILTIN_MODELS_API_KEY_PLACEHOLDER = '${JUSTDO_APIKEY_BUILTIN_MODELS}';
 
 export const BUILTIN_MODEL_SECRET_PROVIDER_ID = 'justdo_login';
+export const LEGACY_BUILTIN_MODEL_SECRET_PROVIDER_ID = 'justdo-builtin';
 
 export type OpenClawBuiltinSecretRef = Readonly<{
   source: 'exec';
@@ -43,7 +44,7 @@ export const buildManagedOpenClawSecrets = (
   const existingProviders = isRecord(existingSecrets.providers) ? existingSecrets.providers : {};
   const providers = { ...existingProviders };
   delete providers[BUILTIN_MODEL_SECRET_PROVIDER_ID];
-  delete providers['justdo-builtin'];
+  delete providers[LEGACY_BUILTIN_MODEL_SECRET_PROVIDER_ID];
   const secrets = { ...existingSecrets, providers };
   if (Object.keys(providers).length === 0) {
     delete secrets.providers;
@@ -51,12 +52,19 @@ export const buildManagedOpenClawSecrets = (
   return secrets;
 };
 
+export const containsBuiltinCredentialRef = (value: unknown): boolean => {
+  if (typeof value === 'string') return value.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER);
+  if (Array.isArray(value)) return value.some(containsBuiltinCredentialRef);
+  if (!isRecord(value)) return false;
+  const { source, provider, id } = value;
+  return (
+    typeof id === 'string' &&
+    (source === 'exec' || source === 'file' || source === 'env') &&
+    (provider === BUILTIN_MODEL_SECRET_PROVIDER_ID || provider === LEGACY_BUILTIN_MODEL_SECRET_PROVIDER_ID)
+  ) || Object.values(value).some(containsBuiltinCredentialRef);
+};
+
 export const containsBuiltinMemorySearchRef = (value: unknown): boolean =>
   (isRecord(value) && value.provider === OpenClawExtensionId.RUNTIME_SERVICES) ||
   containsBuiltinModelRef(value) ||
-  (typeof value === 'string'
-    ? value.includes(BUILTIN_MODELS_API_KEY_PLACEHOLDER) ||
-      value === BUILTIN_MODEL_SECRET_PROVIDER_ID
-    : Array.isArray(value)
-      ? value.some(containsBuiltinMemorySearchRef)
-      : isRecord(value) && Object.values(value).some(containsBuiltinMemorySearchRef));
+  containsBuiltinCredentialRef(value);

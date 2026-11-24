@@ -29,6 +29,7 @@ type Dependencies = {
   adapter: LoginSdkAdapter;
   onLoginCommitted: () => Promise<void>;
   onLogoutCommitted: () => Promise<void>;
+  waitForLogoutCatalog?: () => Promise<void>;
   onStateChanged: (state: AuthState) => void;
 } & (
   | { publishCommittedHeaders: (values: Readonly<StoredLogin['values']>) => void }
@@ -51,6 +52,7 @@ type CookieRenewal = {
 export class LoginService {
   private state: AuthState;
   private generation = 0;
+  private syncAttempt = 0;
   private identity: string | null;
   private credentialVersion: string | null;
   private queue: Promise<unknown> = Promise.resolve();
@@ -230,7 +232,8 @@ export class LoginService {
       return this.failure(AuthErrorCode.StorageFailed);
     }
     this.applyLogin(null, AuthStatus.SignedOut);
-    await this.sync(null);
+    // Local revocation starts synchronously; Gateway acknowledgement has its own status.
+    void this.sync(null);
     let sdkCleared = true;
     try {
       await this.dependencies.adapter.logout?.({
@@ -503,6 +506,17 @@ export class LoginService {
             this.setState({ operation: AuthOperation.Idle });
             return this.failure(AuthErrorCode.SyncFailed);
           }
+        } else {
+          // An explicit logout may still be clearing the previous account's model catalog.
+          try {
+            await this.dependencies.waitForLogoutCatalog?.();
+          } catch {
+            if (generation !== this.generation || controller.signal.aborted) {
+              return this.failure(AuthErrorCode.SessionChanged);
+            }
+            this.setState({ operation: AuthOperation.Idle });
+            return this.failure(AuthErrorCode.SyncFailed);
+          }
         }
         if (generation !== this.generation || controller.signal.aborted) {
           return this.failure(AuthErrorCode.SessionChanged);
@@ -528,6 +542,7 @@ export class LoginService {
   }
 
   private async sync(login: StoredLogin | null): Promise<boolean> {
+    const attempt = ++this.syncAttempt;
     this.setState({ syncStatus: AuthSyncStatus.Pending });
     try {
       if (login) {
@@ -536,11 +551,11 @@ export class LoginService {
       } else {
         await this.dependencies.onLogoutCommitted();
       }
-      // Completed means the callback settled, NOT that a model or the runtime is ready.
-      this.setState({ syncStatus: AuthSyncStatus.Completed, errorCode: null });
+      // A late cleanup must leave the new login and any SDK logout error alone.
+      if (attempt === this.syncAttempt) this.setState({ syncStatus: AuthSyncStatus.Completed });
       return true;
     } catch {
-      this.setState({ syncStatus: AuthSyncStatus.Failed });
+      if (attempt === this.syncAttempt) this.setState({ syncStatus: AuthSyncStatus.Failed });
       return false;
     }
   }

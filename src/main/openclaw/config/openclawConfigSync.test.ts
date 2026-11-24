@@ -23,7 +23,7 @@ import {
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
 import { providerRouteIdentity } from './models/providerProjection';
 import {
-  buildAuthScopedOpenClawConfig,
+  buildLoginScopedOpenClawConfig,
   buildManagedCapabilityPluginEntries,
   buildManagedOpenClawSurfaces,
   buildOpenClawHookConfig,
@@ -1519,7 +1519,7 @@ describe('optional agent-team configuration', () => {
     expect(existing).toEqual(original);
   });
   test('retains the required launch guard during auth-only sync and preserves optional choices', () => {
-    const result = buildAuthScopedOpenClawConfig(
+    const result = buildLoginScopedOpenClawConfig(
       {
         plugins: {
           allow: ['agent-team'],
@@ -1540,7 +1540,6 @@ describe('optional agent-team configuration', () => {
           },
         },
       },
-      'auth-login',
     );
     expect(result.plugins).toMatchObject({
       allow: ['agent-team', 'runtime-services'],

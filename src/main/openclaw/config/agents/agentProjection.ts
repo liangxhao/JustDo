@@ -10,6 +10,7 @@ import { OPENCLAW_COMPACTION_TIMEOUT_SECONDS } from '../../../../shared/openclaw
 import { OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
 import type { Agent } from '../../../data/coworkStore';
 import { isRecord } from '../configShape';
+import { containsBuiltinModelRef } from '../models/builtinSecretProjection';
 import { resolveConfiguredPluginPath } from '../plugins/extensionInventory';
 import { resolveManagedAgentWorkspace } from './agentWorkspace';
 
@@ -168,6 +169,7 @@ export const buildManagedOpenClawSessionConfig = (existing?: unknown) => ({
 
 export const buildManagedOpenClawSubagentConfig = (
   settings: AgentRuntimeSettings = createDefaultAgentRuntimeSettings(),
+  builtinAvailable = true,
 ) => ({
   ...(settings.subagents.delegationMode
     ? { delegationMode: settings.subagents.delegationMode }
@@ -177,7 +179,9 @@ export const buildManagedOpenClawSubagentConfig = (
   maxConcurrent: settings.subagents.maxConcurrent,
   runTimeoutSeconds: settings.subagents.runTimeoutSeconds,
   archiveAfterMinutes: settings.subagents.archiveAfterMinutes,
-  ...(settings.subagents.model ? { model: settings.subagents.model } : {}),
+  ...(settings.subagents.model && (builtinAvailable || !containsBuiltinModelRef(settings.subagents.model))
+    ? { model: settings.subagents.model }
+    : {}),
   ...(settings.subagents.thinking ? { thinking: settings.subagents.thinking } : {}),
 });
 

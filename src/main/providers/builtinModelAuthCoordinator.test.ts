@@ -418,6 +418,25 @@ test('provider removal after temporary expiry requires a full login even when th
   expect(dependencies.rotate).not.toHaveBeenCalled();
 });
 
+test('shares in-flight explicit cleanup when the login file watcher observes its deletion', async () => {
+  const { dependencies, coordinator } = setup();
+  coordinator.initialize(credential);
+  dependencies.exchange.mockResolvedValue(null);
+  dependencies.getActive.mockReturnValue(null);
+  const cleanup = deferred<undefined>();
+  dependencies.logout.mockReturnValueOnce(cleanup.promise);
+
+  const logout = coordinator.logout();
+  await coordinator.refreshInBackground();
+  expect(coordinator.logout()).toBe(logout);
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+
+  cleanup.resolve(undefined);
+  await logout;
+  await coordinator.refreshInBackground();
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+});
+
 test('retries credential removal after a failed logout synchronization', async () => {
   const { dependencies, coordinator } = setup();
   coordinator.initialize(credential);

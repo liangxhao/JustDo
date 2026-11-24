@@ -17,7 +17,7 @@ afterEach(() => vi.restoreAllMocks());
 
 const createHarness = () => {
   const store = {} as SqliteStore;
-  const syncOpenClawConfig = vi.fn().mockResolvedValue({ success: true, hostPolicyVerified: true });
+  const syncOpenClawConfig = vi.fn().mockResolvedValue({ success: true, configSynced: true, hostPolicyVerified: true });
   const notifyCatalogChanged = vi.fn();
   const notifyRuntimeModelsChanged = vi.fn();
   const lifecycle = new BuiltinModelLifecycle({
@@ -42,19 +42,21 @@ describe('BuiltinModelLifecycle', () => {
   ] as const)('publishes the local catalog before Gateway finishes %s', async (method, access, reason) => {
     const harness = createHarness();
     const persistCatalog = Promise.withResolvers<void>();
-    const applyConfig = Promise.withResolvers<{ success: true; hostPolicyVerified: true }>();
+    const applyConfig = Promise.withResolvers<{ success: true; configSynced: true; hostPolicyVerified: true }>();
     syncBuiltinModelProviderMock.mockReturnValueOnce(persistCatalog.promise);
     harness.syncOpenClawConfig.mockReturnValueOnce(applyConfig.promise);
 
     const refresh = harness.lifecycle[method]();
     expect(syncBuiltinModelProviderMock).toHaveBeenCalledWith(harness.store, { access });
     expect(harness.notifyCatalogChanged).not.toHaveBeenCalled();
+    const logoutCatalog = harness.lifecycle.waitForLogoutCatalog();
     persistCatalog.resolve();
+    await logoutCatalog;
     await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason }));
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
     expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
 
-    applyConfig.resolve({ success: true, hostPolicyVerified: true });
+    applyConfig.resolve({ success: true, configSynced: true, hostPolicyVerified: true });
     await refresh;
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
     expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
@@ -167,7 +169,7 @@ describe('BuiltinModelLifecycle', () => {
             releaseLoginSync = () => resolve({ success: true, hostPolicyVerified: true });
           }),
       )
-      .mockResolvedValueOnce({ success: true, hostPolicyVerified: true });
+      .mockResolvedValueOnce({ success: true, configSynced: true, hostPolicyVerified: true });
 
     const login = harness.lifecycle.refreshAfterLogin();
     await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1));

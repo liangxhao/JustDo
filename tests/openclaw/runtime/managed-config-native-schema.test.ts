@@ -65,7 +65,7 @@ type Assessment = {
   label: string; schemaSuccess: boolean; schemaIssues: { path: string; keys?: string[] }[];
   legacyIssues: { path: string; message: string }[];
   reloadPlan?: { changedPaths: string[]; restartGateway: boolean; restartReasons: string[];
-    hotReasons: string[]; restartServices: string[] };
+    hotReasons: string[]; restartServices: string[]; reloadPlugins: boolean };
 };
 function assess(cases: { label: string; config: unknown; previousConfig?: unknown }[]): Assessment[] {
   const directory = temporary();
@@ -151,6 +151,7 @@ nativeTest.each([false, true])('built-in login and logout stay hot-reloadable wi
     expect(sync.sync(reason)).toMatchObject({ ok: true, configChanged: true, requiresGatewayRestart: false });
     const config = read();
     expect(config.gateway).toEqual(initialGateway);
+    if (!signedIn) expect(config.plugins).toEqual(previousConfig.plugins);
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(initialEnvironment);
     expect(config.memory.search.enabled).toBe(signedIn);
     expect(Boolean(config.models.providers?.builtin_models)).toBe(signedIn);
@@ -168,6 +169,9 @@ nativeTest.each([false, true])('built-in login and logout stay hot-reloadable wi
     expect(result.reloadPlan, result.label).toMatchObject({ restartGateway: false, restartReasons: [] });
     expect(result.reloadPlan!.changedPaths.some(value => value.startsWith('models.'))).toBe(true);
     expect(result.reloadPlan!.restartServices).toContain('memory-core-index');
+    if (result.label.startsWith(BuiltinModelSyncReason.AuthLogout)) {
+      expect(result.reloadPlan!.reloadPlugins).toBe(false);
+    }
   }
 }, 120_000);
 
@@ -267,6 +271,9 @@ nativeTest('full and minimal model projections preserve valid native settings wi
       } as never);
       const reason = mode === 'full-login' ? BuiltinModelSyncReason.AuthLogin
         : mode === 'minimal-startup' ? 'startup' : BuiltinModelSyncReason.AuthLogout;
+      if (reason === BuiltinModelSyncReason.AuthLogout) {
+        expect(sync.sync(BuiltinModelSyncReason.AuthLogin), mode).toMatchObject({ ok: true });
+      }
       expect(sync.sync(reason), mode).toMatchObject({ ok: true });
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       expect(config.skills.workshop, mode).toEqual({ autonomous: { mode: 'auto' }, maxSkillBytes: 60_000 });
@@ -371,6 +378,9 @@ nativeTest('full and minimal speech projections keep preferences outside valid n
     } as never);
     const reason = mode === 'full-login' ? BuiltinModelSyncReason.AuthLogin
       : mode === 'minimal-startup' ? 'startup' : BuiltinModelSyncReason.AuthLogout;
+    if (reason === BuiltinModelSyncReason.AuthLogout) {
+      expect(sync.sync(BuiltinModelSyncReason.AuthLogin), mode).toMatchObject({ ok: true });
+    }
     expect(sync.sync(reason), mode).toMatchObject({ ok: true });
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     expect(config.tts, mode).not.toHaveProperty('prefsPath');

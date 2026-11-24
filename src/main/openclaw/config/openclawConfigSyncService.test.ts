@@ -440,6 +440,8 @@ describe('OpenClawConfigSyncService', () => {
         const executionMode = options.executionMode ?? 'local';
         const execHost = executionMode === 'sandbox' ? 'sandbox' : 'gateway';
         return {
+          path: options.configPath ?? 'openclaw.json',
+          valid: true,
           configRevisionHash: 'applied-config-revision',
           appliedConfigHash: 'applied-config-revision',
           config: {
@@ -1271,7 +1273,7 @@ describe('OpenClawConfigSyncService', () => {
     );
   });
 
-  it.each(['preserve-extension', 'auth-logout'])(
+  it.each(['preserve-extension', BuiltinModelSyncReason.AuthLogin])(
     'preserves configuration when ownership cannot be read during %s',
     async reason => {
       const harness = createHarness({
@@ -1284,7 +1286,7 @@ describe('OpenClawConfigSyncService', () => {
         configSynced: false,
       });
       expect(harness.configSync.sync).not.toHaveBeenCalled();
-      const stopCount = reason === 'auth-logout' ? 0 : 1;
+      const stopCount = reason === BuiltinModelSyncReason.AuthLogin ? 0 : 1;
       expect(harness.disconnectGatewayClient).toHaveBeenCalledTimes(stopCount);
       expect(harness.stopGateway).toHaveBeenCalledTimes(stopCount);
     },
@@ -3101,55 +3103,43 @@ describe('OpenClawConfigSyncService', () => {
     );
   });
 
-  it('rejects logout before changing secrets or restarting when the file still has built-in config', async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-logout-verification-'));
-    const configPath = path.join(directory, 'openclaw.json');
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        models: {
-          providers: {
-            builtin_models: {
-              apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
-            },
-          },
-        },
-      }),
-      'utf8',
-    );
-    const harness = createHarness({ configPath });
+  it.each([EnginePhase.Ready, EnginePhase.Running])('only accepts missing logout config on an offline Gateway (%s)', async phase => {
+    const harness = createHarness({ phase, configChanged: false });
+    const projected = harness.configSync.sync.getMockImplementation()!();
+    harness.configSync.sync.mockReturnValue({ ...projected, configMissing: true } as typeof projected);
+    const offline = phase === EnginePhase.Ready;
 
-    try {
-      await expect(
-        harness.service.syncConfig({ reason: 'auth-logout' }),
-      ).resolves.toMatchObject({
-        success: false,
-        configSynced: false,
-        error: expect.stringContaining('built-in authentication placeholder remains'),
-      });
-      expect(harness.engineManager.setGatewayLaunchEnvVars).not.toHaveBeenCalled();
-      expect(harness.stopGateway).not.toHaveBeenCalled();
-      expect(harness.startGateway).not.toHaveBeenCalled();
-    } finally {
-      fs.rmSync(directory, { recursive: true, force: true });
-    }
+    await expect(harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogout })).resolves.toMatchObject({
+      success: offline, configSynced: offline,
+    });
+    expect(harness.requestGateway).not.toHaveBeenCalled();
   });
 
-  it.each(['queued', 'preflight'] as const)('preserves renewed credentials when obsolete logout cleanup is %s', async phase => {
-    let authSessionId: string | null = phase === 'queued' ? 'restored-session' : null;
-    let releaseOwnership!: () => void;
-    const ownership = new Promise<ReadonlySet<string>>(resolve => {
-      releaseOwnership = () => resolve(new Set());
+  it('keeps logout pending if Gateway still reports the built-in provider', async () => {
+    const harness = createHarness({ configChanged: false });
+    harness.requestGateway.mockResolvedValueOnce({
+      path: 'openclaw.json', valid: true,
+      configRevisionHash: 'still-active', appliedConfigHash: 'still-active',
+      config: { models: { providers: { builtin_models: {} } } },
     });
-    const readOwnership = vi.fn(() => ownership);
-    const harness = createHarness({
-      getModelAuthSessionId: () => authSessionId,
-      getExtensionMcpServerNames: readOwnership,
-    });
+
+    await expect(harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogout }))
+      .resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.requestGateway.mock.calls).toEqual([['config.get']]);
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('preserves renewed credentials when logout cleanup was queued before recovery', async () => {
+    let authSessionId: string | null = null;
+    const barrier = Promise.withResolvers<void>();
+    const harness = createHarness({ getModelAuthSessionId: () => authSessionId });
+    const mutation = harness.service.runConfigMutationExclusive(() => barrier.promise);
     const cleanup = harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogout });
-    if (phase === 'preflight') await vi.waitFor(() => expect(readOwnership).toHaveBeenCalledOnce());
+
     authSessionId = 'restored-session';
-    releaseOwnership();
+    barrier.resolve();
+    await mutation;
+
     await expect(cleanup).resolves.toMatchObject({ success: false, configSynced: false });
     expect(harness.configSync.sync).not.toHaveBeenCalled();
     expect(harness.stopGateway).not.toHaveBeenCalled();
@@ -3217,7 +3207,7 @@ describe('OpenClawConfigSyncService', () => {
     }
   });
 
-  it('hot-reloads logout config without restarting when secrets are removed', async () => {
+  it('applies logout without scanning plugins, changing execution policy or retiring custom auth', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-logout-hot-reload-'));
     const configPath = path.join(directory, 'openclaw.json');
     fs.writeFileSync(
@@ -3228,19 +3218,28 @@ describe('OpenClawConfigSyncService', () => {
       }),
       'utf8',
     );
+    const getExtensionMcpServerNames = vi.fn(async () => { throw new Error('inventory unavailable'); });
+    const getNativeMcpDataBindings = vi.fn(async () => { throw new Error('plugin data unavailable'); });
     const harness = createHarness({
-      configPath,
-      waitForReload: true,
+      configPath, waitForReload: true, executionMode: 'sandbox', sandboxReady: false,
+      getExtensionMcpServerNames, getNativeMcpDataBindings,
     });
 
     try {
       await expect(
-        harness.service.syncConfig({ reason: 'auth-logout' }),
+        harness.service.syncConfig({ reason: BuiltinModelSyncReason.AuthLogout, retiredProviderIds: ['custom'] }),
       ).resolves.toMatchObject({
         success: true,
         configSynced: true,
       });
       expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+      expect(getExtensionMcpServerNames).not.toHaveBeenCalled();
+      expect(getNativeMcpDataBindings).not.toHaveBeenCalled();
+      expect(harness.engineManager.setGatewayLaunchEnvVars).not.toHaveBeenCalled();
+      expect(harness.requestGateway.mock.calls).toEqual([
+        ['config.get'],
+        ['models.authLogout', { provider: 'builtin_models', agentId: 'main' }],
+      ]);
       expect(harness.stopGateway).not.toHaveBeenCalled();
       expect(harness.startGateway).not.toHaveBeenCalled();
     } finally {

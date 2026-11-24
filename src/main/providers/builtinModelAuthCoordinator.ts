@@ -37,6 +37,7 @@ const decisionDiagnostics = (decision: RefreshDecision): BuiltinModelAuthDiagnos
 /** Prevent obsolete asynchronous refreshes from overwriting a newer auth decision. */
 export class BuiltinModelAuthCoordinator {
   private generation = 0;
+  private explicitLogout: { generation: number; promise: Promise<void> } | null = null;
   private applied: BuiltinModelCredential | null | undefined;
   private appliedAuthSessionId: string | null = null;
   private pendingBackground: RefreshDecision | null = null;
@@ -120,6 +121,7 @@ export class BuiltinModelAuthCoordinator {
   private async applyDecision(decision: RefreshDecision): Promise<void> {
     if (!this.isCurrent(decision)) return;
     const { credential, authSessionId, refreshCatalog } = decision;
+    if (!credential && decision.generation === this.explicitLogout?.generation) return;
     if (!refreshCatalog && this.applied !== undefined &&
       credential?.accessToken === this.applied?.accessToken &&
       (!credential || (authSessionId !== null && authSessionId === this.appliedAuthSessionId))) return;
@@ -181,11 +183,20 @@ export class BuiltinModelAuthCoordinator {
     }
   }
 
-  async logout(): Promise<void> {
+  logout(): Promise<void> {
+    if (this.explicitLogout?.generation === this.generation) return this.explicitLogout.promise;
     const generation = ++this.generation;
     this.pendingBackground = null;
     this.applied = undefined;
     this.appliedAuthSessionId = null;
+    const promise = this.applyExplicitLogout(generation).finally(() => {
+      if (this.explicitLogout?.generation === generation) this.explicitLogout = null;
+    });
+    this.explicitLogout = { generation, promise };
+    return promise;
+  }
+
+  private async applyExplicitLogout(generation: number): Promise<void> {
     try {
       this.dependencies.invalidate?.();
     } finally {

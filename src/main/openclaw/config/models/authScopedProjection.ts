@@ -1,6 +1,5 @@
 import { OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
 import { OpenClawProviderId } from '../../../../shared/providers';
-import { BuiltinModelSyncReason } from '../../../../shared/providers/builtinModels';
 import {
   mergeAgentEntriesWithManagedMainSettings,
   mergeManagedOpenClawSubagentConfig,
@@ -15,8 +14,10 @@ import {
 } from '../policies/executionPolicyProjection';
 import {
   buildManagedOpenClawSecrets,
+  BUILTIN_MODEL_SECRET_PROVIDER_ID,
   containsBuiltinMemorySearchRef,
   containsBuiltinModelRef,
+  LEGACY_BUILTIN_MODEL_SECRET_PROVIDER_ID,
 } from './builtinSecretProjection';
 import {
   getModelProviderId,
@@ -25,13 +26,102 @@ import {
 } from './providerProjection';
 import { MANAGED_PROVIDER_SECRET_SOURCE, providerSecretIdentity } from './providerSecretFile';
 
-export const buildAuthScopedOpenClawConfig = (
+/** Remove one provider without reprojecting the surrounding user configuration. */
+export const projectLoggedOutOpenClawConfig = (
+  existing: Record<string, unknown>,
+  resolveFallback: () => string | undefined,
+): Record<string, unknown> => {
+  const result = { ...existing };
+  const builtin = OpenClawProviderId.BuiltinModels;
+  if (isRecord(existing.models) && isRecord(existing.models.providers) &&
+      Object.hasOwn(existing.models.providers, builtin)) {
+    const providers = { ...existing.models.providers };
+    delete providers[builtin];
+    const models: Record<string, unknown> = { ...existing.models, providers };
+    if (Object.keys(providers).length === 0) delete models.providers;
+    result.models = models;
+  }
+  const secretProviders = isRecord(existing.secrets) ? existing.secrets.providers : undefined;
+  if (isRecord(secretProviders) && (
+    Object.hasOwn(secretProviders, BUILTIN_MODEL_SECRET_PROVIDER_ID) ||
+    Object.hasOwn(secretProviders, LEGACY_BUILTIN_MODEL_SECRET_PROVIDER_ID)
+  )) {
+    const secrets = buildManagedOpenClawSecrets(existing);
+    if (Object.keys(secrets).length) result.secrets = secrets;
+    else delete result.secrets;
+  }
+  if (isRecord(existing.memory) && containsBuiltinMemorySearchRef(existing.memory.search)) {
+    result.memory = { ...existing.memory, search: { enabled: false } };
+  }
+
+  const removeModel = (settings: Record<string, unknown>, fallback?: () => string | undefined) => {
+    const model = settings.model;
+    if (!containsBuiltinModelRef(model)) return settings;
+    const next = { ...settings };
+    if (isRecord(model)) {
+      const fallbacks = Array.isArray(model.fallbacks)
+        ? model.fallbacks.filter(value => typeof value === 'string' && !containsBuiltinModelRef(value))
+        : undefined;
+      if (!containsBuiltinModelRef(model.primary)) {
+        next.model = { ...model, ...(fallbacks && { fallbacks }) };
+        return next;
+      }
+      const [firstFallback, ...remainingFallbacks] = fallbacks ?? [];
+      const primary = firstFallback ?? fallback?.();
+      if (primary) {
+        next.model = { ...model, primary, ...(fallbacks && { fallbacks: remainingFallbacks }) };
+        return next;
+      }
+    } else {
+      const primary = fallback?.();
+      if (primary) {
+        next.model = primary;
+        return next;
+      }
+    }
+    delete next.model;
+    return next;
+  };
+  const removeAgentModels = (
+    settings: Record<string, unknown>,
+    fallback?: () => string | undefined,
+  ) => {
+    const next = removeModel(settings, fallback);
+    if (!isRecord(next.subagents)) return next;
+    const subagents = removeModel(next.subagents);
+    return subagents === next.subagents ? next : { ...next, subagents };
+  };
+  if (isRecord(existing.agents)) {
+    const agents = { ...existing.agents };
+    if (isRecord(agents.defaults)) {
+      const defaults = removeAgentModels(agents.defaults, resolveFallback);
+      const modelAllowlist = defaults.models;
+      if (isRecord(modelAllowlist) && Object.keys(modelAllowlist).some(containsBuiltinModelRef)) {
+        agents.defaults = {
+          ...defaults,
+          models: Object.fromEntries(
+            Object.entries(modelAllowlist).filter(([ref]) => !containsBuiltinModelRef(ref)),
+          ),
+        };
+      } else {
+        agents.defaults = defaults;
+      }
+    }
+    if (isRecord(agents.entries)) {
+      agents.entries = Object.fromEntries(Object.entries(agents.entries).map(([id, entry]) =>
+        [id, isRecord(entry) ? removeAgentModels(entry) : entry],
+      ));
+    }
+    result.agents = agents;
+  }
+  return result;
+};
+
+export const buildLoginScopedOpenClawConfig = (
   existingConfig: Record<string, unknown>,
   managedConfig: Record<string, unknown>,
-  reason: string,
 ): Record<string, unknown> => {
   const canonicalExistingConfig = projectManagedOpenClawBrowserConfig(existingConfig);
-  const isLogin = reason === BuiltinModelSyncReason.AuthLogin;
   const existingModels = isRecord(canonicalExistingConfig.models)
     ? canonicalExistingConfig.models
     : {};
@@ -91,7 +181,7 @@ export const buildAuthScopedOpenClawConfig = (
   for (const [providerId, provider] of managedCustomProviders) {
     providers[providerId] = provider;
   }
-  if (isLogin && hasManagedBuiltinProvider) {
+  if (hasManagedBuiltinProvider) {
     providers[OpenClawProviderId.BuiltinModels] =
       managedProviders[OpenClawProviderId.BuiltinModels];
   }
@@ -176,7 +266,7 @@ export const buildAuthScopedOpenClawConfig = (
       ? defaults.model
       : undefined;
 
-  const shouldRemoveBuiltinRefs = !isLogin || !hasManagedBuiltinProvider;
+  const shouldRemoveBuiltinRefs = !hasManagedBuiltinProvider;
   if (!shouldRemoveBuiltinRefs) {
     if (
       managedDefaultPrimary.startsWith(`${OpenClawProviderId.BuiltinModels}/`) &&
