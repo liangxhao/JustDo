@@ -4,21 +4,11 @@ import type {
   McpAppContentReference,
 } from '@shared/plugins/mcpAppReferences';
 import { sameMcpAppContent } from '@shared/plugins/mcpAppReferences';
-import {
-  type McpAppDescriptor,
-  type McpAppPreview,
-  mcpAppRecord,
-  type McpAppViewPayload,
-} from '@shared/plugins/mcpApps';
+import { type McpAppPreview, mcpAppRecord, type McpAppViewPayload } from '@shared/plugins/mcpApps';
 
-import { connectCurrentDiagram } from '../../../../../../plugins/extensions/drawio/browser/current-canvas';
-import {
-  DRAWIO_ENTRY_TOOLS,
-  DRAWIO_RESOURCE,
-  DRAWIO_SERVER,
-} from '../../../../../../plugins/extensions/drawio/contracts';
 import type { McpAppSession, McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
-import { isNativeAppReference } from '../../pipeline/native-app-reference';
+import { findMcpAppViewAdapter } from '../../pipeline/mcp-app-adapters';
+import { readAppReferenceAdapter } from '../../pipeline/native-app-reference';
 import { decodeMcpAppLaunch, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
 import type { McpAppViewContext } from './view';
 
@@ -59,36 +49,44 @@ export function restrictRecoveredAppPayload(
   };
 }
 
-/** Reviewed, optional plugin integration. The standard host has no business-content protocol. */
+/** Connect only the adapter chosen for the authenticated view during preparation. */
 export function connectAppContent(input: {
-  identity?: Readonly<McpAppDescriptor>;
   payload: McpAppViewPayload;
-  previewViewId: string;
   preview: McpAppPreview;
   session: McpAppSessionView;
   context: McpAppViewContext;
   bridge: AppBridge;
   current: () => boolean;
-  operationCurrent?: () => boolean;
+  operationCurrent: () => boolean;
   priority: () => number;
 }) {
-  const { identity, payload, session, context, bridge, current, priority } = input;
-  const diagramId = mcpAppRecord(payload.toolResult?.structuredContent)?.diagramId;
+  const { payload, preview, session, context, bridge, current, priority } = input;
+  const identity = readNativeMcpAppIdentity(preview);
+  const registered = session.contentAdapter;
   if (
-    identity?.serverName !== DRAWIO_SERVER ||
-    identity.uiResourceUri !== DRAWIO_RESOURCE ||
-    !DRAWIO_ENTRY_TOOLS.includes(identity.toolName as never) ||
+    !identity ||
+    !registered ||
     identity.originSessionKey !== context.sessionKey ||
-    typeof diagramId !== 'string' ||
     !session.sessionId ||
     !session.agentId
   )
     return;
+  const { adapter, source } = registered;
+  if (
+    identity.viewId !== session.viewId ||
+    identity.serverName !== source.serverName ||
+    identity.toolName !== source.toolName ||
+    identity.uiResourceUri !== source.uiResourceUri ||
+    identity.originSessionKey !== source.originSessionKey
+  )
+    return;
+  const item = adapter.content(payload.toolResult);
+  if (!item) return;
   const content: Readonly<McpAppContentIdentity> =
-    readRecoveredAppContent(input.preview, session) ??
+    readRecoveredAppContent(preview, session) ??
     Object.freeze({
-      namespace: 'drawio/editor',
-      contentId: diagramId,
+      namespace: adapter.namespace,
+      contentId: item.id,
       serverName: identity.serverName,
       uiResourceUri: identity.uiResourceUri,
       originViewId: identity.viewId,
@@ -98,36 +96,33 @@ export function connectAppContent(input: {
     });
   const dispose =
     payload.messageSupported === true
-      ? connectCurrentDiagram({
-          source: Object.freeze({
-            serverName: identity.serverName,
-            toolName: identity.toolName,
-            uiResourceUri: identity.uiResourceUri,
-            originSessionKey: identity.originSessionKey,
-          }),
-          diagramId,
+      ? adapter.connect({
+          ...session.editorTransport(adapter),
+          source,
+          contentId: item.id,
           bridge,
           viewId: () => session.nativeViewId!,
-          current: input.operationCurrent ?? current,
+          current: input.operationCurrent,
           canPrepare: current,
           priority,
-          request: (value, signal) => session.diagramRequest(value, signal),
-          release: (token, forgetSource) => session.releaseDiagram(token, forgetSource),
-          subscribe: listener => session.subscribeDiagram(listener),
+          subscribe: listener => session.subscribeRetainedEditor(listener),
           onSuspend: listener => session.onSuspend(listener),
-          register: prepare =>
+          registerPreparation: prepare =>
             context.apps.registerCanvasPreparation(
-              input.previewViewId, prepare, current, runId => session.retainDiagramRun(runId),
+              adapter,
+              preview.viewId,
+              prepare,
+              current,
+              runId => session.retainPreparedRun(runId),
             ),
         })
       : () => undefined;
-  const title = mcpAppRecord(payload.toolResult?.structuredContent)?.title;
   return {
     content,
     dispose,
     retainOnNavigation: payload.messageSupported === true,
-    localNotice: 'mcpAppsDiagramLocal',
-    title: typeof title === 'string' ? title.slice(0, 160) : undefined,
+    ownsReadOnlyNotice: adapter.ownsReadOnlyNotice,
+    title: item.title,
   };
 }
 
@@ -135,8 +130,9 @@ export async function restoreAppReference(
   reference: McpAppContentReference,
   context: McpAppViewContext,
 ) {
+  const adapter = readAppReferenceAdapter(reference);
   if (
-    !isNativeAppReference(reference) ||
+    !adapter ||
     !context.isCurrent() ||
     !context.apps.ready ||
     context.sessionKey !== reference.content.sessionKey
@@ -144,13 +140,7 @@ export async function restoreAppReference(
     throw new Error('App reference unavailable');
   const source = reference.content;
   const session = context.apps.bind(source.originViewId);
-  if (
-    session.sessionId !== source.sessionId ||
-    session.agentId !== source.agentId ||
-    source.namespace !== 'drawio/editor' ||
-    source.serverName !== DRAWIO_SERVER ||
-    source.uiResourceUri !== DRAWIO_RESOURCE
-  )
+  if (session.sessionId !== source.sessionId || session.agentId !== source.agentId)
     throw new Error('App reference source changed');
   const pending = recovering.get(context.apps) ?? [];
   const existing = pending.find(
@@ -158,25 +148,17 @@ export async function restoreAppReference(
   );
   if (existing) return existing.promise;
   const promise = (async () => {
-    const result = await session.restoreDiagramReference({
-      diagramId: source.contentId,
-      originViewId: source.originViewId,
-      sessionId: source.sessionId,
-      operationId: reference.operationId,
-      toolCallId: reference.toolCallId,
-      title: reference.title,
-    });
+    const result = await session.restoreContentReference(reference);
     if (!context.isCurrent() || !session.isCurrent()) throw new Error('App reference changed');
     const preview = decodeMcpAppLaunch(result);
     const identity = readNativeMcpAppIdentity(preview);
     const payload = mcpAppRecord(mcpAppRecord(result)?.payload);
-    const diagram = mcpAppRecord(mcpAppRecord(payload?.toolResult)?.structuredContent);
     if (
       !preview ||
-      identity?.serverName !== source.serverName ||
-      identity.uiResourceUri !== source.uiResourceUri ||
+      !identity ||
+      findMcpAppViewAdapter(identity) !== adapter ||
       identity.originSessionKey !== source.sessionKey ||
-      diagram?.diagramId !== source.contentId ||
+      adapter.content(payload?.toolResult)?.id !== source.contentId ||
       payload?.messageSupported !== false
     )
       throw new Error('App reference unavailable');

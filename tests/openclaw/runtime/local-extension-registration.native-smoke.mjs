@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import bundledAssets from '../../../scripts/plugins/bundled-extension-assets.cjs';
 import { resolveNativeSmokeTarget } from './native-smoke-target.mjs';
 
 const { runtimeRoot } = resolveNativeSmokeTarget();
@@ -13,10 +14,12 @@ test('the frozen local extensions register with the actual native loader without
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-registration-native-'));
   const previous = { ...process.env };
   const ids = [
-    'acpx', 'agent-team', 'ask-user-question', 'automation-permission', 'drawio',
+    'acpx', 'agent-team', 'ask-user-question', 'automation-permission',
     'embedded-browser', 'openai', 'plan-mode', 'runtime-services', 'stt-local-cli',
     'swarm-workflow', 'typesafe', 'smart-canvas',
   ];
+  const repoRoot = path.resolve(import.meta.dirname, '../../..');
+  ids.push(...bundledAssets.listBundledExtensionAssets(repoRoot).map(bundle => bundle.id));
   let inspection;
   try {
     for (const key of Object.keys(process.env))

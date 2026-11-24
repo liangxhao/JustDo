@@ -48,7 +48,7 @@ function failed(result: Record<string, unknown>) {
   );
 }
 /** Only call with a real native tool result; no assistant-nested or prose admission. */
-export function readDiagramUpdate(
+function readDiagramUpdate(
   value: unknown,
   toolName: string | undefined,
   toolCallId: string | undefined,
@@ -83,11 +83,10 @@ export function diagramUpdateReference(receipt: ReferenceFields) {
 }
 
 /** Call only for a native result of this exact plugin tool and invocation. */
-export function readDiagramReference(value: unknown, toolName?: string, toolCallId?: string) {
-  if (toolName !== DRAWIO_EDIT_TOOL || !toolCallId) return;
+export function readDiagramReference(value: unknown, toolCallId: string) {
   const result = object(value);
-  if (failed(result)) return;
-  const full = readDiagramUpdate(result, toolName, toolCallId);
+  if (!toolCallId || failed(result)) return;
+  const full = readDiagramUpdate(result, DRAWIO_EDIT_TOOL, toolCallId);
   if (full) return diagramUpdateReference(full);
   const content = result.content;
   if (!Array.isArray(content) || content.length !== 1) return;

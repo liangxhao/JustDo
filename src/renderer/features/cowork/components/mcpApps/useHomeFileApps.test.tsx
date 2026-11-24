@@ -22,6 +22,7 @@ const f = vi.hoisted(() => ({
   engine: { ready: false, pending: false, failed: false },
   prepare: vi.fn<(host: TestHost) => Promise<TestHost & { sessionKey?: string }>>(),
   discover: vi.fn<() => Promise<McpAppDiscovery>>(),
+  bind: vi.fn<() => { sessionKey: string; sessionId: string; agentId: string }>(),
   launch: vi.fn(),
   invalidate: vi.fn(),
   dispose: vi.fn(),
@@ -46,7 +47,7 @@ vi.mock('@/libs/openclaw-chat/gateway/mcp-app/mcp-workspace-session', () => ({
       f.hosts.push(host);
       f.connections.push(this);
     }
-    apps = { discover: f.discover, launch: f.launch, invalidate: f.invalidate };
+    apps = { bind: f.bind, discover: f.discover, launch: f.launch, invalidate: f.invalidate };
     subscribeConnection = (listener: () => void) => {
       this.listeners.add(listener);
       return () => this.listeners.delete(listener);
@@ -121,6 +122,11 @@ function setup(running = false, prepare?: (host: TestHost) => Promise<TestHost>)
     resume: () => ({ isCurrent: host.isCurrent }),
     sessionKey: 'agent:main:home',
   })));
+  f.bind.mockReturnValue({
+    sessionKey: 'agent:main:home',
+    sessionId: 'home-native-session',
+    agentId: 'main',
+  });
   f.launch.mockResolvedValue({
     viewId: 'view',
     descriptor: {
@@ -240,6 +246,7 @@ test('opens only the explicit ambiguous file handler and rejects a replaced reso
   const catalog = {
     servers: ['sheet', 'analysis'].map(serverName => ({
       serverName,
+      pluginId: `${serverName}-plugin`,
       label: serverName,
       entrypoints: [{
         toolName: 'preview_file',
@@ -278,6 +285,8 @@ test('opens only the explicit ambiguous file handler and rejects a replaced reso
     },
   });
   await expect(loaded.context.reopen?.()).rejects.toThrow('superseded');
+  f.discover.mockResolvedValue({ servers: [{ ...catalog.servers[1], pluginId: 'replacement' }] });
+  await expect(loaded.context.reopen?.()).rejects.toThrow('no longer available');
   f.discover.mockResolvedValue({ servers: [catalog.servers[0]] });
   await expect(loaded.context.reopen?.()).rejects.toThrow('no longer available');
   expect(f.launch).toHaveBeenCalledTimes(2);
@@ -591,11 +600,13 @@ test('remembers the first authenticated connection across a subscription change 
   expect(f.launch).not.toHaveBeenCalled();
 });
 
-test('first-send promotion keeps the same canvas and adopts its owner without a launch replay', async () => {
+test('first-send promotion keeps the same file canvas and allows an explicit same-owner reopen', async () => {
   const h = setup();
   await act(async () => {
     await h.result.current.openFile(h.request);
   });
+  const entry = f.open.mock.lastCall![0] as McpAppWorkspaceFileEntry;
+  const loaded = await entry.load(new AbortController().signal);
   const host = f.hosts[0];
   let requestId: string | undefined;
   expect(host.getWorkingDirectory?.()).toBe(h.options.cwd);
@@ -616,11 +627,39 @@ test('first-send promotion keeps the same canvas and adopts its owner without a 
   expect(host.isCurrent()).toBe(true);
   expect(host.canInteract?.()).toBe(true);
   expect(f.invalidate).not.toHaveBeenCalled();
+  expect(f.launch).toHaveBeenCalledTimes(1);
+
+  f.launch.mockResolvedValueOnce({ ...loaded.preview, viewId: 'reopened-file-view' });
+  const reopened = await loaded.context.reopen!();
+  expect(reopened.preview.viewId).toBe('reopened-file-view');
+  expect(f.launch).toHaveBeenCalledTimes(2);
+
+  f.bind.mockReturnValueOnce({
+    sessionKey: 'agent:main:home',
+    sessionId: 'new-incarnation',
+    agentId: 'main',
+  });
+  await expect(reopened.context.reopen!()).rejects.toThrow('native session changed');
+
+  let finishPreparation!: () => void;
+  const preparation = new Promise<void>(resolve => { finishPreparation = resolve; });
+  f.prepare.mockImplementationOnce(async owner => {
+    await preparation;
+    return { ...owner, sessionKey: 'agent:main:home' };
+  });
+  const abort = new AbortController();
+  const cancelled = reopened.context.reopen!(abort.signal);
+  abort.abort();
+  finishPreparation();
+  await expect(cancelled).rejects.toThrow('workspace changed');
+  expect(f.launch).toHaveBeenCalledTimes(2);
+
   h.rerender({ ...h.options, enabled: false, currentSessionId: 'other' });
   expect(host.getWorkingDirectory?.()).toBeUndefined();
   expect(host.canInteract?.()).toBe(false);
   expect(f.invalidate).toHaveBeenCalled();
-  expect(f.launch).not.toHaveBeenCalled();
+  await expect(reopened.context.reopen!()).rejects.toThrow('workspace changed');
+  expect(f.launch).toHaveBeenCalledTimes(2);
 });
 
 test.each(['temp-failed', 'other-chat'])(

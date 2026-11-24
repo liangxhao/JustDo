@@ -2,4 +2,5 @@
 export const appNativePolicies = {
   'agent-team': { defaultEnabled: false, userToggleable: true },
   'swarm-workflow': { defaultEnabled: false, userToggleable: true },
+  'optional-editor': { defaultEnabled: true, userToggleable: true },
 };

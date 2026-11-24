@@ -3,9 +3,9 @@ import path from 'node:path';
 import ts from 'typescript';
 import { expect, test } from 'vitest';
 
-test('Core process types remain valid without either optional business plugin source tree', () => {
+test('Core process types remain valid without optional business plugin source trees', () => {
   const root = path.resolve(import.meta.dirname, '../..');
-  const removed = ['agent-team', 'swarm-workflow'].map(id =>
+  const removed = ['agent-team', 'drawio', 'swarm-workflow'].map(id =>
     path.join(root, 'plugins/extensions', id).replaceAll('\\', '/').toLowerCase(),
   );
   const unavailable = (filename: string) => {

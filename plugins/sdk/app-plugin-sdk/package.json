@@ -14,6 +14,7 @@
     "./interactions": "./interactions.ts",
     "./history-presentation": "./history-presentation.ts",
     "./main": "./main.ts",
+    "./mcp-app": "./mcp-app.ts",
     "./metadata": "./metadata.ts",
     "./native": "./native.ts",
     "./native-contract": "./native-contract.ts",

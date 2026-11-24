@@ -10,8 +10,9 @@ import { decodeMcpAppLaunch } from '@/libs/openclaw-chat/pipeline/native-mcp-app
 import { i18nService } from '@/services/i18n';
 
 import { HOME_DISPLAY_SESSION_KEY } from '../display/tabs/useSessionDisplayState';
-import { openResourceFilePreview, openManagedFilePreview } from '../preview/filePreviewNavigation';
+import { openManagedFilePreview, openResourceFilePreview } from '../preview/filePreviewNavigation';
 import { decodeFileAppLaunch, findFileApp, openManagedFileApp, type OpenMcpAppFile } from './fileApps';
+import { withManualAppReopen } from './manualAppReopen';
 import { McpAppIcon } from './McpAppIcon';
 import type { McpAppComposerMenu } from './McpAppsControls';
 import { openWorkspaceAppFile, openWorkspaceAppLaunch } from './workspaceApps';
@@ -322,13 +323,37 @@ export function useHomeFileApps(options: Options): {
         const preview = decodeMcpAppLaunch(await scope.session.apps.launch(input, signal));
         if (!preview || !current() || !context.isCurrent())
           throw new Error('App launch superseded');
-        return { preview, context };
+        return {
+          preview,
+          context: withManualAppReopen({
+            context,
+            preview,
+            input,
+            catalog: catalogRef.current?.owner === scope ? catalogRef.current.value : undefined,
+            captureOwner: () => {
+              const target = scope.targetSessionId;
+              const revision = navigation.current;
+              return () =>
+                scope.valid &&
+                latest.current.nativeAvailable &&
+                scope.targetSessionId === target &&
+                navigation.current === revision &&
+                (target
+                  ? !target.startsWith('temp-') &&
+                    retained.current.has(scope) &&
+                    latest.current.currentSessionId === target &&
+                    latest.current.sessionInteractive !== false
+                  : active.current && latest.current.enabled && owned.current === scope);
+            },
+          }),
+        };
       },
     });
   };
   const openFile = useCallback<OpenMcpAppFile>(
     async request => {
       if (!latest.current.nativeAvailable || !latest.current.enabled || !request.isCurrent() || hasPendingStart()) return false;
+      const { filePath, handlerId: requestedHandlerId } = request;
       const scope = owner();
       const epoch = navigation.current;
       const { session } = scope;
@@ -347,9 +372,9 @@ export function useHomeFileApps(options: Options): {
         return false;
       }
       if (!current() || !request.isCurrent() || !context.isCurrent()) return false;
-      const handler = findFileApp(catalog, request.filePath, request.handlerId);
+      const handler = findFileApp(catalog, filePath, requestedHandlerId);
       if (!handler) return false;
-      const { id: handlerId, input, icons } = handler;
+      const { id: handlerId, icons, pluginId } = handler;
       if (request.focusExisting?.(handlerId)) return true;
       if (request.managed) {
         const revision = session.apps.discoveryRevision;
@@ -361,45 +386,78 @@ export function useHomeFileApps(options: Options): {
           () => current() && session.apps.discoveryRevision === revision,
         );
       }
-      const fileName = request.filePath.split(/[\\/]/).pop() || request.filePath;
-      const load = async (signal?: AbortSignal, ownEpoch = navigation.current) => {
-        const currentLoad = () =>
-          active.current &&
-          latest.current.enabled &&
-          owned.current === scope &&
-          navigation.current === ownEpoch;
+      const fileName = filePath.split(/[\\/]/).pop() || filePath;
+      const load = async (
+        currentLoad: () => boolean,
+        signal?: AbortSignal,
+        original?: ReturnType<typeof session.apps.bind>,
+      ) => {
         if (!currentLoad() || signal?.aborted) throw new Error('App workspace changed');
         const fresh = await session.prepare();
+        if (!currentLoad() || !fresh.isCurrent() || signal?.aborted)
+          throw new Error('App workspace changed');
+        const binding = session.apps.bind();
+        if (
+          original &&
+          (binding.sessionKey !== original.sessionKey ||
+            binding.sessionId !== original.sessionId ||
+            binding.agentId !== original.agentId)
+        )
+          throw new Error('File App native session changed');
         const discovery = await session.apps.discover(signal);
-        const selected = findFileApp(discovery, request.filePath, handlerId);
+        const selected = findFileApp(discovery, filePath, handlerId);
         if (
           !currentLoad() ||
           !fresh.isCurrent() ||
           signal?.aborted ||
-          !selected
+          !selected ||
+          selected.pluginId !== pluginId
         )
           throw new Error('File App is no longer available');
-        const preview = decodeFileAppLaunch(await session.apps.launch(input, signal), selected, fresh.sessionKey);
+        const preview = decodeFileAppLaunch(
+          await session.apps.launch(selected.input, signal),
+          selected,
+          fresh.sessionKey,
+        );
         if (!preview || !currentLoad() || !fresh.isCurrent() || signal?.aborted)
           throw new Error('File App open was superseded');
+        const reopen = (signal?: AbortSignal) => {
+          const target = scope.targetSessionId;
+          const reopenEpoch = navigation.current;
+          const currentReopen = () => {
+            if (
+              !active.current || !scope.valid || navigation.current !== reopenEpoch ||
+              scope.targetSessionId !== target
+            )
+              return false;
+            if (!target) return latest.current.enabled && owned.current === scope;
+            return (
+              !target.startsWith('temp-') &&
+              retained.current.has(scope) &&
+              latest.current.currentSessionId === target &&
+              latest.current.sessionInteractive !== false
+            );
+          };
+          return load(currentReopen, signal, binding);
+        };
         const fileContext = (base: McpAppViewContext): McpAppViewContext => ({
           ...base,
           resume: () => {
             const resumed = base.resume?.();
             return resumed ? fileContext(resumed) : undefined;
           },
-          reopen: () => load(),
+          reopen,
         });
         return { preview, context: fileContext(fresh) };
       };
       openWorkspaceAppFile({
-        id: `mcp-app-file:${JSON.stringify([HOME_DISPLAY_SESSION_KEY, scope.requestId, request.filePath, handlerId])}`,
+        id: `mcp-app-file:${JSON.stringify([HOME_DISPLAY_SESSION_KEY, scope.requestId, filePath, handlerId])}`,
         sessionId: HOME_DISPLAY_SESSION_KEY,
-        filePath: request.filePath,
+        filePath,
         fileHandlerId: handlerId,
-        label: request.handlerId ? `${fileName} · ${handler.label}` : fileName,
+        label: requestedHandlerId ? `${fileName} · ${handler.label}` : fileName,
         icons,
-        load: signal => load(signal, epoch),
+        load: signal => load(current, signal),
       });
       return true;
     },

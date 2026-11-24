@@ -84,9 +84,11 @@ function AppPanel({
       });
     resume();
     const stop = entry.context.apps.subscribe(resume);
+    const view = currentView.current;
     return () => {
       listening = false;
       stop();
+      view?.cancelReopen();
     };
   }, [active, entry]);
   return <div ref={mount} hidden={!active} className="absolute inset-0 z-20 bg-background" />;

@@ -28,6 +28,7 @@ const { pipeline } = require('stream/promises');
 const tar = require('tar');
 const { constants: zlibConstants, createZstdCompress, zstdCompressSync } = require('zlib');
 const { isLegalMetadataPath } = require('../openclaw/prune-openclaw-runtime.cjs');
+const { containsAssetPath, listBundledExtensionAssets } = require('../plugins/bundled-extension-assets.cjs');
 
 const WINDOWS_RUNTIME_ZSTD_LEVEL = 19;
 const WINDOWS_RUNTIME_ZSTD_WINDOW_LOG = 26;
@@ -169,15 +170,15 @@ function verifyLegalMetadataEntries(entries, prefix, sourceRoot, excludedPaths =
   return required.length;
 }
 
-function shouldExclude(entryPath, isDirectory = false) {
+function shouldExclude(entryPath, isDirectory = false, preserve = []) {
   const basename = path.basename(entryPath);
   const normalized = entryPath.replace(/\\/g, '/');
   // Retired generated libraries must not survive from an older build tree.
   if (/(?:^|\/)dist\/extensions\/smart-canvas\/assets(?:\/|$)/.test(normalized)) return true;
   // The official Node distribution is closed by its own source/file manifest.
   if (/^node-runtime(?:\/|$)/.test(normalized)) return false;
-  // The prepared editor is a closed, hashed resource set, including legal files.
-  if (/(?:^|\/)dist\/extensions\/drawio\/assets(?:\/|$)/.test(normalized)) return false;
+  // Enrolled resource sets are verified separately and copied byte for byte.
+  if (containsAssetPath(normalized.replace(/^\.\//, ''), preserve)) return false;
   // Native Control UI serves the unchanged identity asset when an optional
   // encoded representation is absent. Keep its manifest and all original bytes.
   if (/^dist\/control-ui\/assets\/.+\.(?:js|css)\.(?:br|gz)$/.test(normalized)) return true;
@@ -221,10 +222,10 @@ function isPythonDistributionLicense(entryPath) {
   );
 }
 
-function shouldExcludeForSource(entryPath, preservePythonLicenses, isDirectory = false) {
+function shouldExcludeForSource(entryPath, preservePythonLicenses, isDirectory, preserve) {
   return preservePythonLicenses && isPythonDistributionLicense(entryPath)
     ? false
-    : shouldExclude(entryPath, isDirectory);
+    : shouldExclude(entryPath, isDirectory, preserve);
 }
 
 function shouldExcludeFromSource(entryPath, excludedPaths = []) {
@@ -241,7 +242,7 @@ function shouldExcludeFromSource(entryPath, excludedPaths = []) {
  * Pack a single source directory into a tar file.
  * The directory contents are stored under `prefix/` in the tar.
  */
-function packSingleSource(sourceDir, outputTar, prefix) {
+function packSingleSource(sourceDir, outputTar, prefix, preserve = []) {
   const entries = [];
   let skipped = 0;
 
@@ -256,13 +257,13 @@ function packSingleSource(sourceDir, outputTar, prefix) {
       const relPath = relPrefix ? `${relPrefix}/${item.name}` : item.name;
 
       if (item.isDirectory()) {
-        if (shouldExclude(relPath, true)) {
+        if (shouldExclude(relPath, true, preserve)) {
           skipped++;
           continue;
         }
         walk(fullPath, relPath);
       } else if (item.isFile()) {
-        if (shouldExclude(relPath)) {
+        if (shouldExclude(relPath, false, preserve)) {
           skipped++;
           continue;
         }
@@ -282,11 +283,11 @@ function packSingleSource(sourceDir, outputTar, prefix) {
       sync: true,
       // Follow symlinks instead of storing them (avoids Windows issues)
       follow: true,
-      filter: (filePath, stat) => !shouldExclude(filePath, stat.isDirectory()),
+      filter: (filePath, stat) => !shouldExclude(filePath, stat.isDirectory(), preserve),
     },
     // Pack all top-level entries (tar will recurse)
     fs.readdirSync(sourceDir).filter(name => {
-      return !shouldExclude(name, true);
+      return !shouldExclude(name, true, preserve);
     }),
   );
 
@@ -302,7 +303,7 @@ function collectArchiveSources(sources) {
   const directories = [];
   const files = [];
   const archivePaths = new Set();
-  for (const { dir, prefix, exclude = [], preservePythonLicenses = false } of sources) {
+  for (const { dir, prefix, exclude = [], preserve = [], preservePythonLicenses = false } of sources) {
     if (!fs.existsSync(dir)) {
       console.log(`[pack-openclaw-tar]   Skipping ${prefix}: ${dir} not found`);
       continue;
@@ -324,7 +325,7 @@ function collectArchiveSources(sources) {
         }
         // Match tar's existing follow:true behavior, including packaged aliases.
         const stat = fs.statSync(fullPath);
-        if (shouldExcludeForSource(relativePath, preservePythonLicenses, stat.isDirectory())) {
+        if (shouldExcludeForSource(relativePath, preservePythonLicenses, stat.isDirectory(), preserve)) {
           totalSkipped++;
           continue;
         }
@@ -487,6 +488,7 @@ async function compressTarArchive(sourceTar, outputArchive, options = {}) {
 function main() {
   const projectRoot = path.join(__dirname, '../..');
   const isWinCombined = process.argv.includes('--win-combined');
+  const assetDirectories = listBundledExtensionAssets(projectRoot).map(bundle => bundle.runtimeDirectory);
 
   if (isWinCombined) {
     const outputTar = path.join(projectRoot, 'build', 'tar', 'win-resources.tar');
@@ -500,6 +502,7 @@ function main() {
         dir: path.join(projectRoot, 'vendor', 'openclaw-runtime', 'current'),
         prefix: 'cfmind',
         exclude: PACKAGED_RUNTIME_EXCLUDES,
+        preserve: assetDirectories,
       },
       {
         dir: path.join(projectRoot, 'build', 'runtimes', 'python-win'),
@@ -550,7 +553,7 @@ function main() {
 
   const t0 = Date.now();
   const basename = path.basename(outputTar, '.tar');
-  const { totalFiles, skipped } = packSingleSource(sourceDir, outputTar, basename);
+  const { totalFiles, skipped } = packSingleSource(sourceDir, outputTar, basename, assetDirectories);
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   const sizeMB = (fs.statSync(outputTar).size / (1024 * 1024)).toFixed(1);
   console.log(

@@ -89,7 +89,7 @@ export async function collectWorkspaceExtensionInventory(
   }
 }
 
-const inspectConfiguredPluginPaths = (
+export const inspectConfiguredPluginPaths = (
   plugins: Record<string, unknown>,
   inventory?: WorkspaceExtensionInventory,
 ): OpenClawExtensionInventory => {
@@ -112,6 +112,7 @@ export const listAvailableOpenClawExtensionIds = (
   plugins: Record<string, unknown>,
   workspaceDirs: readonly string[] = [],
   inventory?: WorkspaceExtensionInventory,
+  configuredInventory = inspectConfiguredPluginPaths(plugins, inventory),
 ): string[] | null => {
   const bundledInventory = inspectBundledOpenClawExtensions();
   const localInventory = inspectLocalOpenClawExtensions();
@@ -122,7 +123,6 @@ export const listAvailableOpenClawExtensionIds = (
       ? inventory.workspace.get(directory) ?? incompleteInventory
       : inspectOpenClawExtensionDirectory(directory);
   });
-  const configuredInventory = inspectConfiguredPluginPaths(plugins, inventory);
   if (
     !bundledInventory.complete ||
     bundledInventory.ids.length === 0 ||
@@ -170,7 +170,6 @@ export const isUserToggleableBundledPlugin = (
   pluginId === OpenClawExtensionId.MEMORY_CORE ||
   pluginId === OpenClawExtensionId.WORKBOARD ||
   pluginId === OpenClawExtensionId.SMART_CANVAS ||
-  pluginId === OpenClawExtensionId.DRAWIO ||
   pluginId === OpenClawExtensionId.TYPESAFE ||
   pluginId === OpenClawExtensionId.STT_LOCAL_CLI ||
   pluginId === LOCAL_TTS_PROVIDER_ID;

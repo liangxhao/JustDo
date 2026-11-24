@@ -14,6 +14,7 @@ const {
   validatePackageVersions,
 } = require('./scripts/packaging/electron-builder-product-metadata.cjs');
 validatePackageVersions(packageJson);
+const { listBundledExtensionAssets } = require('./scripts/plugins/bundled-extension-assets.cjs');
 const {
   configureWindowsInstallerScript,
 } = require('./scripts/packaging/windows-installer-script.cjs');
@@ -22,6 +23,28 @@ const { readWindowsUpdateConfig } = require('./scripts/packaging/windows-update-
 
 const { appId, productName } = resolveBuilderProductMetadata(packageJson.productName);
 const windowsUpdateConfig = readWindowsUpdateConfig();
+const bundledAssetDirectories = listBundledExtensionAssets(__dirname).map(bundle => bundle.runtimeDirectory);
+
+function includeBundledExtensionAssets(resources) {
+  return resources.flatMap(resource =>
+    resource.to === 'cfmind' && bundledAssetDirectories.length > 0
+      ? [
+          {
+            ...resource,
+            filter: [
+              ...resource.filter,
+              ...bundledAssetDirectories.flatMap(directory => [`!${directory}`, `!${directory}/**`]),
+            ],
+          },
+          ...bundledAssetDirectories.map(directory => ({
+            from: `${resource.from}/${directory}`,
+            to: `${resource.to}/${directory}`,
+            filter: ['**/*'],
+          })),
+        ]
+      : [resource],
+  );
+}
 
 module.exports = {
   ...baseConfig,
@@ -55,6 +78,7 @@ module.exports = {
   ],
   mac: {
     ...baseConfig.mac,
+    extraResources: includeBundledExtensionAssets(baseConfig.mac.extraResources),
     extendInfo: {
       ...baseConfig.mac.extendInfo,
       NSCalendarsUsageDescription: `${productName} 需要访问您的日历来帮助您查看和管理日程安排，例如查找事件、创建会议等。`,
@@ -68,6 +92,7 @@ module.exports = {
   },
   linux: {
     ...baseConfig.linux,
+    extraResources: includeBundledExtensionAssets(baseConfig.linux.extraResources),
     desktop: {
       ...baseConfig.linux.desktop,
       entry: {

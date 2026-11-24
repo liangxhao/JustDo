@@ -18,7 +18,7 @@ test('relies on the npm predist:win lifecycle without invoking it twice', () => 
   ) as { scripts: Record<string, string> };
 
   expect(packageJson.scripts['predist:win']).toBe(
-    'npm run validate:product-metadata && npm run drawio:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
+    'npm run validate:product-metadata && npm run plugins:assets:prepare -- --ensure --download && npm run clean:release && node scripts/packaging/prepare-windows-build.cjs',
   );
   expect(packageJson.scripts['dist:win']).not.toContain('npm run predist:win');
   expect(packageJson.scripts['dist:win']).not.toMatch(/setup:(?:mingit|python-runtime)/);

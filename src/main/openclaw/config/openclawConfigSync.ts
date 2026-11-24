@@ -55,6 +55,7 @@ import {
   constrainAgentEntryToAvailableModels,
   ensureDir,
   hasOpenClawConfigChanged,
+  inspectConfiguredPluginPaths,
   isBundledPluginAvailable,
   isRecord,
   isUserToggleableBundledPlugin,
@@ -233,7 +234,7 @@ export class OpenClawConfigSync {
   private nativeMcpDataReceipt?: string;
   private readonly getHooks?: () => OpenClawHookRecord[];
   private readonly getAgents?: () => Agent[];
-  private readonly getAppPluginDefaults: () => Record<string, { defaultEnabled: boolean; userToggleable: boolean }>;
+  private readonly getAppPluginDefaults: NonNullable<OpenClawConfigSyncDeps['getAppPluginDefaults']>;
   private readonly getAppPluginEntries?: () => Record<string, unknown>;
   private readonly getAppPluginPolicy?: () => { sandboxTools?: string[]; surfaces?: Record<string, unknown> };
   private readonly getBrowserMode?: () => BrowserModeValue;
@@ -780,7 +781,13 @@ export class OpenClawConfigSync {
     }
 
     const appEntries = this.getAppPluginEntries?.() ?? {};
-    const appPolicies = this.getAppPluginDefaults();
+    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
+      this.engineManager.getStateDir(),
+    );
+    const configuredInventory = inspectConfiguredPluginPaths(existingPlugins, workspaceInventory);
+    const appPolicies = this.getAppPluginDefaults(
+      configuredInventory.complete ? [...trustedInstalledExtensionIds, ...configuredInventory.ids] : null,
+    );
     const workspaceDir = (coworkConfig.workingDirectory || '').trim();
     // Default workspace to stateDir/workspace so skills are found in stateDir/skills
     const defaultWorkspaceDir = path.join(this.engineManager.getStateDir(), 'workspace');
@@ -825,9 +832,6 @@ export class OpenClawConfigSync {
       extensionMcpNames,
       retiredMcpNames,
     );
-    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
-      this.engineManager.getStateDir(),
-    );
     const availableExtensionIds = listAvailableOpenClawExtensionIds(
       this.engineManager.getStateDir(),
       existingPlugins,
@@ -838,6 +842,7 @@ export class OpenClawConfigSync {
         existingConfig,
       }),
       workspaceInventory,
+      configuredInventory,
     );
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(
@@ -1263,7 +1268,10 @@ export class OpenClawConfigSync {
       this.getSpeechOutputState(),
     );
     const appEntries = this.getAppPluginEntries?.() ?? {};
-    const appPolicies = this.getAppPluginDefaults();
+    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
+      this.engineManager.getStateDir(),
+    );
+    const appPolicies = this.getAppPluginDefaults(trustedInstalledExtensionIds);
     const bundledExtensionEntries = {
       ...buildManagedBundledExtensionEntries(
         agentRuntimeSettings,
@@ -1278,9 +1286,6 @@ export class OpenClawConfigSync {
       ...appEntries,
     };
     const defaultPluginEntries = buildDefaultOpenClawPluginEntries(isBundledPluginAvailable, appPolicies);
-    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
-      this.engineManager.getStateDir(),
-    );
     let minimalConfig: Record<string, unknown> = withMemorySearch(
       {
         skills: mergeOpenClawSkillConfig({}, {}),
@@ -1524,6 +1529,13 @@ export class OpenClawConfigSync {
             const existingPlugins = isRecord(canonicalExisting.plugins)
               ? canonicalExisting.plugins
               : {};
+            const configuredInventory = inspectConfiguredPluginPaths(existingPlugins, workspaceInventory);
+            const existingDefaultPluginEntries = buildDefaultOpenClawPluginEntries(
+              isBundledPluginAvailable,
+              this.getAppPluginDefaults(
+                configuredInventory.complete ? [...trustedInstalledExtensionIds, ...configuredInventory.ids] : null,
+              ),
+            );
             const existingHooks = isRecord(canonicalExisting.hooks)
               ? { ...canonicalExisting.hooks }
               : {};
@@ -1540,6 +1552,7 @@ export class OpenClawConfigSync {
                 existingConfig: canonicalExisting,
               }),
               workspaceInventory,
+              configuredInventory,
             );
             const mergedBrowserConfig = projectManagedOpenClawBrowserConfig(
               withMemorySearch(
@@ -1609,9 +1622,9 @@ export class OpenClawConfigSync {
                     ),
                   },
                   plugins: mergeOpenClawPluginConfig(
-                    applyDefaultOpenClawPluginEntries(existingPlugins, defaultPluginEntries),
+                    applyDefaultOpenClawPluginEntries(existingPlugins, existingDefaultPluginEntries),
                     bundledExtensionEntries,
-                    [...trustedInstalledExtensionIds, ...Object.keys(defaultPluginEntries)],
+                    [...trustedInstalledExtensionIds, ...Object.keys(existingDefaultPluginEntries)],
                     availableExtensionIds,
                     Object.keys(appEntries),
                   ),

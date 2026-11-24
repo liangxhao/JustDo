@@ -31,6 +31,7 @@ export function findFileApps(catalog: McpAppDiscovery | undefined, filePath: str
         )
         .map(entry => ({
           id: JSON.stringify([server.serverName, entry.toolName, entry.resourceUri]),
+          pluginId: server.pluginId,
           label: server.label || server.serverName,
           title: entry.title,
           resourceUri: entry.resourceUri,

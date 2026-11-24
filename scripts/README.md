@@ -107,10 +107,15 @@ included in the installer. Existing prepared trees install once to create it.
 
 `plugins/sync-bundled-skills.cjs` reads `plugins/skills/builtin-skills.json`, validates the selected application/native skill sources, and synchronizes the prepared runtime. Its callers retain the runtime and packaging lifecycle. The native recipe binds script paths and bytes, including this helper; changed recipe inputs require fresh preparation, never editing or re-signing an old proof.
 
-Plugin-specific preparation and verification scripts belong to
-`plugins/extensions/<plugin-id>/scripts/`. Root npm commands and packaging hooks
-delegate there; for example, draw.io owns its asset builder and packaged-asset
-verifier under `plugins/extensions/drawio/`.
+A local extension can declare a closed resource set in its package.json
+`bundledAssets` field. The declaration provides the relative asset `directory`,
+the package-owned CJS `prepare` script and its additional build `inputs`. Run
+`npm run plugins:assets:prepare -- --ensure` from the repository root. The
+assembler calls the same script's `verifyBundledAssets(directory, checkSources)`
+export on the source resources and on the prepared runtime copy. Packaging
+preserves the declared subtrees and verifies the packaged bytes. These build
+steps discover declarations from the source checkout. An empty inventory
+requires no asset preparation.
 
 `plugins:app:build` discovers app manifests and produces independent Native/Main/UI
 packages plus a portable SDK. `plugins:app:sdk` emits the SDK alone; the builder also
@@ -170,7 +175,8 @@ source content, packaging recipe and output hashes match
 `build/tar/win-resources-proof.json`. Changed timestamps alone do not force
 recompression. Cold builds verify the actual tar bytes against their input
 inventory and publish archive/metadata/proof with rollback. Final artifact checks
-remain enabled; Windows draw.io verification shares the first runtime extraction.
+remain enabled. Verification of closed extension asset sets shares the first
+Windows runtime extraction.
 
 `packaging/installer-animation-assets.cjs` renders the existing application icon
 into native installer AVI/bitmap assets under `build/installer/<fingerprint>/`.

@@ -19,7 +19,6 @@ vendor/openclaw-plugins/
 resources/icons/_tmp/
 resources/icons/mac/icon.iconset/
 resources/icons/mac/icon.icns.backup
-plugins/extensions/drawio/assets/
 plugins/extensions/smart-canvas/assets/
 resources/package-manager-config/.npmrc
 resources/package-manager-config/pip.ini

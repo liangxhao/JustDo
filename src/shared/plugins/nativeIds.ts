@@ -13,7 +13,6 @@ export const OpenClawExtensionId = {
   OPENAI: 'openai',
   PLAN_MODE: 'plan-mode',
   SMART_CANVAS: 'smart-canvas',
-  DRAWIO: 'drawio',
   TYPESAFE: 'typesafe',
   EMBEDDED_BROWSER: 'embedded-browser',
   ACPX: 'acpx',

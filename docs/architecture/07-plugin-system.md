@@ -38,6 +38,8 @@ MCP 的公共配置、传输方式与写入输入由 `shared/plugins/mcp.ts` 定
 
 构建仍将 OpenClaw 扩展和选中技能组装到原生的 `dist/extensions/`、`skills/`、`custodian-skills/`，开发源码发现读取对应扩展目录。应用图标和原生文档模板位于 `resources/`；下载缓存使用仓库根 `cache/`，工具运行时准备和打包中间产物使用 `build/`，不反向写回资源源码目录。现行 OpenClaw 冻结运行包仍位于 `vendor/openclaw-runtime/`，具体以[构建链](12-tech-stack.md#5-openclaw-供应链)为准。源码与资源约定见[内置插件说明](../../plugins/README.md)和[资源说明](../../resources/README.md)。
 
+内置原生扩展可通过包元数据 `openclaw.bundledPolicy.userToggleable` 声明用户可切换，默认启用取自原生清单。配置同步只读取已组装运行时的内置声明。已安装目录或显式配置加载路径中识别出的同 ID 扩展按各自来源处理，已有启停选择继续保留。
+
 `plugins/sdk/` 保存公开 App SDK 和构建工具开发包，使用 npm workspace 或打包制品接入；扩展发现仍只扫描 `plugins/extensions/`。源码位置、发布和消费契约见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 Chrome Assistant 位于 `plugins/chrome-extensions/chrome-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。
@@ -48,7 +50,7 @@ Chrome Assistant 位于 `plugins/chrome-extensions/chrome-assistant/`，由 Chro
 
 构建生成 `build/chrome-extension/chrome-extension/`，打包后位于安装资源目录的 `chrome-extension/chrome-extension/`；此安装目录不是仓库 `resources/` 下的源码。显示名称和固定扩展身份独立于源码包目录。详见[侧栏对话](../plugins/chrome-extensions/chrome-assistant/side-panel.md)。
 
-插件专属的工具、界面、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置/打包接入，以及验证宿主边界的集成测试；插件不能反向导入应用 `src`。根 npm 命令和打包流程只委托插件自己的脚本，draw.io 的目录约定见[插件说明](../plugins/extensions/drawio/overview.md)。
+插件专属的工具、界面、浏览器适配、资源、构建/校验脚本和单元测试归 `plugins/extensions/<plugin-id>/` 所有。主工程保留通用 MCP Apps 宿主、权限与保存桥、配置和打包接入，以及验证宿主边界的集成测试。桌面构建按[可选适配约定](../plugins/mcp-servers/references.md#5-构建时接入可选适配)发现适配，插件通过纯契约接入。根 npm 命令和打包流程只委托可信源码包声明的构建脚本。
 
 ## 2. 清单读取与界面投影
 
@@ -428,7 +430,7 @@ Extension 提供的 MCP 通过受管子进程直接调用原生 manifest registr
 
 MCP 的传输支持状态使用原生清单的 `unsupported` 标记；`hasStdioTransport: false` 也可能表示受支持的 HTTP 传输，不能据此标记为不支持。
 
-交互界面是工具的附加能力，仍使用相同 MCP 清单和启停流程。连接测试保留标准 `ui://` 资源元数据，列表显示紧凑的界面标识；不因名称、transport 或 resources 能力推断。内置 draw.io 的已审查提示在连接定义被覆盖后撤回，实际工具目录优先。其 stdio 服务、Web 编辑器、只读 loopback 资源和完整离线打包契约见 [draw.io 离线绘图](../plugins/extensions/drawio/offline-editor.md)。
+交互界面是工具的附加能力，仍使用相同 MCP 清单和启停流程。连接测试保留标准 `ui://` 资源元数据，列表按当前有效工具目录显示紧凑的界面标识。配置或扩展变化使旧结果失效。打开列表只读取已有结果。
 
 发现只增加缺失项，不因原生配置暂时缺失就删除产品记录。产品主动删除/改名后不能先读旧原生配置，否则会复活旧 name。未被表单建模的 cwd、OAuth、TLS、tool filter 等字段需要保留合并，不能保存一次表单就丢失。
 

@@ -28,6 +28,11 @@ const yaml = require('js-yaml');
 const ts = require('typescript');
 const { prepareWindowsResources } = require('./prepare-windows-build.cjs');
 const { prepareCachedRuntimeArchive } = require('./windows-runtime-archive-cache.cjs');
+const {
+  containsAssetPath,
+  listBundledExtensionAssets,
+  verifyBundledExtensionAssets,
+} = require('../plugins/bundled-extension-assets.cjs');
 const { verifyApplicationLicenseAssets } = require('./application-license-assets.cjs');
 const { verifyNodeRuntime, targetContract } = require('../runtime/setup-node-runtime.cjs');
 const {
@@ -454,10 +459,8 @@ function verifyRuntimeCompanionFilesFromBundle(runtimeRoot, gatewayBundlePath, b
   );
 }
 
-function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint) {
-  require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(
-    path.join(runtimeRoot, 'dist/extensions/drawio/assets'),
-  );
+function verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint, assetBundles) {
+  verifyBundledExtensionAssets(assetBundles, runtimeRoot);
   verifyRequiredPathSet(
     runtimeRoot,
     [
@@ -519,7 +522,7 @@ function verifyBundledSkillResources(buildHint) {
   console.log('[electron-builder-hooks] Verified bundled skill resources.');
 }
 
-async function ensureBundledOpenClawRuntime(context) {
+async function ensureBundledOpenClawRuntime(context, assetBundles) {
   const { runtimeRoot, targetId } = syncCurrentOpenClawRuntimeForTarget(context);
   const buildHint = getOpenClawRuntimeBuildHint(targetId);
 
@@ -527,7 +530,7 @@ async function ensureBundledOpenClawRuntime(context) {
   // Resource sync restores local TypeScript entries; package only their newly compiled output.
   await precompileOpenClawExtensions(runtimeRoot, { required: true });
   syncBundledSkills(path.join(__dirname, '../..'), runtimeRoot, 'electron-builder-hooks');
-  verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint);
+  verifyBundledOpenClawRuntimeFiles(runtimeRoot, buildHint, assetBundles);
   verifyBundledLocalExtensions(runtimeRoot, buildHint);
   verifyBundledSkillResources(buildHint);
 
@@ -853,7 +856,7 @@ function installSkillDependencies() {
 async function beforePack(context) {
   validatePackageVersions(context.packager.info.metadata);
   await verifyApplicationLicenseAssets({ repoRoot: context.appDir || path.join(__dirname, '../..') });
-  require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets();
+  const assetBundles = listBundledExtensionAssets(path.join(__dirname, '../..'));
   verifyPackagedBuiltinModelAuthConfig(context.appDir || path.join(__dirname, '../..'));
   prepareChromeExtension();
   if (isWindowsTarget(context)) compileChromeExtensionNativeHost();
@@ -862,7 +865,7 @@ async function beforePack(context) {
   installSkillDependencies();
   // Copy the fully prepared custom skills after dependencies are installed so
   // every packaging entry point receives the exact enabled skill set.
-  await ensureBundledOpenClawRuntime(context);
+  await ensureBundledOpenClawRuntime(context, assetBundles);
 
   if (isWindowsTarget(context)) {
     // Keep a deterministic single-stream filter for the application archive.
@@ -896,6 +899,7 @@ async function beforePack(context) {
         // gateway-bundle.mjs is the Windows gateway entry and the bare dist/
         // tree serves CLI/client fallbacks. gateway.asar duplicates that tree.
         exclude: PACKAGED_RUNTIME_EXCLUDES,
+        preserve: assetBundles.map(bundle => bundle.runtimeDirectory),
       },
       {
         label: 'Python runtime',
@@ -1084,8 +1088,8 @@ async function beforePack(context) {
 
 async function afterPack(context) {
   verifyPackagedNodeRuntime(context);
-  await verifyPackagedOpenClawRuntime(context, { includeDrawioAssets: isWindowsTarget(context) });
-  const diagramResourcesRoot = isMacTarget(context)
+  await verifyPackagedOpenClawRuntime(context);
+  const packagedResourcesRoot = isMacTarget(context)
     ? path.join(
         context.appOutDir,
         `${context.packager.appInfo.productFilename}.app`,
@@ -1093,17 +1097,11 @@ async function afterPack(context) {
         'Resources',
       )
     : path.join(context.appOutDir, 'resources');
-  await verifyPackagedApplicationLegalMetadata(path.join(diagramResourcesRoot, 'app.asar'));
+  await verifyPackagedApplicationLegalMetadata(path.join(packagedResourcesRoot, 'app.asar'));
   await verifyApplicationLicenseAssets({
     repoRoot: path.join(__dirname, '../..'),
-    packagedRoot: path.join(diagramResourcesRoot, 'licenses/application-dependencies'),
+    packagedRoot: path.join(packagedResourcesRoot, 'licenses/application-dependencies'),
   });
-  if (!isWindowsTarget(context)) {
-    await require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
-      diagramResourcesRoot,
-      false,
-    );
-  }
   verifyPackagedChromeExtension(context);
 
   if (isWindowsTarget(context)) {
@@ -1729,6 +1727,7 @@ function isDeclaredBundledDependencyArchiveEntry(entryPath, entryType, directori
 async function verifyPackagedOpenClawRuntime(context, options = {}) {
   // Internal test injection preserves the same verifier without using a mutable real runtime.
   const repoRoot = options.repoRoot || path.join(__dirname, '../..');
+  const assetBundles = listBundledExtensionAssets(repoRoot);
   const packageVersion = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).openclaw.version;
   const nativeContract = require('../openclaw/native-database-contract.cjs').readNativeDatabaseContract(repoRoot, packageVersion);
   const resourcesRoot = isMacTarget(context)
@@ -1775,7 +1774,7 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
         'cfmind/dist/extensions/mxc/node_modules/node-pty/package.json',
       ]);
       const archiveEntryPaths = new Set();
-      const diagramPrefix = 'cfmind/dist/extensions/drawio/assets';
+      const assetDirectories = assetBundles.map(bundle => `cfmind/${bundle.runtimeDirectory}`);
       let hasRetiredWidgetAssets = false;
       const tarModule = require(path.join(__dirname, '../..', 'node_modules', 'tar'));
       await pipeline(
@@ -1793,21 +1792,15 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
             return (
               requiredEntries.has(normalized) ||
               normalized.startsWith('cfmind/node-runtime/') ||
-              (options.includeDrawioAssets === true &&
-                (normalized === diagramPrefix || normalized.startsWith(diagramPrefix + '/')))
+              containsAssetPath(normalized, assetDirectories)
             );
           },
         }),
       );
       if (hasRetiredWidgetAssets)
         throw new Error('Packaged runtime includes retired Smart Canvas library assets');
-      if (options.includeDrawioAssets === true) {
-        // Use the plugin's unchanged closed-set verifier against the assets
-        // already selected in this pass, avoiding a third archive decompression.
-        await require('../../plugins/extensions/drawio/scripts/verify-packaged.cjs').verifyPackagedDrawioAssets(
-          temporaryRoot, false,
-        );
-      }
+      // Verify closed asset sets from the first extraction pass.
+      verifyBundledExtensionAssets(assetBundles, path.join(temporaryRoot, 'cfmind'), { checkSources: false });
       // Discover companions from the actual archived bundle, then extract those
       // exact files before the normal filesystem verifier checks their presence.
       // The subsequent manifest check still authenticates the bundle itself.
@@ -1881,7 +1874,8 @@ async function verifyPackagedOpenClawRuntime(context, options = {}) {
       getOpenClawRuntimeBuildHint(resolveOpenClawRuntimeTargetId(context)),
       'Packaged OpenClaw CLI runtime',
     );
-    verifyBundledLocalExtensions(path.join(resourcesRoot, 'cfmind'), 'packaged application');
+    verifyBundledLocalExtensions(packagedRuntimeRoot, 'packaged application');
+    verifyBundledExtensionAssets(assetBundles, packagedRuntimeRoot, { checkSources: false });
   }
 
   console.log('[electron-builder-hooks] Verified patches in packaged OpenClaw runtime.');

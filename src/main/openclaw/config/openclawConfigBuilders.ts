@@ -23,7 +23,9 @@ export type OpenClawConfigSyncDeps = {
   getHooks?: () => OpenClawHookRecord[];
   getAgents?: () => Agent[];
   getAppPluginEntries?: () => Record<string, unknown>;
-  getAppPluginDefaults?: () => Record<string, { defaultEnabled: boolean; userToggleable: boolean }>;
+  getAppPluginDefaults?: (externalIds: readonly string[] | null) => Record<
+    string, { defaultEnabled: boolean; userToggleable: boolean }
+  >;
   getAppPluginPolicy?: () => { sandboxTools?: string[]; surfaces?: Record<string, unknown> };
   getBrowserMode?: () => BrowserModeValue;
   getDecisionModelCategory?: () => unknown;

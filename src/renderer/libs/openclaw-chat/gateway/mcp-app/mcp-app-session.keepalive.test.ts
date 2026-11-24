@@ -147,18 +147,41 @@ describe('MCP App view presence', () => {
     await view.close();
   });
 
-  it.each(['expired', 'unsupported', 'transient'] as const)(
-    'bounds %s heartbeat failures and never replays launch or business tools', async kind => {
+  it('renews a still-live view after a sustained transient outage without reloading it', async () => {
+    const f = fixture();
+    const view = f.apps.bind('mcp-app-delayed-renewal');
+    await view.view();
+    const unavailable = new Error('temporarily unavailable');
+    f.request.mockRejectedValueOnce(unavailable)
+      .mockRejectedValueOnce(unavailable)
+      .mockRejectedValueOnce(unavailable);
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    expect(f.request.mock.calls).toHaveLength(4);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(f.request.mock.calls).toHaveLength(5);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(f.request.mock.calls).toHaveLength(6);
+    expect(f.request.mock.calls.slice(1).every(([method, params]) =>
+      method === McpAppMethod.View &&
+      params.keepAlive === true &&
+      params.viewId === 'mcp-app-delayed-renewal',
+    )).toBe(true);
+    await view.close();
+  });
+
+  it.each(['expired', 'unsupported', 'forbidden', 'invalid'] as const)(
+    'stops on %s heartbeat results without replaying launch or business tools', async kind => {
       const f = fixture();
       const view = f.apps.bind('mcp-app-failure');
       await view.view();
       if (kind === 'unsupported') f.request.mockResolvedValue({});
-      else f.request.mockRejectedValue(kind === 'expired'
-        ? Object.assign(new Error('expired'), { details: { code: 'MCP_APP_VIEW_EXPIRED' } })
-        : new Error('temporarily unavailable'));
+      else f.request.mockRejectedValue(Object.assign(new Error(kind), kind === 'expired'
+        ? { details: { code: 'MCP_APP_VIEW_EXPIRED' } }
+        : { gatewayCode: kind === 'forbidden' ? 'FORBIDDEN' : 'INVALID_REQUEST' }));
       await vi.advanceTimersByTimeAsync(20 * 60_000);
 
-      expect(f.request.mock.calls).toHaveLength(kind === 'transient' ? 4 : 2);
+      expect(f.request.mock.calls).toHaveLength(2);
       expect(f.request.mock.calls.every(([method]) => method === McpAppMethod.View)).toBe(true);
       expect(vi.getTimerCount()).toBe(0);
       await view.close();

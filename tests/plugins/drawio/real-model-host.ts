@@ -1,6 +1,10 @@
+import { mcpAppAdapter } from '../../../plugins/extensions/drawio/browser/mcp-app-adapter';
+import { registerMcpAppAdapter } from '../../../src/renderer/libs/openclaw-chat/pipeline/mcp-app-adapters';
 // Real native history through the production controller and message timeline.
 import { JustDoChatElement } from '../../../src/renderer/libs/openclaw-chat/components/justdo-chat';
 import { ChatController } from '../../../src/renderer/libs/openclaw-chat/gateway/chat-controller';
+
+registerMcpAppAdapter(mcpAppAdapter);
 
 const bootstrap = await fetch(new URL('payload', location.href)).then(response => response.json());
 // Only the Save destination is replaced; all history, admission, view reads and

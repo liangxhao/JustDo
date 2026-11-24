@@ -19,5 +19,6 @@ export {
   inspectOpenClawExtensionDirectory,
   listBundledOpenClawExtensionIds,
   listLocalOpenClawExtensionIds,
+  readBundledNativePluginPolicies,
   syncLocalOpenClawExtensionsIntoRuntime,
 } from './openclawLocalExtensions';

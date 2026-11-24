@@ -49,7 +49,7 @@ const { verifyPackagedOpenClawRuntime, isDeclaredBundledDependencyArchiveEntry }
     verifyPackagedOpenClawRuntime: (context: {
       appOutDir: string;
       electronPlatformName: string;
-    }, options?: { repoRoot: string; includeDrawioAssets?: boolean }) => Promise<void>;
+    }, options?: { repoRoot: string }) => Promise<void>;
     isDeclaredBundledDependencyArchiveEntry: (entryPath: string, entryType: string, directories: string[]) => boolean;
   };
 const { compressTarArchive } = require('../../../scripts/packaging/pack-runtime-resources.cjs') as {
@@ -322,7 +322,7 @@ function createFixture(version = 'v2026.6.11') {
   for (const file of listBuildRecipeFiles(repoRoot)) {
     if (!fs.existsSync(file)) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, '// fixture recipe input\n');
+      fs.writeFileSync(file, path.basename(file) === 'package.json' ? '{}\n' : '// fixture recipe input\n');
     }
   }
   fs.writeFileSync(path.join(runtimeRoot, 'gateway-bundle.mjs'), 'const patched = true;\n');
@@ -1137,7 +1137,6 @@ module.exports = { applyPatch, verifyPatch };
       'scripts/packaging/application-license-assets.cjs',
       'vite.config.mts',
       'scripts/packaging/pack-runtime-resources.cjs',
-      'plugins/extensions/drawio/scripts/verify-packaged.cjs',
     ]) {
       const file = path.join(repoRoot, source);
       expect(listBuildRecipeFiles(repoRoot)).not.toContain(file);
@@ -1243,7 +1242,11 @@ module.exports = { applyPatch, verifyPatch };
 
     const sourceFile = path.join(repoRoot, source);
     expect(listBuildRecipeFiles(repoRoot)).toContain(sourceFile);
-    fs.appendFileSync(sourceFile, '// changed\n');
+    if (path.basename(sourceFile) === 'package.json') {
+      fs.writeFileSync(sourceFile, '{"version":"0.0.1"}\n');
+    } else {
+      fs.appendFileSync(sourceFile, '// changed\n');
+    }
 
     expect(() => verifyOpenClawPatchManifest(runtimeRoot, { repoRoot })).toThrow(
       /source proof is missing, incomplete, or stale/,
@@ -1492,7 +1495,9 @@ module.exports = { applyPatch, verifyPatch };
     { includeCompanion: true, providerChange: 'none', nativeChange: 'owner-bytes' },
     ...['changed', 'missing', 'extra', 'proof-missing', 'unsafe-declaration'].map(bundledChange =>
       ({ includeCompanion: true, providerChange: 'none', nativeChange: 'none', bundledChange })),
-  ].map(entry => ({ bundledChange: 'none', ...entry })))('checks archived proof: companion=$includeCompanion provider=$providerChange native=$nativeChange bundled=$bundledChange', async ({ includeCompanion, providerChange, nativeChange, bundledChange }) => {
+    ...['valid', 'changed'].map(assetChange =>
+      ({ includeCompanion: true, providerChange: 'none', nativeChange: 'none', assetChange })),
+  ].map(entry => ({ bundledChange: 'none', assetChange: 'absent', ...entry })))('checks archived proof: companion=$includeCompanion provider=$providerChange native=$nativeChange bundled=$bundledChange assets=$assetChange', async ({ includeCompanion, providerChange, nativeChange, bundledChange, assetChange }) => {
     const { repoRoot: repositoryRoot } = createFixture('v2026.10.7');
     const sourceLock = readOpenClawSourceLock(repositoryRoot, 'v2026.10.7');
     const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-packaged-patch-test-'));
@@ -1502,9 +1507,24 @@ module.exports = { applyPatch, verifyPatch };
     const resourcesRoot = path.join(appOutDir, 'resources');
     fs.mkdirSync(runtimeRoot, { recursive: true });
     fs.mkdirSync(resourcesRoot, { recursive: true });
-    const diagramFile = 'cfmind/dist/extensions/drawio/assets/probe.js';
-    fs.mkdirSync(path.dirname(path.join(archiveRoot, diagramFile)), { recursive: true });
-    fs.writeFileSync(path.join(archiveRoot, diagramFile), 'diagram fixture');
+    if (assetChange !== 'absent') {
+      const source = path.join(repositoryRoot, 'plugins/extensions/editor-fixture');
+      fs.mkdirSync(source, { recursive: true });
+      fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({
+        bundledAssets: { directory: 'web', prepare: 'prepare.cjs', inputs: [] },
+      }));
+      fs.writeFileSync(path.join(source, 'prepare.cjs'), `
+        const fs = require('node:fs');
+        const path = require('node:path');
+        exports.verifyBundledAssets = (directory, checkSources) => {
+          if (checkSources || fs.readFileSync(path.join(directory, 'app.js'), 'utf8') !== 'fixture')
+            throw new Error('Packaged extension asset checksum mismatch');
+        };
+      `);
+      const assets = path.join(runtimeRoot, 'dist/extensions/editor-fixture/web');
+      fs.mkdirSync(assets, { recursive: true });
+      fs.writeFileSync(path.join(assets, 'app.js'), assetChange === 'valid' ? 'fixture' : 'changed');
+    }
     fs.writeFileSync(
       path.join(runtimeRoot, 'gateway-bundle.mjs'),
       'const identity = "build-info.json"; runtimeProcessEntrypoint("agents/archive-proof.worker");\n',
@@ -1664,26 +1684,8 @@ module.exports = { applyPatch, verifyPatch };
     else if (!includeCompanion) await expect(verification).rejects.toThrow('dist/agents/archive-proof.worker.js');
     else if (providerChange.endsWith('missing')) await expect(verification).rejects.toThrow(/ENOENT/);
     else if (providerChange.endsWith('changed')) await expect(verification).rejects.toThrow(/dependencies/);
-    else {
-      await expect(verification).resolves.toBeUndefined();
-      const diagramVerifier = require('../../../plugins/extensions/drawio/scripts/verify-packaged.cjs');
-      const verifyDiagram = vi.spyOn(diagramVerifier, 'verifyPackagedDrawioAssets')
-        .mockImplementation(async (...args: unknown[]) => {
-          const [root, windows] = args as [string, boolean];
-          expect(windows).toBe(false);
-          expect(fs.readFileSync(path.join(root, diagramFile), 'utf8')).toBe('diagram fixture');
-        });
-      try {
-        const context = { appOutDir, electronPlatformName: 'win32' };
-        const options = { repoRoot: repositoryRoot, includeDrawioAssets: true };
-        await expect(verifyPackagedOpenClawRuntime(context, options)).resolves.toBeUndefined();
-        expect(verifyDiagram).toHaveBeenCalledTimes(1);
-        verifyDiagram.mockRejectedValueOnce(new Error('diagram integrity failure'));
-        await expect(verifyPackagedOpenClawRuntime(context, options)).rejects.toThrow('diagram integrity failure');
-      } finally {
-        verifyDiagram.mockRestore();
-      }
-    }
+    else if (assetChange === 'changed') await expect(verification).rejects.toThrow('Packaged extension asset checksum mismatch');
+    else await expect(verification).resolves.toBeUndefined();
   }, 30_000);
 
   test.each([

@@ -175,10 +175,26 @@ test('stages all local extensions and installs only declared production dependen
   const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
   try {
-    fs.mkdirSync(path.join(extensionsRoot, 'dependency-free'), { recursive: true });
+    const assetExtension = path.join(extensionsRoot, 'dependency-free');
+    const buildDependencies = path.join(tempRoot, 'build-dependencies');
+    fs.mkdirSync(path.join(assetExtension, 'assets'), { recursive: true });
+    fs.mkdirSync(buildDependencies);
+    fs.writeFileSync(path.join(buildDependencies, 'fixture-builder.js'), 'build only');
+    fs.symlinkSync(
+      buildDependencies,
+      path.join(assetExtension, 'node_modules'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    fs.writeFileSync(path.join(assetExtension, 'assets/viewer.html'), 'offline editor');
+    fs.writeFileSync(path.join(assetExtension, 'prepare.cjs'), 'exports.verifyBundledAssets = () => {};');
     fs.writeFileSync(
-      path.join(extensionsRoot, 'dependency-free', 'package.json'),
-      JSON.stringify({ name: 'dependency-free', version: '1.0.0' }),
+      path.join(assetExtension, 'package.json'),
+      JSON.stringify({
+        name: 'dependency-free',
+        version: '1.0.0',
+        devDependencies: { 'fixture-builder': '1.0.0' },
+        bundledAssets: { directory: 'assets', prepare: 'prepare.cjs', inputs: [] },
+      }),
       'utf8',
     );
     fs.mkdirSync(path.join(extensionsRoot, 'with-dependency'), { recursive: true });
@@ -212,7 +228,12 @@ test('stages all local extensions and installs only declared production dependen
       os: 'win32',
       cpu: 'x64',
     });
-    expect(fs.existsSync(path.join(targetRoot, 'dependency-free', 'stale.txt'))).toBe(false);
+    const stagedAssetExtension = path.join(targetRoot, 'dependency-free');
+    expect(fs.existsSync(path.join(stagedAssetExtension, 'stale.txt'))).toBe(false);
+    expect(fs.readFileSync(path.join(stagedAssetExtension, 'assets/viewer.html'), 'utf8')).toBe(
+      'offline editor',
+    );
+    expect(fs.existsSync(path.join(stagedAssetExtension, 'node_modules'))).toBe(false);
     expect(
       fs.existsSync(
         path.join(targetRoot, 'with-dependency', 'node_modules', 'fixture-dep', 'index.js'),

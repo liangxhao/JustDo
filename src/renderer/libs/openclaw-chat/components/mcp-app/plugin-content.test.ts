@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-import { DRAWIO_RESTORE_METHOD } from '../../../../../../plugins/extensions/drawio/contracts';
-import { DRAWIO_REFERENCE_KIND } from '../../../../../../plugins/extensions/drawio/update-result';
+import {
+  EDITOR_RESTORE,
+  editorAdapter,
+  editorSource,
+} from '../../../../../../tests/mcp-apps/editor-adapter-fixture';
 import { McpAppSession } from '../../gateway/mcp-app/mcp-app-session';
+import { registerMcpAppAdapter } from '../../pipeline/mcp-app-adapters';
 import {
   decodeNativeAppReference,
   isNativeAppReference,
@@ -18,6 +22,7 @@ import { getMcpAppPresentations, type McpAppPresentationAnchor } from './present
 import type { McpAppViewContext } from './view';
 
 let release: () => void;
+let releaseAdapter: () => void;
 beforeEach(() => {
   vi.stubGlobal(
     'ResizeObserver',
@@ -27,8 +32,10 @@ beforeEach(() => {
     },
   );
   release = getMcpAppPresentations().retainWorkspace();
+  releaseAdapter = registerMcpAppAdapter(editorAdapter);
 });
 afterEach(async () => {
+  releaseAdapter();
   release();
   document.body.replaceChildren();
   await new Promise(resolve => setTimeout(resolve, 20));
@@ -37,11 +44,8 @@ afterEach(async () => {
 
 function fixture() {
   const source = {
-    kind: 'desktop-native-admission',
-    diagramId: 'diagram-one',
-    serverName: 'drawio',
-    toolName: 'create_diagram',
-    uiResourceUri: 'ui://drawio/editor',
+    ...editorSource,
+    contentId: 'document-one',
     originViewId: 'mcp-app-original',
     sessionKey: 'agent:a:chat',
     sessionId: 'incarnation',
@@ -50,23 +54,13 @@ function fixture() {
   const reference = (operationId: string) =>
     decodeNativeAppReference(
       {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({
-              kind: DRAWIO_REFERENCE_KIND,
-              status: 'applied',
-              diagramId: source.diagramId,
-              title: 'Workflow',
-              operationId,
-              toolCallId: operationId,
-              runId: 'run',
-              source,
-            }),
-          },
-        ],
+        ...source,
+        title: 'Workflow',
+        operationId,
+        toolCallId: operationId,
+        runId: 'run',
       },
-      'drawio_diagram',
+      editorAdapter.referenceTool,
       operationId,
     )!;
   const launch = (viewId: string) => ({
@@ -85,11 +79,11 @@ function fixture() {
     },
     payload: {
       messageSupported: false,
-      toolResult: { structuredContent: { diagramId: source.diagramId } },
+      toolResult: { structuredContent: { id: source.contentId } },
     },
   });
   const request = vi.fn(async (method: string) => {
-    if (method === DRAWIO_RESTORE_METHOD) return launch('mcp-app-recovered');
+    if (method === EDITOR_RESTORE) return launch('mcp-app-recovered');
     return new Promise<never>(() => {});
   });
   const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1', request };
@@ -137,9 +131,7 @@ test('two historical operations share one authenticated recovery and keep the or
     restoreAppReference(second, f.context()),
   ]);
   expect(a).toBe(b);
-  expect(f.request.mock.calls.filter(([method]) => method === DRAWIO_RESTORE_METHOD)).toHaveLength(
-    1,
-  );
+  expect(f.request.mock.calls.filter(([method]) => method === EDITOR_RESTORE)).toHaveLength(1);
   expect(readRecoveredAppContent(a, f.apps.bind())).toEqual(first.content);
   const entry = f.manager.acquire(f.anchor(), a, f.context())!;
   expect(f.manager.findReference(second, f.context())).toBe(entry);

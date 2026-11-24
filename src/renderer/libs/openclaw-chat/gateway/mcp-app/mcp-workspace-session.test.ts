@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { EDITOR_OPERATION, editorAdapter, editorSource } from '../../../../../../tests/mcp-apps/editor-adapter-fixture';
+import { registerMcpAppAdapter } from '../../pipeline/mcp-app-adapters';
 import type { GatewayClientOptions } from '../client';
 import { McpWorkspaceSession } from './mcp-workspace-session';
 
@@ -119,20 +121,40 @@ describe('homepage MCP workspace connection', () => {
     await f.session.prepare();
     f.session.adopt('drawing-chat');
     const view = f.session.apps.bind('mcp-app-canvas');
-    await view.view();
-    view.preservePresentation = true;
-    f.setInteractive(false);
-    f.session.apps.invalidate(true);
-    expect(view.isCurrent()).toBe(false);
-    expect(view.isDiagramCurrent()).toBe(true);
-    await view.diagramRequest({ action: 'next', token: 'private' });
-    expect(fixture.request).toHaveBeenLastCalledWith('drawio.canvas', expect.objectContaining({
-      action: 'next', sessionKey: f.native.sessionKey, sessionId: f.native.gatewaySessionId,
-    }), expect.anything());
-    await expect(view.diagramRequest({ action: 'prepare' })).rejects.toThrow('expired');
-    f.session.dispose();
-    expect(view.isDiagramCurrent()).toBe(false);
-    await expect(view.diagramRequest({ action: 'ack' })).rejects.toThrow('expired');
+    const releaseAdapter = registerMcpAppAdapter(editorAdapter);
+    try {
+      await view.view(undefined, {
+        ...editorSource,
+        viewId: view.viewId!,
+        originSessionKey: f.native.sessionKey,
+      });
+      const transport = view.editorTransport(editorAdapter);
+      view.preservePresentation = true;
+      f.setInteractive(false);
+      f.session.apps.invalidate(true);
+      expect(view.isCurrent()).toBe(false);
+      expect(view.isRetainedEditorCurrent()).toBe(true);
+      await transport.retainedRequest(EDITOR_OPERATION, { action: 'next', token: 'private' });
+      expect(fixture.request).toHaveBeenLastCalledWith(
+        EDITOR_OPERATION,
+        expect.objectContaining({
+          action: 'next',
+          sessionKey: f.native.sessionKey,
+          sessionId: f.native.gatewaySessionId,
+        }),
+        expect.anything(),
+      );
+      await expect(transport.request(EDITOR_OPERATION, { action: 'prepare' })).rejects.toThrow(
+        'expired',
+      );
+      f.session.dispose();
+      expect(view.isRetainedEditorCurrent()).toBe(false);
+      await expect(transport.retainedRequest(EDITOR_OPERATION, { action: 'ack' })).rejects.toThrow(
+        'expired',
+      );
+    } finally {
+      releaseAdapter();
+    }
   });
 
   it('logs the failing catalog phase without exposing native errors or credentials', async () => {

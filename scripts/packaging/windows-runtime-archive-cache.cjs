@@ -27,7 +27,9 @@ function prepareArchiveInputs(sources, recipeFiles = []) {
   ].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
   const recipeSha256 = sha256(JSON.stringify({
     sources: sources.map(source => ({
-      prefix: source.prefix, exclude: source.exclude || [],
+      prefix: source.prefix,
+      exclude: source.exclude || [],
+      preserve: source.preserve || [],
       preservePythonLicenses: Boolean(source.preservePythonLicenses),
       exists: fs.existsSync(source.dir),
       link: fs.existsSync(source.dir) && fs.lstatSync(source.dir).isSymbolicLink()

@@ -1,14 +1,25 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DRAWIO_EDIT_TOOL, DRAWIO_UPDATE_KIND } from '../../../plugins/extensions/drawio/contracts';
-import { diagramUpdateReference } from '../../../plugins/extensions/drawio/update-result';
-import type { AssistantTurn } from '../../../src/renderer/libs/openclaw-chat/model/chat-transcript-state';
-import { projectPersistedTimeline } from '../../../src/renderer/libs/openclaw-chat/model/timeline/project-history-timeline';
-import { projectTurnItems } from '../../../src/renderer/libs/openclaw-chat/model/timeline/project-turn-items';
+import type { AssistantTurn } from '@/libs/openclaw-chat/model/chat-transcript-state';
+import { projectPersistedTimeline } from '@/libs/openclaw-chat/model/timeline/project-history-timeline';
+import { projectTurnItems } from '@/libs/openclaw-chat/model/timeline/project-turn-items';
+import { registerMcpAppAdapter } from '@/libs/openclaw-chat/pipeline/mcp-app-adapters';
 import {
   decodeNativeAppReference,
   isNativeAppReference,
-} from '../../../src/renderer/libs/openclaw-chat/pipeline/native-app-reference';
+} from '@/libs/openclaw-chat/pipeline/native-app-reference';
+
+import { mcpAppAdapter } from '../../../../plugins/extensions/drawio/browser/mcp-app-adapter';
+import { DRAWIO_EDIT_TOOL, DRAWIO_UPDATE_KIND } from '../../../../plugins/extensions/drawio/contracts';
+import { diagramUpdateReference } from '../../../../plugins/extensions/drawio/update-result';
+
+let releaseAdapter: () => void;
+beforeEach(() => {
+  releaseAdapter = registerMcpAppAdapter(mcpAppAdapter);
+});
+afterEach(() => {
+  releaseAdapter();
+});
 
 const result = () => ({
   role: 'toolResult',

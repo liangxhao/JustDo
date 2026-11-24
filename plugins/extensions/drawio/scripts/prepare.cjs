@@ -3,10 +3,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { findPackageJSON } = require('node:module');
+const { pathToFileURL } = require('node:url');
 const tar = require('tar');
 const { build } = require('esbuild');
 const extension = path.resolve(__dirname, '..');
-const root = path.resolve(extension, '../../..');
+const packageUrl = pathToFileURL(path.join(extension, 'package.json'));
+const { devDependencies } = require('../package.json');
 const upstream = require('../upstream.json');
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const sourceHash = () =>
@@ -24,15 +27,12 @@ const sourceHash = () =>
       ].map(file => fs.readFileSync(path.join(extension, file))),
       fs.readFileSync(__filename),
       Buffer.from(
-        [
-          'esbuild',
-          '@modelcontextprotocol/sdk',
-          '@modelcontextprotocol/ext-apps',
-          'saxes',
-          'zod',
-          'tar',
-        ]
-          .map(name => fs.readFileSync(path.join(root, 'node_modules', name, 'package.json')))
+        Object.keys(devDependencies)
+          .map(name => {
+            const metadata = findPackageJSON(name, packageUrl);
+            if (!metadata) throw new Error(`Missing draw.io build dependency: ${name}`);
+            return fs.readFileSync(metadata);
+          })
           .join('\n'),
       ),
     ]),
@@ -47,11 +47,11 @@ const filesIn = directory =>
 function verifyDrawioAssets(directory = path.join(extension, 'assets'), checkSources = true) {
   if (!fs.existsSync(path.join(directory, 'integrity.json')))
     throw new Error(
-      'Missing offline draw.io assets; run npm run drawio:prepare with the pinned archive (see docs/offline-downloads.md)',
+      'Missing offline draw.io assets; run the plugin asset builder with the pinned source archive',
     );
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'integrity.json'), 'utf8'));
   if (manifest.commit !== upstream.commit || (checkSources && manifest.sourceHash !== sourceHash()))
-    throw new Error('Draw.io assets are stale; run npm run drawio:prepare with the pinned archive');
+    throw new Error('Draw.io assets are stale; run the plugin asset builder with the pinned source archive');
   const expected = new Set(Object.keys(manifest.files));
   for (const file of filesIn(directory)) {
     const relative = path.relative(directory, file).replaceAll('\\', '/');
@@ -98,12 +98,12 @@ function extractDrawioSource(archive, staging) {
   }
 }
 
-async function prepare(archive) {
+async function prepare(archive, buildDirectory) {
   const bytes = fs.readFileSync(archive);
   if (hash(bytes) !== upstream.archiveSha256)
     throw new Error('Draw.io source archive SHA-256 mismatch');
-  const buildRoot = path.join(root, 'build');
-  fs.mkdirSync(buildRoot, { recursive: true });
+  fs.mkdirSync(buildDirectory, { recursive: true });
+  const buildRoot = fs.realpathSync(buildDirectory);
   const staging = fs.mkdtempSync(path.join(buildRoot, 'diagram-source-'));
   try {
     extractDrawioSource(archive, staging);
@@ -149,7 +149,7 @@ async function bundleAssets(staging) {
     `window.DRAWIO_CONFIG={defaultFonts:["Arial","Helvetica","Verdana","Times New Roman","Courier New"],fontCss:'',enableCustomFonts:false};\nwindow.EXPORT_URL='';window.PLANT_URL='';window.DRAWIO_GOOGLE_APP_ID='';window.DRAWIO_GOOGLE_CLIENT_ID='';\n`,
   );
   const serverBuild = await build({
-    absWorkingDir: root,
+    absWorkingDir: extension,
     entryPoints: [path.join(extension, 'server.mjs')],
     outfile: path.join(output, 'server.cjs'),
     bundle: true,
@@ -161,7 +161,7 @@ async function bundleAssets(staging) {
     metafile: true,
   });
   const appBuild = await build({
-    absWorkingDir: root,
+    absWorkingDir: extension,
     entryPoints: [path.join(extension, 'app.ts')],
     outfile: path.join(output, 'app.js'),
     bundle: true,
@@ -173,7 +173,7 @@ async function bundleAssets(staging) {
     metafile: true,
   });
   await build({
-    absWorkingDir: root,
+    absWorkingDir: extension,
     entryPoints: [path.join(extension, 'editor-resource.mjs')],
     outfile: path.join(output, 'editor-resource.cjs'),
     bundle: true,
@@ -188,8 +188,8 @@ async function bundleAssets(staging) {
     ...serverBuild.metafile.inputs,
     ...appBuild.metafile.inputs,
   })) {
-    let directory = path.dirname(path.resolve(root, input));
-    while (directory.startsWith(path.join(root, 'node_modules') + path.sep)) {
+    let directory = path.dirname(path.resolve(extension, input));
+    while (directory.split(path.sep).includes('node_modules')) {
       const packageFile = path.join(directory, 'package.json');
       if (fs.existsSync(packageFile)) {
         const metadata = JSON.parse(fs.readFileSync(packageFile, 'utf8'));
@@ -256,6 +256,14 @@ function includeEditorAsset(relativePath) {
   return !/^(?:WEB-INF|META-INF)(?:\/|$)/.test(normalized) && !/\.map$/i.test(normalized);
 }
 
+function pathOption(flag, fallback) {
+  const index = process.argv.indexOf(flag, 2);
+  if (index === -1) return fallback;
+  const value = process.argv[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`${flag} requires a path`);
+  return path.resolve(value);
+}
+
 if (require.main === module) {
   (async () => {
     if (process.argv.includes('--verify')) {
@@ -273,11 +281,11 @@ if (require.main === module) {
         console.log(`[DiagramEditor] Preparing offline assets: ${error.message}`);
       }
     }
-    const archiveIndex = process.argv.indexOf('--archive');
-    const archive =
-      archiveIndex >= 0
-        ? process.argv[archiveIndex + 1]
-        : path.join(root, 'cache/drawio', `drawio-${upstream.commit}.tar.gz`);
+    const archive = pathOption(
+      '--archive',
+      path.join(process.cwd(), 'cache/drawio', `drawio-${upstream.commit}.tar.gz`),
+    );
+    const buildDirectory = pathOption('--build-dir', path.join(process.cwd(), 'build'));
     if (process.argv.includes('--download') && (!ensure || !fs.existsSync(archive))) {
       fs.mkdirSync(path.dirname(archive), { recursive: true });
       const response = await fetch(
@@ -286,10 +294,15 @@ if (require.main === module) {
       if (!response.ok) throw new Error(`Draw.io download failed (${response.status})`);
       fs.writeFileSync(archive, Buffer.from(await response.arrayBuffer()));
     }
-    await prepare(archive);
+    await prepare(archive, buildDirectory);
   })().catch(error => {
     console.error(`[DiagramEditor] ${error.message}`);
     process.exitCode = 1;
   });
 }
-module.exports = { extractDrawioSource, includeEditorAsset, verifyDrawioAssets };
+module.exports = {
+  extractDrawioSource,
+  includeEditorAsset,
+  verifyDrawioAssets,
+  verifyBundledAssets: verifyDrawioAssets,
+};

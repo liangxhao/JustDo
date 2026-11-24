@@ -10,6 +10,42 @@
   "openclaw": {
     "extensions": [
       "./index.ts"
+    ],
+    "bundledPolicy": {
+      "userToggleable": true
+    }
+  },
+  "bundledAssets": {
+    "directory": "assets",
+    "prepare": "scripts/prepare.cjs",
+    "inputs": [
+      "openclaw.plugin.json",
+      "index.ts",
+      "upstream.json",
+      "licenses/saxes-6.0.0.txt",
+      "server.mjs",
+      "editor-resource.mjs",
+      "app.ts",
+      "contracts.ts",
+      "app.css",
+      "editor-bridge.js",
+      "canvas-state.ts",
+      "editing.ts",
+      "restore.ts",
+      "restore-result.ts",
+      "update-result.ts",
+      "skills/drawio-diagrams/SKILL.md"
     ]
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "esbuild": "0.28.1",
+    "saxes": "6.0.0",
+    "tar": "7.5.22",
+    "zod": "4.4.3"
   }
 }

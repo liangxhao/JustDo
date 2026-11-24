@@ -1,3 +1,5 @@
+import type { McpAppAdapterPayload } from '@app-plugin/sdk/mcp-app';
+
 /** Pure wire contracts. View identities are references, never tool grants. */
 export const McpAppMethod = {
   View: 'mcp.app.view',
@@ -231,26 +233,15 @@ export interface McpAppModelContext {
   [key: string]: unknown;
 }
 
-export interface McpAppViewPayload {
-  html: string;
-  sandboxUrl: string;
-  sandboxPort: number;
-  sandboxOrigin?: string;
-  csp?: Record<string, unknown>;
+export interface McpAppViewPayload extends McpAppAdapterPayload {
   toolInput?: Record<string, unknown>;
-  toolResult?: Record<string, unknown>;
   hostContext?: Record<string, unknown>;
   displayMode?: McpAppDisplayMode;
   displayModes?: {
     availableDisplayModes?: McpAppDisplayMode[];
     preferredDisplayMode?: McpAppDisplayMode;
   };
-  richModelContextSupported?: boolean;
-  fileResourcesSupported?: boolean;
   workspaceFile?: { uri: string; name: string; writable: boolean };
-  openFilesSupported?: boolean;
-  messageSupported?: boolean;
-  updateModelContextSupported?: boolean;
 }
 
 /** Optional plugin RPC convention for bounded workspace file snapshots. */

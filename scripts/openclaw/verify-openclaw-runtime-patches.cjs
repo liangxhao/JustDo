@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { listBundledExtensionAssets } = require('../plugins/bundled-extension-assets.cjs');
 const { canonicalJson, verifyNativeDatabaseContract } = require('./native-database-contract.cjs');
 const { verifyNodeRuntime } = require('../runtime/setup-node-runtime.cjs');
 const {
@@ -110,16 +111,7 @@ const BUILD_RECIPE_FILES = [
   'plugins/extensions/prune-policy.json',
   'plugins/skills/builtin-skills.json',
   'scripts/plugins/sync-bundled-skills.cjs',
-  'plugins/extensions/drawio/scripts/prepare.cjs',
-  'plugins/extensions/drawio/package.json',
-  'plugins/extensions/drawio/openclaw.plugin.json',
-  'plugins/extensions/drawio/index.ts',
-  'plugins/extensions/drawio/upstream.json',
-  'plugins/extensions/drawio/licenses/saxes-6.0.0.txt',
-  'plugins/extensions/drawio/server.mjs',
-  'plugins/extensions/drawio/app.ts',
-  'plugins/extensions/drawio/app.css',
-  'plugins/extensions/drawio/editor-bridge.js',
+  'scripts/plugins/bundled-extension-assets.cjs',
 ];
 
 function normalizeOpenClawVersion(version) {
@@ -487,6 +479,7 @@ function listBuildRecipeFiles(repoRoot) {
     ...BUILD_RECIPE_FILES.map(relativePath => path.join(repoRoot, relativePath)),
     ...sourceFiles,
     ...smartCanvasFiles,
+    ...listBundledExtensionAssets(repoRoot).flatMap(bundle => bundle.inputs),
   ];
 }
 

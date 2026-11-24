@@ -43,8 +43,8 @@ jobs:
 
       - run: npm install
 
-      - name: Prepare offline draw.io assets
-        run: npm run drawio:prepare -- --download
+      - name: Prepare offline extension assets
+        run: npm run plugins:assets:prepare -- --ensure --download
 
       # 设置 OpenClaw runtime (如果需要)
       - name: Setup OpenClaw Runtime
@@ -88,8 +88,8 @@ jobs:
 
       - run: npm install
 
-      - name: Prepare offline draw.io assets
-        run: npm run drawio:prepare -- --download
+      - name: Prepare offline extension assets
+        run: npm run plugins:assets:prepare -- --ensure --download
 
       # Windows 需要 Python 运行时
       - name: Setup Python Runtime
@@ -138,8 +138,8 @@ jobs:
 
       - run: npm install
 
-      - name: Prepare offline draw.io assets
-        run: npm run drawio:prepare -- --download
+      - name: Prepare offline extension assets
+        run: npm run plugins:assets:prepare -- --ensure --download
 
       - name: Build Linux
         run: npm run dist:linux

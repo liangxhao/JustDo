@@ -1,6 +1,10 @@
 'use strict';
 
 const fs = require('fs');
+const {
+  listBundledExtensionAssets,
+  verifyBundledExtensionAssets,
+} = require('../plugins/bundled-extension-assets.cjs');
 const crypto = require('crypto');
 const path = require('path');
 const { spawnSync } = require('child_process');
@@ -450,9 +454,7 @@ function bundleProductExtension(sourceDir, targetDir, runtimeRoot) {
 }
 
 function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
-  if (fs.existsSync(path.join(repoRoot, 'plugins/extensions/drawio'))) {
-    require('../../plugins/extensions/drawio/scripts/prepare.cjs').verifyDrawioAssets(path.join(repoRoot, 'plugins/extensions/drawio/assets'));
-  }
+  verifyBundledExtensionAssets(listBundledExtensionAssets(repoRoot));
   const retired = retireAppPlugins(repoRoot, runtimeRoot, options);
   const sourceDir = path.join(repoRoot, 'plugins/extensions');
   const targetDir = path.join(runtimeRoot, 'dist', 'extensions');
@@ -541,6 +543,8 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
       continue;
     }
 
+    // Bundled asset builders can have their own local build tool installation.
+    const copySourceDependencies = !sourcePackage?.app && !sourcePackage?.bundledAssets;
     const stagingRoot = fs.mkdtempSync(path.join(targetDir, `.justdo-extension-${entry.name}-`));
     const stagingDir = path.join(stagingRoot, entry.name);
     try {
@@ -548,8 +552,11 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
         recursive: true,
         force: true,
         verbatimSymlinks: true,
-        filter: entryPath => shouldCopyExtensionSource(extensionSourceDir, entryPath) &&
-          (!sourcePackage?.app || path.relative(extensionSourceDir, entryPath).split(path.sep)[0] !== 'node_modules'),
+        filter: entryPath =>
+          shouldCopyExtensionSource(extensionSourceDir, entryPath) &&
+          (copySourceDependencies ||
+            path.relative(extensionSourceDir, entryPath).split(path.sep)[0]?.toLowerCase() !==
+              'node_modules'),
       });
       bundleProductExtension(extensionSourceDir, stagingDir, runtimeRoot);
       if (usesProductionDependencies) {

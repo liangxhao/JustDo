@@ -1068,11 +1068,11 @@ or preserves its backups if restoration itself fails. Missing or altered cache
 outputs require a rebuild. The proof is not installed, and final packaged runtime,
 source/patch, plugin and installer CRC checks remain enabled on cache hits.
 
-Final Windows runtime verification selects draw.io assets during its first
-archive extraction and runs the plugin's existing closed-set verifier there.
-It retains the second pass that discovers companion files and bundled dependency
-trees from authenticated archive contents. This avoids a third full decompression
-without depending on a mutable local runtime for the archived dependency set.
+Final Windows runtime verification selects the closed asset sets declared by
+bundled extension sources during its first archive extraction and runs each
+package's verifier. It retains the second pass that discovers companion files
+and bundled dependency trees from authenticated archive contents. The packaged
+dependency set comes from the archive's own proof.
 
 Windows x64 validation on 2026-10-28 retained Zstandard level 19, long-distance
 matching, the 64 MiB window and all existing archive exclusions. A required first
@@ -1156,9 +1156,8 @@ Windows MXC keeps its selected Windows executables and WSL DLLs while excluding
 the Linux `lxc-exec`. PTY dependencies belong to the Gateway and MXC runtime
 trees; the application host no longer ships a separate Electron node-pty copy.
 Their selected platform prebuilds and sandbox capabilities remain bundled.
-draw.io removes Java-server directories and source maps during its own asset
-preparation, before generating the closed integrity manifest; generic packaging
-continues to copy that prepared set unchanged.
+Extensions prepare their declared asset sets before packaging. Each declared
+directory is copied intact with its integrity manifest and legal files.
 
 ### Build-time extension staging
 

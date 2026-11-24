@@ -24,7 +24,7 @@
       "@app-plugin/sdk/*": ["./plugins/sdk/app-plugin-sdk/*"]
     }
   },
-  "include": ["src/renderer", "src/shared"],
+  "include": ["src/renderer", "src/shared", "plugins/extensions/*/browser/mcp-app-adapter.ts"],
   "exclude": ["src/**/*.test.*", "src/**/*.spec.*"],
   "references": [
     {

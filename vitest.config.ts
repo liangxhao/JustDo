@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 const extensionRoot = path.resolve(__dirname, 'plugins/extensions');
 const sqliteTestModule = process.env.SQLITE_TEST_MODULE;
@@ -18,6 +18,12 @@ const pluginSetups = readdirSync(extensionRoot, { withFileTypes: true }).flatMap
   const setup = path.join(extensionRoot, entry.name, 'tests/hostSetup.ts');
   return existsSync(setup) ? [setup] : [];
 });
+const bundledIntegrationRoot = path.resolve(__dirname, 'tests/plugins/bundled');
+const absentBundledIntegrations = existsSync(bundledIntegrationRoot)
+  ? readdirSync(bundledIntegrationRoot, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && !existsSync(path.join(extensionRoot, entry.name)))
+      .map(entry => `tests/plugins/bundled/${entry.name}/**`)
+  : [];
 
 if (process.versions.electron) {
   throw new Error(
@@ -64,6 +70,7 @@ export default defineConfig({
   test: {
     // Native runtime cold starts and Windows process snapshots compete for resources.
     maxWorkers: 2,
+    exclude: [...configDefaults.exclude, ...absentBundledIntegrations],
     include: [
       'src/**/*.test.ts',
       'src/**/*.test.tsx',

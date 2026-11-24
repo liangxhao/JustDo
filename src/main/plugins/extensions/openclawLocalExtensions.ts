@@ -1,8 +1,12 @@
 import { app } from 'electron';
 import fs from 'fs';
+import JSON5 from 'json5';
 import path from 'path';
 
-import { OpenClawExtensionId } from '../../../shared/plugins/nativeIds';
+import {
+  normalizeOpenClawPluginPolicyId,
+  OpenClawExtensionId,
+} from '../../../shared/plugins/nativeIds';
 import {
   inspectOpenClawExtensionDirectory,
   isMissingPathError,
@@ -66,6 +70,45 @@ const findBundledExtensionsDir = (): string | null => {
   }
 
   return null;
+};
+
+/** Product policy comes only from packages staged with the bundled runtime. */
+export const readBundledNativePluginPolicies = (
+  externalIds: readonly string[],
+): Record<string, { defaultEnabled: boolean; userToggleable: boolean }> => {
+  const bundledDir = findBundledExtensionsDir();
+  if (!bundledDir) return {};
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(bundledDir, { withFileTypes: true });
+  } catch {
+    return {};
+  }
+
+  const external = new Set(externalIds.map(normalizeOpenClawPluginPolicyId));
+  return Object.fromEntries(entries.flatMap(entry => {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) return [];
+    const extensionDir = path.join(bundledDir, entry.name);
+    const packagePath = path.join(extensionDir, 'package.json');
+    const manifestPath = path.join(extensionDir, 'openclaw.plugin.json');
+    try {
+      if (!fs.lstatSync(packagePath).isFile()) return [];
+      const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      if (pkg?.openclaw?.bundledPolicy?.userToggleable !== true) return [];
+      if (!fs.lstatSync(manifestPath).isFile()) return [];
+      const manifest = JSON5.parse<Record<string, unknown>>(fs.readFileSync(manifestPath, 'utf8'));
+      const id = typeof manifest?.id === 'string' ? manifest.id.trim() : '';
+      if (!id || external.has(normalizeOpenClawPluginPolicyId(id))) return [];
+      const defaultEnabled =
+        manifest.enabledByDefault === true ||
+        (Array.isArray(manifest.enabledByDefaultOnPlatforms) &&
+          manifest.enabledByDefaultOnPlatforms.includes(process.platform));
+      return [[id, { defaultEnabled, userToggleable: true }] as const];
+    } catch {
+      return [];
+    }
+  }));
 };
 
 export const syncLocalOpenClawExtensionsIntoRuntime = async (

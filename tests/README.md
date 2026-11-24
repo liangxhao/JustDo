@@ -19,7 +19,8 @@ tooling, packaged resources and contracts that cross host/native/plugin boundari
 | `plugins/host/`                   | Generic App SDK, Main/Browser loading, lifecycle and resource boundaries         |
 | `plugins/management/marketplace/` | Real plugin management IPC, marketplace/import UI and publication fixtures       |
 | `plugins/chrome-assistant/`       | Chrome extension/desktop integration, Native Messaging and host content adapters |
-| `plugins/drawio/`                 | draw.io host packaging, Renderer navigation and editor integration               |
+| `plugins/bundled/<id>/`           | Host integration suites that use the named bundled extension's source             |
+| `plugins/drawio/`                 | Explicit draw.io Electron, offline packaging and model probes                    |
 | `plugins/smart-canvas/`           | Smart Canvas delivery examples and host resource assembly                        |
 | `openclaw/runtime/`               | Native staging, proofs, SDK/host contracts and explicit prepared-runtime probes  |
 | `openclaw/plugins/`               | OpenAI source/artifact/native composition boundary                               |
@@ -48,7 +49,8 @@ The Runtime Services `history-result.test.mjs` keeps its explicit `node --test`
 execution in the plugin's own `tests/` directory.
 
 Pure plugin tests live under `plugins/<category>/<plugin-id>/tests/`. Host/plugin
-boundary tests stay here even when their subject is a named plugin. The two draw.io
+boundary tests stay here. Suites under `tests/plugins/bundled/<id>/` are discovered
+when the corresponding bundled source directory is present. The two draw.io
 native probes live with that plugin under `scripts/test/` and use an explicitly
 selected host checkout. Required sources and environment variables are documented
 with the owning probe; no sibling checkout is inferred.

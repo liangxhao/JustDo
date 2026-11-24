@@ -130,12 +130,12 @@ describe('diagram navigation lifecycle', () => {
     expect(f.request).toHaveBeenLastCalledWith({ action: 'next', token: 'first' });
   });
 
-  it('keeps source admission while suspended and releases it only when the editor is disposed', () => {
+  it('retires a suspended preparation and leaves source cleanup to the bound view', () => {
     const f = fixture();
     f.suspend();
     expect(f.release).toHaveBeenLastCalledWith('');
     f.dispose();
-    expect(f.release).toHaveBeenLastCalledWith('', true);
+    expect(f.release).toHaveBeenCalledOnce();
   });
   it('drops a late take across A→B→A, stops old polling, and retires the token on the next explicit send', async () => {
     const { prepare, suspend, notify, request, release, callTool } = fixture();

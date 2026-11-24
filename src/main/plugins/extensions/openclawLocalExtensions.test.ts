@@ -17,6 +17,7 @@ import {
   inspectLocalOpenClawExtensions,
   inspectOpenClawExtensionDirectory,
   listBundledOpenClawExtensionIds,
+  readBundledNativePluginPolicies,
   syncLocalOpenClawExtensionsIntoRuntime,
 } from './openclawLocalExtensions';
 
@@ -79,6 +80,36 @@ describe('openclawLocalExtensions', () => {
     expect(listBundledOpenClawExtensionIds()).toContain('current-extension-id');
     expect(hasBundledOpenClawExtension('current-extension-id')).toBe(true);
     expect(hasBundledOpenClawExtension('legacy-directory-name')).toBe(false);
+  });
+
+  it('uses only staged optional native metadata for bundled defaults and excludes an installed shadow', () => {
+    const bundled = path.join(resourcesDir, 'cfmind/dist/extensions');
+    const optional = path.join(bundled, 'optional-editor-package');
+    const required = path.join(bundled, 'engine-support');
+    const installed = path.join(resourcesDir, 'state/extensions/external-editor');
+    for (const directory of [optional, required, installed]) {
+      fs.mkdirSync(directory, { recursive: true });
+      fs.writeFileSync(
+        path.join(directory, 'package.json'),
+        JSON.stringify(directory === required ? {} : {
+          openclaw: { bundledPolicy: { userToggleable: true } },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(directory, 'openclaw.plugin.json'),
+        JSON.stringify({
+          id: directory === required ? 'engine-support' : 'optional-editor',
+          enabledByDefault: true,
+        }),
+      );
+    }
+
+    expect(readBundledNativePluginPolicies([])).toEqual({
+      'optional-editor': { defaultEnabled: true, userToggleable: true },
+    });
+    const installedIds = inspectOpenClawExtensionDirectory(path.dirname(installed)).ids
+      .map(id => id.toUpperCase());
+    expect(readBundledNativePluginPolicies(installedIds)).toEqual({});
   });
 
   it('keeps runtime source replacements and build metadata out of source inventory and runtime copying', async () => {

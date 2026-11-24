@@ -87,7 +87,6 @@
         "filter": [
           "**/*",
           "!gateway.asar",
-          "!dist/extensions/drawio/assets/**",
           "!**/*.map",
           "!**/*.d.ts",
           "!**/*.d.cts",
@@ -116,11 +115,6 @@
           "!dist/extensions/smart-canvas/assets",
           "!dist/extensions/smart-canvas/assets/**"
         ]
-      },
-      {
-        "from": "vendor/openclaw-runtime/current/dist/extensions/drawio/assets",
-        "to": "cfmind/dist/extensions/drawio/assets",
-        "filter": ["**/*"]
       }
     ]
   },
@@ -167,7 +161,6 @@
         "filter": [
           "**/*",
           "!gateway.asar",
-          "!dist/extensions/drawio/assets/**",
           "!**/*.map",
           "!**/*.d.ts",
           "!**/*.d.cts",
@@ -196,11 +189,6 @@
           "!dist/extensions/smart-canvas/assets",
           "!dist/extensions/smart-canvas/assets/**"
         ]
-      },
-      {
-        "from": "vendor/openclaw-runtime/current/dist/extensions/drawio/assets",
-        "to": "cfmind/dist/extensions/drawio/assets",
-        "filter": ["**/*"]
       }
     ],
     "desktop": {

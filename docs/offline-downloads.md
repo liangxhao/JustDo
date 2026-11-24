@@ -40,6 +40,8 @@
 
 ## 5. draw.io 离线编辑器
 
+包含 draw.io 源码的构建工作区需要以下归档。
+
 | 下载地址 | 放置位置 |
 | --- | --- |
 | [draw.io 锁定源码归档](https://codeload.github.com/jgraph/drawio/tar.gz/9034053fba80a435e27d68d374bc564b83917ae9) | `cache/drawio/drawio-9034053fba80a435e27d68d374bc564b83917ae9.tar.gz` |

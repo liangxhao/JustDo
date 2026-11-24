@@ -1,3 +1,10 @@
+import type {
+  McpAppAdapter,
+  McpAppAdapterRequest,
+  McpAppAdapterSource,
+  McpAppPreparedCanvas,
+} from '@app-plugin/sdk/mcp-app';
+import type { McpAppContentReference } from '@shared/plugins/mcpAppReferences';
 import {
   MCP_APP_FILE_OPEN_METHOD_PREFIX,
   MCP_APP_FILE_RESOURCE_METHOD_PREFIX,
@@ -10,21 +17,11 @@ import {
 } from '@shared/plugins/mcpApps';
 
 import {
-  type DiagramReference,
-  DRAWIO_CANVAS_METHOD,
-  DRAWIO_CURRENT_METHOD,
-  DRAWIO_ENTRY_TOOLS,
-  DRAWIO_RESOURCE,
-  DRAWIO_RESTORE_METHOD,
-  DRAWIO_SEND_METHOD,
-  DRAWIO_SEND_NOT_ISSUED,
-  DRAWIO_SERVER,
-  type PreparedDiagramCanvas,
-} from '../../../../../../plugins/extensions/drawio/contracts';
-import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
+import { findMcpAppViewAdapter } from '../../pipeline/mcp-app-adapters';
+import { readAppReferenceAdapter } from '../../pipeline/native-app-reference';
 import { decodeMcpAppLaunch, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
 import type { GatewayClient, GatewayEventFrame } from '../client';
 
@@ -44,11 +41,12 @@ const methods = new Set<string>(Object.values(McpAppMethod));
 const scopedFields = ['sessionKey', 'sessionId', 'agentId', 'viewId', 'requesterId', 'requestId'];
 const canvasSessions = new Set<McpAppSession>();
 const VIEW_KEEPALIVE_INTERVAL_MS = 60_000;
-const VIEW_KEEPALIVE_MAX_FAILURES = 3;
+const VIEW_KEEPALIVE_BACKOFF_MS = 2 * VIEW_KEEPALIVE_INTERVAL_MS;
+const VIEW_KEEPALIVE_BACKOFF_AFTER_FAILURES = 3;
 const SEND_PREPARATION_TIMEOUT_MS = 12_000;
 type RetainCanvasRun = (runId: string) => (() => void) | void;
-type CanvasPreparation = PreparedDiagramCanvas & { priority: number };
-type ReadyCanvas = CanvasPreparation & {
+type ReadyCanvas = McpAppPreparedCanvas & {
+  adapter: McpAppAdapter;
   isCurrent: () => boolean;
   retainRun?: RetainCanvasRun;
 };
@@ -57,9 +55,10 @@ type SendTarget = Pick<
   'client' | 'generation' | 'sessionKey' | 'sessionId' | 'agentId' | 'isCurrent'
 >;
 type CanvasRegistration = {
+  adapter: McpAppAdapter;
   identity: Omit<SendTarget, 'isCurrent'>;
   available: () => boolean;
-  prepare: (signal: AbortSignal) => Promise<CanvasPreparation>;
+  prepare: (signal: AbortSignal) => Promise<McpAppPreparedCanvas>;
   retainRun?: RetainCanvasRun;
 };
 
@@ -101,12 +100,13 @@ export async function prepareMcpAppChatSend(
     (send.sessionId ?? null) !== target.sessionId
   )
     throw new Error('Message send context changed during App preparation');
-  if (!canvases.length || canvases.some(canvas => !canvas.isCurrent()))
+  const adapter = canvases[0]?.adapter;
+  if (!adapter || canvases.some(canvas => canvas.adapter !== adapter || !canvas.isCurrent()))
     return { method: 'chat.send', params: send };
   const priority = Math.max(...canvases.map(item => item.priority));
   const releaseRuns: Array<() => void> = [];
   return {
-    method: DRAWIO_SEND_METHOD,
+    method: adapter.sendMethod,
     onRequest: () => {
       if (typeof send.idempotencyKey === 'string') {
         for (const canvas of canvases) {
@@ -126,22 +126,24 @@ export async function prepareMcpAppChatSend(
       // non-admission evidence permits releasing this run's local retention.
       if (
         failure?.requestSent === false ||
-        failure?.details?.code === DRAWIO_SEND_NOT_ISSUED ||
+        failure?.details?.code === adapter.sendNotIssuedCode ||
         (failure?.gatewayCode === 'INVALID_REQUEST' &&
-          failure.message === `unknown method: ${DRAWIO_SEND_METHOD}`)
+          failure.message === `unknown method: ${adapter.sendMethod}`)
       )
         releaseRuns.splice(0).forEach(release => release());
     },
     params: {
+      ...adapter.sendParams(
+        send,
+        canvases.map(({ viewId, token, priority: value }) => ({
+          viewId,
+          token,
+          selected: priority > 0 && value === priority,
+        })),
+      ),
       sessionKey: target.sessionKey,
       sessionId: target.sessionId,
       agentId: target.agentId,
-      send,
-      canvases: canvases.map(({ viewId, token, priority: value }) => ({
-        viewId,
-        token,
-        selected: priority > 0 && value === priority,
-      })),
     },
   };
 }
@@ -180,6 +182,7 @@ export class McpAppSession {
   }
 
   registerCanvasPreparation(
+    adapter: McpAppAdapter,
     viewId: string,
     prepare: CanvasRegistration['prepare'],
     available: () => boolean,
@@ -187,6 +190,7 @@ export class McpAppSession {
   ) {
     const { client, generation, sessionKey, sessionId, agentId } = this.capture();
     const registration = {
+      adapter,
       identity: { client, generation, sessionKey, sessionId, agentId },
       prepare,
       available,
@@ -230,11 +234,11 @@ export class McpAppSession {
         const isCurrent = () =>
           this.canvasPreparations.get(viewId) === item && this.matchesCanvas(item, target);
         signal.throwIfAborted();
-        if (!isCurrent()) throw new Error('Diagram binding changed during preparation');
+        if (!isCurrent()) throw new Error('MCP App binding changed during preparation');
         const canvas = await item.prepare(signal);
         signal.throwIfAborted();
-        if (!isCurrent()) throw new Error('Diagram binding changed during preparation');
-        return { ...canvas, isCurrent, retainRun: item.retainRun };
+        if (!isCurrent()) throw new Error('MCP App binding changed during preparation');
+        return { ...canvas, adapter: item.adapter, isCurrent, retainRun: item.retainRun };
       });
   }
 
@@ -426,9 +430,12 @@ export class McpAppSession {
   }
 }
 
+/** The native lease expired and an authenticated read-only recovery did not obtain a view. */
+export class McpAppViewRecoveryUnavailable extends Error {}
+
 export class McpAppSessionView {
   private readonly operations = new Set<AbortController>();
-  private readonly diagramOperations = new Set<AbortController>();
+  private readonly retainedOperations = new Set<AbortController>();
   private readonly suspensionListeners = new Set<() => void>();
   private disposed = false;
   private loaded = false;
@@ -438,16 +445,18 @@ export class McpAppSessionView {
   private fileServer?: string;
   private fileUri?: string;
   private fileWritable = false;
-  private diagramAdmissionAttempted = false;
+  private releaseAdapterSource?: () => Promise<unknown>;
+  private attachedAdapter?: Readonly<{ adapter: McpAppAdapter; source: Readonly<McpAppAdapterSource> }>;
   preservePresentation = false;
   suspended = false;
   private revision = 0;
-  private diagramRevision = 0;
-  private readonly diagramRuns = new Set<string>();
-  private stopDiagramRuns?: () => void;
+  private retainedRevision = 0;
+  private readonly preparedRuns = new Set<string>();
+  private stopPreparedRuns?: () => void;
   private keepAliveTimer?: ReturnType<typeof setTimeout>;
   private keepAliveRequest?: AbortController;
   private keepAliveFailures = 0;
+  private keepAliveStopped = false;
 
   private canKeepAlive(): boolean {
     return Boolean(
@@ -462,12 +471,15 @@ export class McpAppSessionView {
   private scheduleKeepAlive(): void {
     if (
       this.keepAliveTimer !== undefined || this.keepAliveRequest ||
-      this.keepAliveFailures >= VIEW_KEEPALIVE_MAX_FAILURES || !this.canKeepAlive()
+      this.keepAliveStopped || !this.canKeepAlive()
     ) return;
+    const delay = this.keepAliveFailures >= VIEW_KEEPALIVE_BACKOFF_AFTER_FAILURES
+      ? VIEW_KEEPALIVE_BACKOFF_MS
+      : VIEW_KEEPALIVE_INTERVAL_MS;
     this.keepAliveTimer = setTimeout(() => {
       this.keepAliveTimer = undefined;
       void this.keepAlive();
-    }, VIEW_KEEPALIVE_INTERVAL_MS);
+    }, delay);
   }
 
   private async keepAlive(): Promise<void> {
@@ -493,14 +505,21 @@ export class McpAppSessionView {
       if (this.binding !== binding || this.nativeViewId !== viewId || controller.signal.aborted)
         return;
       // An older/unmatched runtime must not cause repeated full HTML reads.
-      this.keepAliveFailures = lease?.viewId === viewId && Number.isFinite(lease.expiresAtMs)
-        ? 0 : VIEW_KEEPALIVE_MAX_FAILURES;
+      if (lease?.viewId === viewId && Number.isFinite(lease.expiresAtMs))
+        this.keepAliveFailures = 0;
+      else this.keepAliveStopped = true;
     } catch (error) {
-      if (this.binding !== binding || controller.signal.aborted) return;
+      if (this.binding !== binding || this.nativeViewId !== viewId || controller.signal.aborted)
+        return;
       const failure = error as { gatewayCode?: string; details?: { code?: string } };
-      this.keepAliveFailures = failure?.details?.code === 'MCP_APP_VIEW_EXPIRED' ||
-        failure?.gatewayCode === 'FORBIDDEN' || failure?.gatewayCode === 'INVALID_REQUEST'
-        ? VIEW_KEEPALIVE_MAX_FAILURES : this.keepAliveFailures + 1;
+      if (
+        failure?.details?.code === 'MCP_APP_VIEW_EXPIRED' ||
+        failure?.gatewayCode === 'FORBIDDEN' ||
+        failure?.gatewayCode === 'INVALID_REQUEST'
+      )
+        this.keepAliveStopped = true;
+      else if (this.keepAliveFailures < VIEW_KEEPALIVE_BACKOFF_AFTER_FAILURES)
+        this.keepAliveFailures++;
     } finally {
       if (this.keepAliveRequest === controller) {
         this.keepAliveRequest = undefined;
@@ -516,17 +535,17 @@ export class McpAppSessionView {
     this.keepAliveRequest = undefined;
   }
 
-  get hasPendingDiagramRun(): boolean {
-    return this.diagramRuns.size > 0;
+  get hasPendingPreparedRun(): boolean {
+    return this.preparedRuns.size > 0;
   }
 
   /** Retention metadata only; the plugin alone authorizes the actual prepared send. */
-  retainDiagramRun(runId: string): (() => void) | void {
+  retainPreparedRun(runId: string): (() => void) | void {
     if (!this.isCurrent() || !runId) return;
-    this.diagramRuns.add(runId);
-    if (!this.stopDiagramRuns) {
+    this.preparedRuns.add(runId);
+    if (!this.stopPreparedRuns) {
       const binding = this.binding;
-      this.stopDiagramRuns = binding.client.subscribeEvents(event => {
+      this.stopPreparedRuns = binding.client.subscribeEvents(event => {
         const payload = event.payload as {
           sessionKey?: unknown;
           sessionId?: unknown;
@@ -535,60 +554,89 @@ export class McpAppSessionView {
           data?: { phase?: unknown; executionSettled?: unknown };
         } | undefined;
         if (
-          !this.isDiagramCurrent() ||
+          !this.isRetainedEditorCurrent() ||
           event.event !== 'agent' ||
           payload?.sessionKey !== binding.sessionKey ||
           payload?.sessionId !== binding.sessionId ||
           typeof payload?.runId !== 'string' ||
-          !this.diagramRuns.has(payload.runId) ||
+          !this.preparedRuns.has(payload.runId) ||
           payload.stream !== 'lifecycle' ||
           payload.data?.executionSettled !== true ||
           (payload.data.phase !== 'end' && payload.data.phase !== 'error')
         )
           return;
-        this.releaseDiagramRun(payload.runId);
+        this.releasePreparedRun(payload.runId);
       });
     }
     this.changed();
-    return () => this.releaseDiagramRun(runId);
+    return () => this.releasePreparedRun(runId);
   }
 
-  private releaseDiagramRun(runId: string): void {
-    if (!this.diagramRuns.delete(runId)) return;
-    if (!this.diagramRuns.size) {
-      this.stopDiagramRuns?.();
-      this.stopDiagramRuns = undefined;
+  private releasePreparedRun(runId: string): void {
+    if (!this.preparedRuns.delete(runId)) return;
+    if (!this.preparedRuns.size) {
+      this.stopPreparedRuns?.();
+      this.stopPreparedRuns = undefined;
     }
     this.changed();
   }
 
-  diagramRequest<T = unknown>(input: Record<string, unknown>, signal?: AbortSignal) {
-    return this.dispatch<T>(
-      DRAWIO_CANVAS_METHOD,
-      input,
-      signal,
-      true,
-      input.action === 'next' || input.action === 'ack',
-    );
-  }
-  releaseDiagram(token: string, forgetSource = false): Promise<unknown> {
-    const binding = this.binding;
-    if (binding.client.generation !== binding.generation || !binding.sessionId)
-      return Promise.resolve();
+  private async releaseViewSource(
+    binding: McpAppSessionBinding,
+    viewId: string | undefined,
+    method: string,
+    input: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (binding.client.generation !== binding.generation || !binding.sessionId) return;
+    const params = { ...input };
+    for (const field of scopedFields) delete params[field];
     return binding.client.request(
-      DRAWIO_CANVAS_METHOD,
+      method,
       {
-        action: 'detach',
-        token,
-        ...(forgetSource ? { forgetSource: true } : {}),
+        ...params,
         sessionKey: binding.sessionKey,
         sessionId: binding.sessionId,
         agentId: binding.agentId,
-        viewId: this.nativeViewId,
+        viewId,
       },
       { timeoutMs: 5000 },
     );
   }
+
+  get contentAdapter() {
+    return this.attachedAdapter;
+  }
+
+  editorTransport(adapter: McpAppAdapter) {
+    const assertMethod = (method: string) => {
+      if (this.contentAdapter?.adapter !== adapter || !adapter.viewMethods.includes(method))
+        throw new Error('MCP App adapter binding expired or method unavailable');
+    };
+    const request: McpAppAdapterRequest = async (method, input, signal) => {
+      assertMethod(method);
+      return this.dispatch(method, input, signal, true);
+    };
+    const retainedRequest: McpAppAdapterRequest = async (method, input, signal) => {
+      assertMethod(method);
+      return this.dispatch(method, input, signal, true, true);
+    };
+    const release = async (method: string, input: Record<string, unknown>) => {
+      assertMethod(method);
+      return this.releaseViewSource(this.binding, this.nativeViewId, method, input);
+    };
+    const releaseOnClose = (method: string, input: Record<string, unknown>) => {
+      assertMethod(method);
+      if (!this.isCurrent()) throw new Error('MCP App adapter binding expired');
+      const binding = this.binding;
+      const viewId = this.nativeViewId;
+      let release: Promise<unknown> | undefined;
+      // Close and detach share this exact cleanup receipt, including an unconfirmed result.
+      this.releaseAdapterSource = () =>
+        (release ??= this.releaseViewSource(binding, viewId, method, input));
+    };
+    return { request, retainedRequest, release, releaseOnClose };
+  }
+
   get sessionId() {
     return this.binding.sessionId;
   }
@@ -617,12 +665,20 @@ export class McpAppSessionView {
     };
   }
 
-  restoreDiagramReference(reference: DiagramReference) {
-    if (this.binding.sessionId !== reference.sessionId)
-      throw new Error('Diagram belongs to another native session');
+  restoreContentReference(reference: McpAppContentReference) {
+    const adapter = readAppReferenceAdapter(reference);
+    const { content } = reference;
+    if (
+      !adapter ||
+      content.originViewId !== this.viewId ||
+      content.sessionKey !== this.binding.sessionKey ||
+      content.sessionId !== this.binding.sessionId ||
+      content.agentId !== this.binding.agentId
+    )
+      throw new Error('App reference source changed');
     return this.dispatch(
-      DRAWIO_RESTORE_METHOD,
-      { diagramId: reference.diagramId, operationId: reference.operationId },
+      adapter.restoreMethod,
+      adapter.restoreReferenceParams(content.contentId, reference.operationId),
       undefined,
       true,
     );
@@ -752,7 +808,7 @@ export class McpAppSessionView {
   }
 
   /** Only the trusted canvas adapter may finish work already bound to this editor. */
-  isDiagramCurrent(): boolean {
+  isRetainedEditorCurrent(): boolean {
     return (
       this.isCurrent() ||
       Boolean(
@@ -806,12 +862,12 @@ export class McpAppSessionView {
     input: Record<string, unknown>,
     signal?: AbortSignal,
     includeIncarnation = false,
-    diagramOperation = false,
+    retainedOperation = false,
   ): Promise<T> {
-    const isCurrent = () => (diagramOperation ? this.isDiagramCurrent() : this.isCurrent());
+    const isCurrent = () => (retainedOperation ? this.isRetainedEditorCurrent() : this.isCurrent());
     if (!isCurrent()) throw new Error('MCP App binding expired');
     const binding = this.binding;
-    const revision = diagramOperation ? this.diagramRevision : this.revision;
+    const revision = retainedOperation ? this.retainedRevision : this.revision;
     const params = { ...input };
     for (const field of scopedFields) delete params[field];
     const scope = {
@@ -823,7 +879,7 @@ export class McpAppSessionView {
     const controller = new AbortController();
     const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     this.retain(this);
-    const operations = diagramOperation ? this.diagramOperations : this.operations;
+    const operations = retainedOperation ? this.retainedOperations : this.operations;
     operations.add(controller);
     try {
       const result = await this.binding.client.request<T>(
@@ -836,8 +892,8 @@ export class McpAppSessionView {
       );
       if (
         !isCurrent() ||
-        (diagramOperation
-          ? this.diagramRevision !== revision
+        (retainedOperation
+          ? this.retainedRevision !== revision
           : this.binding !== binding || this.revision !== revision) ||
         combined.aborted
       )
@@ -848,7 +904,7 @@ export class McpAppSessionView {
       throw error;
     } finally {
       operations.delete(controller);
-      if (!this.loaded && this.operations.size === 0 && this.diagramOperations.size === 0)
+      if (!this.loaded && this.operations.size === 0 && this.retainedOperations.size === 0)
         this.forget(this);
     }
   }
@@ -860,6 +916,9 @@ export class McpAppSessionView {
     if (!this.viewId) return Promise.reject(new Error('MCP App view identity is required'));
     const binding = this.binding;
     const revision = this.revision;
+    const adapter = descriptor?.viewId === this.viewId &&
+      descriptor.originSessionKey === binding.sessionKey && binding.sessionId && binding.agentId
+      ? findMcpAppViewAdapter(descriptor) : undefined;
     let result: McpAppViewPayload;
     try {
       result = await this.request<McpAppViewPayload>(McpAppMethod.View, {}, signal);
@@ -877,7 +936,7 @@ export class McpAppSessionView {
       )
         throw error;
       // Recovery reads native evidence and mints a fresh native view. It never
-      // retries the business tool or accepts Renderer-supplied diagram data.
+      // retries the business tool or accepts Renderer-supplied content.
       const recovery = new AbortController();
       const combined = signal ? AbortSignal.any([signal, recovery.signal]) : recovery.signal;
       this.retain(this);
@@ -887,11 +946,7 @@ export class McpAppSessionView {
           viewId: string;
           payload: McpAppViewPayload;
         }>(
-          descriptor.serverName === DRAWIO_SERVER &&
-            DRAWIO_ENTRY_TOOLS.includes(descriptor.toolName as never) &&
-            descriptor.uiResourceUri === DRAWIO_RESOURCE
-            ? DRAWIO_RESTORE_METHOD
-            : MCP_APP_HISTORY_VIEW_METHOD,
+          adapter?.restoreMethod ?? MCP_APP_HISTORY_VIEW_METHOD,
           {
             sessionKey: this.binding.sessionKey,
             sessionId: this.binding.sessionId,
@@ -909,13 +964,12 @@ export class McpAppSessionView {
         )
           throw new Error('MCP App recovery superseded');
         this.restoredViewId = restored.viewId;
-        if (!(
-          descriptor.serverName === DRAWIO_SERVER &&
-          DRAWIO_ENTRY_TOOLS.includes(descriptor.toolName as never) &&
-          descriptor.uiResourceUri === DRAWIO_RESOURCE
-        ))
-          this.historicalSourceViewId = this.viewId;
+        if (!adapter) this.historicalSourceViewId = this.viewId;
         result = restored.payload;
+      } catch (error) {
+        if (this.isCurrent() && this.binding === binding && this.revision === revision && !combined.aborted)
+          throw new McpAppViewRecoveryUnavailable('MCP App view expired');
+        throw error;
       } finally {
         this.operations.delete(recovery);
         if (!this.loaded && this.operations.size === 0) this.forget(this);
@@ -932,67 +986,25 @@ export class McpAppSessionView {
     this.retain(this);
     this.present(this);
     this.keepAliveFailures = 0;
+    this.keepAliveStopped = false;
     this.scheduleKeepAlive();
-    if (
-      descriptor?.serverName === DRAWIO_SERVER &&
-      descriptor.uiResourceUri === DRAWIO_RESOURCE &&
-      DRAWIO_ENTRY_TOOLS.includes(descriptor.toolName as never) &&
-      typeof (result.toolResult?.structuredContent as Record<string, unknown> | undefined)
-        ?.diagramId === 'string'
-    ) {
-      const diagramId = (result.toolResult!.structuredContent as Record<string, unknown>).diagramId;
-      if (result.messageSupported === true) {
-        // Cleanup also owns an admission whose response is lost before the
-        // editor bridge exists. Suspension keeps this provenance; close does not.
-        this.diagramAdmissionAttempted = true;
-        const admitted = await this.dispatch<{ admitted: boolean }>(DRAWIO_CANVAS_METHOD, {
-          action: 'admit',
-          diagramId,
-          source: {
-            serverName: descriptor.serverName,
-            toolName: descriptor.toolName,
-            uiResourceUri: descriptor.uiResourceUri,
-            originSessionKey: descriptor.originSessionKey,
-          },
-        }, signal, true);
-        if (admitted?.admitted !== true) throw new Error('Diagram source admission failed');
-      }
-      const current = await this.dispatch<{
-        diagram: Record<string, unknown> | null;
-        readOnly?: boolean;
-        editorResource?: Pick<McpAppViewPayload,
-          'html' | 'csp' | 'sandboxUrl' | 'sandboxPort' | 'sandboxOrigin'>;
-      }>(DRAWIO_CURRENT_METHOD, result.messageSupported === true
-        ? { editorResource: true, diagramId } : {}, signal, true);
-      if (result.messageSupported === true) {
-        if (typeof current.editorResource?.html !== 'string' ||
-          typeof current.editorResource.sandboxUrl !== 'string' ||
-          typeof current.editorResource.sandboxPort !== 'number')
-          throw new Error('Diagram editor resource unavailable');
-        result = {
-          ...result,
-          html: current.editorResource.html,
-          csp: current.editorResource.csp,
-          sandboxUrl: current.editorResource.sandboxUrl,
-          sandboxPort: current.editorResource.sandboxPort,
-          sandboxOrigin: current.editorResource.sandboxOrigin,
-          // Current canvas snapshots use the independently authenticated draw.io
-          // send preparation. Model changes must not revive old native App grants.
-          updateModelContextSupported: false,
-          richModelContextSupported: false,
-        };
-      }
-      if (current?.diagram)
-        result = { ...result, toolResult: { content: [], structuredContent: current.diagram } };
-      if (current?.readOnly)
-        result = {
-          ...result,
-          messageSupported: false,
-          updateModelContextSupported: false,
-          richModelContextSupported: false,
-          fileResourcesSupported: false,
-          openFilesSupported: false,
-        };
+    if (adapter && descriptor) {
+      const source = Object.freeze({
+        serverName: descriptor.serverName,
+        toolName: descriptor.toolName,
+        uiResourceUri: descriptor.uiResourceUri,
+        originSessionKey: binding.sessionKey,
+      });
+      this.attachedAdapter = Object.freeze({ adapter, source });
+      const transport = this.editorTransport(adapter);
+      result = await adapter.prepareView({
+        source,
+        payload: result,
+        request: (method, input) => transport.request(method, input, signal),
+        releaseOnClose: transport.releaseOnClose,
+      });
+      if (!this.isCurrent() || this.binding !== binding || this.revision !== revision || signal?.aborted)
+        throw new Error('MCP App response superseded');
     }
     if (this.historicalSourceViewId)
       return {
@@ -1045,13 +1057,13 @@ export class McpAppSessionView {
     return this.subscribeView(listener, false);
   }
 
-  subscribeDiagram(listener: (event: GatewayEventFrame) => void): () => void {
+  subscribeRetainedEditor(listener: (event: GatewayEventFrame) => void): () => void {
     return this.subscribeView(listener, true);
   }
 
-  private subscribeView(listener: (event: GatewayEventFrame) => void, diagram: boolean) {
+  private subscribeView(listener: (event: GatewayEventFrame) => void, retained: boolean) {
     return this.binding.client.subscribeEvents(event => {
-      if (!(diagram ? this.isDiagramCurrent() : this.isCurrent())) return;
+      if (!(retained ? this.isRetainedEditorCurrent() : this.isCurrent())) return;
       const payload = event.payload as { viewId?: unknown } | undefined;
       if (payload?.viewId === this.nativeViewId) listener(event);
     });
@@ -1063,38 +1075,37 @@ export class McpAppSessionView {
     this.suspended = false;
     this.stopKeepAlive();
     this.revision++;
-    this.diagramRevision++;
-    this.stopDiagramRuns?.();
-    this.stopDiagramRuns = undefined;
-    this.diagramRuns.clear();
-    for (const listener of this.suspensionListeners) listener();
+    this.retainedRevision++;
+    this.stopPreparedRuns?.();
+    this.stopPreparedRuns = undefined;
+    this.preparedRuns.clear();
+    this.suspensionListeners.clear();
     for (const operation of this.operations) operation.abort();
-    for (const operation of this.diagramOperations) operation.abort();
+    for (const operation of this.retainedOperations) operation.abort();
     this.forget(this);
     // Native WS has no per-request cancellation or view release. Aborting only
     // ends local waits; already dispatched operations may still complete.
     this.closing = Promise.all([
       this.clearContext(this),
-      ...(this.diagramAdmissionAttempted ? [this.releaseDiagram('', true)] : []),
+      this.releaseAdapterSource?.(),
     ]).then(() => undefined);
     return this.closing;
   }
 
   /** Rebinding/transport loss drops local authority without replaying work. */
   detach(): void {
-    if (this.diagramAdmissionAttempted)
-      void this.releaseDiagram('', true).catch(() => undefined);
+    void this.releaseAdapterSource?.().catch(() => undefined);
     for (const operation of this.operations) operation.abort();
-    for (const operation of this.diagramOperations) operation.abort();
+    for (const operation of this.retainedOperations) operation.abort();
     this.disposed = true;
     this.suspended = false;
     this.stopKeepAlive();
     this.revision++;
-    this.diagramRevision++;
-    this.stopDiagramRuns?.();
-    this.stopDiagramRuns = undefined;
-    this.diagramRuns.clear();
-    for (const listener of this.suspensionListeners) listener();
+    this.retainedRevision++;
+    this.stopPreparedRuns?.();
+    this.stopPreparedRuns = undefined;
+    this.preparedRuns.clear();
+    this.suspensionListeners.clear();
     this.forget(this);
   }
 }

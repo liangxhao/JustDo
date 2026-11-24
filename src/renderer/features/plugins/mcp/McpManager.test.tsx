@@ -285,18 +285,8 @@ test('keeps the newer MCP version when a single test completes after its bulk te
   expect(within(card).queryByText('1.2.3')).toBeNull();
 });
 
-test('live tool metadata adds an App label and supersedes a declaration when support is removed', async () => {
-  vi.mocked(mcpService.loadExtensionServers).mockResolvedValue([
-    { ...demoServer('personal'), supportsApps: true },
-  ]);
-  renderManager();
-  const card = (await screen.findByText('personal-mcp')).closest('article')!;
-  expect(within(card).getByText('mcpAppBadge')).toBeTruthy();
-  fireEvent.click(await findCardProbe());
-  await waitFor(() => expect(within(card).queryByText('mcpAppBadge')).toBeNull());
-
-  fireEvent.keyDown(document, { key: 'Escape' });
-  vi.mocked(mcpService.probeServer).mockResolvedValue({
+test('shows an App label only when tool metadata confirms support', async () => {
+  vi.mocked(mcpService.probeServer).mockResolvedValueOnce({
     success: true,
     result: {
       available: true,
@@ -306,8 +296,16 @@ test('live tool metadata adds an App label and supersedes a declaration when sup
       prompts: [],
     },
   });
+  renderManager();
+  const card = (await screen.findByText('personal-mcp')).closest('article')!;
+  expect(within(card).queryByText('mcpAppBadge')).toBeNull();
+  expect(mcpService.probeServer).not.toHaveBeenCalled();
   fireEvent.click(await findCardProbe());
   await waitFor(() => expect(within(card).getByText('mcpAppBadge')).toBeTruthy());
+
+  fireEvent.keyDown(document, { key: 'Escape' });
+  fireEvent.click(await findCardProbe());
+  await waitFor(() => expect(within(card).queryByText('mcpAppBadge')).toBeNull());
 });
 
 const editableExtensionServer = (): ExtensionProvidedMcpServer => {

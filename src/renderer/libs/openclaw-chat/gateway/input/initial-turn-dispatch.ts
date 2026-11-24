@@ -59,7 +59,7 @@ export async function dispatchInitialTurn(
       : { method: 'chat.send', params };
     if (!target.isCurrent()) throw new Error(i18nService.t('coworkInitialDispatchCancelled'));
   } catch (error) {
-    throw Object.assign(error instanceof Error ? error : new Error('Diagram preparation failed'), {
+    throw Object.assign(error instanceof Error ? error : new Error('MCP App preparation failed'), {
       requestSent: false,
     });
   }

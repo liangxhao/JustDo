@@ -1,22 +1,22 @@
 import { type McpAppDiscovery, McpAppMethod } from '@shared/plugins/mcpApps';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  DRAWIO_CANVAS_METHOD,
-  DRAWIO_CURRENT_METHOD,
-  DRAWIO_RESTORE_METHOD,
-  DRAWIO_SEND_NOT_ISSUED,
-} from '../../../../../../plugins/extensions/drawio/contracts';
 import {
   MCP_APP_HISTORY_TOOL_METHOD,
   MCP_APP_HISTORY_VIEW_METHOD,
 } from '../../../../../../plugins/extensions/runtime-services/contracts/mcp-apps';
+import { EDITOR_ADMIT, EDITOR_OPERATION, EDITOR_REFRESH, EDITOR_RESTORE, EDITOR_SEND, EDITOR_SEND_NOT_ISSUED, editorAdapter, editorSource } from '../../../../../../tests/mcp-apps/editor-adapter-fixture';
+import { registerMcpAppAdapter } from '../../pipeline/mcp-app-adapters';
 import type { GatewayClient, GatewayEventFrame, GatewayRequestOptions } from '../client';
 import {
   hasMcpAppCanvasPreparations,
   McpAppSession,
   prepareMcpAppChatSend,
 } from './mcp-app-session';
+
+let releaseAdapter: () => void;
+beforeEach(() => { releaseAdapter = registerMcpAppAdapter(editorAdapter); });
+afterEach(() => { releaseAdapter(); });
 
 function fixture(background = false) {
   let current = true;
@@ -64,24 +64,24 @@ describe('MCP App native session authority', () => {
     const f = fixture(true);
     const view = f.apps.bind('mcp-app-canvas');
     await view.view();
-    const unregister = f.apps.registerCanvasPreparation(view.viewId!, async () => ({
+    const unregister = f.apps.registerCanvasPreparation(editorAdapter, view.viewId!, async () => ({
       token: 'private', viewId: view.nativeViewId!, selected: false, priority: 1,
-    }), () => view.isCurrent(), runId => view.retainDiagramRun(runId));
+    }), () => view.isCurrent(), runId => view.retainPreparedRun(runId));
     try {
       const send = await f.apps.prepareChatSend({
         sessionKey: view.sessionKey, sessionId: view.sessionId, idempotencyKey: 'run-one',
       });
       send.onRequest?.();
       send.onRejected?.(Object.assign(new Error('outcome unknown'), { gatewayCode: 'UNAVAILABLE' }));
-      expect(view.hasPendingDiagramRun).toBe(true);
+      expect(view.hasPendingPreparedRun).toBe(true);
       send.onRejected?.({ requestSent: false });
-      expect(view.hasPendingDiagramRun).toBe(false);
+      expect(view.hasPendingPreparedRun).toBe(false);
       const refused = await f.apps.prepareChatSend({
         sessionKey: view.sessionKey, sessionId: view.sessionId, idempotencyKey: 'run-two',
       });
       refused.onRequest?.();
-      refused.onRejected?.({ details: { code: DRAWIO_SEND_NOT_ISSUED } });
-      expect(view.hasPendingDiagramRun).toBe(false);
+      refused.onRejected?.({ details: { code: EDITOR_SEND_NOT_ISSUED } });
+      expect(view.hasPendingPreparedRun).toBe(false);
     } finally {
       unregister();
       await view.close();
@@ -93,18 +93,18 @@ describe('MCP App native session authority', () => {
     const view = f.apps.bind('mcp-app-canvas');
     await view.view();
     view.preservePresentation = true;
-    const unregister = f.apps.registerCanvasPreparation(view.viewId!, async () => ({
+    const unregister = f.apps.registerCanvasPreparation(editorAdapter, view.viewId!, async () => ({
       token: 'private', viewId: view.nativeViewId!, selected: false, priority: 1,
-    }), () => view.isCurrent(), runId => view.retainDiagramRun(runId));
+    }), () => view.isCurrent(), runId => view.retainPreparedRun(runId));
     const send = await f.apps.prepareChatSend({
       sessionKey: view.sessionKey, sessionId: view.sessionId, idempotencyKey: 'run-one',
     });
-    expect(view.hasPendingDiagramRun).toBe(false);
+    expect(view.hasPendingPreparedRun).toBe(false);
     send.onRequest?.();
     expect(send.params.canvases).toEqual([{
       token: 'private', viewId: view.nativeViewId, selected: true,
     }]);
-    view.retainDiagramRun('run-two');
+    view.retainPreparedRun('run-two');
     f.apps.invalidate(true);
     f.expire();
     const payload = {
@@ -119,11 +119,11 @@ describe('MCP App native session authority', () => {
       { ...payload, data: { phase: 'finishing', executionSettled: true } },
     ]) f.emit({ type: 'event', event: 'agent', payload: wrong });
     f.emit({ type: 'event', event: 'chat', payload: { ...payload, state: 'final' } });
-    expect(view.hasPendingDiagramRun).toBe(true);
+    expect(view.hasPendingPreparedRun).toBe(true);
     f.emit({ type: 'event', event: 'agent', payload });
-    expect(view.hasPendingDiagramRun).toBe(true);
+    expect(view.hasPendingPreparedRun).toBe(true);
     f.emit({ type: 'event', event: 'agent', payload: { ...payload, runId: 'run-two' } });
-    expect(view.hasPendingDiagramRun).toBe(false);
+    expect(view.hasPendingPreparedRun).toBe(false);
     unregister();
     await view.close();
   });
@@ -131,42 +131,48 @@ describe('MCP App native session authority', () => {
   it('keeps only canvas next/ack on the original owner across navigation and resume', async () => {
     const f = fixture(true);
     const view = f.apps.bind('mcp-app-canvas');
-    await view.view();
+    await view.view(undefined, {
+      ...editorSource, viewId: view.viewId!, originSessionKey: view.sessionKey,
+    });
+    const transport = view.editorTransport(editorAdapter);
     view.preservePresentation = true;
     let finish!: (value: unknown) => void;
     f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    const pending = view.diagramRequest({ action: 'next', token: 'private' });
+    const pending = transport.retainedRequest(EDITOR_OPERATION, { action: 'next', token: 'private' });
     const options = f.request.mock.calls.at(-1)![2];
     f.apps.invalidate(true);
     f.expire();
     expect(view.isCurrent()).toBe(false);
-    expect(view.isDiagramCurrent()).toBe(true);
+    expect(view.isRetainedEditorCurrent()).toBe(true);
     expect(options?.signal?.aborted).toBe(false);
-    await expect(view.diagramRequest({ action: 'prepare' })).rejects.toThrow('expired');
+    await expect(transport.request(EDITOR_OPERATION, { action: 'prepare' })).rejects.toThrow('expired');
     await expect(view.request(McpAppMethod.CallTool, { name: 'business' })).rejects.toThrow('expired');
-    await view.diagramRequest({ action: 'ack', token: 'private' });
+    await transport.retainedRequest(EDITOR_OPERATION, { action: 'ack', token: 'private' });
     finish({ operation: null });
     await expect(pending).resolves.toEqual({ operation: null });
     f.expireOwner();
-    expect(view.isDiagramCurrent()).toBe(false);
-    await expect(view.diagramRequest({ action: 'next' })).rejects.toThrow('expired');
+    expect(view.isRetainedEditorCurrent()).toBe(false);
+    await expect(transport.retainedRequest(EDITOR_OPERATION, { action: 'next' })).rejects.toThrow('expired');
     await view.close();
   });
 
   it('accepts an in-flight canvas response across pause/resume but retires it on close', async () => {
     const f = fixture(true);
     const view = f.apps.bind('mcp-app-canvas');
-    await view.view();
+    await view.view(undefined, {
+      ...editorSource, viewId: view.viewId!, originSessionKey: view.sessionKey,
+    });
+    const transport = view.editorTransport(editorAdapter);
     view.preservePresentation = true;
     let finish!: (value: unknown) => void;
     f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    const pending = view.diagramRequest({ action: 'next', token: 'private' });
+    const pending = transport.retainedRequest(EDITOR_OPERATION, { action: 'next', token: 'private' });
     f.apps.invalidate(true);
     expect(f.apps.resume(view)).toBe(true);
     finish({ operation: null });
     await expect(pending).resolves.toEqual({ operation: null });
     f.request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-    const closing = view.diagramRequest({ action: 'ack', token: 'private' });
+    const closing = transport.retainedRequest(EDITOR_OPERATION, { action: 'ack', token: 'private' });
     const rejected = expect(closing).rejects.toThrow('superseded');
     const options = f.request.mock.calls.at(-1)![2];
     await view.close();
@@ -248,7 +254,7 @@ describe('MCP App native session authority', () => {
       selected: false,
       priority: 2,
     }));
-    const unregister = apps.registerCanvasPreparation(view.viewId!, prepare, () =>
+    const unregister = apps.registerCanvasPreparation(editorAdapter, view.viewId!, prepare, () =>
       view.isCurrent(),
     );
     try {
@@ -268,7 +274,7 @@ describe('MCP App native session authority', () => {
       expect(apps.resume(view)).toBe(true);
       expect(hasMcpAppCanvasPreparations(binding())).toBe(true);
       expect((await prepareMcpAppChatSend(binding(), { sessionKey, sessionId })).method).toBe(
-        'drawio.chat.send',
+        EDITOR_SEND,
       );
       expect(prepare).toHaveBeenCalledOnce();
     } finally {
@@ -490,18 +496,16 @@ describe('MCP App native session authority', () => {
   });
   const original = {
     viewId: 'mcp-app-original',
-    serverName: 'drawio',
-    toolName: 'create_diagram',
-    uiResourceUri: 'ui://drawio/editor',
+    ...editorSource,
     toolCallId: 'child',
     originSessionKey: 'agent:a:conversation',
   };
   const expired = () =>
     Object.assign(new Error('expired'), { details: { code: 'MCP_APP_VIEW_EXPIRED' } });
 
-  it('admits diagram provenance before exposing an editor with model-independent assets and context preparation', async () => {
+  it('scopes adapter admission and applies refreshed view data before returning the editor', async () => {
     const { apps, request } = fixture();
-    const initial = { diagramId: 'diagram-one', xml: '<mxGraphModel/>', title: 'Current' };
+    const initial = { id: 'document-one' };
     const editorResource = {
       html: 'stable editor', csp: { resourceDomains: ['http://127.0.0.1:4567'] },
       sandboxUrl: '/sandbox/new', sandboxPort: 4568,
@@ -511,15 +515,15 @@ describe('MCP App native session authority', () => {
       messageSupported: true, updateModelContextSupported: true, richModelContextSupported: true,
       toolResult: { structuredContent: initial },
     }).mockResolvedValueOnce({ admitted: true }).mockResolvedValueOnce({
-      diagram: null, editorResource: { ...editorResource, messageSupported: false },
+      ...editorResource, updateModelContextSupported: false, richModelContextSupported: false,
     });
     const result = await apps.bind(original.viewId).view(undefined, original);
     expect(request.mock.calls.map(([method]) => method)).toEqual([
-      McpAppMethod.View, DRAWIO_CANVAS_METHOD, DRAWIO_CURRENT_METHOD,
+      McpAppMethod.View, EDITOR_ADMIT, EDITOR_REFRESH,
     ]);
     expect(request.mock.calls[1][1]).toMatchObject({
-      action: 'admit', diagramId: initial.diagramId,
-      source: { serverName: 'drawio', toolName: original.toolName,
+      contentId: initial.id,
+      source: { serverName: original.serverName, toolName: original.toolName,
         uiResourceUri: original.uiResourceUri, originSessionKey: original.originSessionKey },
       sessionId: 'native-incarnation', viewId: original.viewId,
     });
@@ -530,15 +534,15 @@ describe('MCP App native session authority', () => {
     });
   });
 
-  it('does not expose a diagram editor when source admission is unconfirmed', async () => {
+  it('does not expose an editor when source admission is unconfirmed', async () => {
     const { apps, request } = fixture();
     request.mockResolvedValueOnce({
       html: 'editor', messageSupported: true,
-      toolResult: { structuredContent: { diagramId: 'diagram-one' } },
+      toolResult: { structuredContent: { id: 'document-one' } },
     }).mockResolvedValueOnce({ admitted: false });
     await expect(apps.bind(original.viewId).view(undefined, original)).rejects.toThrow('admission');
     expect(request.mock.calls.map(([method]) => method)).toEqual([
-      McpAppMethod.View, DRAWIO_CANVAS_METHOD,
+      McpAppMethod.View, EDITOR_ADMIT,
     ]);
   });
 
@@ -546,18 +550,18 @@ describe('MCP App native session authority', () => {
     const { apps, request } = fixture();
     request.mockResolvedValueOnce({
       html: 'editor', messageSupported: true,
-      toolResult: { structuredContent: { diagramId: 'diagram-one' } },
+      toolResult: { structuredContent: { id: 'document-one' } },
     }).mockResolvedValueOnce({ admitted: true }).mockRejectedValueOnce(new Error('asset service failed'));
     const view = apps.bind(original.viewId);
     await expect(view.view(undefined, original)).rejects.toThrow('asset service failed');
     await view.close();
-    expect(request).toHaveBeenLastCalledWith(DRAWIO_CANVAS_METHOD, expect.objectContaining({
-      action: 'detach', token: '', forgetSource: true, viewId: original.viewId,
+    expect(request).toHaveBeenLastCalledWith(EDITOR_ADMIT, expect.objectContaining({
+      release: true, viewId: original.viewId,
       sessionKey: original.originSessionKey, sessionId: 'native-incarnation',
     }), expect.anything());
   });
 
-  it('restores only an expired diagram reference and routes subsequent operations through its fresh native view', async () => {
+  it('restores only an expired enhanced view and routes subsequent operations through its fresh native view', async () => {
     const { apps, request } = fixture();
     request
       .mockRejectedValueOnce(expired())
@@ -566,7 +570,7 @@ describe('MCP App native session authority', () => {
     const view = apps.bind(original.viewId);
     expect(await view.view(undefined, original)).toEqual({ html: 'editor' });
     expect(request.mock.calls[1]).toEqual([
-      DRAWIO_RESTORE_METHOD,
+      EDITOR_RESTORE,
       {
         sessionKey: 'agent:a:conversation',
         agentId: 'a',

@@ -228,3 +228,92 @@ test('returning during a stale explicit reopen resumes without waiting or adopti
   expect(f.view.loading).toBe(true);
   expect(reopen).toHaveBeenCalledOnce();
 });
+
+test('an expired manual view first tries history and opens a fresh blank editor only on its separate action', async () => {
+  const f = waitingFixture();
+  const descriptor = { ...f.view.preview!.descriptor!, originSessionKey: f.view.context!.sessionKey };
+  const preview = (viewId: string) =>
+    decodeMcpAppLaunch({
+      viewId,
+      preview: {
+        kind: 'canvas',
+        mcpApp: { ...descriptor, viewId },
+        view: { id: viewId, title: 'Editor' },
+        presentation: { target: 'assistant_message', sandbox: 'scripts' },
+      },
+    })!;
+  const original = preview(descriptor.viewId);
+  const next = preview('mcp-app-replacement');
+  f.view.preview = original;
+  const context = { ...f.view.context! };
+  const open = vi.fn(async () => ({ status: 'opened' as const, preview: next, context }));
+  f.view.context!.reopenBlank = { viewId: original.viewId, status: () => 'ready', open };
+  f.request.mockRejectedValueOnce(
+    Object.assign(new Error('lease expired'), { details: { code: 'MCP_APP_VIEW_EXPIRED' } }),
+  ).mockRejectedValueOnce(new Error('Original result unavailable'));
+  f.finishBinding();
+
+  const blankButton = () =>
+    Array.from(f.view.shadowRoot!.querySelectorAll<HTMLButtonElement>('.status button')).find(
+      button => button.textContent?.trim() === i18nService.t('mcpAppsReopenBlank'),
+    );
+  await vi.waitFor(() => expect(blankButton()).toBeDefined());
+  expect(f.request.mock.calls.map(([method]) => method)).toEqual([
+    'mcp.app.view',
+    'runtimeServices.mcpAppHistoryView',
+  ]);
+  expect(open).not.toHaveBeenCalled();
+
+  blankButton()!.click();
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledTimes(3));
+  expect(open).toHaveBeenCalledOnce();
+  expect(f.view.preview).toBe(next);
+  expect(f.request).toHaveBeenLastCalledWith(
+    'mcp.app.view',
+    expect.objectContaining({ viewId: next.viewId }),
+    expect.anything(),
+  );
+});
+
+test('closing a view aborts its explicit reopen before pending file preparation can finish', async () => {
+  const f = waitingFixture();
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+  let finish!: () => void;
+  const stage = new Promise<void>(resolve => { finish = resolve; });
+  const launch = vi.fn();
+  const reopen = vi.fn(async (signal?: AbortSignal) => {
+    await stage;
+    signal?.throwIfAborted();
+    return launch();
+  });
+  f.view.context!.reopen = reopen;
+  f.view.shadowRoot!.querySelector<HTMLButtonElement>('.status button')!.click();
+  await vi.waitFor(() => expect(reopen).toHaveBeenCalledOnce());
+  const signal = reopen.mock.calls[0][0];
+  expect(signal?.aborted).toBe(false);
+  await f.view.closeApp();
+  expect(signal?.aborted).toBe(true);
+  finish();
+  await Promise.resolve();
+  expect(launch).not.toHaveBeenCalled();
+  expect(f.view.closed).toBe(true);
+});
+
+test('an unconfirmed blank launch stays visible if reading the original view later fails generically', async () => {
+  const f = waitingFixture();
+  const open = vi.fn();
+  f.view.context!.reopenBlank = {
+    viewId: f.view.preview!.viewId,
+    status: () => 'unknown',
+    open,
+  };
+
+  f.finishBinding();
+
+  await vi.waitFor(() => expect(f.view.shadowRoot!.querySelector('.status')?.textContent)
+    .toContain(i18nService.t('mcpAppsOperationUnknown')));
+  expect(f.view.shadowRoot!.querySelector('.status')?.textContent)
+    .not.toContain(i18nService.t('mcpAppsReopenBlank'));
+  expect(open).not.toHaveBeenCalled();
+});

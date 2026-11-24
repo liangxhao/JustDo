@@ -22,6 +22,7 @@ vi.mock('@/libs/openclaw-chat/components/mcp-app/view', () => {
     declare context?: McpAppViewContext;
     resume = vi.fn();
     prepareContext = vi.fn().mockResolvedValue(undefined);
+    cancelReopen() {}
     get workspaceContext() {
       return this.context?.isCurrent() ? this.context : undefined;
     }

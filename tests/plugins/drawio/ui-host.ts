@@ -1,3 +1,5 @@
+import { mcpAppAdapter } from '../../../plugins/extensions/drawio/browser/mcp-app-adapter';
+import { registerMcpAppAdapter } from '../../../src/renderer/libs/openclaw-chat/pipeline/mcp-app-adapters';
 import {
   DRAWIO_CANVAS_METHOD,
   DRAWIO_CURRENT_METHOD,
@@ -9,6 +11,8 @@ import { McpAppSession } from '../../../src/renderer/libs/openclaw-chat/gateway/
 import { decodeMcpAppLaunch } from '../../../src/renderer/libs/openclaw-chat/pipeline/native-mcp-app';
 import { McpAppMethod } from '../../../src/shared/plugins/mcpApps';
 import { mountMcpList } from './list-host';
+registerMcpAppAdapter(mcpAppAdapter);
+
 const fixture = window as unknown as {
   fixturePayload: Record<string, unknown>;
   fixtureIcons: unknown[];

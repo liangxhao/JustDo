@@ -283,6 +283,7 @@ import { isDecisionModelManaged } from './openclaw/config/models/decisionModelCo
 import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
 import {
   buildProviderSelection,
+  listInstalledOpenClawExtensionIds,
   listManagedOpenClawPluginIds,
 } from './openclaw/config/openclawConfigSync';
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
@@ -318,6 +319,7 @@ import {
   OpenClawSkillService,
   PluginInstallationService,
   PluginManager,
+  readBundledNativePluginPolicies,
   readNativeMcpServerNames,
   syncMcpConfigAfterMutation,
 } from './plugins';
@@ -784,8 +786,15 @@ const getOpenClawDirectoryOperations = (): ManagedDirectoryOperationCoordinator 
   return openClawDirectoryOperations;
 };
 
+const getOptionalBundledPluginPolicies = (externalIds: readonly string[] | null) => ({
+  // A configured path may shadow a staged plugin when its inventory is incomplete.
+  ...(externalIds ? readBundledNativePluginPolicies(externalIds) : {}),
+  ...getAppPlugins().getBundledNativePolicies(),
+});
+
 const getApplicationManagedPluginIds = (): string[] => {
-  const managed = listManagedOpenClawPluginIds(getAppPlugins().getBundledNativePolicies());
+  const installedIds = listInstalledOpenClawExtensionIds(getOpenClawEngineManager().getStateDir());
+  const managed = listManagedOpenClawPluginIds(getOptionalBundledPluginPolicies(installedIds));
   const decision = getStore().get<AppConfigSettings>('app_config')?.onlineModelProviders?.decision;
   let videoProviderId: string | undefined;
   try {
@@ -935,7 +944,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
   if (!openClawConfigSyncService) {
     openClawConfigSyncService = new OpenClawConfigSyncService({
       getCoworkStore,
-      getAppPluginDefaults: () => getAppPlugins().getBundledNativePolicies(),
+      getAppPluginDefaults: getOptionalBundledPluginPolicies,
       getAppPluginEntries: () =>
         getAppPlugins().registry.projectNativeConfig(getCoworkStore().listAgents()),
       getAppPluginPolicy: () => getAppPlugins().registry.nativePolicy(),

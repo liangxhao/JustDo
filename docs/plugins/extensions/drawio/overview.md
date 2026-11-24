@@ -14,12 +14,12 @@ authenticated plugin RPCs provide current-canvas editing and native history reco
 | `restore.ts`, `restore-result.ts`, `contracts.ts`   | Authenticated recovery of an existing native diagram result                           |
 | `editing.ts`, `canvas-state.ts`, `update-result.ts` | Exact-run current-canvas routing, application receipts and confirmed result selection |
 | `browser/current-canvas.ts`                         | Browser-only standard AppBridge adapter and navigation cleanup                        |
+| `browser/mcp-app-adapter.ts`                        | Optional desktop integration for prepared sends, view admission and history references |
 | `skills/drawio-diagrams/SKILL.md`                   | Native, on-demand drawing guidance and MCP tool discovery                             |
 | `app.ts`, `app.css`, `editor-bridge.js`             | Standard App UI and local editor integration                                          |
 | `upstream.json`                                     | Pinned editor source and archive integrity                                            |
 | `licenses/`                                         | Pinned third-party notices omitted from published dependency packages                 |
 | `scripts/prepare.cjs`                               | Asset preparation, bundling and integrity verification                                |
-| `scripts/verify-packaged.cjs`                       | Verification of the final installed resource layout                                   |
 | `tests/`                                            | Plugin unit tests and diagram fixture                                                 |
 | `assets/`                                           | Generated, ignored runtime bundles, editor resources and licenses                     |
 
@@ -107,12 +107,15 @@ on rejected XML.
 Confirmed updates also emit a bounded `drawio.diagram-reference.v1` text record
 so native history can retain the title, original content source and exact call
 association when custom details are filtered. Full XML remains in the existing
-receipt/storage path. The host maps this reviewed integration to generic App
-references; pinning keeps the original frame and permissions.
+receipt/storage path. The plugin's browser adapter maps the receipt to a generic
+App reference. Pinning keeps the original frame and permissions.
 
-The host owns generic MCP App discovery/rendering, file downloads and native Save
-dialogs. The plugin owns its drawing tools, editor UI, bundled resources and
-build tooling.
+The host owns generic MCP App discovery, rendering, file downloads and native
+Save dialogs. The drawing tools, editor UI, authenticated RPC adaptation and
+offline asset build belong to the plugin. The enhanced browser adapter is
+discovered from bundled sources at desktop build time. Runtime installation of
+the standard MCP App is a separate path. Loading the enhanced adapter from an
+independent install remains a host integration requirement.
 
 ## Design and validation
 

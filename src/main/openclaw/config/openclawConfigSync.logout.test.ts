@@ -56,7 +56,7 @@ vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal
     'openai',
     'mxc',
     'document-extract',
-    'drawio',
+    'optional-editor',
     'web-readability',
     'tts-local-cli',
   ];
@@ -112,7 +112,11 @@ const createConfigurationFixture = (
     } },
   } : {} }) as never);
   const sync = new OpenClawConfigSync({
-    getAppPluginDefaults: () => appNativePolicies,
+    getAppPluginDefaults: externalIds => Object.fromEntries(
+      Object.entries(appNativePolicies).filter(([id]) =>
+        id !== 'optional-editor' || (externalIds !== null && !externalIds.includes(id)),
+      ),
+    ),
     getAppPluginPolicy: () => ({
       sandboxTools: ['task_assistants', 'assistants_create', 'team_discussion'],
     }),
@@ -130,6 +134,44 @@ const createConfigurationFixture = (
   } as never);
   return { configPath, stateDir, sync, read: () => JSON.parse(fs.readFileSync(configPath, 'utf8')) };
 };
+
+test.each([
+  { configured: true, inventoryComplete: true },
+  { configured: false, inventoryComplete: true },
+  { configured: true, inventoryComplete: false },
+  { configured: false, inventoryComplete: false },
+])(
+  'keeps bundled defaults out of a configured plugin shadow (model=$configured, inventory complete=$inventoryComplete)',
+  ({ configured, inventoryComplete }) => {
+    const f = createConfigurationFixture(configured);
+    const externalPackage = path.join(f.stateDir, 'configured', 'editor-replacement');
+    fs.mkdirSync(externalPackage, { recursive: true });
+    fs.writeFileSync(
+      path.join(externalPackage, 'openclaw.plugin.json'),
+      JSON.stringify({ id: 'optional-editor' }),
+    );
+    expect(f.sync.sync('startup').ok).toBe(true);
+    const existing = f.read();
+    delete existing.plugins.entries['optional-editor'];
+    existing.plugins.allow = existing.plugins.allow.filter((id: string) => id !== 'optional-editor');
+    existing.plugins.load = { paths: [externalPackage] };
+    fs.writeFileSync(f.configPath, JSON.stringify(existing));
+
+    const context = inventoryComplete
+      ? undefined
+      : { workspaceInventory: { workspace: new Map(), configured: new Map() } };
+    expect(f.sync.sync('startup', undefined, undefined, context).ok).toBe(true);
+    const config = f.read();
+    expect(config.plugins.load.paths).toEqual([externalPackage]);
+    expect(config.plugins.entries['optional-editor']).toBeUndefined();
+    expect(config.plugins.allow).not.toContain('optional-editor');
+
+    config.plugins.entries['optional-editor'] = { enabled: false };
+    fs.writeFileSync(f.configPath, JSON.stringify(config));
+    expect(f.sync.sync('startup', undefined, undefined, context).ok).toBe(true);
+    expect(f.read().plugins.entries['optional-editor']).toEqual({ enabled: false });
+  },
+);
 
 test.each([true, false])('projects SDK data consistently through configured=%s startup, auth and withdrawal', async configured => {
   const bindings: NativeMcpDataBinding[] = [{ pluginId: 'data-fixture',
@@ -2154,7 +2196,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workboard',
       'agent-team',
       'smart-canvas',
-      'drawio',
+      'optional-editor',
       'swarm-workflow',
       'typesafe',
       'memory-core',
@@ -2270,7 +2312,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workboard',
       'agent-team',
       'smart-canvas',
-      'drawio',
+      'optional-editor',
       'swarm-workflow',
       'typesafe',
       'memory-core',
@@ -2543,7 +2585,7 @@ describe('OpenClaw auth logout config sync', () => {
       'workboard',
       'agent-team',
       'smart-canvas',
-      'drawio',
+      'optional-editor',
       'swarm-workflow',
       'typesafe',
       'memory-core',

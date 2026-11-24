@@ -6,21 +6,25 @@ vi.mock('openclaw/plugin-sdk/gateway-method-runtime', () => ({
 }));
 vi.mock('openclaw/plugin-sdk/session-store-runtime', () => ({ getSessionEntry: sdk.entry }));
 
-import { connectCurrentDiagram } from '../../../plugins/extensions/drawio/browser/current-canvas';
-import {
-  DRAWIO_APPLY_TOOL,
-  DRAWIO_CANVAS_EVENT,
-  DRAWIO_CANVAS_METHOD,
-  DRAWIO_SNAPSHOT_TOOL,
-} from '../../../plugins/extensions/drawio/contracts';
-import { registerDiagramEditing } from '../../../plugins/extensions/drawio/editing';
 import type {
   GatewayClient,
   GatewayEventFrame,
   GatewayRequestOptions,
-} from '../../../src/renderer/libs/openclaw-chat/gateway/client';
-import { McpAppSession } from '../../../src/renderer/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
+} from '@/libs/openclaw-chat/gateway/client';
+import { McpAppSession } from '@/libs/openclaw-chat/gateway/mcp-app/mcp-app-session';
+import { registerMcpAppAdapter } from '@/libs/openclaw-chat/pipeline/mcp-app-adapters';
 
+import { mcpAppAdapter } from '../../../../plugins/extensions/drawio/browser/mcp-app-adapter';
+import {
+  DRAWIO_APPLY_TOOL,
+  DRAWIO_CANVAS_EVENT,
+  DRAWIO_CANVAS_METHOD,
+  DRAWIO_CURRENT_METHOD,
+  DRAWIO_SNAPSHOT_TOOL,
+} from '../../../../plugins/extensions/drawio/contracts';
+import { registerDiagramEditing } from '../../../../plugins/extensions/drawio/editing';
+
+const editorResource = { html: 'editor', sandboxUrl: '/sandbox', sandboxPort: 1234 };
 const scope = { sessionKey: 'agent:main:canvas', sessionId: 'physical', agentId: 'main' };
 const snapshot = {
   diagramId: 'diagram-one',
@@ -52,6 +56,7 @@ let listeners: Set<(event: GatewayEventFrame) => void>;
 const cleanups: Array<() => void> = [];
 
 beforeEach(() => {
+  cleanups.push(registerMcpAppAdapter(mcpAppAdapter));
   handlers = new Map();
   listeners = new Set();
   sdk.entry.mockReturnValue({ sessionId: scope.sessionId, lifecycleRevision: 'same-incarnation' });
@@ -106,6 +111,10 @@ async function fixture(holdFirstPrepareResponse = false) {
   let ownerCurrent = true;
   const request = vi.fn(
     (method: string, params: unknown, options?: GatewayRequestOptions): Promise<unknown> => {
+      if (method === 'mcp.app.view')
+        return Promise.resolve({ ...editorResource, messageSupported: true, toolResult: { structuredContent: snapshot } });
+      if (method === DRAWIO_CURRENT_METHOD)
+        return Promise.resolve({ diagram: null, editorResource });
       const handler = handlers.get(method);
       if (!handler) return Promise.resolve({});
       // Match the actual client: local cancellation rejects the wait while the
@@ -157,10 +166,10 @@ async function fixture(holdFirstPrepareResponse = false) {
   }));
   const attach = async (viewId: string) => {
     const view = apps.bind(viewId);
-    await view.view();
-    await view.diagramRequest({ action: 'admit', source, diagramId: snapshot.diagramId });
+    await view.view(undefined, { ...source, viewId });
+    const transport = view.editorTransport(mcpAppAdapter);
     view.preservePresentation = true;
-    let prepare!: () => Promise<unknown>;
+    let prepare!: (signal: AbortSignal) => Promise<unknown>;
     let currentSnapshot = { ...snapshot };
     let beforeApply: (() => Promise<void>) | undefined;
     const callTool = vi.fn(async (input: {
@@ -186,29 +195,30 @@ async function fixture(holdFirstPrepareResponse = false) {
         },
       };
     });
-    const stop = connectCurrentDiagram({
+    const stop = mcpAppAdapter.connect({
+      ...transport,
       source,
       viewId: () => viewId,
-      diagramId: snapshot.diagramId,
+      contentId: snapshot.diagramId,
       bridge: { callTool } as never,
-      current: () => view.isDiagramCurrent(),
+      current: () => view.isRetainedEditorCurrent(),
       canPrepare: () => view.isCurrent(),
       priority: () => 2,
-      request: input => view.diagramRequest(input),
-      release: (token, forgetSource) => view.releaseDiagram(token, forgetSource),
       onSuspend: listener => view.onSuspend(listener),
-      subscribe: listener => view.subscribeDiagram(listener),
-      register: callback => {
+      subscribe: listener => view.subscribeRetainedEditor(listener),
+      registerPreparation: callback => {
         prepare = callback;
-        return apps.registerCanvasPreparation(viewId, callback, () => view.isCurrent(),
-          runId => view.retainDiagramRun(runId));
+        return apps.registerCanvasPreparation(mcpAppAdapter, viewId, callback, () => view.isCurrent(),
+          runId => view.retainPreparedRun(runId));
       },
     });
     cleanups.push(stop);
     return {
       view,
       callTool,
-      prepare: () => prepare(),
+      transport,
+      dispose: stop,
+      prepare: () => prepare(new AbortController().signal),
       beforeApply: (callback: () => Promise<void>) => {
         beforeApply = callback;
       },
@@ -218,6 +228,7 @@ async function fixture(holdFirstPrepareResponse = false) {
     apps,
     attach,
     backend,
+    request,
     held: () => held,
     switchAway() {
       apps.invalidate(true);
@@ -257,10 +268,10 @@ describe('actual session cancellation with background draw.io preparation', () =
 
     f.switchAway();
     expect(original.view.isCurrent()).toBe(false);
-    expect(original.view.isDiagramCurrent()).toBe(true);
+    expect(original.view.isRetainedEditorCurrent()).toBe(true);
     await expect(original.prepare()).rejects.toThrow('unavailable');
     await expect(
-      original.view.diagramRequest({ action: 'prepare', source, snapshot }),
+      original.transport.request(DRAWIO_CANVAS_METHOD, { action: 'prepare', source, snapshot }),
     ).rejects.toThrow('binding expired');
     const read = await invoke('read-background', { action: 'read' });
     expect(JSON.parse(read.content[0].text)).toEqual(snapshot);
@@ -335,10 +346,25 @@ describe('actual session cancellation with background draw.io preparation', () =
       f.switchAway();
       if (action === 'close') {
         await original.view.close();
+        original.dispose();
+        original.view.detach();
         await Promise.all(f.backend);
+        expect(
+          f.request.mock.calls.filter(
+            ([method, params]) =>
+              method === DRAWIO_CANVAS_METHOD &&
+              (params as { action?: string }).action === 'detach',
+          ),
+        ).toEqual([[
+          DRAWIO_CANVAS_METHOD,
+          expect.objectContaining({
+            ...scope, viewId: 'mcp-app-original', token: '', forgetSource: true,
+          }),
+          expect.anything(),
+        ]]);
       } else f.revokeOwner();
 
-      expect(original.view.isDiagramCurrent()).toBe(false);
+      expect(original.view.isRetainedEditorCurrent()).toBe(false);
       await expect(invoke('read-revoked', { action: 'read' })).rejects.toThrow();
       await expect(original.prepare()).rejects.toThrow('unavailable');
       expect(

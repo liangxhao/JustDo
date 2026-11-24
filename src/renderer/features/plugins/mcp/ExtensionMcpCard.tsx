@@ -49,7 +49,7 @@ const ExtensionMcpCard = ({
     probeDisabled={probing || updating || !server.supported}
     probing={probing}
     probeResult={probeResult}
-    supportsApps={supportsApps ?? server.supportsApps}
+    supportsApps={supportsApps}
     title={server.name}
     stateAction={
       (server.enabled ? server.management?.disable.allowed : server.management?.enable.allowed) ? (

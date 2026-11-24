@@ -13,7 +13,8 @@ export const DRAWIO_SNAPSHOT_TOOL = 'diagram_snapshot';
 export const DRAWIO_APPLY_TOOL = 'diagram_apply';
 export const DRAWIO_UPDATE_KIND = 'drawio.diagram-update.v1';
 export const DRAWIO_CANVAS_EVENT = 'plugin.drawio.canvas-changed';
-export const DRAWIO_ENTRY_TOOLS = ['create_diagram', 'open_editor', 'open_file'] as const;
+export const DRAWIO_OPEN_EDITOR_TOOL = 'open_editor';
+export const DRAWIO_ENTRY_TOOLS = [DRAWIO_TOOL, DRAWIO_OPEN_EDITOR_TOOL, 'open_file'] as const;
 
 export interface DiagramSnapshot {
   diagramId: string;
@@ -49,13 +50,4 @@ export interface DiagramUpdateReceipt extends DiagramSnapshot {
   toolCallId: string;
   baseContentStamp: string;
   status: 'applied';
-}
-
-export interface DiagramReference {
-  diagramId: string;
-  operationId: string;
-  toolCallId: string;
-  originViewId: string;
-  sessionId: string;
-  title: string;
 }

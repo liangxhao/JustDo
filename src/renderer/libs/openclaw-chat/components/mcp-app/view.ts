@@ -23,7 +23,7 @@ import { keyed } from 'lit/directives/keyed.js';
 import { i18nService } from '@/services/i18n';
 import { TOKEN_CONTRACT } from '@/theme/tokens/contract';
 
-import type { McpAppSession, McpAppSessionView } from '../../gateway/mcp-app/mcp-app-session';
+import { type McpAppSession, type McpAppSessionView, McpAppViewRecoveryUnavailable } from '../../gateway/mcp-app/mcp-app-session';
 import { isNativeAppReference } from '../../pipeline/native-app-reference';
 import { isNativeMcpAppPreview, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
 import { resolveNativeSandboxUrl } from '../native-widget/host';
@@ -62,7 +62,16 @@ export interface McpAppViewContext {
   /** Rebind an existing workspace view only after the same native incarnation is ready. */
   resume?: () => McpAppViewContext | undefined;
   /** Explicit user reopen for a file snapshot; never an automatic tool replay. */
-  reopen?: () => Promise<{ context: McpAppViewContext; preview: McpAppPreview }>;
+  reopen?: (signal?: AbortSignal) => Promise<{ context: McpAppViewContext; preview: McpAppPreview }>;
+  /** Ready global entries explicitly reviewed to open a new blank editor. */
+  reopenBlank?: {
+    viewId: string;
+    status: () => 'ready' | 'opening' | 'unknown';
+    open: (signal: AbortSignal) => Promise<
+      { status: 'opened'; context: McpAppViewContext; preview: McpAppPreview }
+      | { status: 'unknown' }
+    >;
+  };
 }
 
 const activeViews = new WeakMap<McpAppSession, Map<string, McpAppView>>();
@@ -85,7 +94,7 @@ type Resources = {
   prepareContext?: (signal?: AbortSignal) => Promise<void>;
   preparingContext?: boolean;
   content?: Readonly<McpAppContentIdentity>;
-  localNotice?: string;
+  ownsReadOnlyNotice?: boolean;
   contentTitle?: string;
   sharedHeader?: boolean;
   retainOnNavigation?: boolean;
@@ -146,6 +155,8 @@ export class McpAppView extends LitElement {
   private mode: 'inline' | 'fullscreen' = 'inline';
   private closing?: Promise<void>;
   private lastSession?: McpAppSessionView;
+  private viewRecoveryUnavailable = false;
+  private reopening?: AbortController;
   private expansionFocus?: HTMLElement;
   private waitingApps?: McpAppSession;
   private stopWaiting?: () => void;
@@ -274,6 +285,8 @@ export class McpAppView extends LitElement {
   private clear(): void {
     const resources = this.resources;
     this.version++;
+    this.cancelReopen();
+    this.viewRecoveryUnavailable = false;
     this.resources = undefined;
     this.confirmation?.respond(false);
     this.confirmation = undefined;
@@ -451,7 +464,7 @@ export class McpAppView extends LitElement {
       const payload = restrictRecoveredAppPayload(
         preview,
         resources.session,
-        await resources.session.view(resources.controller.signal, preview.descriptor),
+        await resources.session.view(resources.controller.signal, readNativeMcpAppIdentity(preview)),
       );
       if (!current()) return;
       if (
@@ -692,11 +705,8 @@ export class McpAppView extends LitElement {
       await bridge.sendToolInput({ arguments: payload.toolInput ?? {} });
       if (payload.toolResult) await bridge.sendToolResult(payload.toolResult as never);
       if (!current()) return;
-      const identity = readNativeMcpAppIdentity(preview);
       const plugin = connectAppContent({
-        identity,
         payload,
-        previewViewId: preview.viewId,
         preview,
         session: resources.session,
         context,
@@ -708,11 +718,11 @@ export class McpAppView extends LitElement {
           this.version === version &&
           !this.closed &&
           !resources.controller.signal.aborted &&
-          resources.session.isDiagramCurrent(),
+          resources.session.isRetainedEditorCurrent(),
         priority: () => (this.visible() ? (this.fillContainer ? 2 : 1) : 0),
       });
       resources.content = plugin?.content;
-      resources.localNotice = plugin?.localNotice;
+      resources.ownsReadOnlyNotice = plugin?.ownsReadOnlyNotice;
       resources.contentTitle = plugin?.title;
       resources.retainOnNavigation = plugin?.retainOnNavigation;
       resources.update = () => bridge.setHostContext(buildContext());
@@ -738,9 +748,10 @@ export class McpAppView extends LitElement {
       resources.session.preservePresentation =
         this.shouldPreservePresentation();
       this.loading = false;
-    } catch {
+    } catch (error) {
       if (this.resources === resources) {
         this.clear();
+        this.viewRecoveryUnavailable = error instanceof McpAppViewRecoveryUnavailable;
         this.error = i18nService.t('mcpAppsUnavailable');
       }
     }
@@ -803,6 +814,7 @@ export class McpAppView extends LitElement {
     if (this.closing) return this.closing;
     const resources = this.resources;
     this.contextCleanupUnconfirmed = false;
+    this.cancelReopen();
     this.closed = true;
     this.confirmation?.respond(false);
     this.confirmation = undefined;
@@ -861,19 +873,42 @@ export class McpAppView extends LitElement {
     this.resources?.update?.();
   }
 
-  private async reload(): Promise<void> {
-    if (this.loading) return;
+  cancelReopen(): void {
+    const pending = this.reopening;
+    if (!pending) return;
+    this.reopening = undefined;
+    pending.abort();
+    this.loading = false;
+  }
+
+  private get blankReopen() {
+    const open = this.context?.reopenBlank;
+    return !this.closed && open?.viewId === this.preview?.viewId ? open : undefined;
+  }
+
+  private async reload(openBlank = false): Promise<void> {
+    const blank = openBlank ? this.blankReopen : undefined;
+    if (this.loading || (openBlank && (!this.viewRecoveryUnavailable || blank?.status() !== 'ready')))
+      return;
     const context = this.context;
     const preview = this.preview;
+    const opening = new AbortController();
     const current = () => this.isConnected && this.context === context && this.preview === preview;
+    this.reopening = opening;
     this.loading = true;
     try {
       await this.closing;
-      if (!current()) return;
+      if (!current() || opening.signal.aborted) return;
       const version = this.version;
-      const reopened = context?.reopen ? await context.reopen() : undefined;
+      const opened = await blank?.open(opening.signal);
+      if (!current() || this.version !== version || opening.signal.aborted) return;
+      if (opened?.status === 'unknown') {
+        this.error = i18nService.t('mcpAppsOperationUnknown');
+        return;
+      }
+      const reopened = opened ?? (context?.reopen ? await context.reopen(opening.signal) : undefined);
       const refreshed = reopened?.context ?? (context?.refresh ? await context.refresh() : context);
-      if (!current() || this.version !== version || !refreshed?.isCurrent()) return;
+      if (!current() || this.version !== version || opening.signal.aborted || !refreshed?.isCurrent()) return;
       if (reopened && !isNativeMcpAppPreview(reopened.preview)) return;
       this.context = refreshed;
       this.clear();
@@ -884,9 +919,13 @@ export class McpAppView extends LitElement {
       this.error = '';
       this.requestUpdate();
     } catch {
-      if (current()) this.error = i18nService.t('mcpAppsUnavailable');
+      if (current() && !opening.signal.aborted) this.error = i18nService.t('mcpAppsUnavailable');
     } finally {
-      if (current()) this.loading = false;
+      if (this.reopening === opening) {
+        this.reopening = undefined;
+        if (current()) this.loading = false;
+      }
+      if (blank && this.isConnected && this.preview === preview) this.requestUpdate();
     }
   }
 
@@ -902,7 +941,7 @@ export class McpAppView extends LitElement {
   get retainOnNavigation(): boolean {
     return Boolean(
       !this.closed && this.resources?.retainOnNavigation && this.context?.resume &&
-      this.resources.session.hasPendingDiagramRun,
+      this.resources.session.hasPendingPreparedRun,
     );
   }
 
@@ -942,6 +981,7 @@ export class McpAppView extends LitElement {
 
   protected render() {
     const t = (key: string) => i18nService.t(key);
+    const blankReopenStatus = this.blankReopen?.status();
     const identity = readNativeMcpAppIdentity(this.preview);
     const icons = identity
       ? resolveMcpAppIcons(this.context?.apps.iconCatalog, identity)
@@ -968,7 +1008,7 @@ export class McpAppView extends LitElement {
             >${this.contentTitle ?? this.preview?.title ?? t('mcpAppsTitle')}</span
           >
         </span>
-        ${this.inactive && !this.closed && !this.resources?.localNotice ? html`<span class="notice" title=${t('mcpAppsReadOnly')}>${t('mcpAppsReadOnly')}</span>` : nothing}
+        ${this.inactive && !this.closed && !this.resources?.ownsReadOnlyNotice ? html`<span class="notice" title=${t('mcpAppsReadOnly')}>${t('mcpAppsReadOnly')}</span>` : nothing}
         <span class="app-header-space" aria-hidden="true"></span>
         <span class="host-actions">
           ${
@@ -1016,12 +1056,12 @@ export class McpAppView extends LitElement {
             </div>`
           : nothing
       }
-      ${this.inactive && !this.closed && this.fillContainer && !this.resources?.localNotice ? html`<div class="notice">${t('mcpAppsReadOnly')}</div>` : nothing}
+      ${this.inactive && !this.closed && this.fillContainer && !this.resources?.ownsReadOnlyNotice ? html`<div class="notice">${t('mcpAppsReadOnly')}</div>` : nothing}
       ${this.loading ? html`<div class="status" role="status"><span class="spinner" aria-hidden="true"></span>${t('mcpAppsLoading')}</div>` : nothing}
       ${
         this.error
           ? html`<div class="status" role="status">
-              <span>${this.error}</span>
+              <span>${blankReopenStatus === 'unknown' ? t('mcpAppsOperationUnknown') : this.error}</span>
               ${
                 !this.closed
                   ? html`<button
@@ -1030,7 +1070,11 @@ export class McpAppView extends LitElement {
                       }}
                     >
                       ${t('mcpAppsRetry')}
-                    </button>`
+                    </button>
+                    ${this.viewRecoveryUnavailable && blankReopenStatus === 'ready' ? html`<button
+                      ?disabled=${this.loading}
+                      @click=${() => void this.reload(true)}
+                    >${t('mcpAppsReopenBlank')}</button>` : nothing}`
                   : nothing
               }
             </div>`

@@ -108,8 +108,6 @@ async function runServerOperation() {
             connectionSummary: transport?.description,
             connectionTimeoutMs: transport?.connectionTimeoutMs,
             requestTimeoutMs: transport?.requestTimeoutMs,
-            supportsApps: plugin.origin === 'bundled' && plugin.id === 'drawio' && name === 'drawio' &&
-              !Object.keys(cfg.mcp?.servers?.[name] ?? {}).some(key => !['enabled', 'connectionTimeoutMs', 'requestTimeoutMs'].includes(key)),
           };
         }) }];
     });

@@ -29,6 +29,7 @@ import { i18nService } from '@/services/i18n';
 
 import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { decodeFileAppLaunch, findFileApp, openManagedFileApp, type OpenMcpAppFile } from './fileApps';
+import { withManualAppReopen } from './manualAppReopen';
 import { McpAppIcon } from './McpAppIcon';
 import { type AppSettings, appSettingsSchema, McpAppSettings } from './McpAppSettings';
 import { APP_BUTTON, APP_ICON_BUTTON, APP_INPUT } from './mcpAppStyles';
@@ -221,7 +222,7 @@ export function McpAppsControls({
         const preview = decodeMcpAppLaunch(await apps.launch(input, signal));
         if (!preview || !current() || !context.isCurrent())
           throw new Error('App launch was superseded');
-        return { preview, context };
+        return { preview, context: withManualAppReopen({ context, preview, input, catalog }) };
       },
     });
     if (ownedControls.current) closeWorkspaceAppControls(ownedControls.current);
@@ -285,8 +286,10 @@ export function McpAppsControls({
         const { id: handlerId, input, icons } = handler;
         if (request.focusExisting?.(handlerId)) return true;
         const epoch = lifecycle.fileEpoch;
-        const sameHandler = () =>
-          Boolean(findFileApp(fileActions.current.catalog, request.filePath, handlerId));
+        const sameHandler = () => {
+          const selected = findFileApp(fileActions.current.catalog, request.filePath, handlerId);
+          return selected !== undefined && selected.pluginId === handler.pluginId;
+        };
         if (request.managed)
           return openManagedFileApp(
             { ...request, managed: request.managed },
@@ -318,16 +321,18 @@ export function McpAppsControls({
               const resumed = base.resume?.();
               return resumed ? fileContext(resumed) : undefined;
             },
-            reopen: async () => {
-              if (!fileActions.current.canDraft() || !sameHandler())
+            reopen: async (signal?: AbortSignal) => {
+              const current = () =>
+                !signal?.aborted && fileActions.current.canDraft() && sameHandler();
+              if (!current())
                 throw new Error('File App is no longer available');
               const fresh = base.refresh
                 ? await base.refresh()
                 : await fileActions.current.prepare();
-              if (!fresh.isCurrent() || !sameHandler() || fresh.sessionKey !== context.sessionKey)
+              if (!current() || !fresh.isCurrent() || fresh.sessionKey !== context.sessionKey)
                 throw new Error('File App session changed');
-              const next = decodeFileAppLaunch(await apps.launch(input), handler, fresh.sessionKey);
-              if (!next || !fresh.isCurrent() || !sameHandler())
+              const next = decodeFileAppLaunch(await apps.launch(input, signal), handler, fresh.sessionKey);
+              if (!next || !current() || !fresh.isCurrent())
                 throw new Error('File App reopen was superseded');
               return { preview: next, context: fileContext(fresh) };
             },

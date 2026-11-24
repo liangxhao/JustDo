@@ -54,7 +54,9 @@ import type { ManagedSpeechModelSettings } from './speech/speechModelConfig';
 type OpenClawConfigSyncServiceDeps = {
   getCoworkStore: () => CoworkStore;
   getAppPluginEntries?: () => Record<string, unknown>;
-  getAppPluginDefaults?: () => Record<string, { defaultEnabled: boolean; userToggleable: boolean }>;
+  getAppPluginDefaults?: (externalIds: readonly string[] | null) => Record<
+    string, { defaultEnabled: boolean; userToggleable: boolean }
+  >;
   getAppPluginPolicy?: () => { sandboxTools?: string[]; surfaces?: Record<string, unknown> };
   getOpenClawEngineManager: () => OpenClawEngineManager;
   getMcpStore: () => McpStore;

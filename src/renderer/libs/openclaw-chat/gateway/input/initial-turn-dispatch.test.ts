@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+  EDITOR_SEND,
+  editorAdapter,
+} from '../../../../../../tests/mcp-apps/editor-adapter-fixture';
 import type { GatewayClient } from '../client';
 import { McpAppSession } from '../mcp-app/mcp-app-session';
 import { dispatchInitialTurn } from './initial-turn-dispatch';
@@ -39,6 +43,7 @@ describe('prepared initial turn dispatch', () => {
         priority: number;
       }) => void;
       const unregister = apps.registerCanvasPreparation(
+        editorAdapter,
         'mcp-app-editor',
         () =>
           new Promise(done => {
@@ -76,20 +81,56 @@ describe('prepared initial turn dispatch', () => {
       throw new Error('lost response');
     });
     const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1:1', request };
-    const state = { connected: true, sessionKey: 'agent:main:one', currentSessionId: 'physical', client };
+    const state = {
+      connected: true,
+      sessionKey: 'agent:main:one',
+      currentSessionId: 'physical',
+      client,
+    };
     const apps = new McpAppSession(() => ({
-      ...state, client: client as unknown as GatewayClient, generation: 1,
-      sessionId: state.currentSessionId, agentId: 'main', isCurrent: () => true,
+      ...state,
+      client: client as unknown as GatewayClient,
+      generation: 1,
+      sessionId: state.currentSessionId,
+      agentId: 'main',
+      isCurrent: () => true,
     }));
-    const retainRun = vi.fn(() => { calls.push('retain'); });
-    const unregister = apps.registerCanvasPreparation('mcp-app-editor', async () => ({
-      token: 'private', viewId: 'mcp-app-editor', selected: true, priority: 2,
-    }), () => true, retainRun);
+    const retainRun = vi.fn(() => {
+      calls.push('retain');
+    });
+    const unregister = apps.registerCanvasPreparation(
+      editorAdapter,
+      'mcp-app-editor',
+      async () => ({
+        token: 'private',
+        viewId: 'mcp-app-editor',
+        selected: true,
+        priority: 2,
+      }),
+      () => true,
+      retainRun,
+    );
     try {
-      await expect(dispatchInitialTurn(state, {
-        sessionKey: state.sessionKey, sessionId: state.currentSessionId, idempotencyKey: 'turn',
-      }, () => { calls.push('before'); })).rejects.toMatchObject({ requestSent: true });
+      await expect(
+        dispatchInitialTurn(
+          state,
+          {
+            sessionKey: state.sessionKey,
+            sessionId: state.currentSessionId,
+            idempotencyKey: 'turn',
+          },
+          () => {
+            calls.push('before');
+          },
+        ),
+      ).rejects.toMatchObject({ requestSent: true });
       expect(calls).toEqual(['before', 'retain', 'request']);
+      expect(request).toHaveBeenCalledWith(
+        EDITOR_SEND,
+        expect.objectContaining({
+          send: expect.objectContaining({ idempotencyKey: 'turn' }),
+        }),
+      );
       expect(retainRun).toHaveBeenCalledExactlyOnceWith('turn');
     } finally {
       unregister();
@@ -102,7 +143,12 @@ describe('prepared initial turn dispatch', () => {
       vi.useFakeTimers();
       const request = vi.fn().mockResolvedValue({ runId: 'turn' });
       const client = { generation: 1, gatewayUrl: 'ws://127.0.0.1:1', request };
-      const state = { connected: true, sessionKey: 'agent:main:one', currentSessionId: 'physical', client };
+      const state = {
+        connected: true,
+        sessionKey: 'agent:main:one',
+        currentSessionId: 'physical',
+        client,
+      };
       const apps = new McpAppSession(() => ({
         client: client as unknown as GatewayClient,
         generation: 1,
@@ -112,21 +158,45 @@ describe('prepared initial turn dispatch', () => {
         isCurrent: () => true,
       }));
       const retainRun = vi.fn();
-      const unregisterReady = apps.registerCanvasPreparation('mcp-app-other', async () => ({
-        token: 'other', viewId: 'mcp-app-other', selected: false, priority: 1,
-      }), () => true, retainRun);
-      const unregisterIdle = apps.registerCanvasPreparation('mcp-app-idle', signal =>
-        new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-        }), () => true, retainRun);
+      const unregisterReady = apps.registerCanvasPreparation(
+        editorAdapter,
+        'mcp-app-other',
+        async () => ({
+          token: 'other',
+          viewId: 'mcp-app-other',
+          selected: false,
+          priority: 1,
+        }),
+        () => true,
+        retainRun,
+      );
+      const unregisterIdle = apps.registerCanvasPreparation(
+        editorAdapter,
+        'mcp-app-idle',
+        signal =>
+          new Promise((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          }),
+        () => true,
+        retainRun,
+      );
       const params = {
-        sessionKey: state.sessionKey, sessionId: state.currentSessionId, idempotencyKey: 'turn',
+        sessionKey: state.sessionKey,
+        sessionId: state.currentSessionId,
+        idempotencyKey: 'turn',
         message: 'Continue the conversation',
       };
       try {
         const sending = dispatchInitialTurn(
-          state, params, undefined, undefined,
-          unavailable === 'closes' ? async () => { unregisterIdle(); } : undefined,
+          state,
+          params,
+          undefined,
+          undefined,
+          unavailable === 'closes'
+            ? async () => {
+                unregisterIdle();
+              }
+            : undefined,
         );
         await vi.advanceTimersByTimeAsync(12_000);
         await expect(sending).resolves.toEqual({ runId: 'turn' });
@@ -164,12 +234,15 @@ describe('prepared initial turn dispatch', () => {
       client: { generation: 1, gatewayUrl: 'ws://127.0.0.1:1', request },
     };
     const params = {
-      sessionKey: state.sessionKey, sessionId: state.currentSessionId, idempotencyKey: 'turn',
+      sessionKey: state.sessionKey,
+      sessionId: state.currentSessionId,
+      idempotencyKey: 'turn',
       message: 'Continue the conversation',
     };
     const prepareAppContext = vi.fn().mockRejectedValue(new Error('App context unavailable'));
-    await expect(dispatchInitialTurn(state, params, undefined, undefined, prepareAppContext))
-      .resolves.toEqual({ runId: 'turn' });
+    await expect(
+      dispatchInitialTurn(state, params, undefined, undefined, prepareAppContext),
+    ).resolves.toEqual({ runId: 'turn' });
     expect(prepareAppContext).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledExactlyOnceWith('chat.send', params);
   });

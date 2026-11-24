@@ -12,7 +12,7 @@ npm install
 npm run electron:dev:openclaw
 ```
 
-首次启动会准备当前平台的 OpenClaw runtime 和开发资源。后续只修改应用代码时，可直接运行 `npm run electron:dev`；修改运行时补丁或扩展后需重新准备 runtime，再重启应用。
+首次启动会准备当前平台的 OpenClaw runtime 和开发资源。只修改应用代码时，可直接运行 `npm run electron:dev`，它会沿用已准备运行时中的原生扩展和默认启用声明。更新运行时补丁、原生扩展或其包元数据后，按[重新准备运行时](#重新准备运行时)更新，再启动应用。
 
 Windows 普通开发启动与安装版共用固定 AppData 下的 `storage-location.json` 和单实例锁。安装版完成迁移后，运行 `npm run electron:dev` 即使用同一数据目录。数据位置暂不可用时，开发启动直接退出。
 
@@ -42,7 +42,7 @@ Windows 普通开发启动与安装版共用固定 AppData 下的 `storage-locat
 | `npm run pack`           | 生成应用目录包，不生成安装器                   |
 | `npm run dist`           | 按 Electron Builder 默认平台配置生成安装包     |
 
-产物统一输出到 `release/`。**`dist:win` 会先清空 `release/`**，然后校验并复用或重建 Windows runtime，准备 draw.io、MinGit、Python 和本地语音引擎，再构建安装包。正常重复打包无需设置 `OPENCLAW_FORCE_INSTALL`。
+产物统一输出到 `release/`。**`dist:win` 会先清空 `release/`**，然后校验并复用或重建 Windows runtime，准备插件声明的离线资源、MinGit、Python 和本地语音引擎，再构建安装包。正常重复打包无需设置 `OPENCLAW_FORCE_INSTALL`。
 
 `pack` / `dist` 需要事先准备匹配目标平台的 runtime；发布时优先使用对应平台命令。macOS 建议使用显式架构命令，确保应用与 runtime 架构一致。
 
@@ -56,7 +56,7 @@ Windows 普通开发启动与安装版共用固定 AppData 下的 `storage-locat
 npm run openclaw:runtime:host
 ```
 
-开发准备提示冻结快照过期时，从锁定的原始包完整重建，不手工修改旧产物。PowerShell：
+增删声明 `bundledAssets` 的内置扩展会改变 runtime 构建配方。开发准备遇到旧配方的冻结快照时，从锁定的原始包完整重建。PowerShell：
 
 ```powershell
 $env:OPENCLAW_FORCE_INSTALL = '1'

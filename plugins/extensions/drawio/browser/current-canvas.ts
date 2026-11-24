@@ -1,33 +1,26 @@
-import type { AppBridge } from '@modelcontextprotocol/ext-apps/app-bridge';
+import type { McpAppAdapterBridge, McpAppAdapterSource, McpAppPreparedCanvas } from '@app-plugin/sdk/mcp-app';
 
 import {
   type DiagramSnapshot,
   DRAWIO_APPLY_TOOL,
   DRAWIO_CANVAS_EVENT,
   DRAWIO_SNAPSHOT_TOOL,
-  type PreparedDiagramCanvas,
 } from '../contracts';
 
-type Source = {
-  serverName: string;
-  toolName: string;
-  uiResourceUri: string;
-  originSessionKey: string;
-};
 interface CanvasHost {
-  source: Readonly<Source>;
+  source: Readonly<McpAppAdapterSource>;
   viewId: () => string;
   diagramId: string;
-  bridge: AppBridge;
+  bridge: McpAppAdapterBridge;
   current: () => boolean;
-  canPrepare?: () => boolean;
+  canPrepare: () => boolean;
   priority: () => number;
   request: <T>(input: Record<string, unknown>, signal?: AbortSignal) => Promise<T>;
-  release: (token: string, forgetSource?: boolean) => Promise<unknown>;
+  release: (token: string) => Promise<unknown>;
   subscribe: (listener: (event: { event: string }) => void) => () => void;
   onSuspend: (listener: () => void) => () => void;
   register: (
-    prepare: (signal?: AbortSignal) => Promise<PreparedDiagramCanvas & { priority: number }>,
+    prepare: (signal?: AbortSignal) => Promise<McpAppPreparedCanvas>,
   ) => () => void;
 }
 const object = (v: unknown): Record<string, unknown> =>
@@ -56,15 +49,15 @@ export function connectCurrentDiagram(host: CanvasHost) {
   let disposed = false;
   let polling = false;
   const current = () => !disposed && host.current();
-  const canPrepare = () => current() && (host.canPrepare?.() ?? true);
-  const retire = (forgetSource = false) => {
+  const canPrepare = () => current() && host.canPrepare();
+  const retire = () => {
     epoch++;
     preparationEpoch++;
     retireOnPrepare = true;
     if (token) retiredToken = token;
     token = '';
     // Exact-owner cleanup also cancels preparations whose response was lost.
-    void (forgetSource ? host.release('', true) : host.release('')).catch(() => undefined);
+    void host.release('').catch(() => undefined);
   };
   const stopSuspension = host.onSuspend(() => {
     // Navigation cancels an unfinished send preparation, but an already frozen
@@ -101,7 +94,7 @@ export function connectCurrentDiagram(host: CanvasHost) {
     token = prepared.token;
     retiredToken = '';
     retireOnPrepare = false;
-    return { token, viewId: host.viewId(), selected: false, priority: host.priority() };
+    return { token, viewId: host.viewId(), priority: host.priority() };
   });
   const poll = async () => {
     if (!token || !current() || polling) return;
@@ -147,7 +140,6 @@ export function connectCurrentDiagram(host: CanvasHost) {
   const timer = setInterval(() => void poll(), 3000);
   return () => {
     disposed = true;
-    retire(true);
     clearInterval(timer);
     unsubscribe();
     unregister();
