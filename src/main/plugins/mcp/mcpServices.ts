@@ -1,9 +1,7 @@
 import type Database from 'better-sqlite3';
 
-import type { PluginOperationContext } from '../../../shared/plugins/pluginOperation';
 import type { OpenClawEngineManager } from '../../openclaw/runtime/openclawEngineManager';
 import { runExtensionMcpOperation } from './extensionMcpRuntime';
-import { McpConfigSyncService } from './mcpConfigSyncService';
 import {
   McpProbeResult,
   McpReadResourceResult,
@@ -15,15 +13,11 @@ import { McpStore } from './mcpStore';
 type McpServicesDeps = {
   getDatabase: () => Database.Database;
   getManager: () => OpenClawEngineManager;
-  syncOpenClawConfig: (options: {
-    reason: string;
-  }) => Promise<{ success: boolean; changed: boolean; error?: string }>;
 };
 
 export class McpServices {
   private readonly deps: McpServicesDeps;
   private store: McpStore | null = null;
-  private configSyncService: McpConfigSyncService | null = null;
 
   constructor(deps: McpServicesDeps) {
     this.deps = deps;
@@ -34,20 +28,6 @@ export class McpServices {
       this.store = new McpStore(this.deps.getDatabase());
     }
     return this.store;
-  }
-
-  syncConfig(): Promise<{ tools: number; error?: string }> {
-    return this.getConfigSyncService().syncConfig();
-  }
-
-  syncConfigAfterExclusiveMutation(
-    syncOpenClawConfig: McpServicesDeps['syncOpenClawConfig'],
-    context?: PluginOperationContext,
-  ): Promise<{ tools: number; error?: string }> {
-    return this.getConfigSyncService().syncConfigAfterExclusiveMutation(
-      syncOpenClawConfig,
-      context,
-    );
   }
 
   async probeServer(id: string): Promise<McpProbeResult> {
@@ -81,15 +61,5 @@ export class McpServices {
       throw new Error('MCP server not found');
     }
     return readMcpResource(server, uri);
-  }
-
-  private getConfigSyncService(): McpConfigSyncService {
-    if (!this.configSyncService) {
-      this.configSyncService = new McpConfigSyncService({
-        getMcpStore: () => this.getStore(),
-        syncOpenClawConfig: this.deps.syncOpenClawConfig,
-      });
-    }
-    return this.configSyncService;
   }
 }

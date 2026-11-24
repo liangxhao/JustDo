@@ -11,7 +11,7 @@ import { OpenClawConfigSyncService } from '../../openclaw/config/openclawConfigS
 import { mergeNativeMcpOverrides } from '../../openclaw/config/plugins/nativeMcpOverrides';
 import { PluginInstallationService, PluginInstallOrigin } from '../../plugins/installation';
 import type { McpServerRecord, McpStore } from '../../plugins/mcp';
-import { McpConfigSyncService } from '../../plugins/mcp/mcpConfigSyncService';
+import { syncMcpConfigAfterMutation } from '../../plugins/mcp/mcpConfigSyncService';
 
 const handlers = new Map<string, (...args: unknown[]) => unknown>();
 const fileDialogs = vi.hoisted(() => ({ showOpenDialog: vi.fn(), showSaveDialog: vi.fn() }));
@@ -323,6 +323,7 @@ const createMutationHarness = (
     restoreServer: vi.fn((record: McpServerRecord) => records.set(record.id, record)),
   };
   const syncConfig = vi.fn(async () => ({ tools: 1 }) as { tools: number; error?: string });
+  const configQueue = new OpenClawConfigSyncService({} as never);
   const discoverExternalServers = vi.fn();
   const onMarketplacePluginDeleted = vi.fn();
   const installationService = new PluginInstallationService();
@@ -332,7 +333,8 @@ const createMutationHarness = (
     requestGateway: vi.fn(),
     readExtensionDefinition: vi.fn(async () => null),
     getManagedPluginIds: () => [],
-    runConfigMutationExclusive: runExclusive ?? (operation => operation(syncConfig)),
+    runConfigMutationExclusive: runExclusive ?? (operation =>
+      configQueue.runConfigMutationExclusive(() => operation(syncConfig))),
     probeServer: vi.fn(),
     readResource: vi.fn(),
     installationService,
@@ -770,12 +772,12 @@ test.each(['delete', 'update'])(
       JSON.stringify({ mcp: { servers: { Docs: { url: 'https://example.com/mcp' } } } }),
     );
     let globalSync!: OpenClawConfigSyncService;
-    let mcpSync!: McpConfigSyncService;
     const harness = createMutationHarness(mutate =>
       globalSync.runConfigMutationExclusive(({ syncConfig }) =>
         mutate(retiredMcpServerNames =>
-          mcpSync.syncConfigAfterExclusiveMutation(options =>
-            syncConfig({ ...options, retiredMcpServerNames }),
+          syncMcpConfigAfterMutation(
+            options => syncConfig({ ...options, retiredMcpServerNames }),
+            () => discoveryStore.getEnabledServers().length,
           ),
         ),
       ),
@@ -831,10 +833,6 @@ test.each(['delete', 'update'])(
           return { ok: true, changed: true, configChanged: true, configPath };
         },
       },
-    });
-    mcpSync = new McpConfigSyncService({
-      getMcpStore: () => discoveryStore as unknown as McpStore,
-      syncOpenClawConfig: options => globalSync.syncConfig(options),
     });
     let release!: () => void;
     const earlierMutation = globalSync.runConfigMutationExclusive(

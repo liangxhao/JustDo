@@ -12,7 +12,6 @@ test('routes extension probes and resource reads to native ownership without cre
   const services = new McpServices({
     getDatabase,
     getManager: () => manager,
-    syncOpenClawConfig: vi.fn(),
   });
   vi.mocked(runExtensionMcpOperation)
     .mockResolvedValueOnce({ available: true })

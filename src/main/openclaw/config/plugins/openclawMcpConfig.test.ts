@@ -128,14 +128,16 @@ describe('buildOpenClawMcpServers', () => {
     });
   });
 
-  it('preserves OpenClaw fields that the JustDo form does not model', () => {
+  it('uses the stored enablement and preserves supported native connection fields', () => {
     expect(
       buildOpenClawMcpServers([
         record({
           name: 'privateDocs',
+          enabled: false,
           transportType: 'http',
           url: 'https://example.com/mcp',
           openClawConfig: {
+            disabled: false,
             url: 'https://example.com/mcp',
             transport: 'streamable-http',
             requestTimeoutMs: 1_500,
@@ -148,7 +150,7 @@ describe('buildOpenClawMcpServers', () => {
       ]),
     ).toEqual({
       privateDocs: {
-        enabled: true,
+        enabled: false,
         url: 'https://example.com/mcp',
         transport: 'streamable-http',
         requestTimeoutMs: 1_500,

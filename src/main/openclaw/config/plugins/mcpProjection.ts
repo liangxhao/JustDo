@@ -39,6 +39,8 @@ export const buildOpenClawMcpServers = (
         ...(server.openClawConfig ?? {}),
         enabled: server.enabled,
       };
+      // OpenClaw rejects this field even when enabled is present.
+      delete config.disabled;
       if (server.requestTimeoutSeconds !== undefined) {
         config.requestTimeoutMs = server.requestTimeoutSeconds * 1_000;
       } else if (config.requestTimeoutMs === undefined) {

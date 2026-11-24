@@ -15,7 +15,7 @@ import { PluginInstallationService } from '../../../../src/main/plugins/installa
 import { createPluginMarketplaceService } from '../../../../src/main/plugins/marketplace';
 import { discoverExtensionMcpServers } from '../../../../src/main/plugins/mcp/extensionMcpDiscovery';
 import { runExtensionMcpOperation } from '../../../../src/main/plugins/mcp/extensionMcpRuntime';
-import { McpConfigSyncService } from '../../../../src/main/plugins/mcp/mcpConfigSyncService';
+import { syncMcpConfigAfterMutation } from '../../../../src/main/plugins/mcp/mcpConfigSyncService';
 import { McpStore } from '../../../../src/main/plugins/mcp/mcpStore';
 import { PluginManager } from '../../../../src/main/plugins/pluginManager';
 import { OpenClawSkillFileService } from '../../../../src/main/plugins/skills/openclawSkillFileService';
@@ -100,7 +100,6 @@ export async function createProbeServices(options: {
     } } }, { replacePaths });
     return { success: true, changed: true };
   };
-  const mcpSync = new McpConfigSyncService({ getMcpStore: () => store, syncOpenClawConfig: syncNativeMcpConfig });
   let configTail = Promise.resolve();
   const runExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
     const pending = configTail.then(operation);
@@ -151,7 +150,7 @@ export async function createProbeServices(options: {
     registerMcpHandlers({
       getStore: () => store, installationService,
       runConfigMutationExclusive: operation => runExclusive(() => operation((_retired, context) =>
-        mcpSync.syncConfigAfterExclusiveMutation(syncNativeMcpConfig, context))),
+        syncMcpConfigAfterMutation(syncNativeMcpConfig, () => store.getEnabledServers().length, context))),
       probeServer: id => runExtensionMcpOperation(native.manager, 'probe', id),
       readResource: (id, uri) => runExtensionMcpOperation(native.manager, 'read', id, uri),
       listExtensionServers: () => discoverExtensionMcpServers(native.manager),

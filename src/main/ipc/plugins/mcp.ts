@@ -77,37 +77,20 @@ export const registerMcpHandlers = ({
   discoverExternalServers,
   onMarketplacePluginDeleted,
 }: McpHandlerDependencies): void => {
-  let mutationTail: Promise<void> = Promise.resolve();
-  const runMcpOperationExclusive = <T>(
+  const runMcpMutationExclusive = <T>(
     operation: (syncConfig: SyncMcpConfig) => Promise<T>,
-  ): Promise<T> => {
-    const result = mutationTail.then(() =>
-      runConfigMutationExclusive(syncConfig => {
-        const projectionNames = new Set(
-          getStore()
-            .listServers()
-            .map(server => server.name),
-        );
-        return operation((_retiredNames, context, preservedNames) => {
-          const currentNames = new Set(
-            getStore()
-              .listServers()
-              .map(server => server.name),
-          );
-          // A rollback must also retire names projected by the failed attempt.
-          for (const name of currentNames) projectionNames.add(name);
-          const retiredNames = [...projectionNames].filter(name => !currentNames.has(name));
-          if (preservedNames?.length) return syncConfig(retiredNames, context, preservedNames);
-          return context ? syncConfig(retiredNames, context) : syncConfig(retiredNames);
-        });
-      }),
-    );
-    mutationTail = result.then(
-      (): void => undefined,
-      (): void => undefined,
-    );
-    return result;
-  };
+  ): Promise<T> =>
+    runConfigMutationExclusive(syncConfig => {
+      const projectionNames = new Set(getStore().listServers().map(server => server.name));
+      return operation((_retiredNames, context, preservedNames) => {
+        const currentNames = new Set(getStore().listServers().map(server => server.name));
+        // A rollback must also retire names projected by the failed attempt.
+        for (const name of currentNames) projectionNames.add(name);
+        const retiredNames = [...projectionNames].filter(name => !currentNames.has(name));
+        if (preservedNames?.length) return syncConfig(retiredNames, context, preservedNames);
+        return context ? syncConfig(retiredNames, context) : syncConfig(retiredNames);
+      });
+    });
   const syncMcpMutation = async (
     syncConfig: SyncMcpConfig,
     rollback: () => void,
@@ -166,7 +149,7 @@ export const registerMcpHandlers = ({
       progress.report(stage);
     };
     progress.report(PluginOperationStage.QUEUED);
-    return runMcpOperationExclusive(syncConfig => {
+    return runMcpMutationExclusive(syncConfig => {
       progress.report(PluginOperationStage.VALIDATING);
       return operation(async (retiredNames, _context, preservedNames) => {
         if (!rollingBack) progress.report(PluginOperationStage.APPLYING_CONFIGURATION);
@@ -230,8 +213,8 @@ export const registerMcpHandlers = ({
     registerMcpTransferHandlers({
       getMainWindow,
       service,
-      readNames: () => runMcpOperationExclusive(async () => (await readNames()).occupied),
-      readServers: () => runMcpOperationExclusive(async () => getStore().listServers()),
+      readNames: () => runConfigMutationExclusive(async () => (await readNames()).occupied),
+      readServers: () => runConfigMutationExclusive(async () => getStore().listServers()),
       commit: (event, owner, input, context) => runMcpMutationWithProgress<McpTransferResult<McpImportCommitReceipt>>(
         event,
         context,
@@ -296,7 +279,7 @@ export const registerMcpHandlers = ({
         request.onProgress?.({ stage, percent: 0 });
       };
       report(PluginOperationStage.QUEUED);
-      return runMcpOperationExclusive(async syncConfig => {
+      return runMcpMutationExclusive(async syncConfig => {
         report(PluginOperationStage.VALIDATING);
         if (request.payload.kind !== PluginKind.MCP) {
           return { success: false, error: 'Invalid MCP installation payload' };
@@ -400,7 +383,7 @@ export const registerMcpHandlers = ({
   });
 
   ipcMain.handle('mcp:list', () =>
-    runMcpOperationExclusive(async () => {
+    runConfigMutationExclusive(async () => {
       try {
         try {
           await discoverExternalServers();
@@ -451,7 +434,7 @@ export const registerMcpHandlers = ({
       ),
   );
   ipcMain.handle(ExtensionMcpIpc.ReadSettings, (_event, id: unknown) =>
-    runMcpOperationExclusive(() => extensionSettings.readSettings(id)),
+    runConfigMutationExclusive(() => extensionSettings.readSettings(id)),
   );
 
   ipcMain.handle(

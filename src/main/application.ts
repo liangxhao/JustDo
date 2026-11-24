@@ -319,6 +319,7 @@ import {
   PluginInstallationService,
   PluginManager,
   readNativeMcpServerNames,
+  syncMcpConfigAfterMutation,
 } from './plugins';
 import { AppApprovalStore } from './plugins/app/approvalStore';
 import { startAppDevelopmentAssets } from './plugins/app/developmentAssets';
@@ -1389,7 +1390,6 @@ const getMcpServices = (): McpServices => {
     mcpServices = new McpServices({
       getManager: getOpenClawEngineManager,
       getDatabase: () => getStore().getDatabase(),
-      syncOpenClawConfig,
     });
   }
   return mcpServices;
@@ -1950,8 +1950,9 @@ if (agentBridgeArgv) {
     runConfigMutationExclusive: operation =>
       getOpenClawConfigSyncService().runConfigMutationExclusive(({ syncConfig }) =>
         operation((retiredMcpServerNames, context, preservedMcpServerNames) =>
-          getMcpServices().syncConfigAfterExclusiveMutation(
+          syncMcpConfigAfterMutation(
             options => syncConfig({ ...options, retiredMcpServerNames, preservedMcpServerNames }),
+            () => getMcpStore().getEnabledServers().length,
             context,
           ),
         ),

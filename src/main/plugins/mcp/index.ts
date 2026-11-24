@@ -4,7 +4,7 @@ export {
   discoverNativeMcpDataBindings,
   readNativeMcpServerNames,
 } from './extensionMcpDiscovery';
-export { McpConfigSyncService } from './mcpConfigSyncService';
+export { syncMcpConfigAfterMutation } from './mcpConfigSyncService';
 export type {
   McpProbePrompt,
   McpProbeResource,
