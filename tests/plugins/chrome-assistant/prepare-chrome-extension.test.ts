@@ -471,7 +471,9 @@ describe('Chrome extension preparation', () => {
         expect.objectContaining({ op: 'request', input: expectedInput, payloadDigest: expectedDigest }),
       ]);
       expect(onRequest).not.toHaveBeenCalled();
-      expect(onConnection).toHaveBeenCalledWith({ status: 'pending', origin: view.location.origin });
+      expect(onConnection).toHaveBeenCalledWith({
+        status: 'pending', origin: view.location.origin, message: expect.stringMatching(/\S/u),
+      });
       await binding.unbind();
       expect(sendMessage.mock.calls.at(-1)?.[1]).toMatchObject({ op: 'cancel' });
     } finally {

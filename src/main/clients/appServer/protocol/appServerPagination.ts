@@ -75,7 +75,7 @@ export function paginateIds<T>(
 }
 
 export function paginateThreads<T extends AppServerThreadMetadata>(
-  metadata: T[], params: AppServerParams,
+  metadata: T[], params: AppServerParams, projectionScope?: string,
 ): { data: T[]; nextCursor: string | null; backwardsCursor: null } {
   const size = limit(params);
   const archived = optionalBoolean(params, 'archived') ?? false;
@@ -95,7 +95,7 @@ export function paginateThreads<T extends AppServerThreadMetadata>(
   const searchTerm = optionalString(params, 'searchTerm') ?? '';
   const cwd = params.cwd == null ? [] : typeof params.cwd === 'string' ? [params.cwd] : strings(params, 'cwd');
   const scope = [...new Set(metadata.map(entry => entry.source ?? 'cli'))].sort();
-  const fingerprint = createHash('sha256').update(JSON.stringify({ scope, archived, sortKey, direction,
+  const fingerprint = createHash('sha256').update(JSON.stringify({ scope, projectionScope, archived, sortKey, direction,
     modelProviders, sourceKinds, excluded, searchTerm, cwd })).digest('base64url');
   const key = (entry: AppServerThreadMetadata) => sortKey === 'created_at' ? entry.createdAt : entry.updatedAt;
   const compare = (left: { id: string; value: number }, right: { id: string; value: number }) => {

@@ -11,8 +11,10 @@ import type { ChromeExtensionStreamEvent } from '../../shared/chrome/chromeExten
 import { CoworkStore } from '../data/coworkStore';
 import type { NativeRunTerminalReceipt } from '../engine/gateway/types';
 import type { CoworkNativeAcceptedBinding } from '../engine/types';
+import { ChromeAppServerHub } from './chromeAppServerBinding';
 import { wrapChromeWebLaunchOperation } from './chromeAppServerProtocol';
 import type { ChromeExtensionTrustedSendHooks } from './chromeAppServerTypes';
+import { ChromeExtensionChatController } from './chromeExtensionChatController';
 import { ChromeWebLaunchService } from './chromeWebLaunchService';
 import { ChromeWebLaunchStore } from './chromeWebLaunchStore';
 import { buildStrictWebLaunchContext, webLaunchActualDigest, webLaunchDigest } from './chromeWebLaunchValidation';
@@ -138,6 +140,42 @@ describe('webpage launch admission and persistence', () => {
 
     expect(f.cowork.listSessionSearchSummaries().map(row => row.id)).toEqual(hasRuns ? [threadId] : []);
     expect(f.sessionsChanged).toHaveBeenCalledTimes(hasRuns ? 0 : 1);
+  });
+
+  it('lists a website conversation in Chrome only after the first-send marker is cleared', async () => {
+    const f = fixture();
+    const { internal: { threadId } } = f.prepare();
+    const { internal: { threadId: sentThreadId } } = f.prepare({ requestId: 'request-2', clickSequence: 2 });
+    f.cowork.clearSessionPendingFirstSend(sentThreadId);
+    const controller = new ChromeExtensionChatController({
+      getStore: () => f.cowork,
+      getRuntime: () => null,
+      getRouter: () => null,
+      ensureEngineRunning: vi.fn(),
+    });
+    const hub = new ChromeAppServerHub(controller, 'test');
+    hub.activate();
+    const browser = hub.connect({ isClosed: () => false, notify: vi.fn() });
+    const pickerParams = { chrome: { excludePendingFirstSend: true } };
+
+    try {
+      await expect(browser.threads.list(pickerParams)).resolves.toMatchObject({ data: [{ id: sentThreadId }] });
+      await expect(browser.threads.list({})).resolves.toMatchObject({
+        data: expect.arrayContaining([expect.objectContaining({ id: threadId })]),
+      });
+      const legacyPage = await browser.threads.list({ limit: 1 });
+      expect(legacyPage.nextCursor).toEqual(expect.any(String));
+      await expect(browser.threads.list({ ...pickerParams, cursor: legacyPage.nextCursor }))
+        .rejects.toThrow('Invalid pagination cursor.');
+      expect(controller.getThread(threadId).id).toBe(threadId);
+
+      f.cowork.clearSessionPendingFirstSend(threadId);
+      await expect(browser.threads.list(pickerParams)).resolves.toMatchObject({
+        data: expect.arrayContaining([expect.objectContaining({ id: threadId })]),
+      });
+    } finally {
+      await hub.stop();
+    }
   });
 
   it('requires manual sending for the connection request and honors the next click automatically', async () => {

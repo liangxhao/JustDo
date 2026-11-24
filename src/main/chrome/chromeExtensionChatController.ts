@@ -61,6 +61,7 @@ import type {
   ChromeExtensionPageContext,
   ChromeExtensionQuestionResponse,
   ChromeExtensionThread,
+  ChromeExtensionThreadListOptions,
   ChromeExtensionTrustedSendHooks,
   ChromeExtensionTurnState,
 } from './chromeAppServerTypes';
@@ -872,9 +873,9 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
     return error.message;
   }
 
-  listSessions() {
+  listSessions(options?: ChromeExtensionThreadListOptions) {
     const store = this.deps.getStore();
-    return store.listSessions().flatMap(summary => {
+    return store.listSessions(undefined, options).flatMap(summary => {
       const session = this.findChromeSession(summary.id);
       if (!session) return [];
       return [
@@ -1885,7 +1886,7 @@ export class ChromeExtensionChatController implements ChromeExtensionChatApi {
             try {
               if (store.clearSessionPendingFirstSend(session.id)) this.deps.onSessionsChanged?.();
             } catch {
-              console.warn('[ChromeExtensionChat] Failed to publish the accepted conversation to the desktop list.');
+              console.warn('[ChromeExtensionChat] Failed to publish the accepted session to conversation lists.');
             }
           }
         },

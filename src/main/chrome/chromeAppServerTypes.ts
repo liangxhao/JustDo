@@ -8,6 +8,7 @@ import type { MessageFileLinkTarget } from '../../shared/preview/messageFileLink
 import type { PermissionMode } from '../../shared/security/approvals';
 import type { AppServerConnectionContext } from '../clients/appServer/protocol/appServerProtocol';
 import type { AppServerModel, AppServerThreadHistory } from '../clients/appServer/protocol/appServerTypes';
+import type { SessionProjectionFilters } from '../data/coworkSessionDirectory';
 import type { CoworkStartOptions } from '../engine/types';
 import type { ExternalApprovalSessionScope } from '../openclaw/permissions/externalApprovalSessionScope';
 import { ChromeAppServerMethod } from './chromeAppServerProtocol';
@@ -100,6 +101,8 @@ export type ChromeExtensionAppServerStreamEvent = ChromeExtensionStreamEvent & {
   retryAttempt?: number;
 };
 
+export type ChromeExtensionThreadListOptions = Pick<SessionProjectionFilters, 'excludePendingFirstSend'>;
+
 export interface ChromeExtensionChatApi {
   listQuestions?: (sessionId: string, assertCurrent: () => void) => Promise<ChromeExtensionQuestion[]>;
   respondQuestion?: (
@@ -111,7 +114,7 @@ export interface ChromeExtensionChatApi {
     sessionId: string,
     listener: (event: ChromeExtensionAppServerStreamEvent) => void,
   ) => Promise<() => void>;
-  listSessions: () => Promise<ChromeExtensionThread[]> | ChromeExtensionThread[];
+  listSessions: (options?: ChromeExtensionThreadListOptions) => Promise<ChromeExtensionThread[]> | ChromeExtensionThread[];
   getThread?: (sessionId: string) => ChromeExtensionThread;
   setThreadName?: (sessionId: string, name: string) => ChromeExtensionThread;
   getHistory?: (sessionId: string) => Promise<AppServerThreadHistory>;

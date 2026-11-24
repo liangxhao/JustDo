@@ -539,10 +539,17 @@ export class ChromeAppServerHub {
   }
 
   private async listThreads(_peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
-    const threads = await this.api.listSessions();
+    // Older side panels rely on the list to retain their selected draft.
+    const excludePendingFirstSend = optionalBoolean(this.chromeParams(params), 'excludePendingFirstSend');
+    const threads = await this.api.listSessions({ excludePendingFirstSend });
     this.assertPeerActive(_peer);
-    const page = paginateThreads(threads.map(thread => toAppServerMetadata(this.selectedThread(_peer, thread))), params);
-    return { ...page, data: page.data.map(metadata => codexThread(metadata, this.loadedIds().includes(metadata.id))) };
+    const page = paginateThreads(
+      threads.map(thread => toAppServerMetadata(this.selectedThread(_peer, thread))),
+      params,
+      excludePendingFirstSend ? 'chrome-exclude-pending-first-send' : undefined,
+    );
+    const loaded = new Set(this.loadedIds());
+    return { ...page, data: page.data.map(metadata => codexThread(metadata, loaded.has(metadata.id))) };
   }
 
   private async readImage(_peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {

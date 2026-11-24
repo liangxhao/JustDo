@@ -485,30 +485,32 @@ function clearPendingUserMessage() {
 async function refreshSessions(preferredSessionId, generation) {
   const previousSelection = sessionSelect.value;
   const current = preferredSessionId ?? sessionSelect.value;
-  const result = await client.request('thread/list');
+  const result = await client.request('thread/list', { chrome: { excludePendingFirstSend: true } });
   if (generation !== refreshGeneration) return false;
+  const conversations = result.data ?? [];
+  const selectedThread = conversations.find(entry => entry.id === current);
+  const draftOption = sessionSelect.querySelector('option[hidden]');
+  const keepDraft = !selectedThread && draftOption?.value === current;
   // Keep the native select's compact label while refreshing its choices.
   sessionSelect.options.length = 0;
   const createOption = document.createElement('option');
   createOption.value = '';
   createOption.textContent = t('newChat');
   sessionSelect.append(createOption);
-  for (const entry of result.data ?? []) {
+  for (const entry of conversations) {
     const option = document.createElement('option');
     option.value = entry.id;
     option.textContent = entry.name ?? entry.preview ?? t('untitled');
     sessionSelect.append(option);
   }
-  if ([...sessionSelect.options].some(option => option.value === current)) {
-    sessionSelect.value = current;
-  }
+  if (keepDraft) sessionSelect.append(draftOption);
+  sessionSelect.value = selectedThread || keepDraft ? current : '';
   if (previousSelection !== sessionSelect.value) {
     draftPermissionSelection = null;
     approvals.cancelAll();
     clearQuestions();
   }
   webLaunchPanel?.updateSelection();
-  const selectedThread = (result.data ?? []).find(entry => entry.id === sessionSelect.value);
   if (selectedThread?.status?.type === 'active' && !pendingCompletions.has(selectedThread.id)) {
     setRunningTurn(
       selectedThread.id,
@@ -1213,9 +1215,12 @@ webLaunchPanel = createWebLaunchPanel({
       input.threadId &&
       ![...sessionSelect.options].some(option => option.value === input.threadId)
     ) {
-      const option = document.createElement('option');
+      const option = sessionSelect.querySelector('option[hidden]') ?? document.createElement('option');
       option.value = input.threadId;
-      option.textContent = t('webLaunchTitle');
+      option.textContent = t('newChat');
+      // Keep the draft selected without adding it to the conversation picker.
+      option.hidden = true;
+      option.disabled = true;
       sessionSelect.append(option);
     }
     if (input.threadId !== undefined) {

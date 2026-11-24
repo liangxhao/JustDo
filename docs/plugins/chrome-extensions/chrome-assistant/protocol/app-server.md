@@ -46,7 +46,7 @@ ws://127.0.0.1:<dynamic-port>/app-server?token=<64 hex chars>
 | 方法                                     | Chrome 范围与行为                                                                      |
 | ---------------------------------------- | -------------------------------------------------------------------------------------- |
 | `model/list`                             | 当前真实模型目录，使用公共模型字段与 cursor／limit；不把过时的 UI 选择冒充可用模型     |
-| `thread/list`                            | 公共分页、排序及已支持筛选，只列浏览器来源会话；wire source 为 `appServer`             |
+| `thread/list`                            | 公共分页、排序及已支持筛选，只列浏览器来源会话；侧栏传入 `chrome.excludePendingFirstSend: true` 过滤待首发网页草稿；wire source 为 `appServer` |
 | `thread/start`                           | 公共创建结果；支持已校验模型及目录。浏览器目录由宿主管理，不能通过请求任意切换         |
 | `thread/read`                            | 默认读取元数据，不隐式订阅；`includeTurns: true` 读取经身份校验的原生历史              |
 | `thread/resume`                          | 显式绑定观察，默认包含标准历史；`excludeTurns: true` 跳过标准正文                      |

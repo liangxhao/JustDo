@@ -54,6 +54,7 @@ vi.mock('../conversation-overlay/modules/sidepanel-stream.js', () => ({
     project() { return { id: this.id, turns: [] }; }
     setHistory() {}
     start = mock.startStream;
+    identifyInput() { return false; }
     cancelStart() {}
     bindRun() { return true; }
     finish() {}
@@ -295,6 +296,7 @@ describe('side panel interactions', () => {
   });
 
   it.each(['click', 'Enter'])('uses %s to send a website draft before Stop targets the exact launch', async activation => {
+    const threadId = 'website-draft';
     const receipt = {
       launchId: 'website-launch',
       receiptRevision: 1,
@@ -302,7 +304,11 @@ describe('side panel interactions', () => {
       execution: { status: 'not-started', executionSettled: false },
       output: { status: 'awaiting-consent' },
     };
-    const pendingSubmit = deferred<{ ok: boolean; receipt: typeof receipt }>();
+    const pendingSubmit = deferred<{
+      ok: boolean;
+      receipt: typeof receipt;
+      internal: { threadId: string; clientTurnId: string; nativeRunId: string };
+    }>();
     const webRequest = vi.fn(async (request: { type: string }) => {
       if (request.type === 'web-launch:launch:submit') return pendingSubmit.promise;
       if (request.type === 'web-launch:launch:revise') return {
@@ -327,13 +333,21 @@ describe('side panel interactions', () => {
     });
 
     await mount();
+    const hostRequest = mock.request.getMockImplementation()!;
+    let acknowledged = false;
+    mock.request.mockImplementation(async (method, params) => {
+      const result = await hostRequest(method, params);
+      if (method === 'thread/list' && (acknowledged || !params?.chrome?.excludePendingFirstSend))
+        return { data: [...result.data, { id: threadId, name: 'Summarize these orders' }] };
+      return result;
+    });
     const registration = webRequest.mock.calls.find(([request]) => request.type === 'web-launch:panel:register')![0];
     receive({
       ...registration,
       type: 'web-launch:panel:event',
       envelope: {
         launchId: receipt.launchId,
-        threadId: 'one',
+        threadId,
         origin: 'https://business.invalid:8443',
         prompt: 'Summarize these orders',
         mode: 'draft',
@@ -351,10 +365,15 @@ describe('side panel interactions', () => {
     const prompt = element<HTMLTextAreaElement>('prompt');
     const send = element<HTMLButtonElement>('send');
     const permission = element<HTMLSelectElement>('permission');
+    const select = element<HTMLSelectElement>('session');
+    const visibleConversations = () => [...select.options].filter(option => !option.hidden).map(option => option.value);
     await vi.waitFor(() => {
       expect(prompt.value).toBe('Summarize these orders');
       expect(send.disabled).toBe(false);
     });
+    expect(select.value).toBe(threadId);
+    expect(select.selectedOptions[0].textContent).toBe('New chat');
+    expect(visibleConversations()).not.toContain(threadId);
     expect(document.getElementById('webLaunchCard')).toBeNull();
     expect(permission.value).toBe('full');
     expect(send.getAttribute('aria-label')).toBe('Send');
@@ -381,6 +400,8 @@ describe('side panel interactions', () => {
       expect(send.getAttribute('aria-label')).toBe('Stop');
       expect(send.disabled).toBe(false);
     });
+    expect(select.selectedOptions[0].textContent).toBe('New chat');
+    expect(visibleConversations()).not.toContain(threadId);
     expect(webRequest).toHaveBeenCalledWith(expect.objectContaining({
       type: 'web-launch:launch:submit', launchId: receipt.launchId,
       submission: 'confirmed', shareResult: true, confirmNewTask: true,
@@ -393,8 +414,18 @@ describe('side panel interactions', () => {
     expect(webRequest).toHaveBeenCalledWith(expect.objectContaining({
       type: 'web-launch:launch:stop', launchId: receipt.launchId,
     }));
-    pendingSubmit.resolve({ ok: true, receipt });
-    await flush();
+    acknowledged = true;
+    pendingSubmit.resolve({
+      ok: true,
+      receipt: {
+        ...receipt, receiptRevision: 3, request: { status: 'submitted' },
+        execution: { status: 'running', executionSettled: false },
+      },
+      internal: { threadId, clientTurnId: 'turn', nativeRunId: 'native-run' },
+    });
+    await vi.waitFor(() => expect(visibleConversations()).toContain(threadId));
+    expect(select.value).toBe(threadId);
+    expect(select.selectedOptions[0].textContent).toBe('Summarize these orders');
     expect(webRequest.mock.calls.filter(([request]) => request.type === 'web-launch:launch:submit')).toHaveLength(1);
     expect(mock.request.mock.calls.filter(([method]) => method === 'turn/start' || method === 'turn/interrupt')).toHaveLength(0);
   });

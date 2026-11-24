@@ -64,7 +64,7 @@ type Prepare = {
 
 - 后台以浏览器 `MessageSender` 为来源，网页字段不能覆盖。`payloadDigest` 是 `canonicalWebLaunchInput` 的 UTF-8 SHA-256。
 - 后台为原文档的新真实点击发送 `prepare`，由 Main 按当前文档来源选择有效租约或创建新租约。成功接纳的回执各自保留租约 ID，站点授权和已消费的点击序号跨租约生效。
-- `prepare` 在同一事务内为预留的产品会话记录待首发标记。侧栏可以恢复该草稿。Chrome 聊天 Controller 在核验首条原生发送 ACK 后清除标记，桌面目录和搜索此时才展示该会话。
+- `prepare` 在同一事务内为预留的产品会话记录待首发标记。侧栏按草稿会话 ID 恢复，使用 `thread/list` 的 `chrome.excludePendingFirstSend` 筛选正式列表。Chrome 聊天 Controller 在核验首条原生发送 ACK 后清除标记，侧栏列表、桌面目录和搜索此时才展示该会话。
 - 相同文档请求身份与摘要返回原回执。同 ID 换内容返回 `REQUEST_CONFLICT`。
 - 已消费的序号若缺少完整回执，返回 `EXPIRED`，不重新创建会话。
 
