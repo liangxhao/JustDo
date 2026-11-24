@@ -59,7 +59,8 @@ export function createWebConnectionPanel({ document, chrome, request, onNotice }
     !disposed &&
     action === operation &&
     pending?.pendingId === snapshot.pendingId &&
-    pending.revision === snapshot.revision &&
+    (pending.revision === snapshot.revision ||
+      (pending.status === Status.Granting && pending.revision === snapshot.revision + 1)) &&
     active();
   function render() {
     const visible = active();
@@ -114,7 +115,13 @@ export function createWebConnectionPanel({ document, chrome, request, onNotice }
         ? { ...value, status: Status.Expired, code: undefined }
         : { ...value };
     const statusChanged = pending?.pendingId !== next.pendingId || pending.status !== next.status;
-    if (statusChanged || pending.revision !== next.revision) {
+    const acknowledgingAllow =
+      allowing &&
+      pending?.pendingId === next.pendingId &&
+      pending.status === Status.Awaiting &&
+      next.status === Status.Granting &&
+      next.revision === pending.revision + 1;
+    if (!acknowledgingAllow && (statusChanged || pending.revision !== next.revision)) {
       action += 1;
       allowing = denying = false;
       errorCode = '';
@@ -181,27 +188,26 @@ export function createWebConnectionPanel({ document, chrome, request, onNotice }
     allowing = true;
     errorCode = '';
     render();
+    // Record the click before awaiting Chrome. The background can finish after this panel closes.
+    void decide(snapshot, operation, 'allow');
     void Promise.resolve(permission)
       .catch(() => false)
       .then(granted => {
-        if (!current(snapshot, operation)) return;
-        return decide(
-          snapshot,
-          operation,
-          granted ? 'allow' : 'deny',
-          granted ? undefined : 'permission-denied',
-        );
+        if (granted || !current(snapshot, operation)) return;
+        reject(snapshot, 'permission-denied');
       });
   });
-  deny.addEventListener('click', () => {
-    if (!active() || denying) return;
-    const snapshot = { ...pending };
+  function reject(snapshot, reason) {
     const operation = ++action;
     allowing = false;
     denying = true;
     errorCode = '';
     render();
-    void decide(snapshot, operation, 'deny');
+    void decide(snapshot, operation, 'deny', reason);
+  }
+  deny.addEventListener('click', () => {
+    if (!active() || denying) return;
+    reject({ ...pending });
   });
   return {
     accept,

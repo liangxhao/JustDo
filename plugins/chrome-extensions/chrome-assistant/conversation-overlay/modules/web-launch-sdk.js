@@ -273,12 +273,40 @@ export function createChromeAssistant({
       );
     });
   }
+  function bridgeOwnsClick(binding) {
+    return binding.registration?.supportsHandoff === true &&
+      !binding.button.hasAttribute(BIND_ATTRIBUTE);
+  }
+  function attachBootstrapBinding(binding, supportsHandoff) {
+    if (!binding.bootstrap) return Promise.resolve();
+    if (binding.registration) return binding.registration.promise;
+    binding.button.setAttribute(BIND_ATTRIBUTE, binding.id);
+    const registration = { supportsHandoff };
+    registration.promise = call(binding.id, 'bind', {
+      bindingRevision: binding.revision,
+      input: binding.input,
+    }).catch(error => {
+      // The isolated bridge can be ready even if its reply is dropped.
+      if (error.code !== 'BRIDGE_UNAVAILABLE' || binding.closed ||
+          binding.registration !== registration || !bridgeOwnsClick(binding))
+        throw error;
+    }).then(() => {
+      if (binding.registration === registration) binding.bootstrap = false;
+    }).finally(() => {
+      if (binding.registration === registration) binding.registration = undefined;
+    });
+    binding.registration = registration;
+    return registration.promise;
+  }
   function closeBinding(binding) {
+    if (bridgeOwnsClick(binding)) binding.bootstrap = false;
     binding.closed = true;
     binding.generation += 1;
     stopPolling(binding);
     if (externalAvailable && binding.bootstrapPending)
       void external('cancel', { bindingId: binding.id }).catch(() => {});
+    if (binding.button.getAttribute(BIND_ATTRIBUTE) === binding.id)
+      binding.button.removeAttribute(BIND_ATTRIBUTE);
     binding.requests.clear();
     bindings.delete(binding.id);
   }
@@ -316,6 +344,7 @@ export function createChromeAssistant({
         }
         if (message.reconnectRequired && externalAvailable) {
           binding.bootstrap = true;
+          binding.registration = undefined;
           binding.bootstrapPending = false;
           binding.connectionId = undefined;
           stopPolling(binding);
@@ -336,17 +365,20 @@ export function createChromeAssistant({
       )
         return;
       const generation = binding.generation;
+      const supportsHandoff = message.bindingHandoff === true;
       binding.continuingGeneration = generation;
       void (async () => {
         try {
-          binding.button.setAttribute(BIND_ATTRIBUTE, binding.id);
-          await call(binding.id, 'bind', {
-            bindingRevision: binding.revision,
-            input: binding.input,
-          });
+          await attachBootstrapBinding(binding, supportsHandoff);
           if (binding.closed || binding.generation !== generation) return;
-          binding.bootstrap = false;
-          const result = await call(binding.id, 'continue', { pendingId: message.pendingId });
+          const continuation = call(binding.id, 'continue', { pendingId: message.pendingId });
+          if (supportsHandoff) {
+            for (const other of bindings.values()) {
+              if (other !== binding && other.bootstrap && other.button.isConnected)
+                void attachBootstrapBinding(other, supportsHandoff).catch(() => {});
+            }
+          }
+          const result = await continuation;
           if (binding.closed || binding.generation !== generation) return;
           binding.bootstrapPending = false;
           stopPolling(binding);
@@ -456,6 +488,7 @@ export function createChromeAssistant({
         !value.closed &&
         value.bootstrap &&
         !value.bootstrapPending &&
+        !bridgeOwnsClick(value) &&
         event.composedPath().includes(value.button),
     );
     if (
@@ -554,7 +587,6 @@ export function createChromeAssistant({
           await call(id, 'bind', { bindingRevision: 1, input: binding.input });
       } catch (error) {
         closeBinding(binding);
-        if (button.getAttribute(BIND_ATTRIBUTE) === id) button.removeAttribute(BIND_ATTRIBUTE);
         throw error;
       }
       return Object.freeze({
@@ -566,6 +598,8 @@ export function createChromeAssistant({
           try {
             const next = normalizeInput(input);
             const digest = externalAvailable ? await inputDigest(next, cryptoApi) : undefined;
+            if (binding.registration) await binding.registration.promise.catch(() => {});
+            if (binding.closed) throw failure('EXPIRED');
             if (!binding.bootstrap)
               await call(id, 'update', { bindingRevision: binding.revision + 1, input: next });
             binding.revision += 1;
@@ -578,6 +612,7 @@ export function createChromeAssistant({
         async unbind() {
           if (binding.closed) return;
           closeBinding(binding);
+          if (binding.registration) await binding.registration.promise.catch(() => {});
           if (!binding.bootstrap) await call(id, 'unbind');
         },
       });

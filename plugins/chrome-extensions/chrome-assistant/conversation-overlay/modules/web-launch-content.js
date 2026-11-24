@@ -77,22 +77,28 @@ export function installWebLaunchContent({
       throw { code: 'INVALID_REQUEST' };
     if ([...bindings.values()].some(binding => binding !== previous && binding.element === element))
       throw { code: 'REQUEST_CONFLICT' };
-    element.removeAttribute(BIND_ATTRIBUTE);
     const binding = { element, input, revision: message.bindingRevision, ready: false };
     bindings.set(message.bindingId, binding);
-    const digest = cryptoApi.subtle
-      ? await inputDigest(input, cryptoApi)
-      : (await send({ type: `${WEB_RUNTIME}digest`, input })).digest;
-    if (!/^[a-f0-9]{64}$/u.test(digest ?? '')) throw { code: 'BRIDGE_UNAVAILABLE' };
-    if (
-      terminated ||
-      documentNonce !== registrationNonce ||
-      bindings.get(message.bindingId) !== binding ||
-      !element.isConnected
-    )
-      throw { code: 'EXPIRED' };
-    binding.digest = digest;
+    try {
+      binding.digest = cryptoApi.subtle
+        ? await inputDigest(input, cryptoApi)
+        : (await send({ type: `${WEB_RUNTIME}digest`, input })).digest;
+      if (!/^[a-f0-9]{64}$/u.test(binding.digest ?? '')) throw { code: 'BRIDGE_UNAVAILABLE' };
+      if (
+        terminated ||
+        documentNonce !== registrationNonce ||
+        bindings.get(message.bindingId) !== binding ||
+        !element.isConnected ||
+        (!previous && element.getAttribute(BIND_ATTRIBUTE) !== message.bindingId)
+      )
+        throw { code: 'EXPIRED' };
+    } catch (error) {
+      if (!previous && bindings.get(message.bindingId) === binding)
+        bindings.delete(message.bindingId);
+      throw error;
+    }
     binding.ready = true;
+    if (!previous) element.removeAttribute(BIND_ATTRIBUTE);
     reply(message, { ok: true, bindingRevision: binding.revision });
   }
 
@@ -413,7 +419,7 @@ export function installWebLaunchContent({
         expiresAt: message.expiresAt,
       };
       continuations.set(value.pendingId, value);
-      post({ kind: 'connection-ready', ...value });
+      post({ kind: 'connection-ready', ...value, bindingHandoff: true });
       reply({ ok: true });
       return false;
     }

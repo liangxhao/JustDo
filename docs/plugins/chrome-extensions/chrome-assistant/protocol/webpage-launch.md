@@ -77,11 +77,11 @@ type Prepare = {
 ### 首次连接与受限续接
 
 1. 扩展通过独立的 `runtime.onMessageExternal` 接收连接 `probe`、`request`、`query`、`cancel`。入口仅处理这四种连接消息，不能代理 Native discovery、任意 RPC 或业务任务的 `prepare`／`submit`。扩展管理外部来源、待确认身份、绝对期限、原文档绑定和单次续接，Main 不增加待确认状态或正文存储。
-2. 用户在侧栏同意连接后，后台对精确 origin 写入 `{enabled:true, allowSend:true, allowResult:true}`。写入使用待确认时冻结的全局 `expectedRevision`，冲突后等待新的连接请求。已有完整授权时可沿用原记录。旧站点缺少任一权限时，需要通过连接卡确认完整授权范围。新版后台只把三项均为 `true` 的站点视为已连接。
+2. 用户在侧栏同意连接后，后台记录决定。Chrome 授予访问权限后，后台对精确 origin 写入 `{enabled:true, allowSend:true, allowResult:true}`。站点授权在准备草稿前持久化。写入比较当前全局 `expectedRevision`，仅当待确认站点本身的 revision 未变时，才重试无关策略冲突。完整的站点授权与 Chrome 访问权限均有效时，可沿用原记录并自动恢复内容桥。经外部连接入口接收的原点击仍按受限续接处理。
 3. 受限 `prepare` 成对传入 `connectionOnly:true` 和确认连接时的全局 `expectedPolicyRevision`。`false`、缺失 revision 或单独 revision 均拒绝。Main 在同一同步事务内比较全局 revision，保留原 `input` 和 `payloadDigest`，强制原请求等待侧栏手动发送。已存在的较高授权回执不能重新解释为受限续接。
 4. 用户在可信侧栏点击发送时确认该次操作。请求为 `final` 时，这一点击同时确认本轮回传。
 
-每个窗口可保留一笔等待中的连接申请。窗口仍有待处理输入或任务队列时，初始状态为 `waiting-for-window`，保留原浏览器文档、绑定和两分钟期限。输入可用后重新读取策略，进入 `awaiting-consent`。已有连接申请时，后来的点击收到 `waiting-for-connection`，网页提示回原标签页处理已有申请。
+每个窗口可保留一笔等待中的连接申请。需要新授权时，窗口仍有待处理输入或任务队列则进入 `waiting-for-window`，保留原文档、绑定和两分钟期限。输入可用后显示授权卡。窗口随后变忙时，用户仍可确认授权，原请求经受限续接进入队列。已有连接申请时，后来的连接点击收到 `waiting-for-connection`，网页提示回原标签页处理已有申请。
 
 已具备当前站点授权和 Chrome host permission 的页面可由 `probe` 按精确浏览器文档修复内容桥。修复只注入内容脚本，后续发送仍需要新真实点击。
 

@@ -25,6 +25,8 @@ const Status = Object.freeze({
   Expired: 'expired',
 });
 const pendingDecision = value => [Status.Awaiting, Status.Granting].includes(value.status);
+const showDecision = value => !value.reuseGrant && !value.continuationStatus && pendingDecision(value) &&
+  (value.requiresAction || value.code || value.status === Status.Granting);
 const needsPolicy = value =>
   [Status.Waiting, Status.Awaiting].includes(value.status) && value.sitesRevision === undefined;
 const live = value =>
@@ -32,6 +34,7 @@ const live = value =>
     pendingDecision(value) ||
     value.status === Status.Connected) &&
   !value.claimed;
+const hasOpenContinuation = value => live(value) && !value.continuationStatus;
 const competingConnection = supportsWaiting => ({
   ok: true,
   connectionPending: supportsWaiting
@@ -52,11 +55,15 @@ const metadata = value =>
         revision: value.revision,
         origin: value.source.origin,
         expiresAt: value.expiresAt,
-        status: value.status,
+        status: value.continuationStatus ?? value.status,
         requiresAction: value.requiresAction === true,
-        ...(value.code ? { code: value.code } : {}),
+        ...(value.code && !value.continuationStatus ? { code: value.code } : {}),
       }
     : null;
+const retryableGrantErrors = new Set([
+  'APP_NOT_RUNNING', 'CONNECTION_UNAVAILABLE', 'NATIVE_HOST_UNAVAILABLE',
+  'REQUEST_TIMEOUT', 'STORAGE_UNAVAILABLE',
+]);
 
 /** Untrusted external messages can request a connection, never a native operation. */
 export function createWebLaunchConnections({
@@ -65,7 +72,9 @@ export function createWebLaunchConnections({
   store,
   client,
   readSites,
+  currentSite,
   applySites,
+  cacheWebsiteGrants,
   registerScripts,
   hasCachedWebsiteGrant,
   notify,
@@ -78,17 +87,35 @@ export function createWebLaunchConnections({
   const retired = new Set();
   const refreshes = new Map();
   const windowChecks = new Map();
+  const granting = new Map();
   const expired = value => value.expiresAt <= now();
+  const mayReuseGrant = value => [Status.Awaiting, Status.Waiting].includes(value.status) &&
+    hasWebsiteLaunchGrant(currentSite(value.source.origin));
   const retire = id => {
     retired.add(id);
     if (retired.size > 128) retired.delete(retired.values().next().value);
   };
+  function endContinuation(value, status) {
+    if (!hasOpenContinuation(value)) return false;
+    retire(value.pendingId);
+    value.requiresAction = false;
+    delete value.input;
+    if (value.status === Status.Granting && !value.reuseGrant) {
+      // Page navigation and unbinding can close the draft independently of a trusted Allow.
+      value.continuationStatus = status;
+    } else {
+      value.status = status;
+      value.revision += 1;
+    }
+  }
   function collect(values) {
     for (const value of Object.values(values)) {
       if (live(value) && expired(value)) {
-        value.status = Status.Expired;
+        value.status = value.continuationStatus ?? Status.Expired;
         value.revision += 1;
         value.requiresAction = false;
+        if (value.continuationStatus) delete value.code;
+        delete value.continuationStatus;
         delete value.input;
       }
     }
@@ -99,14 +126,17 @@ export function createWebLaunchConnections({
       delete values[value.pendingId];
   }
   async function change(pendingId, action) {
-    const { result, changed } = await store(values => {
+    const { result, changed, wasVisible } = await store(values => {
       collect(values);
       const value = values[pendingId];
       if (!value) throw { code: 'EXPIRED' };
+      const wasVisible = showDecision(value);
       const changed = action(value) !== false;
-      return { result: structuredClone(value), changed };
+      return { result: structuredClone(value), changed, wasVisible };
     });
-    if (changed) notify(result.source, metadata(result));
+    if (changed && (!pendingDecision(result) || showDecision(result) || result.continuationStatus))
+      notify(result.source, metadata(result));
+    else if (changed && wasVisible) notify(result.source, null);
     return result;
   }
   async function current(panel) {
@@ -114,7 +144,7 @@ export function createWebLaunchConnections({
       collect(values);
       const value = Object.values(values)
         .reverse()
-        .filter(item => inPanelTab(item, panel) && pendingDecision(item))
+        .filter(item => inPanelTab(item, panel) && showDecision(item))
         .sort((a, b) => b.createdAt - a.createdAt)[0];
       return metadata(value);
     });
@@ -124,7 +154,6 @@ export function createWebLaunchConnections({
     item.status = Status.Waiting;
     item.requiresAction = false;
     item.revision += 1;
-    delete item.sitesRevision;
     delete item.code;
   }
   function checkWindowWork(windowId) {
@@ -135,20 +164,15 @@ export function createWebLaunchConnections({
     void reconcileWindowWork(windowId).catch(() => {});
   }
   async function refreshConsent(value) {
-    if (![Status.Waiting, Status.Awaiting].includes(value.status)) return value;
+    if (!needsPolicy(value) && !mayReuseGrant(value)) return value;
     const { windowId } = value.source;
-    if (windowBusy(windowId)) {
-      checkWindowWork(windowId);
-      return value.status === Status.Waiting
-        ? value
-        : change(value.pendingId, item =>
-            item.status === Status.Awaiting && windowBusy(windowId) ? deferConsent(item) : false,
-          );
-    }
-    if (!needsPolicy(value)) return value;
     let policies;
+    let site;
+    let reuseGrant;
     try {
       policies = await readSites();
+      site = policies.sites.find(site => site.origin === value.source.origin);
+      reuseGrant = hasWebsiteLaunchGrant(site) && await hasHostPermission(value);
     } catch (error) {
       return change(value.pendingId, item => {
         const code = publicErrorCode(error);
@@ -157,15 +181,22 @@ export function createWebLaunchConnections({
         item.revision += 1;
       });
     }
-    return change(value.pendingId, item => {
-      if (!needsPolicy(item)) return false;
-      if (windowBusy(item.source.windowId)) return deferConsent(item);
-      item.status = Status.Awaiting;
+    const pending = await change(value.pendingId, item => {
+      if (item.revision !== value.revision || (!needsPolicy(item) && !(reuseGrant && mayReuseGrant(item))))
+        return false;
+      if (!reuseGrant && windowBusy(windowId)) {
+        checkWindowWork(windowId);
+        return deferConsent(item);
+      }
+      item.status = reuseGrant ? Status.Granting : Status.Awaiting;
       item.sitesRevision = policies.revision;
-      item.requiresAction = true;
+      item.siteRevision = site?.revision ?? null;
+      item.reuseGrant = reuseGrant;
+      item.requiresAction = !reuseGrant;
       item.revision += 1;
       delete item.code;
     });
+    return pending.status === Status.Granting ? completeGrant(pending) : pending;
   }
   async function find(message, sender) {
     return store(values => {
@@ -204,13 +235,14 @@ export function createWebLaunchConnections({
       files: ['web-launch-content.js'],
     });
   }
+  function hasHostPermission({ source }) {
+    const origin = new URL(source.origin);
+    return chromeApi.permissions.contains({ origins: [`${origin.protocol}//${origin.hostname}/*`] });
+  }
   async function probeConnection(sender) {
-    const origin = new URL(sender.origin);
     if (
-      !(await hasCachedWebsiteGrant(sender.origin)) ||
-      !(await chromeApi.permissions.contains({
-        origins: [`${origin.protocol}//${origin.hostname}/*`],
-      }))
+      !(await hasHostPermission({ source: sender })) ||
+      !(await hasCachedWebsiteGrant(sender.origin, { refresh: true }))
     )
       return false;
     const source = {
@@ -241,7 +273,7 @@ export function createWebLaunchConnections({
       const current = values[value.pendingId];
       if (!current || current.status !== Status.Granting || current.revision !== value.revision)
         throw { code: 'EXPIRED' };
-      return structuredClone(current);
+      return current.continuationStatus;
     });
   }
   function assertLive(value) {
@@ -258,22 +290,19 @@ export function createWebLaunchConnections({
     if (prior && now() - prior.at < WINDOW_CHECK_INTERVAL) return;
     refreshes.set(key, { at: now() });
     if (refreshes.size > 128) refreshes.delete(refreshes.keys().next().value);
-    const value = await store(values =>
+    const pending = await store(values =>
       structuredClone(
-        Object.values(values).find(
+        Object.values(values).filter(
           item =>
             inPanelTab(item, panel) &&
             !expired(item) &&
-            (needsPolicy(item) || (item.status === Status.Awaiting && windowBusy(panel.windowId))),
+            (needsPolicy(item) || item.status === Status.Granting || mayReuseGrant(item)),
         ),
       ),
     );
-    if (!value) return;
-    try {
-      await refreshConsent(value);
-    } catch {
-      /* The trusted panel heartbeat can retry discovery without granting anything. */
-    }
+    await Promise.allSettled(pending.map(value =>
+      value.status === Status.Granting ? completeGrant(value) : refreshConsent(value),
+    ));
   }
   async function decide(message) {
     if (
@@ -295,7 +324,7 @@ export function createWebLaunchConnections({
       )
     )
       throw { code: 'INVALID_REQUEST' };
-    let value = await change(message.pendingId, item => {
+    const value = await change(message.pendingId, item => {
       if (!inPanelTab(item, message)) throw { code: 'FORBIDDEN' };
       if (message.decision === 'deny') {
         if (item.claimed) throw { code: 'TOO_LATE' };
@@ -304,59 +333,83 @@ export function createWebLaunchConnections({
         throw { code: 'EXPIRED' };
       if (message.decision === 'allow' && (item.status !== Status.Awaiting || !item.requiresAction))
         throw { code: 'EXPIRED' };
-      if (message.decision === 'allow' && windowBusy(item.source.windowId))
-        return deferConsent(item);
+      if (message.decision === 'allow') assertLive(item);
       item.status = message.decision === 'deny' ? Status.Rejected : Status.Granting;
       item.requiresAction = false;
       item.revision += 1;
       if (message.decision === 'deny') {
         retire(item.pendingId);
+        delete item.continuationStatus;
         item.code =
           message.reason === 'permission-denied' ? 'PERMISSION_REQUIRED' : 'CONNECTION_REJECTED';
         delete item.input;
       }
     });
-    if (message.decision === 'deny' || value.status === Status.Waiting)
-      return { ok: true, connectionPending: metadata(value) };
-    try {
-      const origin = new URL(value.source.origin);
-      if (
-        !(await chromeApi.permissions.contains({
-          origins: [`${origin.protocol}//${origin.hostname}/*`],
-        }))
-      )
-        throw { code: 'PERMISSION_REQUIRED' };
-      await sourceActive(value);
+    const pending = message.decision === 'deny' ? value : await completeGrant(value);
+    return { ok: true, connectionPending: metadata(pending) };
+  }
+  async function saveGrant(value) {
+    const { origin } = value.source;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const policies = await readSites();
       await assertGrant(value);
-      let policies = await readSites();
-      await assertGrant(value);
-      assertLive(value);
-      if (policies.revision !== value.sitesRevision) throw { code: 'POLICY_CONFLICT' };
-      const existing = policies.sites.find(site => site.origin === value.source.origin);
-      if (!hasWebsiteLaunchGrant(existing)) {
-        policies = await client.request(WebLaunchMethod.SitesWrite, {
-          expectedRevision: value.sitesRevision,
-          origin: value.source.origin,
+      const existing = policies.sites.find(site => site.origin === origin);
+      if (hasWebsiteLaunchGrant(existing)) return { revision: policies.revision, updated: false };
+      if (value.reuseGrant || (value.siteRevision === undefined
+        ? policies.revision !== value.sitesRevision
+        : (existing?.revision ?? null) !== value.siteRevision))
+        throw { code: 'POLICY_CONFLICT' };
+      try {
+        const updated = await client.request(WebLaunchMethod.SitesWrite, {
+          expectedRevision: policies.revision,
+          origin,
           enabled: true,
           allowSend: true,
           allowResult: true,
         });
-        if (!Array.isArray(policies?.sites)) throw { code: 'CONNECTION_UNAVAILABLE' };
-        applySites(policies);
+        if (!Array.isArray(updated?.sites)) throw { code: 'CONNECTION_UNAVAILABLE' };
+        applySites(updated);
+        return { revision: updated.revision, updated: true };
+      } catch (error) {
+        if (publicErrorCode(error) !== 'POLICY_CONFLICT' || attempt === 2) throw error;
       }
+    }
+  }
+  function completeGrant(value) {
+    const id = value.pendingId;
+    if (granting.has(id)) return granting.get(id);
+    const completion = finishGrant(value).finally(() => granting.delete(id));
+    granting.set(id, completion);
+    return completion;
+  }
+  async function finishGrant(value) {
+    let policies;
+    try {
       await assertGrant(value);
-      await registerScripts(policies);
-      await sourceActive(value);
-      await assertGrant(value);
-      await injectBridge(value.source);
-      await assertGrant(value);
+      if (!(await hasHostPermission(value))) return value;
+      policies = await saveGrant(value);
+      // Persistence and delivery to this particular document have separate lifetimes.
+      await (policies.updated ? registerScripts() : cacheWebsiteGrants()).catch(() => {});
+      if (!(await assertGrant(value))) {
+        assertLive(value);
+        await sourceActive(value);
+        if (!(await assertGrant(value))) await injectBridge(value.source);
+      }
       value = await change(value.pendingId, item => {
         if (item.status !== Status.Granting || item.revision !== value.revision)
           throw { code: 'EXPIRED' };
-        item.status = Status.Connected;
-        item.policyRevision = policies.revision;
+        if (item.continuationStatus) {
+          item.status = item.continuationStatus;
+        } else {
+          assertLive(item);
+          item.status = Status.Connected;
+          item.policyRevision = policies.revision;
+        }
+        delete item.continuationStatus;
+        delete item.code;
         item.revision += 1;
       });
+      if (value.status !== Status.Connected) return value;
       const ready = await chromeApi.tabs.sendMessage(
         value.source.tabId,
         {
@@ -370,13 +423,25 @@ export function createWebLaunchConnections({
         { documentId: value.source.documentId },
       );
       if (!ready?.ok) throw { code: 'EXPIRED' };
-      return { ok: true, connectionPending: metadata(value) };
+      return value;
     } catch (error) {
+      const code = publicErrorCode(error);
+      if (!policies && retryableGrantErrors.has(code) && error?.code) {
+        return change(value.pendingId, item => {
+          if (item.status !== Status.Granting || item.revision !== value.revision || item.code === code)
+            return false;
+          item.code = code;
+          item.revision += 1;
+        });
+      }
       await change(value.pendingId, item => {
-        if (![Status.Granting, Status.Connected].includes(item.status) || item.claimed)
+        if (![Status.Granting, Status.Connected].includes(item.status) ||
+            item.revision !== value.revision || item.claimed)
           return false;
-        item.status = Status.Expired;
-        item.code = publicErrorCode(error);
+        item.status = item.continuationStatus ?? Status.Expired;
+        if (item.continuationStatus) delete item.code;
+        else item.code = code;
+        delete item.continuationStatus;
         item.revision += 1;
         delete item.input;
       }).catch(() => {});
@@ -430,15 +495,16 @@ export function createWebLaunchConnections({
         }).then(async value => {
           if (!value) {
             const hasCompetingConnection = await store(values => Object.values(values).some(
-              item => item.source.windowId === sender.tab.windowId && !expired(item) && live(item),
+              item => item.source.windowId === sender.tab.windowId && !expired(item) && hasOpenContinuation(item),
             ));
             return hasCompetingConnection ? competingConnection(false)
               : { ok: true, connectionPending: { status: Status.Expired } };
           }
-          const busy = windowBusy(sender.tab.windowId);
-          const shouldRefresh =
-            (value.status === Status.Waiting && (busy || !value.code)) ||
-            (value.status === Status.Awaiting && busy);
+          const busy = value.status === Status.Waiting && windowBusy(value.source.windowId);
+          if (busy) checkWindowWork(value.source.windowId);
+          const shouldRefresh = value.status === Status.Waiting && !value.code && !busy;
+          if (value.status === Status.Granting || (!shouldRefresh && mayReuseGrant(value)))
+            void refresh(value.source).catch(() => {});
           return {
             ok: true,
             connectionPending: metadata(shouldRefresh ? await refreshConsent(value) : value),
@@ -451,12 +517,7 @@ export function createWebLaunchConnections({
           .then(value =>
             change(value.pendingId, item => {
               if (item.claimed) throw { code: 'TOO_LATE' };
-              if (!live(item)) return false;
-              retire(item.pendingId);
-              item.status = Status.Cancelled;
-              item.requiresAction = false;
-              item.revision += 1;
-              delete item.input;
+              return endContinuation(item, Status.Cancelled);
             }),
           )
           .then(value => ({ ok: true, connectionPending: metadata(value) })),
@@ -501,7 +562,7 @@ export function createWebLaunchConnections({
             if ((tabEpoch.get(sender.tab.id) ?? 0) !== epoch) throw { code: 'EXPIRED' };
             collect(values);
             const existing = Object.values(values).find(
-              item => item.source.windowId === sender.tab.windowId && live(item),
+              item => item.source.windowId === sender.tab.windowId && hasOpenContinuation(item),
             );
             if (existing) {
               if (
@@ -549,7 +610,6 @@ export function createWebLaunchConnections({
           });
           if (!value) return competingConnection(message.connectionWaitStatus);
           if ((tabEpoch.get(sender.tab.id) ?? 0) !== epoch) throw { code: 'EXPIRED' };
-          notify(value.source, metadata(value));
           value = await refreshConsent(value);
           return { ok: true, connectionPending: metadata(value) };
         })
@@ -586,12 +646,7 @@ export function createWebLaunchConnections({
     void store(values => {
       const invalidated = [];
       for (const value of Object.values(values))
-        if (value.source.tabId === tabId && live(value)) {
-          retire(value.pendingId);
-          value.status = Status.Expired;
-          value.revision += 1;
-          value.requiresAction = false;
-          delete value.input;
+        if (value.source.tabId === tabId && endContinuation(value, Status.Expired) !== false) {
           invalidated.push({ source: value.source, pending: metadata(value) });
         }
       return invalidated;
@@ -601,5 +656,19 @@ export function createWebLaunchConnections({
       })
       .catch(() => {});
   }
-  return { handleExternalMessage, decide, current, consume, invalidateTab, refresh };
+  async function resumeGrants() {
+    const pending = await store(values => {
+      collect(values);
+      return structuredClone(Object.values(values).filter(item => item.status === Status.Granting));
+    });
+    await Promise.allSettled(pending.map(async value => {
+      // Recheck if an earlier attempt was already running when the event arrived.
+      const updated = await (granting.get(value.pendingId) ?? value);
+      if (updated.status === Status.Granting) await completeGrant(updated);
+    }));
+  }
+  chromeApi.permissions.onAdded?.addListener(() => {
+    void resumeGrants().catch(() => {});
+  });
+  return { handleExternalMessage, decide, current, consume, invalidateTab, refresh, resumeGrants };
 }

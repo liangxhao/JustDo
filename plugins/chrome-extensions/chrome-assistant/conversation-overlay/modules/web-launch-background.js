@@ -20,7 +20,7 @@ import {
 const SESSION_KEY = 'chromeWebLaunchSession';
 const SITES_KEY = 'chromeWebLaunchGrantedOrigins';
 const LEGACY_SITES_KEY = 'chromeWebLaunchSites';
-const LEGACY_SITE_READ_TIMEOUT_MS = 1000;
+const SITE_GRANT_READ_TIMEOUT_MS = 1000;
 const grantedOriginsFrom = sites => sites.filter(hasWebsiteLaunchGrant).map(site => site.origin);
 const scriptId = origin =>
   `web-launch-${[...new TextEncoder().encode(origin)].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
@@ -84,12 +84,14 @@ export function createWebLaunchBackground({
   let state;
   let serial = Promise.resolve();
   let sites = { revision: -1, sites: [] };
+  const currentSite = origin => sites.sites.find(site => site.origin === origin);
   let observing;
   const client =
     injectedClient ??
     new AppServerClient(
       (method, params) => {
         if (method === 'chrome/webLaunch/sites/changed' && params?.sites) applySites(params);
+        if (method === 'connection/reconnected') void connections.resumeGrants().catch(() => {});
         if (method === 'chrome/webLaunch/changed' || method === 'connection/reconnected') {
           void readSites().catch(() => {});
           void refreshObservations().catch(() => {});
@@ -255,13 +257,16 @@ export function createWebLaunchBackground({
     applySites(value);
     return value;
   }
-  async function hasCachedWebsiteGrant(origin) {
+  async function hasCachedWebsiteGrant(origin, { refresh = false } = {}) {
+    if (hasWebsiteLaunchGrant(currentSite(origin))) return true;
     const cached = (await chromeApi.storage.local.get(SITES_KEY))[SITES_KEY];
-    if (Array.isArray(cached)) return cached.includes(origin);
-    // Older caches include sites that only consented to opening drafts.
-    const legacy = (await chromeApi.storage.local.get(LEGACY_SITES_KEY))[LEGACY_SITES_KEY];
-    if (!Array.isArray(legacy) || !legacy.includes(origin)) return false;
-    // The legacy lookup must leave time for the SDK to fall back to an inline connection.
+    if (Array.isArray(cached) && cached.includes(origin)) return true;
+    if (!refresh) {
+      if (Array.isArray(cached)) return false;
+      const legacy = (await chromeApi.storage.local.get(LEGACY_SITES_KEY))[LEGACY_SITES_KEY];
+      if (!Array.isArray(legacy) || !legacy.includes(origin)) return false;
+    }
+    // Leave time for the SDK to fall back to an inline connection if Main is unavailable.
     let timeout;
     const loaded = await Promise.race([
       readSites().then(
@@ -269,13 +274,11 @@ export function createWebLaunchBackground({
         () => false,
       ),
       new Promise(resolve => {
-        timeout = setTimeout(() => resolve(false), LEGACY_SITE_READ_TIMEOUT_MS);
+        timeout = setTimeout(() => resolve(false), SITE_GRANT_READ_TIMEOUT_MS);
       }),
     ]).finally(() => clearTimeout(timeout));
     if (!loaded) return false;
-    const origins = grantedOriginsFrom(sites.sites);
-    await chromeApi.storage.local.set({ [SITES_KEY]: origins });
-    return origins.includes(origin);
+    return (await cacheWebsiteGrants()).includes(origin);
   }
   async function getDocument(documentNonce, sender) {
     return transaction(async () => {
@@ -785,12 +788,29 @@ export function createWebLaunchBackground({
     releaseSlot(record.source.windowId, record.requestId);
     throw { code, prepareUncertain: false };
   }
-  async function registerScripts(value) {
+  let grantCacheUpdate = Promise.resolve([]);
+  function cacheWebsiteGrants() {
+    const update = grantCacheUpdate.catch(() => {}).then(async () => {
+      const origins = grantedOriginsFrom(sites.sites);
+      await chromeApi.storage.local.set({ [SITES_KEY]: origins });
+      return origins;
+    });
+    grantCacheUpdate = update;
+    return update;
+  }
+  let scriptRegistration = Promise.resolve();
+  async function registerScripts() {
+    await cacheWebsiteGrants();
+    const update = scriptRegistration.catch(() => {}).then(updateRegisteredScripts);
+    scriptRegistration = update;
+    return update;
+  }
+  async function updateRegisteredScripts() {
     const old = await chromeApi.scripting.getRegisteredContentScripts();
     const owned = old.filter(item => item.id.startsWith('web-launch-')).map(item => item.id);
     if (owned.length) await chromeApi.scripting.unregisterContentScripts({ ids: owned });
     const enabled = new Map();
-    for (const site of value.sites) {
+    for (const site of sites.sites) {
       if (!hasWebsiteLaunchGrant(site)) continue;
       const url = new URL(site.origin);
       const match = `${url.protocol}//${url.hostname}/*`;
@@ -805,7 +825,6 @@ export function createWebLaunchBackground({
         });
     }
     if (enabled.size) await chromeApi.scripting.registerContentScripts([...enabled.values()]);
-    await chromeApi.storage.local.set({ [SITES_KEY]: grantedOriginsFrom(value.sites) });
   }
   const windowOwners = windowId =>
     Object.values(state?.requests ?? {}).filter(
@@ -836,7 +855,9 @@ export function createWebLaunchBackground({
     cryptoApi,
     client,
     readSites,
+    currentSite,
     applySites,
+    cacheWebsiteGrants,
     registerScripts,
     hasCachedWebsiteGrant,
     store: action => transaction(() => action((state.connections ??= {}))),
@@ -868,6 +889,11 @@ export function createWebLaunchBackground({
   }
   async function trustedMessage(message, sender) {
     if (message.type === 'web-launch:connection:decide') {
+      const tabId = panelTab(message, sender);
+      if (!panels.has(tabId)) {
+        const saved = await transaction(() => state.panels[String(tabId)]);
+        if (saved && !panels.has(tabId)) panels.set(tabId, saved);
+      }
       registeredPanel(message, sender);
       return connections.decide(message);
     }
@@ -938,7 +964,7 @@ export function createWebLaunchBackground({
     }
     if (message.type === 'web-launch:sites:list') {
       const value = await readSites();
-      await registerScripts(value);
+      await registerScripts();
       return {
         ok: true,
         policies: value.sites,
@@ -965,7 +991,7 @@ export function createWebLaunchBackground({
       const value = await client.request(WebLaunchMethod.SitesWrite, params);
       const next = value?.sites ? value : await readSites();
       applySites(next);
-      await registerScripts(next);
+      await registerScripts();
       return { ok: true, policies: next.sites, sitesRevision: next.revision };
     }
     if (message.type === 'web-launch:observations:list')

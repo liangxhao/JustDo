@@ -7,7 +7,7 @@ import { canonicalWebLaunchInput, WebLaunchMethod } from '../contracts/webLaunch
 import { createWebLaunchBackground } from '../conversation-overlay/modules/web-launch-background.js';
 import { createChromeAssistant } from '../conversation-overlay/modules/web-launch-sdk.js';
 import { installWebLaunchContent } from '../conversation-overlay/modules/web-launch-content.js';
-import { inputDigest } from '../conversation-overlay/modules/web-launch-security.js';
+import { BIND_ATTRIBUTE, inputDigest } from '../conversation-overlay/modules/web-launch-security.js';
 
 const extensionId = 'fixture-extension';
 const source = {
@@ -39,6 +39,7 @@ describe('first website connection', () => {
   let currentDocument: string;
   let contentListeners: any[];
   let updated: (id: number, change: any) => void;
+  let permissionAdded: () => void;
   let readyMessage: any;
   let contentSend: (message: any) => Promise<any>;
   let externalSend: (message: any) => Promise<any>;
@@ -149,6 +150,11 @@ describe('first website connection', () => {
           return Promise.resolve(true);
         }),
         onRemoved: { addListener: vi.fn() },
+        onAdded: {
+          addListener: (listener: () => void) => {
+            permissionAdded = listener;
+          },
+        },
       },
       tabs: {
         get: vi.fn(async () => ({ url: source.url, windowId: source.tab.windowId })),
@@ -335,19 +341,76 @@ describe('first website connection', () => {
     expect(client.request).not.toHaveBeenCalled();
   });
 
-  it('fences an old grant after policy changes even if the site is enabled, and never resets existing grants', async () => {
+  it('does not restore a site disabled after the consent card opened', async () => {
     const pending = (await request()).connectionPending;
     permitted = true;
     siteRevision = 2;
     policies = [
-      { origin: source.origin, enabled: true, allowSend: true, allowResult: true, revision: 2 },
+      { origin: source.origin, enabled: false, allowSend: false, allowResult: false, revision: 2 },
     ];
     expect(await decision(pending)).toEqual({ ok: false, code: 'POLICY_CONFLICT' });
     expect(
       client.request.mock.calls.some(([method]) => method === WebLaunchMethod.SitesWrite),
     ).toBe(false);
-    expect(policies[0]).toMatchObject({ allowSend: true, allowResult: true });
+    expect(policies[0]).toMatchObject({ enabled: false });
   });
+
+  it('saves a click after the panel closes and retries an unrelated policy write conflict', async () => {
+    const pending = (await request()).connectionPending;
+    // The registered panel can still receive the user's click after a worker restart.
+    controller = createWebLaunchBackground({ chromeApi: api, cryptoApi: webcrypto, client });
+    expect(await decision(pending)).toMatchObject({
+      ok: true, connectionPending: { status: 'granting', requiresAction: false },
+    });
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.SitesWrite, expect.anything());
+    // The browser permission arrives after the side panel and worker instances are gone.
+    controller = createWebLaunchBackground({ chromeApi: api, cryptoApi: webcrypto, client });
+    const original = client.request.getMockImplementation()!;
+    let conflictingWrite = true;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.SitesWrite && conflictingWrite) {
+        conflictingWrite = false;
+        siteRevision += 1;
+        throw { code: 'POLICY_CONFLICT' };
+      }
+      return original(method, params);
+    });
+    permitted = true;
+    permissionAdded();
+
+    await vi.waitFor(() => expect(policies).toMatchObject([
+      { origin: source.origin, enabled: true, allowSend: true, allowResult: true },
+    ]));
+    await vi.waitFor(() => expect(storage.chromeWebLaunchGrantedOrigins).toEqual([source.origin]));
+    expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Submit, expect.anything());
+    expect((await external({ op: 'probe' })).connected).toBe(true);
+    expect((await registerPanel()).connectionPending).toBeNull();
+  });
+
+  it.each(['unbind', 'navigation'])(
+    'preserves an accepted site grant while %s closes the original draft',
+    async sourceClosed => {
+      const pending = (await request()).connectionPending;
+      expect((await decision(pending)).connectionPending.status).toBe('granting');
+      if (sourceClosed === 'unbind') {
+        const cancelled = await external({ op: 'cancel', pendingId: pending.pendingId });
+        expect(cancelled.connectionPending.status).toBe('cancelled');
+      } else {
+        currentDocument = 'replacement-document';
+        updated(source.tab.id, { status: 'loading' });
+      }
+      permitted = true;
+      permissionAdded();
+
+      await vi.waitFor(() => expect(policies).toMatchObject([
+        { origin: source.origin, enabled: true, allowSend: true, allowResult: true },
+      ]));
+      await vi.waitFor(() => expect(storage.chromeWebLaunchGrantedOrigins).toEqual([source.origin]));
+      expect(await registerPanel()).toMatchObject({ connectionPending: null });
+      expect(api.scripting.executeScript).not.toHaveBeenCalled();
+      expect(client.request).not.toHaveBeenCalledWith(WebLaunchMethod.Prepare, expect.anything());
+    },
+  );
 
   it('repairs the bridge of an already granted document before the next real click', async () => {
     permitted = true;
@@ -392,6 +455,8 @@ describe('first website connection', () => {
     trustedClick();
     await vi.waitFor(() => expect(handles[0]?.launchId).toBe('launch-1'));
 
+    // The first task is already admitted. A partial policy still requires new consent.
+    policies[0] = { ...policies[0], allowResult: false, revision: ++siteRevision };
     controller = createWebLaunchBackground({ chromeApi: api, cryptoApi: webcrypto, client });
     const first = await request('waiting-connection');
     expect(first.connectionPending).toMatchObject({
@@ -500,6 +565,7 @@ describe('first website connection', () => {
   );
 
   it('falls back to inline connection while the desktop app is slow to check a legacy grant', async () => {
+    permitted = true;
     storage.chromeWebLaunchSites = [source.origin];
     let finishRead!: (value: unknown) => void;
     client.request.mockImplementationOnce(
@@ -1077,22 +1143,128 @@ describe('first website connection', () => {
         false,
       );
       trustedClick();
-      await vi.waitFor(async () => {
-        const pending = (await registerPanel()).connectionPending;
-        expect(pending?.requiresAction).toBe(true);
-        expect(pending?.pendingId).not.toBe(first.pendingId);
-      });
-      const fresh = (await registerPanel()).connectionPending;
-      releaseQuery?.({ ok: true, connectionPending: { ...first, status: 'rejected' } });
-      await Promise.resolve();
-      await Promise.resolve();
-      expect(events.at(-1)).not.toBe('rejected');
-      expect((await decision(fresh)).ok).toBe(true);
       await vi.waitFor(() =>
         expect(
           client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.Prepare),
         ).toHaveLength(1),
       );
+      expect(readyMessage.pendingId).not.toBe(first.pendingId);
+      expect((await registerPanel()).connectionPending).toBeNull();
+      releaseQuery?.({ ok: true, connectionPending: { ...first, status: 'rejected' } });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(events.at(-1)).not.toBe('rejected');
+      expect(client.request.mock.calls.filter(([method]) => method === WebLaunchMethod.SitesWrite))
+        .toHaveLength(1);
     },
   );
+
+  it.each(['pending', 'lost'])('reuses authorization for a second button with a %s bind reply', async bindReply => {
+    const other = document.createElement('button');
+    other.type = 'button';
+    document.body.append(other);
+    const firstRequest = vi.fn();
+    const nextRequest = vi.fn();
+    const connectionRequests = vi.fn();
+    externalSend = message => {
+      if (message.op === 'request') connectionRequests(message);
+      return external(message);
+    };
+    const otherInput = { ...input, prompt: 'Second button' };
+    await sdk.bind(document.getElementById('launch'), input, { onRequest: firstRequest });
+    await sdk.bind(other, otherInput, { onRequest: nextRequest });
+    const otherBindingId = other.getAttribute(BIND_ATTRIBUTE);
+
+    let latestBridgeTimeout: (() => void) | undefined;
+    let expireOther: (() => void) | undefined;
+    const setTimeout = window.setTimeout.bind(window);
+    vi.spyOn(window, 'setTimeout').mockImplementation((handler, delay, ...args) => {
+      const id = setTimeout(handler, delay, ...args);
+      if (delay === 5000 && typeof handler === 'function') {
+        latestBridgeTimeout = () => {
+          window.clearTimeout(id);
+          handler(...args);
+        };
+      }
+      return id;
+    });
+
+    // Hold the click handoff after the isolated script is ready.
+    let otherCorrelationId: string | undefined;
+    let acknowledgeOther: (() => void) | undefined;
+    const post = vi.mocked(window.postMessage).getMockImplementation()!;
+    vi.mocked(window.postMessage).mockImplementation((data, origin) => {
+      if (data.kind === 'bind' && data.bindingId === otherBindingId) {
+        otherCorrelationId = data.correlationId;
+        expireOther = latestBridgeTimeout;
+      }
+      if (data.kind === 'reply' && data.correlationId === otherCorrelationId && data.ok) {
+        acknowledgeOther = () => post(data, origin);
+        return;
+      }
+      post(data, origin);
+    });
+    const original = client.request.getMockImplementation()!;
+    client.request.mockImplementation(async (method, params) => {
+      if (method === WebLaunchMethod.Read) {
+        const records = Object.values(storage.chromeWebLaunchSession.requests) as any[];
+        return records.find(record => record.launchId === params.launchId)?.response;
+      }
+      if (method === WebLaunchMethod.Cancel) {
+        const first = storage.chromeWebLaunchSession.requests[firstRequest.mock.calls[0][0].requestId];
+        return {
+          receipt: { ...first.response.receipt, receiptRevision: 2, request: { status: 'cancelled' } },
+          internal: { ...first.response.internal, replacedDraft: true },
+        };
+      }
+      const response = await original(method, params);
+      if (method === WebLaunchMethod.Prepare && params.input.prompt === otherInput.prompt)
+        response.receipt.launchId = 'launch-2';
+      return response;
+    });
+
+    trustedClick();
+    await vi.waitFor(async () =>
+      expect((await registerPanel()).connectionPending?.requiresAction).toBe(true),
+    );
+    permitted = true;
+    expect((await decision((await registerPanel()).connectionPending)).ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(firstRequest.mock.calls[0]?.[0].launchId).toBe('launch-1');
+      expect(acknowledgeOther).toBeTypeOf('function');
+    });
+    const panelState = { type: 'web-launch:panel:state', ...panelScope };
+    await invoke({ ...panelState, composerBusy: true, replaceableDraftLaunchId: 'launch-1' });
+    if (bindReply === 'lost') {
+      expect(expireOther).toBeTypeOf('function');
+      expireOther!();
+      // Let the rejected bridge promise settle before clicking another button.
+      await new Promise(resolve => setTimeout(resolve));
+    }
+
+    const event = { isTrusted: true, composedPath: () => [other, document, window] };
+    click(event);
+    content!.handleClick(event);
+    if (bindReply === 'pending') acknowledgeOther!();
+    await vi.waitFor(() => expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receipt: expect.objectContaining({ request: { status: 'cancelled' } }),
+        internal: expect.objectContaining({ replacedDraft: true }),
+      }),
+    ));
+    await invoke({ ...panelState, composerBusy: false });
+    await vi.waitFor(() => expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ receipt: expect.objectContaining({ launchId: 'launch-2' }) }),
+    ));
+    await nextRequest.mock.calls[0][0].read();
+    await vi.waitFor(() => expect(nextRequest.mock.calls[0]?.[0].launchId).toBe('launch-2'));
+
+    const calls = (method: string) => client.request.mock.calls.filter(([name]) => name === method);
+    expect(connectionRequests).toHaveBeenCalledOnce();
+    expect(calls(WebLaunchMethod.SitesWrite)).toHaveLength(1);
+    expect(calls(WebLaunchMethod.Submit)).toHaveLength(0);
+    expect(calls(WebLaunchMethod.Prepare)).toHaveLength(2);
+    expect(calls(WebLaunchMethod.Prepare)[1][1]).toMatchObject({ input: otherInput, clickSequence: 2 });
+    expect(calls(WebLaunchMethod.Prepare)[1][1]).not.toHaveProperty('connectionOnly');
+  });
 });

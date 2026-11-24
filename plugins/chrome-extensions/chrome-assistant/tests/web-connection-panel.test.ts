@@ -94,35 +94,56 @@ describe('website connection consent', () => {
     const { permission, request, order, onNotice } = mount();
     button('Allow connection').click();
     expect(permission).toHaveBeenCalledWith({ origins: ['https://business.internal/*'] });
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledExactlyOnceWith(WebConnectionMessage.Decide, {
+      pendingId: 'connection-one',
+      expectedRevision: 1,
+      decision: 'allow',
+    });
     button('Allow connection').click();
-    await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledExactlyOnceWith(WebConnectionMessage.Decide, {
-        pendingId: 'connection-one',
-        expectedRevision: 1,
-        decision: 'allow',
-      }),
-    );
     expect(order).toEqual(['permission', 'decide']);
-    expect(card().classList.contains('hidden')).toBe(true);
+    await vi.waitFor(() => expect(card().classList.contains('hidden')).toBe(true));
     expect(onNotice).not.toHaveBeenCalled();
     expect((document.getElementById('prompt') as HTMLTextAreaElement).value).toBe('Existing draft');
   });
 
-  it('records a denied Chrome prompt as rejection without an allow', async () => {
-    const { permission, request, onNotice } = mount();
-    permission.mockResolvedValue(false);
-    request.mockResolvedValue({
-      ok: true,
-      connectionPending: pending({
-        revision: 2,
-        status: 'rejected',
-        code: 'PERMISSION_REQUIRED',
-      }),
-    });
+  it('hands off approval before the panel closes during the Chrome prompt', async () => {
+    const { panel, permission, request } = mount();
+    let release!: (value: boolean) => void;
+    permission.mockImplementation(() => new Promise(resolve => (release = resolve)));
     button('Allow connection').click();
+    panel.dispose();
+    expect(request).toHaveBeenCalledExactlyOnceWith(WebConnectionMessage.Decide, {
+      pendingId: 'connection-one',
+      expectedRevision: 1,
+      decision: 'allow',
+    });
+    release(true);
+    await Promise.resolve();
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects the same request if Chrome denies permission after the allow intent', async () => {
+    const { permission, request, onNotice } = mount();
+    let release!: (value: boolean) => void;
+    permission.mockImplementation(() => new Promise(resolve => (release = resolve)));
+    request
+      .mockResolvedValueOnce({
+        ok: true,
+        connectionPending: pending({ revision: 2, status: 'granting' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        connectionPending: pending({
+          revision: 3,
+          status: 'rejected',
+          code: 'PERMISSION_REQUIRED',
+        }),
+      });
+    button('Allow connection').click();
+    await vi.waitFor(() => expect(button('Allow connection').disabled).toBe(true));
+    release(false);
     await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith(WebConnectionMessage.Decide, {
+      expect(request).toHaveBeenNthCalledWith(2, WebConnectionMessage.Decide, {
         pendingId: 'connection-one',
         expectedRevision: 1,
         decision: 'deny',
@@ -151,30 +172,32 @@ describe('website connection consent', () => {
     );
   });
 
-  it('does not approve after rejection while the Chrome permission prompt is unresolved', async () => {
+  it('lets explicit rejection take precedence over the unresolved Chrome permission prompt', async () => {
     const { permission, request } = mount();
     let release!: (value: boolean) => void;
     permission.mockImplementation(() => new Promise(resolve => (release = resolve)));
     button('Allow connection').click();
     button('Reject').click();
-    release(true);
-    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(1));
-    expect(request.mock.calls[0][1]).toMatchObject({ decision: 'deny' });
+    release(false);
+    await vi.waitFor(() => expect(card().classList.contains('hidden')).toBe(true));
+    expect(request.mock.calls.map(([, { decision }]) => decision)).toEqual(['allow', 'deny']);
+    expect(request.mock.calls[1][1]).not.toHaveProperty('reason');
   });
 
   it.each(['navigation', 'revision'])(
-    'ignores a delayed permission after %s invalidates the original consent',
+    'ignores a delayed permission denial after %s invalidates the original consent',
     async kind => {
       const { panel, permission, request } = mount();
       let release!: (value: boolean) => void;
       permission.mockImplementation(() => new Promise(resolve => (release = resolve)));
       button('Allow connection').click();
       panel.accept(kind === 'navigation' ? null : pending({ revision: 2 }));
-      release(true);
+      release(false);
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
-      expect(request).not.toHaveBeenCalled();
+      expect(request).toHaveBeenCalledTimes(1);
+      expect(request.mock.calls[0][1]).toMatchObject({ decision: 'allow' });
     },
   );
 
@@ -196,18 +219,23 @@ describe('website connection consent', () => {
     expect(onNotice).not.toHaveBeenCalled();
   });
 
-  it('expires an unresolved consent without extending its deadline or approving a late permission', async () => {
+  it('expires an unresolved consent at its original deadline and ignores late Chrome denial', async () => {
     vi.useFakeTimers();
     const { panel, permission, request, onNotice } = mount();
     let release!: (value: boolean) => void;
     permission.mockImplementation(() => new Promise(resolve => (release = resolve)));
-    panel.accept(pending({ revision: 2, expiresAt: Date.now() + 1_000 }));
+    const expiresAt = Date.now() + 1_000;
+    panel.accept(pending({ revision: 2, expiresAt }));
+    request.mockResolvedValueOnce({
+      ok: true,
+      connectionPending: pending({ revision: 3, status: 'granting', expiresAt }),
+    });
     button('Allow connection').click();
     await vi.advanceTimersByTimeAsync(1_001);
-    release(true);
+    release(false);
     await Promise.resolve();
     await Promise.resolve();
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(1);
     expect(card().classList.contains('hidden')).toBe(true);
     panel.accept(pending({ revision: 3, status: 'expired' }));
     panel.accept(pending({ revision: 3, status: 'awaiting-consent' }));
