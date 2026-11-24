@@ -14,6 +14,7 @@ import { saveExtensionSecrets } from '../../../plugins/extensions/extensionSecre
 import { resolveOnlineReplySpeechProfile } from '../../../speech/onlineReplySpeechProfile';
 import { mergeOpenClawPluginConfig } from '../plugins/pluginProjection';
 import {
+  ASSISTANT_SPEECH_PERSONA,
   buildLocalSpeechExtensionSttConfig,
   buildLocalSpeechExtensionTtsConfig,
 } from './localSpeechExtensionConfig';
@@ -141,11 +142,11 @@ export function applyManagedSpeechModelConfiguration(
     ...previous,
     auto: 'off',
     provider: LOCAL_TTS_PROVIDER_ID,
-    persona: 'assistant-speech',
+    persona: ASSISTANT_SPEECH_PERSONA,
     providers: { ...record(previous.providers), [LOCAL_TTS_PROVIDER_ID]: toolProvider },
     personas: {
       ...record(previous.personas),
-      'assistant-speech': {
+      [ASSISTANT_SPEECH_PERSONA]: {
         provider: LOCAL_TTS_PROVIDER_ID,
         fallbackPolicy: 'fail',
         providers: { [LOCAL_TTS_PROVIDER_ID]: toolProvider },

@@ -1,4 +1,5 @@
-import fs from 'fs';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 
 import { OpenClawProviderId } from '../../../shared/providers';
 import { isRecord, sortJsonValue } from './configShape';
@@ -146,12 +147,19 @@ export type OpenClawConfigSyncResult = {
   agentsMdWarning?: string;
   secretsChanged?: boolean;
   modelDefaultsOnly?: boolean;
+  publication?: OpenClawConfigPublication;
+};
+
+export type OpenClawConfigPublication = {
+  path: string;
+  isCurrent: () => boolean;
 };
 
 export const buildVerifiedConfigSyncResult = (
   configPath: string,
   expectedConfig: Record<string, unknown>,
   changed: boolean,
+  trackPublication = false,
 ): OpenClawConfigSyncResult => {
   const verification = verifyOpenClawConfigMatches(configPath, expectedConfig);
   if (!verification.ok) {
@@ -164,12 +172,28 @@ export const buildVerifiedConfigSyncResult = (
       error: verification.error,
     };
   }
+  const hash = (content: string) => createHash('sha256').update(content).digest('hex');
+  const publishedHash = changed && trackPublication
+    ? hash(`${JSON.stringify(expectedConfig, null, 2)}\n`)
+    : null;
   return {
     ok: true,
     changed,
     configChanged: changed,
     requiresGatewayRestart: false,
     configPath,
+    ...(publishedHash && {
+      publication: {
+        path: configPath,
+        isCurrent: () => {
+          try {
+            return hash(fs.readFileSync(configPath, 'utf8')) === publishedHash;
+          } catch {
+            return false;
+          }
+        },
+      },
+    }),
   };
 };
 

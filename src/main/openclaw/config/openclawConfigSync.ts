@@ -84,7 +84,7 @@ import {
 } from './openclawConfigBuilders';
 import { buildManagedMcpConfig } from './plugins/mcpAppsConfig';
 import { withComputerControlPolicy } from './policies/computerControlConfig';
-import { mergeLocalSpeechExtensionTtsConfig } from './speech/localSpeechExtensionConfig';
+import { hasSpeechToolConfigChanged, mergeLocalSpeechExtensionTtsConfig } from './speech/localSpeechExtensionConfig';
 import { buildManagedLocalSpeechPluginEntries } from './speech/localSpeechPluginConfig';
 import { normalizeNativeTtsConfig } from './speech/nativeTtsConfig';
 import { applyManagedSpeechModelConfiguration, type ManagedSpeechModelSettings } from './speech/speechModelConfig';
@@ -963,25 +963,16 @@ export class OpenClawConfigSync {
     }
 
     if (!configChanged) publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => {});
-    const verification = verifyOpenClawConfigMatches(configPath, configToPersist);
-    if (!verification.ok) {
-      return {
-        ok: false,
-        changed: false,
-        configChanged: false,
-        requiresGatewayRestart: false,
-        configPath,
-        error: verification.error,
-      };
-    }
+    const verified = buildVerifiedConfigSyncResult(
+      configPath, configToPersist, configChanged,
+      configChanged && hasSpeechToolConfigChanged(existingConfig, configToPersist),
+    );
+    if (!verified.ok) return verified;
 
     return {
-      ok: true,
+      ...verified,
       changed: configChanged || preparedSecrets.secretsChanged,
       secretsChanged: preparedSecrets.secretsChanged,
-      configChanged,
-      requiresGatewayRestart: false,
-      configPath,
       modelDefaultsOnly:
         isModelDefaultsSyncReason(reason) &&
         hasOnlyModelDefaultChanges(existingConfig, configToPersist),
@@ -1327,7 +1318,10 @@ export class OpenClawConfigSync {
       changed: boolean,
     ): OpenClawConfigSyncResult => {
       publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => {});
-      return buildVerifiedConfigSyncResult(configPath, expectedConfig, changed);
+      return buildVerifiedConfigSyncResult(
+        configPath, expectedConfig, changed,
+        changed && hasSpeechToolConfigChanged(previousConfig, expectedConfig),
+      );
     };
 
     const isAuthLifecycleSync =

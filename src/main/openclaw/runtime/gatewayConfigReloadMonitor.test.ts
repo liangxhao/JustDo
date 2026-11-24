@@ -56,6 +56,50 @@ describe('GatewayConfigReloadMonitor', () => {
     expect(monitor.getSettledGeneration()).toBe(generation + 1);
   });
 
+  it('verifies a source-only acknowledgement before settling a speech reload', async () => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const verify = vi.fn(async () => true);
+    const awaiting = monitor.waitForReloadAfter(monitor.getGeneration(), 1000, verify);
+    monitor.observeLine('[reload] config change detected; evaluating reload (tts.providers.tts-local-cli.command)');
+    expect(verify).not.toHaveBeenCalled();
+
+    monitor.observeLine('[reload] config source revision 2 accepted (file)');
+
+    expect(monitor.getSettledGeneration()).toBeUndefined();
+    await expect(awaiting).resolves.toBe(true);
+    expect(monitor.getSettledGeneration()).toBe(1);
+  });
+
+  it('does not settle an accepted source with an unconfirmed native revision', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    const verify = vi.fn(async () => false);
+    const awaiting = monitor.waitForReloadAfter(monitor.getGeneration(), 10, verify);
+    monitor.observeLine('[reload] config change detected; evaluating reload (tts.providers.tts-local-cli.command)');
+
+    monitor.observeLine('[reload] config source revision 2 accepted (file)');
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(verify).toHaveBeenCalledOnce();
+    await expect(awaiting).resolves.toBe(false);
+  });
+
+  it('discards source verification when the Gateway lifecycle changes', async () => {
+    vi.useFakeTimers();
+    const monitor = new GatewayConfigReloadMonitor();
+    let resolveVerification!: (applied: boolean) => void;
+    const verification = new Promise<boolean>(resolve => { resolveVerification = resolve; });
+    const awaiting = monitor.waitForReloadAfter(monitor.getGeneration(), 10, () => verification);
+    monitor.observeLine('[reload] config change detected; evaluating reload (tts.providers.tts-local-cli.command)');
+    monitor.observeLine('[reload] config source revision 2 accepted (file)');
+
+    monitor.observeGatewayExit();
+    resolveVerification(true);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(awaiting).resolves.toBe(false);
+  });
+
   it.each([
     'config reload failed: publication rejected',
     'config reload disabled (gateway.reload.mode=off)',

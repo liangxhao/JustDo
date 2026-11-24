@@ -15,6 +15,7 @@ import type { GatewayClientLike } from '../../engine/gateway/types';
 import type { NativeMcpDataBinding } from '../../plugins/data/nativeMcpData';
 import { nativeMcpDataDirectory } from '../../plugins/data/nativeMcpData';
 import { ensureExecutionReady } from '../runtime/executionReadiness';
+import { GatewayConfigReloadMonitor } from '../runtime/gatewayConfigReloadMonitor';
 import { resolveManagedCredentialReloadTimeoutMs } from './models/credentialTimeouts';
 import {
   MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS,
@@ -351,7 +352,9 @@ describe('OpenClawConfigSyncService', () => {
       canReuseGatewayNetworkEnvironment: vi.fn(() => options.reusableNetworkEnvironment ?? false),
       getGatewayPort: vi.fn(() => 18789),
       getConfiguredGatewayPort: vi.fn(() => 18789),
-      waitForGatewayConfigReload: vi.fn(async () => options.waitForReload ?? true),
+      waitForGatewayConfigReload: vi.fn(async (
+        _generation: number, _timeoutMs?: number, _verifySourceAcceptance?: () => Promise<boolean>,
+      ) => options.waitForReload ?? true),
       getGatewayLaunchEnvVars: vi.fn(() => options.previousSecrets ?? {}),
       setGatewayLaunchEnvVars: vi.fn(),
       getGatewayProcessGeneration: vi.fn(() => processGeneration),
@@ -1021,6 +1024,44 @@ describe('OpenClawConfigSyncService', () => {
     await expect(general).resolves.toMatchObject({ success: true });
     await expect(saving).resolves.toMatchObject({ success: true });
     await expect(verify).resolves.toMatchObject({ success: true });
+  });
+
+  it.each([false, true])('applies a speech snapshot without restarting (new credentials: %s)', async secretsChanged => {
+    const harness = createHarness({ secretsChanged });
+    const monitor = new GatewayConfigReloadMonitor();
+    const configPath = 'openclaw.json';
+    let rawRevision = 'previous-source';
+    const syncResult = harness.configSync.sync.getMockImplementation()!();
+    const publication = { path: configPath, isCurrent: () => true };
+    const published = { ...syncResult, publication };
+    harness.configSync.sync.mockReturnValue(published);
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params) => {
+      if (method === 'config.patch') {
+        if ((params as { baseHash: string }).baseHash !== 'applied-source') throw new Error('stale base hash');
+        return { ok: true, noop: true, path: configPath, changedPaths: [] };
+      }
+      const result = await request(method, params);
+      return method === 'config.get' ? { ...result, valid: true, path: configPath, hash: rawRevision } : result;
+    });
+    harness.engineManager.getGatewayConfigReloadGeneration.mockReturnValue(monitor.getGeneration());
+    harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce(async (generation, timeoutMs, verify) => {
+      await expect(verify!()).rejects.toThrow('stale base hash');
+      rawRevision = 'applied-source';
+      const applied = monitor.waitForReloadAfter(generation, timeoutMs, verify);
+      monitor.observeLine('[reload] config change detected; evaluating reload (tts.providers.tts-local-cli.model)');
+      monitor.observeLine('[reload] config source revision 2 accepted (file)');
+      return applied;
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'app-config-change' })).resolves.toMatchObject({
+      success: true, configSynced: true,
+    });
+
+    const methods = harness.requestGateway.mock.calls.map(([method]) => method);
+    expect(methods).not.toContain('gateway.restart.request');
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(methods.includes('secrets.reload')).toBe(secretsChanged);
   });
 
   it.each(['default-model-change', 'default-model-change-rollback'])(

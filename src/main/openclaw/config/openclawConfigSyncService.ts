@@ -34,6 +34,7 @@ import {
   GatewayConfigRestartOutcome,
   requestGatewayConfigRestart,
 } from '../runtime/gatewayConfigRestart';
+import type { OpenClawConfigPublication } from './configVerification';
 import { resolveManagedCredentialReloadTimeoutMs } from './models/credentialTimeouts';
 import {
   ManagedCredentialReloadOutcome,
@@ -111,6 +112,7 @@ type PendingCredentialReload = {
     lifecycleGeneration: number;
     requiresHardRestart: boolean;
     nativeRestartRequested?: boolean;
+    publication?: OpenClawConfigPublication;
   };
   acknowledged?: { processGeneration: number; lifecycleGeneration: number };
   stopped?: {
@@ -171,6 +173,9 @@ const FALLBACK_EXEC_APPROVAL_FIELDS = {
 } as const;
 
 type ConfigSnapshot = {
+  path?: unknown;
+  valid?: unknown;
+  hash?: unknown;
   configRevisionHash?: unknown;
   appliedConfigHash?: unknown;
   config?: {
@@ -938,6 +943,7 @@ export class OpenClawConfigSyncService {
       pending.configApplication = {
         reloadGeneration, processGeneration: processGenerationBeforeSync,
         lifecycleGeneration: lifecycleGenerationBeforeSync,
+        publication: syncResult.publication,
         requiresHardRestart: requiresHardRestart || Boolean(previousApplication?.requiresHardRestart &&
           (previousApplication.processGeneration === processGenerationBeforeSync ||
             engineManager.hasPendingGatewayLaunchEnvironmentChanges())),
@@ -998,9 +1004,10 @@ export class OpenClawConfigSyncService {
     }
 
     if (applyMode === 'native-reload') {
-      const reloaded = syncResult.secretsChanged
-        ? await engineManager.waitForGatewayConfigReload(reloadGeneration, resolveManagedCredentialReloadTimeoutMs())
-        : await engineManager.waitForGatewayConfigReload(reloadGeneration);
+      const reloaded = await this.waitForConfigApplication(
+        reloadGeneration, syncResult.publication, preflightIsCurrent,
+        syncResult.secretsChanged ? resolveManagedCredentialReloadTimeoutMs() : undefined,
+      );
       if (ownership && !ownership.isCurrent()) return unconfirmedApplication();
       if (reloaded) {
         return this.verifySuccessfulConfigApplication(
@@ -1125,6 +1132,38 @@ export class OpenClawConfigSyncService {
     return response;
   }
 
+  private waitForConfigApplication(
+    generation: number,
+    publication: OpenClawConfigPublication | undefined,
+    isCurrent: () => boolean,
+    timeoutMs?: number,
+  ): Promise<boolean> {
+    const manager = this.deps.getOpenClawEngineManager();
+    if (!publication) {
+      return timeoutMs === undefined ? manager.waitForGatewayConfigReload(generation) :
+        manager.waitForGatewayConfigReload(generation, timeoutMs);
+    }
+    return manager.waitForGatewayConfigReload(generation, timeoutMs, async () => {
+      const client = this.deps.getGatewayClient();
+      const stillOwnsPublication = () => isCurrent() && client === this.deps.getGatewayClient() && publication.isCurrent();
+      if (!client || !stillOwnsPublication()) return false;
+      const options = { timeoutMs: 5_000 };
+      const snapshot = await client.request<ConfigSnapshot>('config.get', {}, options);
+      if (!stillOwnsPublication() || snapshot.path !== publication.path || snapshot.valid !== true ||
+        typeof snapshot.configRevisionHash !== 'string' || snapshot.configRevisionHash.trim() === '' ||
+        snapshot.configRevisionHash !== snapshot.appliedConfigHash ||
+        typeof snapshot.hash !== 'string' || snapshot.hash.trim() === '') return false;
+      // Native hashes are opaque and config.get can be cached. An empty guarded
+      // patch checks the raw revision against a fresh read and performs no write.
+      const confirmation = await client.request<{ ok?: boolean; noop?: boolean; path?: string; changedPaths?: unknown }>(
+        'config.patch', { raw: '{}', baseHash: snapshot.hash }, options,
+      );
+      return stillOwnsPublication() && confirmation.ok === true && confirmation.noop === true &&
+        confirmation.path === publication.path && Array.isArray(confirmation.changedPaths) &&
+        confirmation.changedPaths.length === 0;
+    });
+  }
+
   private async applyPendingCredentialConfig(
     pending: PendingCredentialReload,
     options: SyncOpenClawConfigOptions,
@@ -1170,9 +1209,7 @@ export class OpenClawConfigSyncService {
       const timeoutMs = pending.needsSecretsReload ? resolveManagedCredentialReloadTimeoutMs() : undefined;
       const applied = application.nativeRestartRequested
         ? await manager.waitForGatewayReadyAfter(application.lifecycleGeneration, resolveManagedCredentialReloadTimeoutMs())
-        : timeoutMs === undefined
-          ? await manager.waitForGatewayConfigReload(application.reloadGeneration)
-          : await manager.waitForGatewayConfigReload(application.reloadGeneration, timeoutMs);
+        : await this.waitForConfigApplication(application.reloadGeneration, application.publication, ownership.isCurrent, timeoutMs);
       if (!ownership.isCurrent()) return unconfirmed();
       if (!applied) {
         if (preserveGateway || application.nativeRestartRequested) return unconfirmed();

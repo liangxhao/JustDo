@@ -562,8 +562,12 @@ export class OpenClawEngineManager extends EventEmitter {
     return `${this.gatewayProcessGeneration}:${this.getGatewayLifecycleGeneration()}:${configGeneration}`;
   }
 
-  waitForGatewayConfigReload(generation: number, timeoutMs?: number): Promise<boolean> {
-    return this.gatewayConfigReloadMonitor.waitForReloadAfter(generation, timeoutMs);
+  waitForGatewayConfigReload(
+    generation: number,
+    timeoutMs?: number,
+    verifySourceAcceptance?: () => Promise<boolean>,
+  ): Promise<boolean> {
+    return this.gatewayConfigReloadMonitor.waitForReloadAfter(generation, timeoutMs, verifySourceAcceptance);
   }
 
   getGatewayLifecycleGeneration(): number {

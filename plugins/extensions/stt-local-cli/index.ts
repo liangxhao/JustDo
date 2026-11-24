@@ -9,6 +9,7 @@ export const TOOL_NAME = 'transcribe_audio';
 export default {
   id: 'stt-local-cli',
   name: 'stt-local-cli',
+  reload: { hotPrefixes: ['plugins.entries.stt-local-cli.config'] },
   register(api: OpenClawPluginApi) {
     let busy = false;
     api.registerTool(

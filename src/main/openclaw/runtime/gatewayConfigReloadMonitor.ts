@@ -5,6 +5,7 @@ type ReloadRecord = {
   changedPaths: string[];
   outcome: GatewayConfigReloadOutcome | null;
   restartAccepted: boolean;
+  sourceAccepted?: true;
 };
 
 export type GatewayConfigReloadKind = 'dynamic' | 'hot' | 'restart';
@@ -72,6 +73,7 @@ const RELOAD_RULES: ReloadRule[] = [
 export const GATEWAY_RESTART_COMPLETION_TIMEOUT_MS = 10 * 60_000;
 const GATEWAY_READY_LINE_PATTERN = /^(?:\S+\s+)?\[gateway\] ready\s*$/;
 const GATEWAY_RESTART_LINE_PATTERN = /^(?:\S+\s+)?\[gateway\] (?:received SIGUSR[12]; restarting|restart mode: in-process restart(?: \([^()\r\n]*\))?)\s*$/;
+const CONFIG_SOURCE_ACCEPTED_LINE_PATTERN = /^(?:\S+\s+)?\[reload\] config source revision \d+ accepted \(file\)\s*$/;
 
 const matchesPrefix = (configPath: string, prefix: string): boolean =>
   configPath === prefix || configPath.startsWith(`${prefix}.`);
@@ -206,6 +208,18 @@ export class GatewayConfigReloadMonitor {
       return;
     }
 
+    if (CONFIG_SOURCE_ACCEPTED_LINE_PATTERN.test(line)) {
+      const record = this.records.at(-1);
+      if (record && record.generation > this.configGenerationAtReady &&
+        record.outcome === null && !record.restartAccepted && !this.gatewayRestartPending) {
+        // Native snapshot-only updates can omit the hot reload completion line.
+        // Source acceptance also covers unapplied writes, so request verification.
+        record.sourceAccepted = true;
+        this.notify();
+      }
+      return;
+    }
+
     if (
       line.includes('config reload failed') ||
       line.includes('config reload skipped by writer intent') ||
@@ -218,7 +232,11 @@ export class GatewayConfigReloadMonitor {
     }
   }
 
-  waitForReloadAfter(generation: number, timeoutMs = 30_000): Promise<boolean> {
+  waitForReloadAfter(
+    generation: number,
+    timeoutMs = 30_000,
+    verifySourceAcceptance?: () => Promise<boolean>,
+  ): Promise<boolean> {
     const getCurrentRecord = (): ReloadRecord | undefined =>
       this.records.find(candidate => candidate.generation > generation);
     const resolveCurrent = (): boolean | null => {
@@ -235,6 +253,7 @@ export class GatewayConfigReloadMonitor {
       let settled = false;
       let usingCompletionTimeout = false;
       let usingRestartTimeout = false;
+      let verifyingSource = false;
       let timer: ReturnType<typeof setTimeout>;
       const finish = (result: boolean) => {
         if (settled) return;
@@ -263,6 +282,19 @@ export class GatewayConfigReloadMonitor {
           // its own bounded completion window before requesting a restart.
           usingCompletionTimeout = true;
           armTimer(timeoutMs);
+        }
+        const record = getCurrentRecord();
+        if (!verifyingSource && verifySourceAcceptance && record?.sourceAccepted &&
+          record.generation === this.generation && !record.restartAccepted && !this.gatewayRestartPending) {
+          verifyingSource = true;
+          const lifecycle = this.gatewayLifecycleGeneration;
+          void verifySourceAcceptance().then(applied => {
+            if (!applied || settled || record.outcome !== null || record.restartAccepted ||
+              this.gatewayRestartPending || record.generation !== this.generation ||
+              lifecycle !== this.gatewayLifecycleGeneration) return;
+            record.outcome = 'applied';
+            this.notify();
+          }).catch(() => {});
         }
       };
       armTimer(timeoutMs);
