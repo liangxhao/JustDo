@@ -17,6 +17,7 @@ export interface SessionDirectoryEntry {
   pinned: boolean;
   agentId?: string;
   groupId?: string | null;
+  cwd?: string;
   source?: CoworkSessionSource;
   external?: ExternalSessionMetadata;
   nativeSessionKey?: string;

@@ -8,7 +8,14 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { ChatBubbleLeftRightIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
+import {
+  ChatBubbleLeftRightIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  FolderIcon,
+  FolderOpenIcon,
+} from '@heroicons/react/24/outline';
+import { SESSION_HISTORY_GROUPING_PREFERENCE_KEY } from '@shared/app/rendererPreferences';
 import {
   SESSION_LIST_PAGE_SIZE,
   type SessionDirectoryEntry,
@@ -42,24 +49,35 @@ import type {
 } from '@/features/cowork/coworkTypes';
 import {
   DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS,
+  getSessionDateGroupKey,
+  getSessionWorkspaceKey,
   groupSessionsByDate,
+  groupSessionsByWorkspace,
   partitionSidebarSessions,
   type SessionDateGroupKey,
+  SessionHistoryGrouping,
 } from '@/features/cowork/sessionPresentation';
 import { appBrowserRegistry } from '@/features/plugins/app/runtime';
 import { i18nService } from '@/services/i18n';
+import { rendererPreferences } from '@/services/rendererPreferences';
 import type { RootState } from '@/store';
 
 import SessionListPageFooter, { type SessionListPageFooterProps } from './SessionListPageFooter';
+import { useWorkspaceSessionPages } from './useWorkspaceSessionPages';
 
 type ListDirectoryEntry = SessionDirectoryEntry;
 
-interface DateGroupPage {
-  key: SessionDateGroupKey;
+interface HistoryGroupPage {
+  key: string;
+  label: string;
+  path?: string;
+  showPath?: boolean;
+  isWorkspace?: boolean;
   count: number;
   isCollapsed: boolean;
   sessions: CoworkSessionSummary[];
   footer: SessionListPageFooterProps;
+  onToggle: () => void;
 }
 
 interface UngroupedDroppableZoneProps {
@@ -81,9 +99,10 @@ interface UngroupedDroppableZoneProps {
   onToggleSelection: (sessionId: string) => void;
   onEnterBatchMode: (sessionId: string) => void;
   onMoveToGroup: (sessionId: string, groupId: string | null) => void;
-  showDateGroups: boolean;
-  dateGroups: DateGroupPage[];
-  onToggleDateGroup: (key: SessionDateGroupKey) => void;
+  historyGroups: HistoryGroupPage[];
+  pinnedGroup?: HistoryGroupPage;
+  grouping?: SessionHistoryGrouping;
+  onGroupingChange: (grouping: SessionHistoryGrouping) => void;
 }
 
 const dateGroupLabels: Record<SessionDateGroupKey, string> = {
@@ -114,9 +133,10 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
   onToggleSelection,
   onEnterBatchMode,
   onMoveToGroup,
-  showDateGroups,
-  dateGroups,
-  onToggleDateGroup,
+  historyGroups,
+  pinnedGroup,
+  grouping,
+  onGroupingChange,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id: 'ungrouped' });
 
@@ -144,47 +164,73 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
     />
   );
 
+  const renderGroup = (group: HistoryGroupPage) => (
+    <section key={group.key} className="mb-1 last:mb-0">
+      <button
+        type="button"
+        onClick={group.onToggle}
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-raised"
+        aria-expanded={!group.isCollapsed}
+        aria-label={`${group.showPath ? group.path : group.label} · ${group.count} · ${i18nService.t(
+          group.isCollapsed ? 'expand' : 'collapse',
+        )}`}
+        title={group.path}
+      >
+        <ChevronRightIcon
+          className={`h-3.5 w-3.5 shrink-0 text-secondary transition-transform ${
+            group.isCollapsed ? '' : 'rotate-90'
+          }`}
+        />
+        {group.isWorkspace && <FolderIcon className="h-3.5 w-3.5 shrink-0 text-primary" />}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-xs font-semibold text-foreground/80">{group.label}</span>
+          {group.showPath && <span className="block truncate text-[10px] text-secondary" dir="ltr">{group.path}</span>}
+        </span>
+        <span className="ml-auto min-w-5 px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums text-secondary">
+          {group.count}
+        </span>
+      </button>
+      {!group.isCollapsed && (
+        <div className="space-y-0.5">
+          {group.sessions.map(renderSession)}
+          <SessionListPageFooter {...group.footer} />
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div ref={setNodeRef} className="mt-1.5">
-      <div className="px-2.5 py-1">
+      {pinnedGroup && renderGroup(pinnedGroup)}
+      <div className="flex items-center justify-between gap-1 px-2.5 py-1">
         <span className="text-xs font-medium text-secondary">{i18nService.t('coworkHistory')}</span>
+        {grouping && (
+          <div
+            role="group"
+            aria-label={i18nService.t('sessionHistoryGrouping')}
+            className="inline-flex shrink-0 items-center gap-0.5"
+          >
+            {([
+              [SessionHistoryGrouping.Time, 'sessionHistoryGroupByTime', ClockIcon],
+              [SessionHistoryGrouping.Workspace, 'sessionHistoryGroupByWorkspace', FolderOpenIcon],
+            ] as const).map(([mode, label, Icon]) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={grouping === mode}
+                aria-label={i18nService.t(label)}
+                title={i18nService.t(label)}
+                onClick={() => onGroupingChange(mode)}
+                className="inline-flex h-6 w-7 items-center justify-center rounded-md text-secondary hover:bg-surface-raised hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary aria-pressed:text-primary"
+              >
+                <Icon aria-hidden="true" className="h-4 w-4" />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className={isOver ? 'rounded-lg bg-blue-500/10 ring-1 ring-blue-400/30' : ''}>
-        {showDateGroups
-          ? dateGroups.map(group => {
-              const isCollapsed = group.isCollapsed;
-              const label = i18nService.t(dateGroupLabels[group.key]);
-              return (
-                <section key={group.key} className="mb-1 last:mb-0">
-                  <button
-                    type="button"
-                    onClick={() => onToggleDateGroup(group.key)}
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-raised"
-                    aria-expanded={!isCollapsed}
-                    aria-label={`${label} · ${group.count} · ${i18nService.t(
-                      isCollapsed ? 'expand' : 'collapse',
-                    )}`}
-                  >
-                    <ChevronRightIcon
-                      className={`h-3.5 w-3.5 shrink-0 text-secondary transition-transform ${
-                        isCollapsed ? '' : 'rotate-90'
-                      }`}
-                    />
-                    <span className="text-xs font-semibold text-foreground/80">{label}</span>
-                    <span className="ml-auto min-w-5 px-1.5 py-0.5 text-center text-[10px] font-medium tabular-nums text-secondary">
-                      {group.count}
-                    </span>
-                  </button>
-                  {!isCollapsed && (
-                    <div className="space-y-0.5">
-                      {group.sessions.map(renderSession)}
-                      <SessionListPageFooter {...group.footer} />
-                    </div>
-                  )}
-                </section>
-              );
-            })
-          : unGroupedSessions.map(renderSession)}
+        {grouping ? historyGroups.map(renderGroup) : unGroupedSessions.map(renderSession)}
       </div>
     </div>
   );
@@ -193,6 +239,7 @@ const UngroupedDroppableZone: React.FC<UngroupedDroppableZoneProps> = ({
 interface UngroupedSessionListProps {
   sessions: CoworkSessionSummary[];
   directory?: SessionDirectoryEntry[];
+  workspaceDirectory?: SessionDirectoryEntry[];
   onVisibleSessionIdsChange?: (sessionIds: string[]) => void;
   isLoading?: boolean;
   loadFailed?: boolean;
@@ -214,6 +261,7 @@ interface UngroupedSessionListProps {
 const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   sessions: inputSessions,
   directory: inputDirectory = inputSessions,
+  workspaceDirectory = inputDirectory,
   onVisibleSessionIdsChange,
   isLoading = false,
   loadFailed = false,
@@ -456,6 +504,58 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   const [collapsedDateGroupKeys, setCollapsedDateGroupKeys] = useState<Set<SessionDateGroupKey>>(
     () => new Set(DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS),
   );
+  const [grouping, setGrouping] = useState<SessionHistoryGrouping>(() =>
+    rendererPreferences.getItem(SESSION_HISTORY_GROUPING_PREFERENCE_KEY) ===
+    SessionHistoryGrouping.Workspace
+      ? SessionHistoryGrouping.Workspace
+      : SessionHistoryGrouping.Time,
+  );
+  const groupByWorkspace =
+    groupRecentSessionsByDate && grouping === SessionHistoryGrouping.Workspace;
+  const [workspaceExpansion, setWorkspaceExpansion] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
+  const handleGroupingChange = (next: SessionHistoryGrouping) => {
+    if (next === grouping) return;
+    const active = unGroupedSessions.find(entry => entry.id === currentSessionId && !entry.pinned);
+    if (active) {
+      if (next === SessionHistoryGrouping.Workspace) {
+        setWorkspaceExpansion(current => new Map(current).set(getSessionWorkspaceKey(active.cwd), true));
+      } else {
+        setCollapsedDateGroupKeys(current => {
+          const expanded = new Set(current);
+          expanded.delete(getSessionDateGroupKey(active));
+          return expanded;
+        });
+      }
+    }
+    setGrouping(next);
+    rendererPreferences.setItem(SESSION_HISTORY_GROUPING_PREFERENCE_KEY, next);
+  };
+  const visibleById = useMemo(() => new Map(directory.map(entry => [entry.id, entry])), [directory]);
+  const workspaceGroups = useMemo(() => {
+    if (!groupByWorkspace) return [];
+    const candidates = partitionSidebarSessions(workspaceDirectory).regular
+      .filter(entry => !entry.groupId && !entry.pinned)
+      .map(entry => visibleById.get(entry.id) ?? entry);
+    return groupSessionsByWorkspace(candidates, visibleById);
+  }, [groupByWorkspace, workspaceDirectory, visibleById]);
+  const defaultWorkspaceKey = (
+    workspaceGroups.find(group => group.sessions.some(entry => entry.id === currentSessionId)) ??
+    workspaceGroups[0]
+  )?.key;
+  const expandedWorkspaceGroups = useMemo(
+    () => workspaceGroups.filter(
+      group => workspaceExpansion.get(group.key) ?? group.key === defaultWorkspaceKey,
+    ),
+    [workspaceGroups, workspaceExpansion, defaultWorkspaceKey],
+  );
+  const workspacePageFor = useWorkspaceSessionPages(expandedWorkspaceGroups, visibleById, summaryById);
+  const workspacePages = workspaceGroups.map(group => ({
+    group,
+    isExpanded: workspaceExpansion.get(group.key) ?? group.key === defaultWorkspaceKey,
+    ...workspacePageFor(group),
+  }));
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(() => Date.now());
   const [pageLimits, setPageLimits] = useState<Record<string, number>>({});
   const [failedRequestKey, setFailedRequestKey] = useState<string | null>(null);
@@ -492,6 +592,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
     () => groupSessionsByDate(unGroupedSessions, calendarRefreshKey),
     [unGroupedSessions, calendarRefreshKey],
   );
+  const displayedDateGroups = groupByWorkspace
+    ? dateGroups.filter(group => group.key === 'pinned')
+    : dateGroups;
   const pageEntries = (key: string, entries: ListDirectoryEntry[], all = false) =>
     all ? entries : entries.slice(0, pageLimits[key] ?? SESSION_LIST_PAGE_SIZE);
   const visibleEntries = [
@@ -504,7 +607,7 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         : [],
     ),
     ...(groupRecentSessionsByDate
-      ? dateGroups.flatMap(group =>
+      ? displayedDateGroups.flatMap(group =>
           collapsedDateGroupKeys.has(group.key)
             ? []
             : pageEntries(
@@ -515,6 +618,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         )
       : unGroupedSessions),
   ];
+  const visibleWorkspaceEntries = workspacePages.flatMap(page =>
+    page.isExpanded ? page.entries.filter(entry => visibleById.has(entry.id)) : [],
+  );
   const missingIds = visibleEntries
     .filter(entry => !summaryById.has(entry.id))
     .map(entry => entry.id);
@@ -537,7 +643,9 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
   }, [requestKey, retryRevision]);
 
   const visibleIdsKey = JSON.stringify(
-    visibleEntries.filter(entry => summaryById.has(entry.id)).map(entry => entry.id),
+    [...visibleEntries, ...visibleWorkspaceEntries]
+      .filter(entry => summaryById.has(entry.id))
+      .map(entry => entry.id),
   );
   useEffect(() => {
     onVisibleSessionIdsChange?.(JSON.parse(visibleIdsKey) as string[]);
@@ -573,6 +681,38 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
       return next;
     });
   };
+  const datePages = displayedDateGroups.map(({ key, sessions: entries }) => {
+    const { sessions, ...footer } = pageProps(
+      `date:${key}`, entries, !DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS.includes(key),
+    );
+    return {
+      key,
+      label: i18nService.t(dateGroupLabels[key]),
+      count: entries.length,
+      isCollapsed: collapsedDateGroupKeys.has(key),
+      sessions,
+      footer,
+      onToggle: () => toggleDateGroup(key),
+    };
+  });
+  const workspaceLabelCounts = new Map<string, number>();
+  for (const { group } of workspacePages) {
+    workspaceLabelCounts.set(group.label, (workspaceLabelCounts.get(group.label) ?? 0) + 1);
+  }
+  const historyGroups: HistoryGroupPage[] = groupByWorkspace
+    ? workspacePages.map(({ group, isExpanded, entries, footer }) => ({
+        key: `workspace:${group.key}`,
+        label: group.label || i18nService.t('sessionHistoryNoWorkspace'),
+        path: group.path || undefined,
+        showPath: (workspaceLabelCounts.get(group.label) ?? 0) > 1,
+        isWorkspace: true,
+        count: group.visibleCount,
+        isCollapsed: !isExpanded,
+        sessions: resolveSummaries(entries.filter(entry => visibleById.has(entry.id))),
+        footer,
+        onToggle: () => setWorkspaceExpansion(current => new Map(current).set(group.key, !isExpanded)),
+      }))
+    : datePages.filter(group => group.key !== 'pinned');
 
   const retryingSessionIds = useAutomaticErrorRetryIndicators();
 
@@ -732,21 +872,10 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
         ) : regularSessions.length > 0 ? (
           <UngroupedDroppableZone
             unGroupedSessions={groupRecentSessionsByDate ? [] : resolveSummaries(unGroupedSessions)}
-            dateGroups={dateGroups.map(group => {
-              const { sessions, ...footer } = pageProps(
-                `date:${group.key}`,
-                group.sessions,
-                !DEFAULT_COLLAPSED_SESSION_DATE_GROUP_KEYS.includes(group.key),
-              );
-              return {
-                key: group.key,
-                count: group.sessions.length,
-                isCollapsed: collapsedDateGroupKeys.has(group.key),
-                sessions,
-                footer,
-              };
-            })}
-            onToggleDateGroup={toggleDateGroup}
+            historyGroups={historyGroups}
+            pinnedGroup={groupRecentSessionsByDate ? datePages.find(group => group.key === 'pinned') : undefined}
+            grouping={groupRecentSessionsByDate ? grouping : undefined}
+            onGroupingChange={handleGroupingChange}
             unreadSessionIdSet={unreadSessionIdSet}
             runtimeRunningSessionIds={runtimeRunningSessionIds}
             retryingSessionIds={retryingSessionIds}
@@ -763,7 +892,6 @@ const UngroupedSessionList: React.FC<UngroupedSessionListProps> = ({
             onTogglePinned={handleTogglePinned}
             onToggleSelection={onToggleSelection}
             onEnterBatchMode={onEnterBatchMode}
-            showDateGroups={groupRecentSessionsByDate}
             onMoveToGroup={handleMoveToGroup}
           />
         ) : null}

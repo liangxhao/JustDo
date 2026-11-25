@@ -141,16 +141,22 @@ const updateDirectoryEntry = (
   if (entry) Object.assign(entry, changes);
 };
 
-const rememberDirectoryEntry = (state: CoworkState, session: CoworkSessionSummary): void => {
-  if (!state.sessionDirectory || session.id.startsWith('temp-')) return;
+const rememberDirectoryEntry = (
+  state: CoworkState,
+  session: CoworkSessionSummary,
+): string | undefined => {
+  if (!state.sessionDirectory || session.id.startsWith('temp-')) return session.cwd;
   const index = state.sessionDirectory.findIndex(item => item.id === session.id);
+  const previous = state.sessionDirectory[index];
+  // A detail or admission response can arrive after a newer directory read.
+  const cwd = previous?.cwd ?? session.cwd;
   const entry: SessionDirectoryEntry = {
     id: session.id,
     status: session.status,
-    pinned: session.pinned,
+    pinned: session.pinned ?? false,
     agentId: session.agentId,
-    groupId:
-      session.groupId !== undefined ? session.groupId : state.sessionDirectory[index]?.groupId,
+    groupId: session.groupId !== undefined ? session.groupId : previous?.groupId,
+    cwd,
     source: session.source,
     external: session.external,
     nativeSessionKey: session.nativeSessionKey,
@@ -159,6 +165,7 @@ const rememberDirectoryEntry = (state: CoworkState, session: CoworkSessionSummar
   };
   if (index < 0) state.sessionDirectory.push(entry);
   else state.sessionDirectory[index] = entry;
+  return cwd;
 };
 
 const coworkSlice = createSlice({
@@ -367,6 +374,7 @@ const coworkSlice = createSlice({
         if (!nextSession.id.startsWith('temp-')) {
           const { id, title, status, pinned, agentId, external, source, createdAt, updatedAt } =
             nextSession;
+          const cwd = rememberDirectoryEntry(state, nextSession);
           const summary: CoworkSessionSummary = {
             id,
             title,
@@ -374,6 +382,7 @@ const coworkSlice = createSlice({
             pinned: pinned ?? false,
             agentId,
             groupId: nextSession.groupId,
+            cwd,
             nativeSessionKey: nextSession.nativeSessionKey,
             historyBinding: nextSession.historyBinding,
             external,
@@ -391,7 +400,6 @@ const coworkSlice = createSlice({
             state.sessions.unshift(summary);
           }
         }
-        rememberDirectoryEntry(state, nextSession);
         markSessionRead(state, nextSession.id);
       }
     },
@@ -443,6 +451,7 @@ const coworkSlice = createSlice({
 
     addSession(state, action: PayloadAction<{ session: CoworkSession; select: boolean }>) {
       const { session, select } = action.payload;
+      const cwd = rememberDirectoryEntry(state, session);
       const summary: CoworkSessionSummary = {
         nativeSessionKey: session.nativeSessionKey,
         historyBinding: session.historyBinding,
@@ -452,6 +461,7 @@ const coworkSlice = createSlice({
         pinned: session.pinned ?? false,
         agentId: session.agentId,
         groupId: session.groupId,
+        cwd,
         external: session.external,
         source: session.source,
         createdAt: session.createdAt,
@@ -461,7 +471,6 @@ const coworkSlice = createSlice({
       // startSession IPC resolves. Treat admission as an upsert so that race
       // cannot insert the same canonical session a second time.
       state.sessions = [summary, ...state.sessions.filter(item => item.id !== session.id)];
-      rememberDirectoryEntry(state, summary);
       if (select) {
         state.currentSession = session;
         state.currentSessionId = session.id;
@@ -620,8 +629,12 @@ const coworkSlice = createSlice({
     },
 
     updateCurrentSessionWorkspace(state, action: PayloadAction<{ sessionId: string; cwd: string }>) {
-      if (state.currentSession?.id === action.payload.sessionId) {
-        state.currentSession.cwd = action.payload.cwd;
+      const { sessionId, cwd } = action.payload;
+      updateDirectoryEntry(state, sessionId, { cwd });
+      const summary = state.sessions.find(session => session.id === sessionId);
+      if (summary) summary.cwd = cwd;
+      if (state.currentSession?.id === sessionId) {
+        state.currentSession.cwd = cwd;
         if (state.currentSession.historyBinding)
           state.currentSession.historyBinding.workspaceUnavailable = false;
       }

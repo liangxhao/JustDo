@@ -2,11 +2,13 @@
 
 import type { DragEndEvent } from '@dnd-kit/core';
 import { configureStore } from '@reduxjs/toolkit';
+import { SESSION_HISTORY_GROUPING_PREFERENCE_KEY } from '@shared/app/rendererPreferences';
 import {
   type AutomaticErrorRetryActivitySnapshot,
   AutomaticErrorRetryPhase as RetryPhase,
   type AutomaticErrorRetryPresentation,
 } from '@shared/cowork/automaticErrorRetry';
+import { SESSION_LIST_PAGE_SIZE } from '@shared/cowork/sessionDirectory';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import { ExternalSessionSource, ExternalSessionStatus } from '@shared/integrations/externalSession';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -25,6 +27,7 @@ import coworkReducer, {
 } from '@/features/cowork/coworkSlice';
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 import { translations } from '@/services/i18n/translations';
+import { rendererPreferences } from '@/services/rendererPreferences';
 
 import CoworkSessionList from './CoworkSessionList';
 
@@ -65,6 +68,7 @@ const notifyPresentation = () => {
 vi.mock('@/features/cowork/coworkService', () => ({
   coworkService: {
     ensureSessionSummaries: vi.fn(async () => true),
+    readSessionSummaryPage: vi.fn(async () => true),
     moveSessionToGroup: vi.fn(async () => true),
   },
 }));
@@ -74,15 +78,127 @@ vi.mock('@/services/i18n', () => ({
 
 afterEach(() => {
   cleanup();
+  rendererPreferences.removeItem(SESSION_HISTORY_GROUPING_PREFERENCE_KEY);
   vi.unstubAllGlobals();
   vi.useRealTimers();
   activities.presentation = {};
   vi.mocked(coworkService.ensureSessionSummaries).mockReset().mockResolvedValue(true);
+  vi.mocked(coworkService.readSessionSummaryPage).mockReset().mockResolvedValue(true);
   vi.mocked(coworkService.moveSessionToGroup).mockReset().mockResolvedValue(true);
   dragHandlers.onDragEnd = undefined;
 });
 
 describe('session list pages', () => {
+  it('reads one raw workspace page per action and keeps filtered slots in the page boundary', async () => {
+    const now = Date.now() - 12 * 86_400_000;
+    const raw = Array.from({ length: SESSION_LIST_PAGE_SIZE * 2 + 2 }, (_, index) => ({
+      ...summary(`Workspace chat ${index}`, now - index),
+      cwd: index % 2 ? 'e:/WORK/project/' : 'E:\\work\\project',
+    }));
+    const shown = [raw[0], raw[SESSION_LIST_PAGE_SIZE - 1], ...raw.slice(SESSION_LIST_PAGE_SIZE * 2)];
+    const pinned = { ...summary('Pinned chat', now), cwd: raw[0].cwd, pinned: true };
+    const store = createStore();
+    const onVisibleSessionIdsChange = vi.fn();
+    store.dispatch(setSessions([pinned]));
+    const ConnectedList = () => {
+      const sessions = useSelector((state: ReturnType<typeof store.getState>) => state.cowork.sessions);
+      return (
+        <CoworkSessionList
+          {...createProps(sessions)}
+          directory={[...shown, pinned]}
+          workspaceDirectory={[...raw, pinned]}
+          groupRecentSessionsByDate
+          onVisibleSessionIdsChange={onVisibleSessionIdsChange}
+        />
+      );
+    };
+    vi.mocked(coworkService.readSessionSummaryPage).mockImplementation(async (ids, isVisible) => {
+      store.dispatch(setSessions([pinned, ...raw.filter(row =>
+        (ids.includes(row.id) && isVisible(row.id)) ||
+        store.getState().cowork.sessions.some(session => session.id === row.id),
+      )]));
+      return true;
+    });
+    render(<Provider store={store}><ConnectedList /></Provider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Group by workspace' }));
+    const group = screen.getByRole('button', { name: /^project · 4/i }).closest('section')!;
+    const more = await within(group).findByRole('button', { name: 'Show more' });
+    expect(within(group).getByText(shown[1].title)).toBeTruthy();
+    expect(within(group).queryByText(shown[2].title)).toBeNull();
+    expect(within(group).queryByText(raw[1].title)).toBeNull();
+    expect(onVisibleSessionIdsChange).toHaveBeenLastCalledWith([pinned.id, shown[0].id, shown[1].id]);
+    expect(coworkService.readSessionSummaryPage).toHaveBeenCalledExactlyOnceWith(
+      raw.slice(0, SESSION_LIST_PAGE_SIZE).map(entry => entry.id), expect.any(Function),
+    );
+
+    fireEvent.click(more);
+    await within(group).findByRole('button', { name: 'Show more' });
+    expect(within(group).queryByText(shown[2].title)).toBeNull();
+    expect(coworkService.readSessionSummaryPage).toHaveBeenNthCalledWith(
+      2, raw.slice(SESSION_LIST_PAGE_SIZE, SESSION_LIST_PAGE_SIZE * 2).map(entry => entry.id), expect.any(Function),
+    );
+    expect(coworkService.readSessionSummaryPage).toHaveBeenCalledTimes(2);
+
+    fireEvent.click(within(group).getByRole('button', { name: 'Show more' }));
+    expect(await within(group).findByText(shown[3].title)).toBeTruthy();
+    expect(coworkService.readSessionSummaryPage).toHaveBeenNthCalledWith(
+      3, shown.slice(2).map(entry => entry.id), expect.any(Function),
+    );
+    expect(within(group).queryByRole('button', { name: 'Show more' })).toBeNull();
+    const pinnedGroup = screen.getByRole('button', { name: /^Pinned · 1/ });
+    fireEvent.click(pinnedGroup);
+    fireEvent.click(screen.getByRole('button', { name: 'Group by time' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Group by workspace' }));
+    expect(pinnedGroup.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByText(shown[3].title)).toBeTruthy();
+    const newChat = { ...summary('New workspace chat', Date.now()), cwd: pinned.cwd };
+    raw.unshift(newChat);
+    shown.unshift(newChat);
+    act(() => store.dispatch(setSessions([newChat, ...store.getState().cowork.sessions])));
+    expect(screen.getByText(newChat.title)).toBeTruthy();
+    expect(within(group).queryByRole('button', { name: 'Show more' })).toBeNull();
+    expect(coworkService.readSessionSummaryPage).toHaveBeenCalledTimes(3);
+    expect(coworkService.ensureSessionSummaries).not.toHaveBeenCalled();
+    expect(rendererPreferences.getItem(SESSION_HISTORY_GROUPING_PREFERENCE_KEY)).toBe('workspace');
+  });
+
+  it('hydrates a previously unloaded workspace conversation when activity moves it into the leading raw page', async () => {
+    rendererPreferences.setItem(SESSION_HISTORY_GROUPING_PREFERENCE_KEY, 'workspace');
+    const now = Date.now();
+    const directory = Array.from({ length: SESSION_LIST_PAGE_SIZE + 1 }, (_, index) => ({
+      ...summary(`Recent chat ${index}`, now - index),
+      cwd: 'E:\\project',
+    }));
+    const older = directory.at(-1)!;
+    const store = createStore();
+    const ConnectedList = () => {
+      const entries = useSelector((state: ReturnType<typeof store.getState>) => state.cowork.sessionDirectory);
+      const sessions = useSelector((state: ReturnType<typeof store.getState>) => state.cowork.sessions);
+      return <CoworkSessionList {...createProps(sessions)} directory={entries ?? []} groupRecentSessionsByDate />;
+    };
+    store.dispatch(setSessionDirectory(directory));
+    vi.mocked(coworkService.readSessionSummaryPage).mockImplementation(async ids => {
+      store.dispatch(setSessions(directory.filter(entry => ids.includes(entry.id))));
+      return true;
+    });
+    vi.mocked(coworkService.ensureSessionSummaries).mockImplementation(async () => {
+      store.dispatch(setSessions([...store.getState().cowork.sessions, older]));
+      return true;
+    });
+    render(<Provider store={store}><ConnectedList /></Provider>);
+    await screen.findByRole('button', { name: 'Show more' });
+    expect(screen.queryByText(older.title)).toBeNull();
+    expect(coworkService.ensureSessionSummaries).not.toHaveBeenCalled();
+
+    act(() => store.dispatch(touchSessionActivity({ sessionId: older.id, timestamp: now + 1 })));
+
+    expect(await screen.findByText(older.title)).toBeTruthy();
+    expect(coworkService.ensureSessionSummaries).toHaveBeenCalledExactlyOnceWith([older.id]);
+    expect(coworkService.readSessionSummaryPage).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+  });
+
   it('keeps complete counts while requesting only expanded date pages and retains page size after collapse', async () => {
     const now = Date.now();
     const historical = Array.from({ length: 45 }, (_, index) =>

@@ -216,6 +216,7 @@ interface CoworkSessionSummary {
   status: 'idle' | 'running' | 'completed' | 'error';
   pinned: boolean;
   groupId?: string | null;
+  cwd?: string;
   agentId?: string;
   external?: ExternalSessionMetadata;
   source?: CoworkSessionSource;

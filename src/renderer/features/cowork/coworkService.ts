@@ -418,34 +418,11 @@ export class CoworkService {
       if (task) pending.add(task);
       else unread.push(id);
     }
-    const read = window.electron?.cowork?.readSessionSummaries;
-    if (unread.length && !read) return false;
     for (let offset = 0; offset < unread.length; offset += SESSION_SUMMARY_BATCH_LIMIT) {
       const batch = unread.slice(offset, offset + SESSION_SUMMARY_BATCH_LIMIT);
-      const generation = this.initializationGeneration;
-      const titlesAtRequest = new Map(
-        store.getState().cowork.sessions.map(session => [session.id, session.title]),
-      );
-      const task = Promise.resolve()
-        .then(async () => {
-          const result = await read!(batch);
-          if (generation !== this.initializationGeneration) return false;
-          if (!result.success || !result.sessions) return false;
-          const expected = new Set(batch);
-          if (result.sessions.some(session => !expected.has(session.id))) return false;
-          const currentTitles = new Map(
-            store.getState().cowork.sessions.map(session => [session.id, session.title]),
-          );
-          store.dispatch(
-            upsertSessionSummaries(
-              result.sessions.map(session => {
-                const title = currentTitles.get(session.id);
-                return title !== undefined && title !== titlesAtRequest.get(session.id)
-                  ? { ...session, title }
-                  : session;
-              }),
-            ),
-          );
+      const task = this.readSessionSummaryBatch(batch)
+        .then(succeeded => {
+          if (!succeeded) return false;
           const current = store.getState().cowork;
           const currentIds = current.sessionDirectory
             ? new Set(current.sessionDirectory.map(entry => entry.id))
@@ -453,7 +430,6 @@ export class CoworkService {
           const available = new Set(current.sessions.map(session => session.id));
           return batch.every(id => (currentIds && !currentIds.has(id)) || available.has(id));
         })
-        .catch(() => false)
         .finally(() => {
           for (const id of batch) {
             if (this.summaryReads.get(id) === task) this.summaryReads.delete(id);
@@ -463,6 +439,45 @@ export class CoworkService {
       pending.add(task);
     }
     return (await Promise.all(pending)).every(Boolean);
+  }
+
+  readSessionSummaryPage(rawIds: string[], isVisible: (id: string) => boolean): Promise<boolean> {
+    return this.readSessionSummaryBatch(rawIds, isVisible);
+  }
+
+  private readSessionSummaryBatch(batch: string[], isVisible?: (id: string) => boolean): Promise<boolean> {
+    const read = window.electron?.cowork?.readSessionSummaries;
+    if (!read) return Promise.resolve(false);
+    const generation = this.initializationGeneration;
+    const titlesAtRequest = new Map(
+      store.getState().cowork.sessions.map(session => [session.id, session.title]),
+    );
+    return Promise.resolve()
+      .then(async () => {
+        const result = await read(batch);
+        if (generation !== this.initializationGeneration || !result.success || !result.sessions)
+          return false;
+        const expected = new Set(batch);
+        if (result.sessions.some(session => !expected.has(session.id))) return false;
+        const currentTitles = new Map(
+          store.getState().cowork.sessions.map(session => [session.id, session.title]),
+        );
+        const admitted = isVisible
+          ? result.sessions.filter(session => isVisible(session.id))
+          : result.sessions;
+        if (admitted.length) {
+          store.dispatch(
+            upsertSessionSummaries(admitted.map(session => {
+              const title = currentTitles.get(session.id);
+              return title !== undefined && title !== titlesAtRequest.get(session.id)
+                ? { ...session, title }
+                : session;
+            })),
+          );
+        }
+        return true;
+      })
+      .catch(() => false);
   }
 
   async getSessionRuntimeStatus(

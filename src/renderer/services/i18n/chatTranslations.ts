@@ -194,6 +194,10 @@ export const chatTranslations = {
     coworkMessageHistoryMutationFailed: '更新消息失败，请稍后重试',
     // JustDo
     coworkHistory: '最近对话',
+    sessionHistoryGrouping: '最近对话分组方式',
+    sessionHistoryGroupByTime: '按时间分组',
+    sessionHistoryGroupByWorkspace: '按工作区分组',
+    sessionHistoryNoWorkspace: '未设置工作区',
     groupedSessions: '对话分组',
     chromeExtensionSessionGroup: 'Chrome',
     coworkNoSessions: '暂无最近对话',
@@ -967,6 +971,10 @@ export const chatTranslations = {
     coworkMessageHistoryMutationFailed: 'Failed to update the message. Please try again.',
     // JustDo
     coworkHistory: 'Recent Chats',
+    sessionHistoryGrouping: 'Recent chat grouping',
+    sessionHistoryGroupByTime: 'Group by time',
+    sessionHistoryGroupByWorkspace: 'Group by workspace',
+    sessionHistoryNoWorkspace: 'No workspace',
     groupedSessions: 'Groups',
     chromeExtensionSessionGroup: 'Chrome',
     coworkNoSessions: 'No chats yet',

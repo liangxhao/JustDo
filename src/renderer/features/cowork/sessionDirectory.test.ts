@@ -14,6 +14,7 @@ import reducer, {
   setSessionRuntimeActivity,
   setSessions,
   touchSessionActivity,
+  updateCurrentSessionWorkspace,
   updateSessionPinned,
   updateSessionTitle,
   upsertSessionSummaries,
@@ -58,8 +59,8 @@ describe('complete directory and partial row summaries', () => {
     state = reducer(state, addSession({ session: fullSession('canonical'), select: true }));
 
     expect(state.currentSessionId).toBe('canonical');
-    expect(state.sessions.map(session => session.id)).toEqual(['canonical']);
-    expect(state.sessionDirectory?.map(session => session.id)).toEqual(['canonical']);
+    expect(state.sessions).toMatchObject([{ id: 'canonical', cwd: 'E:\\project' }]);
+    expect(state.sessionDirectory).toMatchObject([{ id: 'canonical', cwd: 'E:\\project' }]);
   });
 
   test.each([
@@ -95,6 +96,26 @@ describe('complete directory and partial row summaries', () => {
     expect(state.sessionDirectory).toEqual([]);
   });
 
+  test('a confirmed workspace change updates sidebar metadata after changing conversations', () => {
+    const moved = fullSession('moved');
+    const current = fullSession('current');
+    let state = reducer(undefined, setSessionDirectory([entry(moved.id, { cwd: moved.cwd })]));
+    state = reducer(state, addSession({ session: moved, select: true }));
+    state = reducer(state, setCurrentSession(current));
+
+    const cwd = 'E:\\new-project';
+    state = reducer(state, updateCurrentSessionWorkspace({ sessionId: moved.id, cwd }));
+    state = reducer(state, upsertSessionSummaries([{ ...summary(moved.id), cwd: moved.cwd }]));
+
+    expect(state.sessionDirectory?.find(session => session.id === moved.id)?.cwd).toBe(cwd);
+    expect(state.sessions.find(session => session.id === moved.id)?.cwd).toBe(cwd);
+    expect(state.currentSession?.cwd).toBe(current.cwd);
+
+    state = reducer(state, setCurrentSession(moved));
+    expect(state.sessionDirectory?.find(session => session.id === moved.id)?.cwd).toBe(cwd);
+    expect(state.sessions.find(session => session.id === moved.id)?.cwd).toBe(cwd);
+  });
+
   test('pin, move and activity changes update unloaded directory entries', () => {
     let state = reducer(undefined, setSessionDirectory([entry('old')]));
     state = reducer(state, updateSessionPinned({ sessionId: 'old', pinned: true }));
@@ -123,6 +144,19 @@ describe('complete directory and partial row summaries', () => {
 });
 
 describe('bounded row loading', () => {
+  test('reads a single raw page and admits only visible results, even if Main omits a row', async () => {
+    const ids = ['show', 'hidden', 'removed'];
+    store.dispatch(setSessionDirectory(ids.map(id => entry(id))));
+    const readSessionSummaries = vi.fn(async () => ({
+      success: true, sessions: [summary('show'), summary('hidden')],
+    }));
+    vi.stubGlobal('window', { electron: { cowork: { readSessionSummaries } } });
+
+    expect(await new CoworkService().readSessionSummaryPage(ids, id => id === 'show')).toBe(true);
+    expect(readSessionSummaries).toHaveBeenCalledExactlyOnceWith(ids);
+    expect(store.getState().cowork.sessions.map(row => row.id)).toEqual(['show']);
+  });
+
   test('cold startup reads only the directory and does not hydrate hidden rows', async () => {
     store.dispatch(setSessionDirectory([]));
     const readSessionSummaries = vi.fn();

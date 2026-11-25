@@ -125,8 +125,10 @@ beforeEach(() => {
 
 test('reads a lightweight complete directory and only requested summaries without session detail reads', () => {
   for (let index = 0; index < 205; index += 1) insertSession(`session-${index}`, index);
-  db.prepare('UPDATE cowork_sessions SET group_id = ?, pinned = 1 WHERE id = ?').run(
+  const workspace = 'E:\\workspace\\product';
+  db.prepare('UPDATE cowork_sessions SET group_id = ?, pinned = 1, cwd = ? WHERE id = ?').run(
     'manual',
+    workspace,
     'session-0',
   );
   const details = vi.spyOn(store, 'getSession').mockImplementation(() => {
@@ -137,11 +139,16 @@ test('reads a lightweight complete directory and only requested summaries withou
   const page = store.readSessionSummaries(['session-0', 'session-3', 'session-3', 'missing']);
 
   expect(directory).toHaveLength(205);
-  expect(directory[0]).toMatchObject({ id: 'session-0', groupId: 'manual', pinned: true });
+  expect(directory[0]).toMatchObject({
+    id: 'session-0',
+    groupId: 'manual',
+    pinned: true,
+    cwd: workspace,
+  });
   expect(directory[0]).not.toHaveProperty('title');
   expect(directory[0]).not.toHaveProperty('historyBinding');
   expect(page.map(session => session.id)).toEqual(['session-0', 'session-3']);
-  expect(page[0]).toMatchObject({ title: 'test', groupId: 'manual' });
+  expect(page[0]).toMatchObject({ title: 'test', groupId: 'manual', cwd: workspace });
   expect(store.readSessionSummaries([])).toEqual([]);
   expect(() =>
     store.readSessionSummaries(
@@ -183,8 +190,11 @@ test('projects external origins and historical identities and hides holding sess
   history.run('holding', 'agent:main:harness:inert-custody:one', 'native-holding', 'native');
 
   const directory = store.listSessionDirectory('main');
+  const preparePage = vi.spyOn(db, 'prepare');
   const summaries = store.readSessionSummaries(['historical', 'holding']);
 
+  expect(preparePage).toHaveBeenCalledTimes(1);
+  preparePage.mockRestore();
   expect(directory.map(session => session.id)).toEqual(['cli', 'chrome', 'historical']);
   expect(directory[0].external).toEqual({
     origin: 'cli',

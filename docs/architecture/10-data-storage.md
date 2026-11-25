@@ -218,10 +218,11 @@ certifier，避免校验的提交授权与同步插件加载争用 Gateway 事�
 
 正式 Renderer 的 HTTP 静态宿主每次启动使用随机端口，不能把持久偏好绑定该 origin。
 `kv['app.renderer-preferences.v1']` 通过既有 store preload 保存具名主题、宠物浮动位置、
-定时任务结果过滤、聊天列表宽度（`shell.session-list-width`），以及尚未提交的 Goal 完成反馈状态。启动先恢复这份快照，再导入 App
-和 Redux slice，确保初始过滤值和主题读取正确。
+定时任务结果过滤、聊天列表宽度（`shell.session-list-width`）、最近对话分组方式
+（`shell.session-history-grouping`）、已固定的浏览历史地址及尚未提交的 Goal 完成反馈状态。
+启动先恢复这份快照，再导入 App 和 Redux slice，确保初始偏好读取正确。
 
-只接受四个固定键与 Goal 草稿命名空间，
+只接受白名单内的固定键与 Goal 草稿命名空间，
 最多 128 项、单值 64 KiB、总值 512 KiB；超额先淘汰最旧 Goal 草稿，固定偏好保留。
 窗口首屏的只读外观快照由 Main 从既有 `app_config.theme` 和这里的 `justdo-theme-id` 提取，
 通过受限同步 preload 读取提供，每次新文档及 reload 都取最新值；不另存主题副本、不依赖随机
@@ -477,7 +478,7 @@ Goal 后继在本地登记失败且确定尚未发送，或被原生明确提交
 
 ### 会话目录与按需摘要查询
 
-CoworkStore.listSessionDirectory 批量关联产品会话、外部来源和历史绑定键，返回不含标题、正文或完整历史绑定的轻量元数据；readSessionSummaries 按有界 ID 集合查询摘要，listSessionSearchSummaries 仅在打开搜索时读取完整简单摘要。它们复用产品库及现有主键，不新增表或复制 OpenClaw transcript。历史绑定与外部来源使用批量 JOIN，取消列表读取中的逐条查询；临时 holding 身份在目录与摘要的同一投影中排除。
+CoworkStore.listSessionDirectory 批量关联产品会话、外部来源和历史绑定键，返回不含标题、正文或完整历史绑定的轻量元数据。工作区分组使用目录投影中的产品会话 `cwd`；托管 Worktree 使用保存的检出目录。readSessionSummaries 按有界 ID 集合查询摘要，listSessionSearchSummaries 仅在打开搜索时读取完整简单摘要。它们复用产品库及现有主键，不新增表或复制 OpenClaw transcript。历史绑定与外部来源使用批量 JOIN，完整模式确认后每批摘要只执行一次查询；临时 holding 身份在目录与摘要的同一投影中排除。
 
 Renderer 持有完整目录和一个按需摘要实体集合。目录刷新才能裁剪失效会话的未读或展示资源；部分摘要响应不得复活已删除项。读取期间的活动、置顶及归组变化以当前目录为准，读取期间成功完成的重命名保留当前标题。单条完整会话详情保留 groupId，防止搜索或通知打开会话时丢失手动归组。
 

@@ -162,6 +162,7 @@ export interface CoworkSessionSummary {
   status: CoworkSessionStatus;
   pinned: boolean;
   groupId: string | null;
+  cwd?: string;
   agentId: string;
   external?: ExternalSessionMetadata;
   source?: CoworkSessionSource;

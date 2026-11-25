@@ -1,9 +1,25 @@
+import type { SessionDirectoryEntry } from '@shared/cowork/sessionDirectory';
 import { CoworkSessionSource } from '@shared/cowork/sessionSource';
 import { ExternalSessionSource } from '@shared/integrations/externalSession';
 
 import type { CoworkSessionSummary } from '@/features/cowork/coworkTypes';
 export type { SessionDetailStats } from '@shared/cowork/sessionDetails';
 export { sumSessionDetailTokenUsage } from '@shared/cowork/sessionDetails';
+export const SessionHistoryGrouping = {
+  Time: 'time',
+  Workspace: 'workspace',
+} as const;
+export type SessionHistoryGrouping =
+  (typeof SessionHistoryGrouping)[keyof typeof SessionHistoryGrouping];
+
+export interface SessionWorkspaceGroup {
+  key: string;
+  path: string;
+  label: string;
+  sessions: SessionDirectoryEntry[];
+  visibleCount: number;
+}
+
 export type SessionDateGroupKey =
   'pinned' | 'today' | 'yesterday' | 'previous7Days' | 'previous30Days' | 'earlier';
 
@@ -101,3 +117,42 @@ export const groupSessionsByDate = <T extends SidebarSession>(
     return values?.length ? [{ key, sessions: values.sort(sortByRecentActivity) }] : [];
   });
 };
+
+function sessionWorkspacePath(cwd: string) {
+  const windowsPath = /^[a-z]:[\\/]|^(?:\\\\|\/\/)/i.test(cwd);
+  const normalized = windowsPath ? cwd.replace(/\\/g, '/') : cwd;
+  const path = normalized.replace(/\/+$/, '') || normalized;
+  return {
+    key: windowsPath ? path.toLowerCase() : path,
+    label: path.slice(path.lastIndexOf('/') + 1) || path,
+  };
+}
+
+export const getSessionWorkspaceKey = (cwd?: string): string => sessionWorkspacePath(cwd ?? '').key;
+
+export function groupSessionsByWorkspace(
+  sessions: SessionDirectoryEntry[],
+  visibleIds: Pick<ReadonlySet<string>, 'has'>,
+): SessionWorkspaceGroup[] {
+  const grouped = new Map<string, SessionWorkspaceGroup>();
+  for (const session of [...sessions].sort(sortByRecentActivity)) {
+    const cwd = session.cwd ?? '';
+    const { key, label } = sessionWorkspacePath(cwd);
+    let group = grouped.get(key);
+    if (!group) {
+      group = {
+        key,
+        path: cwd,
+        label,
+        sessions: [],
+        visibleCount: 0,
+      };
+      grouped.set(key, group);
+    }
+    group.sessions.push(session);
+    if (visibleIds.has(session.id)) group.visibleCount += 1;
+  }
+
+  const groups = [...grouped.values()].filter(group => group.visibleCount > 0);
+  return [...groups.filter(group => group.key), ...groups.filter(group => !group.key)];
+}

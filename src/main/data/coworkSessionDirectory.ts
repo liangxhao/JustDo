@@ -18,6 +18,7 @@ interface SessionProjectionRow {
   pinned: number;
   agent_id: string | null;
   group_id: string | null;
+  cwd: string;
   source: string | null;
   native_session_key: string | null;
   created_at: number;
@@ -44,12 +45,10 @@ interface ProjectionOptions extends SessionProjectionFilters {
   summaries?: boolean;
 }
 
-/** A bounded number of SQL queries, independent of the number of sessions returned. */
-const readProjection = (
-  db: Database.Database,
-  { agentId, sessionIds, summaries = false, excludeNativeChildren, excludePendingFirstSend }: ProjectionOptions,
-): SessionProjectionRow[] => {
-  if (sessionIds?.length === 0) return [];
+const completeProjectionSchemas = new WeakSet<Database.Database>();
+
+const readProjectionTables = (db: Database.Database) => {
+  if (completeProjectionSchemas.has(db)) return { external: true, history: true };
   // The production schema owns both tables. Small store fixtures may omit them.
   const tables = new Set(
     (
@@ -63,6 +62,17 @@ const readProjection = (
   );
   const external = tables.has('cowork_external_sessions');
   const history = tables.has('history_session_bindings');
+  if (external && history) completeProjectionSchemas.add(db);
+  return { external, history };
+};
+
+/** A bounded number of SQL queries, independent of the number of sessions returned. */
+const readProjection = (
+  db: Database.Database,
+  { agentId, sessionIds, summaries = false, excludeNativeChildren, excludePendingFirstSend }: ProjectionOptions,
+): SessionProjectionRow[] => {
+  if (sessionIds?.length === 0) return [];
+  const { external, history } = readProjectionTables(db);
   const predicates: string[] = [];
   const parameters: string[] = [];
   if (excludeNativeChildren) predicates.push('session.native_parent_session_id IS NULL');
@@ -80,7 +90,7 @@ const readProjection = (
   return db
     .prepare(
       `SELECT session.id, session.status, session.pinned, session.agent_id,
-      session.group_id, session.source, session.native_session_key,
+      session.group_id, session.cwd, session.source, session.native_session_key,
       session.created_at, session.updated_at,
       ${external ? 'external.source' : 'NULL'} AS external_source,
       ${external ? 'external.status' : 'NULL'} AS external_status,
@@ -124,6 +134,7 @@ const mapDirectoryEntry = (row: SessionProjectionRow): SessionDirectoryEntry => 
     pinned: Boolean(row.pinned),
     agentId: row.agent_id || 'main',
     groupId: row.group_id,
+    cwd: row.cwd,
     ...(row.source === CoworkSessionSource.ChromeExtension ? { source: row.source } : {}),
     ...(nativeSessionKey ? { nativeSessionKey } : {}),
     ...(row.external_source && row.external_status

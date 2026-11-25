@@ -373,6 +373,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             groupRecentSessionsByDate
             sessions={visibleSessions}
             directory={visibleDirectory}
+            workspaceDirectory={directory}
             onVisibleSessionIdsChange={handleVisibleSessionIdsChange}
             isLoading={sessionListStatus === 'loading'}
             loadFailed={sessionListStatus === 'error'}
