@@ -11,6 +11,7 @@ import {
 } from '../../../plugins/extensions/embedded-browser/browserExecutionContract';
 import embeddedBrowserPlugin from '../../../plugins/extensions/embedded-browser/index';
 import type { ScheduledTask } from '../../shared/scheduledTask/types';
+import { mapGatewayJob } from '../scheduler/cronJobService';
 import { EmbeddedBrowserGatewayBridge } from './embeddedBrowserGatewayBridge';
 
 const nativeSdk = vi.hoisted(() => ({ getSessionEntry: vi.fn() }));
@@ -34,6 +35,18 @@ const cronRun = {
   trigger: 'cron',
   jobId: 'job-1',
 };
+const gatewayJob = {
+  id: cronRun.jobId,
+  name: 'Scheduled browser check',
+  enabled: true,
+  schedule: { kind: 'every', everyMs: 60_000 },
+  sessionTarget: 'isolated',
+  wakeMode: 'now',
+  payload: { kind: 'agentTurn', message: 'Check the site' },
+  state: {},
+  createdAtMs: 1,
+  updatedAtMs: 1,
+} satisfies Parameters<typeof mapGatewayJob>[0];
 const request = (
   run = userRun,
   requestId = 'request-1',
@@ -63,16 +76,7 @@ const setup = () => {
         cwd: workspaceDir,
       }),
     ),
-    getScheduledTask: vi.fn(
-      async () =>
-        ({
-          id: 'job-1',
-          management: 'editable',
-          sessionTarget: 'isolated',
-          agentId: 'main',
-          payload: { kind: 'agentTurn' },
-        }) as ScheduledTask,
-    ),
+    getScheduledTask: vi.fn(async (): Promise<ScheduledTask | null> => mapGatewayJob(gatewayJob)),
     resolveExecutionSession: vi.fn<
       (query: AppExecutionSessionQuery) => Promise<AppResolvedExecutionSession | null>
     >(async () => null),
@@ -1274,34 +1278,73 @@ describe('authenticated embedded browser Gateway boundary', () => {
     );
   });
 
-  it('prepares a scheduled run with its own page scope and the trusted workspace', async () => {
-    const { options, bridge } = setup();
-    bridge.handleEvent(request(cronRun));
-    await vi.waitFor(() => expect(options.execute).toHaveBeenCalled());
-    expect(options.execute.mock.calls[0][3]).toMatchObject({
-      sessionId: expect.stringMatching(/^browser-run:[a-f0-9]{64}$/),
-      headlessOnly: true,
-      workspaceDir,
-    });
-    expect(options.getDesktopSession).not.toHaveBeenCalled();
-  });
+  it.each([
+    { name: 'isolated job', job: gatewayJob },
+    {
+      name: 'isolated job with advanced delivery',
+      job: { ...gatewayJob, delivery: { mode: 'announce', threadId: 'delivery-thread' } },
+    },
+    {
+      name: 'current-conversation job',
+      job: { ...gatewayJob, sessionTarget: 'current', sessionKey: userRun.sessionKey },
+    },
+  ] satisfies { name: string; job: Parameters<typeof mapGatewayJob>[0] }[])(
+    'gives an authorized $name its own background scope and trusted workspace',
+    async ({ job }) => {
+      const { options, bridge } = setup();
+      options.getScheduledTask.mockResolvedValue(mapGatewayJob(job));
 
-  it('rejects cron false and advanced or managed task shapes', async () => {
+      bridge.handleEvent(request(cronRun));
+
+      await vi.waitFor(() => expect(options.execute).toHaveBeenCalledOnce());
+      expect(options.execute.mock.calls[0][3]).toMatchObject({
+        sessionId: expect.stringMatching(/^browser-run:[a-f0-9]{64}$/),
+        headlessOnly: true,
+        workspaceDir,
+      });
+      expect(options.getScheduledTask).toHaveBeenCalledExactlyOnceWith(cronRun.jobId);
+      expect(options.getDesktopSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects scheduled requests for a foreground page', async () => {
     const { options, bridge } = setup();
     bridge.handleEvent(request(cronRun, 'false', { action: 'open', headless: false }));
     await vi.waitFor(() =>
       expect(options.resolve).toHaveBeenCalledWith('false', expect.objectContaining({ ok: false })),
     );
-    options.getScheduledTask.mockResolvedValue({
-      id: 'job-1',
-      management: 'managed',
-    } as ScheduledTask);
-    bridge.handleEvent(request({ ...cronRun, runId: 'run-2' }, 'managed'));
+    expect(options.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing job', null, 'could not be verified'],
+    ['mismatched job', mapGatewayJob({ ...gatewayJob, id: 'other-job' }), 'could not be verified'],
+    [
+      'system-managed job',
+      mapGatewayJob({ ...gatewayJob, declarationKey: 'maintenance' }),
+      'System-managed',
+    ],
+    [
+      'persistent session',
+      mapGatewayJob({ ...gatewayJob, sessionTarget: `session:${userRun.sessionKey}` }),
+      'assistant task',
+    ],
+    [
+      'command job',
+      mapGatewayJob({ ...gatewayJob, payload: { kind: 'command', argv: ['echo', 'fixture'] } }),
+      'assistant task',
+    ],
+  ] as const)('rejects a scheduled request for a %s', async (_name, job, reason) => {
+    const { options, bridge } = setup();
+    options.getScheduledTask.mockResolvedValue(job);
+
+    bridge.handleEvent(request(cronRun));
+
     await vi.waitFor(() =>
-      expect(options.resolve).toHaveBeenCalledWith(
-        'managed',
-        expect.objectContaining({ ok: false }),
-      ),
+      expect(options.resolve).toHaveBeenCalledWith('request-1', {
+        ok: false,
+        error: expect.stringContaining(reason),
+      }),
     );
     expect(options.execute).not.toHaveBeenCalled();
   });
@@ -1661,8 +1704,6 @@ describe('authenticated embedded browser Gateway boundary', () => {
 
   it('fences an older cron admission that finishes ownership preparation after its replacement', async () => {
     const { options, bridge } = setup();
-    const job = await options.getScheduledTask();
-    options.getScheduledTask.mockClear();
     let finishRetired!: (value: ScheduledTask) => void;
     options.getScheduledTask.mockImplementationOnce(
       () =>
@@ -1680,7 +1721,7 @@ describe('authenticated embedded browser Gateway boundary', () => {
     );
     const currentSignal = options.execute.mock.calls[0][2];
 
-    finishRetired(job);
+    finishRetired(mapGatewayJob(gatewayJob));
     await new Promise(resolve => setImmediate(resolve));
     bridge.handleEvent({
       event: EMBEDDED_BROWSER_REVOKED_EVENT,

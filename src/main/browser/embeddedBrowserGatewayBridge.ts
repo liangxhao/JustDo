@@ -16,6 +16,7 @@ import {
   readBrowserRequestedEvent,
   readBrowserRevokedEvent,
 } from '../../../plugins/extensions/embedded-browser/browserExecutionContract';
+import { PayloadKind, SessionTarget } from '../../shared/scheduledTask/constants';
 import type { ScheduledTask } from '../../shared/scheduledTask/types';
 import type { BrowserExecutionScope } from './agent/browserAgentProtocol';
 
@@ -655,14 +656,20 @@ export class EmbeddedBrowserGatewayBridge {
       };
     }
     const job = run.jobId ? await this.options.getScheduledTask(run.jobId) : null;
+    if (!job || job.id !== run.jobId) {
+      throw new Error('The scheduled task for this browser run could not be verified.');
+    }
+    if (job.management === 'managed') {
+      throw new Error('System-managed scheduled tasks cannot use the embedded browser.');
+    }
+    // OpenClaw runs both targets in detached sessions. Form editability is unrelated.
     if (
-      !job ||
-      job.id !== run.jobId ||
-      job.management !== 'editable' ||
-      job.sessionTarget !== 'isolated' ||
-      job.payload.kind !== 'agentTurn'
+      (job.sessionTarget !== SessionTarget.Isolated && job.sessionTarget !== 'current') ||
+      job.payload.kind !== PayloadKind.AgentTurn
     ) {
-      throw new Error('This scheduled task does not support the embedded browser.');
+      throw new Error(
+        'Scheduled browser execution requires an isolated or current-conversation assistant task.',
+      );
     }
     const digest = createHash('sha256').update(runKey(run)).digest('hex');
     return {

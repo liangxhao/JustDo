@@ -358,12 +358,12 @@ guest preload 的 `sendToHost` 改为窄的 guest→Main allowlist：验证真�
 ### 准入顺序
 
 1. 已提交配置保持 native 服务开启、browser 模型工具被标准 deny；原生先构造唯一 web_browser 目录。这里不需要两个 factory 先取得 jobId，也不能由后续 prepare 改写之前的工具构造。
-2. agent_turn_prepare 提供 job/run/session 身份，Main 经认证 cron/session API 核验产品归属、任务权限、隔离 agentTurn 范围、工作区和当前模式 revision，建立 pending claim。不能从 cron key 后缀或最新 run 推断授权。
+2. agent_turn_prepare 提供 job/run/session 身份，Main 经认证 cron/session API 核验产品归属、任务权限、后台执行范围、工作区和当前模式 revision，建立 pending claim。不能从 cron key 后缀或最新 run 推断授权。
 3. 后置 requiresToolAuthority:true 的 before_prompt_build 确认 allows('web_browser') 和 hook lifetime，再激活精确路由。内置预留有界 Main 资源；Chrome 使用原调用者及原生系统/操作员权限，不能借 Main admin 提权。
 4. 每次工具调用经 exact run/toolCall/v2 guard。内置 Main 直接创建页面，不需要 Cowork 伪会话或 BrowserPanel；Chrome 经固定原生 RPC 计划执行，不临时换浏览器。
 5. whole-run 精确终态后关准入、drain，再按页面 owner 回收/转交；Chrome 仅释放本运行控制及自建页，不关借用标签。取消或资源异常不是终态。
 
-现有内置后台仅准入产品可编辑的隔离 agentTurn；未来门面必须保留该范围。其他 native 任务若需纳入，须另证权限和执行等价性；无法覆盖时明确列为切换阻塞，不以保守拒绝冒充兼容。工作区由原生准备/fsPolicy 核验，不借最近聊天 cwd。
+未来门面须覆盖[现行内置浏览器后台执行范围](../architecture/08-scheduled-tasks.md#内置浏览器后台执行)。其他 native 任务若需纳入，须另证权限和执行等价性；无法覆盖现行范围时明确列为切换阻塞。工作区由原生准备/fsPolicy 核验，不借最近聊天 cwd。
 
 ### 用户设置
 

@@ -60,7 +60,11 @@ current + none 不显示回复原会话的承诺。会话绑定的助手任务�
 
 ### 内置浏览器后台执行
 
-浏览器模式继续读取“设置 → 浏览器”。选择 embedded 时，产品可编辑、isolated 的 agentTurn job 可使用同一个 `browser` 后台执行；Main 从原生 job API 核对形态，不向 systemEvent、脚本/命令、托管或高级任务自动开放。原生最终工具权限仍是前提，只读任务不因无人值守获得浏览器权限。
+浏览器模式继续读取“设置 → 浏览器”。选择内置浏览器时，目标为 `isolated` 或 `current` 的非托管 `agentTurn`
+任务可在后台使用同一个 `browser` 工具。`current` 由 OpenClaw 在独立运行会话中执行，浏览器页面归本次运行。
+Main 通过原生 job API 核对任务身份和形态，表单的编辑限制以及高级通知等配置不影响浏览器准入。
+`systemEvent`、脚本、命令、系统托管和直接绑定持久会话的 `session:…` 任务不在此范围内。
+原生最终工具权限仍是前提，只读任务不因无人值守获得浏览器权限。任务专用的 `permissionMode` 只适用于 `isolated` 任务。
 
 公开 prompt/tool hooks 及 V2 invocation guard 提供确切 jobId、runId、sessionKey、物理 sessionId、生命周期 revision 和工作区；模型参数不能建立这些绑定。Main 以完整原生运行身份创建后台 scope，强制 headless=true，不依赖打开详情或 Renderer ready ACK，显式 false 返回冲突。
 

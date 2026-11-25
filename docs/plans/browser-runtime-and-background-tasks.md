@@ -46,7 +46,7 @@ Chrome 控制授权和统一同页宿主的剩余设计，不代表已经支持�
 ### 后续完整方案的交付范围
 
 - 桌面聊天的内置浏览器保持真实网页、历史、登录、下载、PDF、查找、标注、录制、人工介入和侧栏分离能力。
-- 产品可编辑的、隔离 `agentTurn` 定时任务使用浏览器时继承全局模式；选择内置才使用本设计的后台宿主。沿用任务权限，`systemEvent`、脚本/命令、托管和高级任务不自动获得控制能力。
+- 符合[定时任务后台执行范围](../architecture/08-scheduled-tasks.md#内置浏览器后台执行)的助手任务继承全局模式；选择内置才使用本设计的后台宿主。沿用原生任务权限。
 - 正在运行的后台页面可在侧栏只读查看；需要操作时先停止并取得精确终态，再人工接管。
 - Chrome 扩展会话只操作本轮授权并核验的 Chrome 标签，其标签授权不被定时任务继承；定时任务选择 Chrome 时按全局所选 driver 独立准入。
 
@@ -67,7 +67,7 @@ Electron 的 offscreen 文档描述的是绘制输出方式，不能据此推导
 
 - 工具仍名为 `browser`，原生/内置插件按模式互斥（`embedded-browser/index.ts`、`config/plugins/pluginProjection.ts`）；待改为唯一门面与原生服务共存，并完成权限名过渡。
 - 前台仍由 `BrowserPanel.tsx` 的 webview 管理，后台为 `backgroundBrowserHost.ts` 的离屏 BrowserWindow；统一 WCV、同实例展示与接管仍待实现。工作区已有 WCV 只承载侧栏壳，不代表真实网页已迁移。
-- exact-run/toolCall、v2 live guard、prepare/commit/取消撤权和内置 cron 的 editable/isolated/agentTurn 准入已经实现（`browserRunAdmission.ts`、`embeddedBrowserGatewayBridge.ts`）。剩余是迁移后的通道、身份、未知回执与 Chrome 分支证明，不重建旧桥。
+- exact-run/toolCall、v2 live guard、prepare/commit/取消撤权和[内置 cron 准入](../architecture/08-scheduled-tasks.md#内置浏览器后台执行)已经实现（`browserRunAdmission.ts`、`embeddedBrowserGatewayBridge.ts`）。剩余是迁移后的通道、身份、未知回执与 Chrome 分支证明，不重建旧桥。
 
 门面、Chrome grant、统一页面 registry 和 presentation lease 都是未来目标。
 全运行终态、ACK、final 与 idle 的边界继续遵循[引擎](../architecture/05-agent-engine.md)；只读任务不因迁移自动获得浏览器权限。
