@@ -251,12 +251,8 @@ export const scheduledTaskTranslations = {
     cronDialogPermissionReadOnly: '只读（默认）',
     cronDialogPermissionFull: '完全权限',
     cronDialogPermissionCustom: '保留现有自定义权限',
-    cronDialogPermissionReadOnlyHint:
-      '仅允许读取文件、搜索网页和检索记忆；禁止执行命令、修改文件及调用其他工具。结果仍按下方投递设置发送。',
-    cronDialogPermissionFullHint:
-      '使用与主界面相同的完全权限模式，允许执行命令和修改文件，无需人工审批。',
-    cronDialogPermissionCustomHint:
-      '保留原有权限模式和工具设置；如需免审批执行，请显式选择完全权限。',
+    cronDialogPermissionReadOnlyHint: '仅允许读取文件、检索记忆和获取指定网址的网页内容。',
+    cronDialogPermissionFullHint: '允许执行命令和修改文件，无需人工审批。',
     cronDialogCreateTitle: '创建任务',
     cronDialogEditTitle: '编辑任务',
     cronDialogTaskName: '任务名称',
@@ -649,11 +645,8 @@ export const scheduledTaskTranslations = {
     cronDialogPermissionFull: 'Full access',
     cronDialogPermissionCustom: 'Keep existing custom permissions',
     cronDialogPermissionReadOnlyHint:
-      'Only file reads, web search and fetch, and memory retrieval are allowed. Commands, file changes, and other tools are blocked. Results still follow the delivery settings below.',
-    cronDialogPermissionFullHint:
-      'Uses the same Full permission mode as chat. Commands and file changes run without human approval.',
-    cronDialogPermissionCustomHint:
-      'Preserves the existing permission mode and tool settings. Select Full explicitly to enable execution without approval.',
+      'Can only read files, retrieve memories, and fetch web content from specified URLs.',
+    cronDialogPermissionFullHint: 'Commands and file changes run without human approval.',
     cronDialogCreateTitle: 'Create Task',
     cronDialogEditTitle: 'Edit Task',
     cronDialogTaskName: 'Task Name',

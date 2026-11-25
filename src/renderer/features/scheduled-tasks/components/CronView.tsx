@@ -1445,15 +1445,15 @@ export function CreateEditDialog({
                         </option>
                       )}
                   </select>
-                  <p className="mt-2 text-xs text-secondary">
-                    {t(
-                      permissionMode === ScheduledTaskPermission.ReadOnly
-                        ? 'cronDialogPermissionReadOnlyHint'
-                        : permissionMode === ScheduledTaskPermission.Full
-                          ? 'cronDialogPermissionFullHint'
-                          : 'cronDialogPermissionCustomHint',
-                    )}
-                  </p>
+                  {permissionMode !== ScheduledTaskPermission.Custom && (
+                    <p className="mt-2 text-xs text-secondary">
+                      {t(
+                        permissionMode === ScheduledTaskPermission.ReadOnly
+                          ? 'cronDialogPermissionReadOnlyHint'
+                          : 'cronDialogPermissionFullHint',
+                      )}
+                    </p>
+                  )}
                 </>
               )}
             </section>
