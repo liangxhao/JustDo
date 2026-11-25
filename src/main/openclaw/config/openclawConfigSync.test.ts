@@ -21,54 +21,64 @@ import {
   setActiveBuiltinModelDevelopmentApiKey,
 } from '../../providers/builtinModelCredential';
 import type { ProviderRawConfig } from '../../providers/providerApiConfig';
-import { providerRouteIdentity } from './models/providerProjection';
 import {
-  buildLoginScopedOpenClawConfig,
-  buildManagedCapabilityPluginEntries,
-  buildManagedOpenClawSurfaces,
-  buildOpenClawHookConfig,
-  listKnownOpenClawWorkspaceDirs,
-} from './openclawConfigBuilders';
-import {
-  applyDefaultOpenClawPluginEntries,
   applyManagedOpenClawHeartbeatConfig,
+  buildManagedOpenClawAgentThinkingConfig,
+  buildManagedOpenClawCompactionConfig,
+  buildManagedOpenClawHeartbeatConfig,
+  buildManagedOpenClawSessionConfig,
+  buildManagedOpenClawSubagentConfig,
+  listKnownOpenClawWorkspaceDirs,
+  mergeAgentEntriesWithManagedMainSettings,
+  OPENCLAW_SESSION_MAX_ENTRIES,
+  OPENCLAW_SESSION_PRUNE_AFTER,
+} from './agents/agentProjection';
+import {
+  buildManagedOpenClawSurfaces,
+  buildOpenClawConfigMeta,
+  projectManagedOpenClawBrowserConfig,
+} from './configCompatibility';
+import { hasOpenClawConfigChanged } from './configVerification';
+import { buildLoginScopedOpenClawConfig } from './models/authScopedProjection';
+import {
   buildBuiltinMemorySearchConfig,
-  buildDefaultOpenClawPluginEntries as buildCoreDefaultOpenClawPluginEntries,
+  buildManagedOpenClawModelCatalogConfig,
+  buildProviderSelection,
+  providerRouteIdentity,
+} from './models/providerProjection';
+import { OpenClawConfigSync } from './openclawConfigSync';
+import {
   buildManagedAcpxPluginEntry,
   buildManagedExternalAgentEntries,
   buildManagedOpenClawAcpConfig,
-  buildManagedOpenClawAgentThinkingConfig,
-  buildManagedOpenClawCompactionConfig,
-  buildManagedOpenClawConnectivityConfig,
-  buildManagedOpenClawCronConfig,
-  buildManagedOpenClawHeartbeatConfig,
-  buildManagedOpenClawModelCatalogConfig,
-  buildManagedOpenClawSandboxConfig,
-  buildManagedOpenClawSandboxToolConfig,
-  buildManagedOpenClawSessionConfig,
-  buildManagedOpenClawSubagentConfig,
-  buildManagedOpenClawTtsPluginEntries,
-  buildOpenClawConfigMeta,
-  buildProviderSelection,
-  hasOpenClawConfigChanged,
-  mergeAgentEntriesWithManagedMainSettings,
+  buildOpenClawHookConfig,
+} from './plugins/mcpProjection';
+import {
+  applyDefaultOpenClawPluginEntries,
+  buildDefaultOpenClawPluginEntries as buildCoreDefaultOpenClawPluginEntries,
+  buildManagedCapabilityPluginEntries,
   mergeOpenClawPluginConfig as mergeCoreOpenClawPluginConfig,
   mergeOpenClawSkillConfig,
+  removeUnavailableOpenClawPluginRegistrations,
+} from './plugins/pluginProjection';
+import {
+  buildManagedOpenClawConnectivityConfig,
+  buildManagedOpenClawCronConfig,
+  buildManagedOpenClawSandboxConfig,
+  buildManagedOpenClawSandboxToolConfig,
   OPENCLAW_FALLBACK_EXEC_MODE,
   OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
   OPENCLAW_MAX_SKILLS_IN_PROMPT,
   OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
   OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
-  OPENCLAW_SESSION_MAX_ENTRIES,
-  OPENCLAW_SESSION_PRUNE_AFTER,
   OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
   OPENCLAW_SUBAGENT_MAX_CONCURRENT,
-  OpenClawConfigSync,
-  projectManagedOpenClawBrowserConfig,
-  removeUnavailableOpenClawPluginRegistrations,
-  resolveManagedOpenClawTtsConfig,
   resolveOpenClawExecHost,
-} from './openclawConfigSync';
+} from './policies/executionPolicyProjection';
+import {
+  buildManagedOpenClawTtsPluginEntries,
+  resolveManagedOpenClawTtsConfig,
+} from './speech/onlineSpeechProjection';
 
 test('keeps extension Hook dispatch available when every independent Hook is disabled', () => {
   expect(

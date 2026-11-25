@@ -1,10 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
 import { createDefaultAgentRuntimeSettings } from '../../../../shared/agents/agentRuntimeSettings';
-import {
-  buildLoginScopedOpenClawConfig,
-  mergeManagedOpenClawCodeModeConfig,
-} from '../openclawConfigBuilders';
+import { buildLoginScopedOpenClawConfig } from '../models/authScopedProjection';
+import { mergeManagedOpenClawCodeModeConfig } from './executionPolicyProjection';
 
 describe('managed Code Mode configuration', () => {
   test.each([

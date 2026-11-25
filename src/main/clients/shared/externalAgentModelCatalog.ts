@@ -1,4 +1,4 @@
-import { buildProviderSelection } from '../../openclaw/config/openclawConfigBuilders';
+import { buildProviderSelection } from '../../openclaw/config/models/providerProjection';
 import {
   type ProviderRawConfig,
   resolveAllEnabledProviderConfigs,

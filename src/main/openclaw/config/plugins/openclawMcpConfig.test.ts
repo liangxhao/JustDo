@@ -3,7 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import type { McpServerRecord } from '../../../plugins/mcp';
-import { buildOpenClawMcpServers } from '../openclawConfigSync';
+import { buildOpenClawMcpServers } from './mcpProjection';
 
 const record = (overrides: Partial<McpServerRecord>): McpServerRecord => ({
   id: 'id',

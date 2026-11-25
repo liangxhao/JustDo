@@ -1,4 +1,7 @@
-import { isRecord, sortJsonValue } from '../openclawConfigBuilders';
+import {
+  isRecord,
+  sortJsonValue,
+} from '../configShape';
 
 export const ModelDefaultsSyncReason = {
   Selection: 'default-model-change',

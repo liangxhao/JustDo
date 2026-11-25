@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
+import { isUserToggleableBundledPlugin } from './extensionInventory';
 import {
   applyDefaultOpenClawPluginEntries,
   buildDefaultOpenClawPluginEntries,
-  isUserToggleableBundledPlugin,
   listManagedOpenClawPluginIds,
   mergeOpenClawPluginConfig,
-} from '../openclawConfigBuilders';
+} from './pluginProjection';
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => process.cwd() },

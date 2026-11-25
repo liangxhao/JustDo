@@ -8,7 +8,6 @@ import path from 'path';
 import { OpenClawExtensionId } from '../../../../shared/plugins/nativeIds';
 import { LOCAL_TTS_PROVIDER_ID } from '../../../../shared/speech/localTts';
 import {
-  hasBundledOpenClawExtension,
   inspectBundledOpenClawExtensions,
   inspectLocalOpenClawExtensions,
   inspectOpenClawExtensionDirectory,
@@ -28,8 +27,25 @@ const WORKSPACE_EXTENSION_INVENTORY_TIMEOUT_MS = 5_000;
 const incompleteInventory: OpenClawExtensionInventory = { complete: false, ids: [] };
 let retiringInventoryWorker: Worker | null = null;
 
+const inspectInstalledExtensions = (stateDir: string): OpenClawExtensionInventory =>
+  inspectOpenClawExtensionDirectory(path.join(stateDir, 'extensions'));
+
 export const listInstalledOpenClawExtensionIds = (stateDir: string): string[] =>
-  inspectOpenClawExtensionDirectory(path.join(stateDir, 'extensions')).ids;
+  inspectInstalledExtensions(stateDir).ids;
+
+export const inspectBundledPluginSources = () => {
+  const bundled = inspectBundledOpenClawExtensions();
+  const local = inspectLocalOpenClawExtensions();
+  const ids = new Set([...bundled.ids, ...local.ids]);
+  return { bundled, local, isBundledAvailable: (id: string) => ids.has(id) };
+};
+
+export const inspectOpenClawExtensionSources = (stateDir: string) => ({
+  ...inspectBundledPluginSources(),
+  installed: inspectInstalledExtensions(stateDir),
+});
+
+export type OpenClawExtensionSources = ReturnType<typeof inspectOpenClawExtensionSources>;
 
 export const resolveConfiguredPluginPath = (value: string): string => {
   const trimmed = value.trim();
@@ -111,35 +127,40 @@ export const listAvailableOpenClawExtensionIds = (
   stateDir: string,
   plugins: Record<string, unknown>,
   workspaceDirs: readonly string[] = [],
-  inventory?: WorkspaceExtensionInventory,
-  configuredInventory = inspectConfiguredPluginPaths(plugins, inventory),
+  {
+    workspace,
+    configured = inspectConfiguredPluginPaths(plugins, workspace),
+    sources = inspectOpenClawExtensionSources(stateDir),
+  }: {
+    workspace?: WorkspaceExtensionInventory;
+    configured?: OpenClawExtensionInventory;
+    sources?: OpenClawExtensionSources;
+  } = {},
 ): string[] | null => {
-  const bundledInventory = inspectBundledOpenClawExtensions();
-  const localInventory = inspectLocalOpenClawExtensions();
-  const installedInventory = inspectOpenClawExtensionDirectory(path.join(stateDir, 'extensions'));
+  const { bundled, local, installed } = sources;
   const workspaceInventories = workspaceDirs.map(workspaceDir => {
     const directory = workspaceExtensionDirectory(workspaceDir);
-    return inventory
-      ? inventory.workspace.get(directory) ?? incompleteInventory
+    return workspace
+      ? workspace.workspace.get(directory) ?? incompleteInventory
       : inspectOpenClawExtensionDirectory(directory);
   });
   if (
-    !bundledInventory.complete ||
-    bundledInventory.ids.length === 0 ||
-    !localInventory.complete ||
-    !installedInventory.complete ||
+    !bundled.complete ||
+    bundled.ids.length === 0 ||
+    !local.complete ||
+    !installed.complete ||
     workspaceInventories.some(inventory => !inventory.complete) ||
-    !configuredInventory.complete
+    !configured.complete
   ) {
     return null;
   }
   return [
     ...new Set([
-      ...bundledInventory.ids,
-      ...localInventory.ids,
-      ...installedInventory.ids,
+      ...bundled.ids,
+      ...local.ids,
+      ...installed.ids,
       ...workspaceInventories.flatMap(inventory => inventory.ids),
-      ...configuredInventory.ids,
+      ...configured.ids,
     ]),
   ].sort();
 };
@@ -156,10 +177,6 @@ export const readPreinstalledPluginIds = (): string[] => {
   } catch {
     return [];
   }
-};
-
-export const isBundledPluginAvailable = (pluginId: string): boolean => {
-  return hasBundledOpenClawExtension(pluginId);
 };
 
 export const isUserToggleableBundledPlugin = (

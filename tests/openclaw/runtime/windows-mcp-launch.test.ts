@@ -10,10 +10,8 @@ import { BrowserMode } from '../../../src/shared/browser/browser';
 vi.mock('electron', () => ({
   app: { getName: () => 'fixture', getPath: () => '', isPackaged: false },
 }));
-import {
-  buildManagedOpenClawConnectivityConfig,
-  projectManagedOpenClawBrowserConfig,
-} from '../../../src/main/openclaw/config/openclawConfigBuilders';
+import { projectManagedOpenClawBrowserConfig } from '../../../src/main/openclaw/config/configCompatibility';
+import { buildManagedOpenClawConnectivityConfig } from '../../../src/main/openclaw/config/policies/executionPolicyProjection';
 import {
   buildElectronNodeShimScripts,
   buildWindowsChildProcessPreload,

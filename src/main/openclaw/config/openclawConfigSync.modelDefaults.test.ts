@@ -77,7 +77,7 @@ describe('model-default-only native publication', () => {
     const publication = fixture.sync.syncModelDefaults();
     const published = JSON.parse(fs.readFileSync(fixture.configPath, 'utf8'));
 
-    expect(publication.result).toMatchObject({ ok: true, changed: true, modelDefaultsOnly: true, secretsChanged: false, requiresGatewayRestart: false });
+    expect(publication.result).toMatchObject({ ok: true, changed: true });
     expect(published).toEqual({ ...config, agents: {
       ...config.agents,
       defaults: { ...config.agents.defaults, model: { primary: 'officemodels/second', fallbacks: ['officemodels/first'] } },
@@ -135,7 +135,7 @@ describe('model-default-only native publication', () => {
     const fixture = createFixture();
     expect(fixture.sync.syncModelDefaults().result.changed).toBe(true);
     const write = vi.spyOn(fs, 'writeFileSync');
-    expect(fixture.sync.syncModelDefaults().result).toMatchObject({ ok: true, changed: false, configChanged: false });
+    expect(fixture.sync.syncModelDefaults().result).toMatchObject({ ok: true, changed: false });
     expect(write).not.toHaveBeenCalled();
   });
 });

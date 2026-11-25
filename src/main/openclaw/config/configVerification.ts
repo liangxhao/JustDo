@@ -56,12 +56,9 @@ export type OpenClawConfigSyncResult = {
   changed: boolean;
   configChanged: boolean;
   configMissing?: true;
-  requiresGatewayRestart: boolean;
   configPath: string;
   error?: string;
-  agentsMdWarning?: string;
   secretsChanged?: boolean;
-  modelDefaultsOnly?: boolean;
   publication?: OpenClawConfigPublication;
 };
 
@@ -82,7 +79,6 @@ export const buildVerifiedConfigSyncResult = (
       ok: false,
       changed: false,
       configChanged: false,
-      requiresGatewayRestart: false,
       configPath,
       error: verification.error,
     };
@@ -95,7 +91,6 @@ export const buildVerifiedConfigSyncResult = (
     ok: true,
     changed,
     configChanged: changed,
-    requiresGatewayRestart: false,
     configPath,
     ...(publishedHash && {
       publication: {
@@ -118,7 +113,6 @@ export const buildMissingEmbeddedBrowserResult = (
   ok: false,
   changed: false,
   configChanged: false,
-  requiresGatewayRestart: false,
   configPath,
   error: 'The bundled embedded browser provider is unavailable.',
 });

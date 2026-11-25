@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { mergeManagedOptionalToolPolicy } from '../openclawConfigBuilders';
+import { mergeManagedOptionalToolPolicy } from './executionPolicyProjection';
 
 describe('optional decision tool admission', () => {
   test.each([undefined, {}, { allow: [] }, { allow: [' ', '\t'] }])(

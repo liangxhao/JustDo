@@ -12,6 +12,7 @@ import {
 import { t } from '../../core/i18n';
 import { SessionRpc } from '../../engine/gateway/sessionRpc';
 import type { GatewayClientLike } from '../../engine/gateway/types';
+import type { GatewayRequestOptions } from '../../engine/types';
 import type { NativeMcpDataBinding } from '../../plugins/data/nativeMcpData';
 import { nativeMcpDataDirectory } from '../../plugins/data/nativeMcpData';
 import { ensureExecutionReady } from '../runtime/executionReadiness';
@@ -32,26 +33,16 @@ describe('resolveOpenClawConfigApplyMode', () => {
         gatewayPhase: 'running',
         configChanged: true,
         gatewayLaunchEnvVarsChanged: false,
-        requiresGatewayRestart: false,
       }),
     ).toBe('native-reload');
   });
 
-  it('hard-restarts for child-process environment and extension manifest changes', () => {
+  it('hard-restarts for child-process environment changes', () => {
     expect(
       resolveOpenClawConfigApplyMode({
         gatewayPhase: 'running',
         configChanged: true,
         gatewayLaunchEnvVarsChanged: true,
-        requiresGatewayRestart: false,
-      }),
-    ).toBe('hard-restart');
-    expect(
-      resolveOpenClawConfigApplyMode({
-        gatewayPhase: 'running',
-        configChanged: false,
-        gatewayLaunchEnvVarsChanged: false,
-        requiresGatewayRestart: true,
       }),
     ).toBe('hard-restart');
   });
@@ -62,7 +53,6 @@ describe('resolveOpenClawConfigApplyMode', () => {
         gatewayPhase: 'ready',
         configChanged: true,
         gatewayLaunchEnvVarsChanged: true,
-        requiresGatewayRestart: true,
       }),
     ).toBe('none');
     expect(
@@ -70,7 +60,6 @@ describe('resolveOpenClawConfigApplyMode', () => {
         gatewayPhase: 'running',
         configChanged: false,
         gatewayLaunchEnvVarsChanged: false,
-        requiresGatewayRestart: false,
       }),
     ).toBe('none');
   });
@@ -81,7 +70,6 @@ describe('resolveOpenClawConfigApplyMode', () => {
         gatewayPhase: 'starting',
         configChanged: false,
         gatewayLaunchEnvVarsChanged: true,
-        requiresGatewayRestart: false,
       }),
     ).toBe('hard-restart');
     expect(
@@ -89,7 +77,6 @@ describe('resolveOpenClawConfigApplyMode', () => {
         gatewayPhase: 'starting',
         configChanged: true,
         gatewayLaunchEnvVarsChanged: false,
-        requiresGatewayRestart: false,
       }),
     ).toBe('hard-restart');
   });
@@ -301,7 +288,6 @@ describe('OpenClawConfigSyncService', () => {
     permissionMode?: 'ask' | 'auto' | 'full';
     reportedPermissionMode?: 'ask' | 'auto' | 'full';
     configChanged?: boolean;
-    modelDefaultsOnly?: boolean;
     getExtensionMcpServerNames?: () => Promise<ReadonlySet<string>>;
     syncError?: string;
     nativeRestartStatus?: string;
@@ -384,7 +370,8 @@ describe('OpenClawConfigSyncService', () => {
         },
       },
     };
-    const requestGateway = vi.fn(async (method: string, params?: unknown) => {
+    const requestGateway = vi.fn(async (method: string, params?: unknown, requestOptions?: GatewayRequestOptions) => {
+      requestOptions?.assertBeforeSend?.();
       if (method === 'computer.status') return options.computerStatus?.() ?? { available: true };
       if (method === 'secrets.reload') {
         if (options.secretsReloadError) throw options.secretsReloadError;
@@ -495,11 +482,7 @@ describe('OpenClawConfigSyncService', () => {
         result: {
           ok: !options.syncError,
           changed: options.configChanged ?? true,
-          configChanged: options.configChanged ?? true,
-          modelDefaultsOnly: options.modelDefaultsOnly ?? true,
-          requiresGatewayRestart: false,
-          secretsChanged: options.secretsChanged ?? false,
-          configPath: options.configPath ?? 'openclaw.json',
+          error: options.syncError,
         },
         isCurrent: vi.fn(() => true),
         matchesRuntimeConfig: vi.fn(() => true),
@@ -511,8 +494,6 @@ describe('OpenClawConfigSyncService', () => {
               ok: true,
               changed: (options.configChanged ?? true) || (options.secretsChanged ?? false),
               configChanged: options.configChanged ?? true,
-              modelDefaultsOnly: options.modelDefaultsOnly,
-              requiresGatewayRestart: false,
               secretsChanged: options.secretsChanged ?? false,
               configPath: options.configPath ?? 'openclaw.json',
             },
@@ -920,15 +901,60 @@ describe('OpenClawConfigSyncService', () => {
       changed: true,
     });
     expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(7);
+    expect(harness.requestGateway).toHaveBeenCalledWith('config.get', undefined,
+      expect.objectContaining({ assertBeforeSend: expect.any(Function) }));
     expect(harness.configSync.sync).toHaveBeenCalledWith('test', new Set(), new Set(), {
       workspaceInventory: expect.anything(),
     });
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).not.toContain('gateway.restart.request');
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
   });
 
+  it.each([undefined, false])('does not act on a replacement Gateway after a reload timeout (restart policy: %s)', async restartGatewayIfRunning => {
+    const harness = createHarness();
+    harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce(async () => {
+      harness.advanceProcessGeneration();
+      return false;
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'settings', restartGatewayIfRunning })).resolves.toMatchObject({
+      success: false, changed: true, configSynced: false,
+    });
+    const methods = harness.requestGateway.mock.calls.map(([method]) => method);
+    expect(methods).not.toContain('gateway.restart.request');
+    expect(methods).not.toContain('gateway.suspend.prepare');
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(['before dispatch', 'before refusal'])('discards an ordinary native restart fallback superseded %s', async boundary => {
+    const harness = createHarness({ waitForReload: false });
+    const request = harness.requestGateway.getMockImplementation()!;
+    const dispatch = vi.fn(() => ({ ok: false }));
+    const replaceLifecycle = () => harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+    harness.requestGateway.mockImplementation(async (method, params, requestOptions) => {
+      if (method !== 'gateway.restart.request') return request(method, params, requestOptions);
+      if (boundary === 'before dispatch') replaceLifecycle();
+      requestOptions?.assertBeforeSend?.();
+      const response = dispatch();
+      if (boundary === 'before refusal') replaceLifecycle();
+      return response;
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({
+      success: false, changed: true, error: t('engineConfigApplicationUnconfirmed'),
+    });
+    expect(dispatch).toHaveBeenCalledTimes(boundary === 'before dispatch' ? 0 : 1);
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).not.toContain('gateway.suspend.prepare');
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])('skips historical model scans for a verified default-only change (config changed: %s)', async configChanged => {
-    const harness = createHarness({ modelDefaultsOnly: true, configChanged });
+    const harness = createHarness({ configChanged });
     await harness.service.syncConfig({ reason: 'startup' });
     harness.engineManager.waitForGatewayConfigReload.mockClear();
     harness.configSync.sync.mockClear();
@@ -959,11 +985,9 @@ describe('OpenClawConfigSyncService', () => {
     expect(reconciliation).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { modelDefaultsOnly: false },
-    { modelDefaultsOnly: true, secretsChanged: true },
-  ])('rejects unsafe model-default publications without a full sync or restart: %j', async options => {
-    const harness = createHarness(options);
+  it('reports a failed model-default publication without a full sync or restart', async () => {
+    const syncError = 'The selected model provider is unavailable.';
+    const harness = createHarness({ syncError });
     const reconciliation = vi.spyOn(harness.service as unknown as {
       syncManagedSessionModelsViaGateway: () => Promise<void>;
     }, 'syncManagedSessionModelsViaGateway').mockResolvedValue();
@@ -971,7 +995,7 @@ describe('OpenClawConfigSyncService', () => {
     const result = await harness.service.syncConfig({ reason: 'default-model-change' });
     expect(result).toMatchObject({ success: false, configSynced: false });
     expect(result.modelDefaultsApplicationPending).toBeUndefined();
-    expect(result.error).toBe(t('modelDefaultConfigSyncFailed'));
+    expect(result.error).toBe(syncError);
 
     expect(reconciliation).not.toHaveBeenCalled();
     expect(harness.configSync.sync).not.toHaveBeenCalled();
@@ -2203,7 +2227,7 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway).toHaveBeenCalledWith('models.authLogout', {
       provider: 'oldproxy',
       agentId: 'main',
-    });
+    }, expect.objectContaining({ assertBeforeSend: expect.any(Function) }));
   });
 
   it('reconciles unresolved managed auth profiles left by an earlier app version', async () => {
@@ -2273,14 +2297,10 @@ describe('OpenClawConfigSyncService', () => {
     await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
       success: true,
     });
-    expect(harness.requestGateway).toHaveBeenCalledWith('models.authLogout', {
-      provider: 'mymodel',
-      agentId: 'main',
-    });
-    expect(harness.requestGateway).not.toHaveBeenCalledWith('models.authLogout', {
-      provider: 'manual-provider',
-      agentId: 'main',
-    });
+    const logouts = harness.requestGateway.mock.calls
+      .filter(([method]) => method === 'models.authLogout')
+      .map(([, params]) => params);
+    expect(logouts).toEqual([{ provider: 'mymodel', agentId: 'main' }]);
   });
 
   it('keeps a failed retired provider cleanup pending for the next verified sync', async () => {
@@ -2522,6 +2542,10 @@ describe('OpenClawConfigSyncService', () => {
 
   it.each(['scheduled', 'deferred', 'coalesced'])('uses a %s native restart after reload failure', async nativeRestartStatus => {
     const harness = createHarness({ waitForReload: false, nativeRestartStatus });
+    harness.engineManager.waitForGatewayReadyAfter.mockImplementation(async () => {
+      harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+      return true;
+    });
     await expect(harness.service.syncConfig({ reason: 'test' })).resolves.toMatchObject({ success: true });
     expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
     expect(harness.requestGateway).not.toHaveBeenCalledWith('gateway.suspend.prepare', expect.anything());
@@ -2539,11 +2563,79 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway).toHaveBeenCalledWith('gateway.suspend.prepare', {
       requestId: 'justdo-config-restart-1',
       terminalPolicy: 'preserve',
-    });
+    }, expect.objectContaining({ assertBeforeSend: expect.any(Function) }));
     expect(harness.stopGateway).toHaveBeenCalledOnce();
     expect(harness.startGateway).toHaveBeenCalledOnce();
     expect(harness.engineManager.restartGateway.mock.calls).toEqual([[]]);
     expect(harness.connectGatewayClient).toHaveBeenCalledOnce();
+  });
+
+  it.each(['while preparing suspension', 'after deferral'])('discards an ordinary cold fallback superseded %s', async timing => {
+    vi.useFakeTimers();
+    const prepare = vi.fn(() => {
+      if (timing === 'after deferral') return { status: 'busy' };
+      harness.advanceProcessGeneration();
+      return { status: 'ready', suspensionId: 'stale' };
+    });
+    const harness = createHarness({ waitForReload: false, prepareGatewaySuspend: prepare });
+
+    const result = await harness.service.syncConfig({ reason: 'settings' });
+    if (timing === 'after deferral') {
+      expect(result).toMatchObject({ success: true, gatewayRestartDeferred: true });
+      harness.advanceProcessGeneration();
+    } else {
+      expect(result).toMatchObject({ success: false, configSynced: false });
+    }
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('replaces a deferred reload fallback after the same Gateway process advances lifecycle', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({ waitForReload: false, activeWorkloads: true });
+    await harness.service.syncConfig({ reason: 'settings' });
+    harness.engineManager.getGatewayLifecycleGeneration.mockReturnValue(2);
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({
+      success: true, gatewayRestartDeferred: true,
+    });
+
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a required launch environment restart after it replaces a deferred reload fallback', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness({ waitForReload: false, activeWorkloads: true });
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({
+      success: true, gatewayRestartDeferred: true,
+    });
+    harness.configSync.collectGatewayLaunchEnvVars.mockReturnValue({ SANDBOX_MODE: 'enabled' });
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({
+      success: true, gatewayRestartDeferred: true,
+    });
+
+    harness.advanceProcessGeneration();
+    harness.setActiveWorkloads(false);
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(harness.engineManager.restartGateway).toHaveBeenCalledOnce();
+  });
+
+  it('preserves a replacement Gateway when native restart bridge recovery fails late', async () => {
+    const harness = createHarness({ waitForReload: false, nativeRestartStatus: 'scheduled' });
+    harness.connectGatewayClient.mockImplementationOnce(async () => {
+      harness.advanceProcessGeneration();
+      throw new Error('stale bridge failure');
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({
+      success: false, configSynced: false, error: t('engineConfigApplicationUnconfirmed'),
+    });
+    expect(harness.disconnectGatewayClient).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+    expect(harness.engineManager.setExternalError).not.toHaveBeenCalled();
   });
 
   it('fails closed when the approval event bridge cannot reconnect after restart', async () => {
@@ -2633,7 +2725,8 @@ describe('OpenClawConfigSyncService', () => {
       'exec.approvals.set',
       expect.objectContaining({ baseHash: 'approval-hash' }),
     );
-    expect(harness.requestGateway).toHaveBeenCalledWith('config.get');
+    expect(harness.requestGateway).toHaveBeenCalledWith('config.get', undefined,
+      expect.objectContaining({ assertBeforeSend: expect.any(Function) }));
     expect(harness.stopGateway).not.toHaveBeenCalled();
   });
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { defaultLocalSpeechSettings } from '../../../../shared/speech/localSpeechSettings';
 import { getLocalAsrStatus } from '../../../speech/localAsrService';
-import { mergeOpenClawPluginConfig } from '../openclawConfigSync';
+import { mergeOpenClawPluginConfig } from '../plugins/pluginProjection';
 import { buildManagedLocalSpeechPluginEntries } from './localSpeechPluginConfig';
 import { buildManagedLocalSttConfig } from './localSttConfig';
 vi.mock('../../../speech/localAsrService', async importOriginal => ({

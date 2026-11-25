@@ -8,7 +8,10 @@ import { pathToFileURL } from 'node:url';
 import { expect, test, vi } from 'vitest';
 vi.mock('electron', () => ({ app: { getName: () => 'JustDo', getPath: () => '', isPackaged: false } }));
 import { sealBuiltinCredential,syncBuiltinCredentialFile } from '../../../src/main/openclaw/config/models/builtinCredentialFile';
-import { buildBuiltinMemorySearchConfig,buildProviderSelection } from '../../../src/main/openclaw/config/openclawConfigSync';
+import {
+  buildBuiltinMemorySearchConfig,
+  buildProviderSelection,
+} from '../../../src/main/openclaw/config/models/providerProjection';
 import { buildWindowsChildProcessPreload } from '../../../src/main/openclaw/runtime/launch/electronNodeRuntime';
 
 const dist = path.resolve(

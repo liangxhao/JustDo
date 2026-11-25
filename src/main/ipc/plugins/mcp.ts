@@ -16,7 +16,7 @@ import {
   PluginOperationStage,
   toPluginOperationStage,
 } from '../../../shared/plugins/pluginOperation';
-import { listManagedOpenClawPluginIds } from '../../openclaw/config/openclawConfigBuilders';
+import { listManagedOpenClawPluginIds } from '../../openclaw/config/plugins/pluginProjection';
 import type { PluginInstallationService } from '../../plugins/installation';
 import { PluginInstallOrigin } from '../../plugins/installation';
 import type {

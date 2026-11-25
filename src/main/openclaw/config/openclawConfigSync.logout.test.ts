@@ -13,18 +13,17 @@ import {
 import { BrowserMode, type BrowserMode as BrowserModeValue } from '../../../shared/browser/browser';
 import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels';
 import { type NativeMcpDataBinding,nativeMcpDataDirectory, prepareNativeMcpData } from '../../plugins/data/nativeMcpData';
+import { inspectBundledOpenClawExtensions, inspectLocalOpenClawExtensions } from '../../plugins/extensions/openclawLocalExtensions';
 import {
   clearActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
 } from '../../providers/builtinModelCredential';
 import { setStoreGetter } from '../../providers/providerApiConfig';
+import { type OpenClawConfigSyncResult } from './configVerification';
 import * as providerSecretFile from './models/providerSecretFile';
-import {
-  listAvailableOpenClawExtensionIds,
-  listManagedOpenClawPluginIds,
-  OpenClawConfigSync,
-  type OpenClawConfigSyncResult,
-} from './openclawConfigSync';
+import { OpenClawConfigSync } from './openclawConfigSync';
+import { listAvailableOpenClawExtensionIds } from './plugins/extensionInventory';
+import { listManagedOpenClawPluginIds } from './plugins/pluginProjection';
 import { OPENCLAW_MANAGED_TOOL_DENY } from './policies/executionPolicyProjection';
 
 vi.mock('electron', () => ({
@@ -67,9 +66,9 @@ vi.mock('../../plugins/extensions/openclawLocalExtensions', async importOriginal
   return {
     ...actual,
     listBundledOpenClawExtensionIds: () => inventory(),
-    inspectBundledOpenClawExtensions: () => ({ complete: true, ids: inventory() }),
+    inspectBundledOpenClawExtensions: vi.fn(() => ({ complete: true, ids: inventory() })),
     listLocalOpenClawExtensionIds: () => [...localInventory.ids],
-    inspectLocalOpenClawExtensions: () => ({ ...localInventory, ids: [...localInventory.ids] }),
+    inspectLocalOpenClawExtensions: vi.fn(() => ({ ...localInventory, ids: [...localInventory.ids] })),
     hasBundledOpenClawExtension: (id: string) =>
       inventory().includes(id) || localIds.has(id),
   };
@@ -301,12 +300,31 @@ describe('native configuration publication contracts', () => {
     expect(published.endsWith('\n')).toBe(true);
     expect(fixture.read().transcripts).toEqual({ enabled: false });
     expect(fixture.read().gateway.bind).toBe('loopback');
+    // A formatter may change whitespace without changing the minimal projection.
+    const existing = contract.existing ? published : JSON.stringify(fixture.read());
+    if (!contract.existing) fs.writeFileSync(fixture.configPath, existing);
     events.length = 0;
 
     expect(fixture.sync.sync(contract.reason)).toMatchObject({ ok: true, configChanged: false });
     expect(events).toEqual([]);
-    expect(fs.readFileSync(fixture.configPath, 'utf8')).toBe(published);
+    expect(fs.readFileSync(fixture.configPath, 'utf8')).toBe(existing);
   }, 20_000);
+
+  test.each([true, false])('scans each plugin inventory once per projection (model configured: %s)', configured => {
+    const fixture = createConfigurationFixture(configured, 'local', {
+      gateway: { mode: 'local', bind: 'loopback' },
+    });
+    vi.mocked(inspectBundledOpenClawExtensions).mockClear();
+    vi.mocked(inspectLocalOpenClawExtensions).mockClear();
+
+    expect(fixture.sync.sync('settings').ok).toBe(true);
+    expect(inspectBundledOpenClawExtensions).toHaveBeenCalledTimes(1);
+    expect(inspectLocalOpenClawExtensions).toHaveBeenCalledTimes(1);
+
+    expect(fixture.sync.sync('settings').ok).toBe(true);
+    expect(inspectBundledOpenClawExtensions).toHaveBeenCalledTimes(2);
+    expect(inspectLocalOpenClawExtensions).toHaveBeenCalledTimes(2);
+  });
 
   test.each(paths.flatMap(contract =>
     (['permission', 'rename', 'readback'] as const).map(failure => ({ ...contract, failure })),
@@ -340,7 +358,7 @@ describe('native configuration publication contracts', () => {
     });
 
     expect(fixture.sync.sync(contract.reason)).toMatchObject({
-      ok: false, changed: false, configChanged: false, requiresGatewayRestart: false,
+      ok: false, changed: false, configChanged: false,
       error: contract.failure === 'readback' ? expect.stringContaining('verification failed') : failureMessage,
     });
     if (contract.failure !== 'readback') {
@@ -383,7 +401,7 @@ test('keeps Gateway listener configuration stable when the first custom model is
 
   configured = true;
   expect(fixture.sync.sync('app-config-change')).toMatchObject({
-    ok: true, configChanged: true, secretsChanged: true, requiresGatewayRestart: false,
+    ok: true, configChanged: true, secretsChanged: true,
   });
   expect(fixture.read().models.providers.internal.models).toEqual([
     expect.objectContaining({ id: 'internal-model' }),
@@ -402,53 +420,6 @@ test('keeps Gateway listener configuration stable when the first custom model is
   expect(fixture.sync.sync('app-config-change').ok).toBe(true);
   expect(fixture.read().gateway).toEqual(initialGateway);
   expect(fixture.sync.sync('app-config-change')).toMatchObject({ ok: true, configChanged: false });
-});
-
-test('marks only verified model-default projections for skipping historical session scans', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'model-default-projection-'));
-  temporaryDirectories.push(directory);
-  const configPath = path.join(directory, 'openclaw.json');
-  const appConfig = {
-    model: { defaultModel: 'first', defaultModelProvider: 'custom_0' },
-    providers: {
-      custom_0: {
-        enabled: true,
-        displayName: 'Internal',
-        apiKey: 'test-key',
-        baseUrl: 'http://model.test/v1',
-        apiFormat: 'openai',
-        models: [{ id: 'first' }, { id: 'second' }],
-      },
-    },
-  };
-  setStoreGetter(() => ({ get: () => appConfig }) as never);
-  const sync = new OpenClawConfigSync({
-    engineManager: {
-      getConfigPath: () => configPath,
-      getStateDir: () => directory,
-      getDesiredVersion: () => '2026.10.6',
-    },
-    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
-    getAgents: () => [],
-    getBrowserMode: () => BrowserMode.User,
-  } as never);
-  expect(sync.sync('startup')).toMatchObject({ ok: true, modelDefaultsOnly: false });
-  const previous = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-
-  appConfig.model.defaultModel = 'second';
-  expect(sync.sync('default-model-change')).toMatchObject({
-    ok: true, configChanged: true, secretsChanged: false, modelDefaultsOnly: true,
-  });
-  const next = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-  expect(next.agents.defaults.model.primary).toBe('internal/second');
-  expect(next.models).toEqual(previous.models);
-
-  appConfig.model.defaultModel = 'first';
-  expect(sync.sync('default-model-change-rollback')).toMatchObject({
-    ok: true, configChanged: true, modelDefaultsOnly: true,
-  });
-  appConfig.providers.custom_0.models.pop();
-  expect(sync.sync('default-model-change')).toMatchObject({ ok: true, modelDefaultsOnly: false });
 });
 
 test.each(['full', 'minimal'])(
@@ -2506,7 +2477,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(sync.sync('browser-mode-change')).toMatchObject({
       ok: true,
       configChanged: true,
-      requiresGatewayRestart: false,
     });
     const config = readConfig();
     expect(config.browser).toMatchObject({
@@ -2523,7 +2493,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(sync.sync('browser-mode-change')).toMatchObject({
       ok: true,
       configChanged: true,
-      requiresGatewayRestart: false,
     });
     const restoredConfig = readConfig();
     expect(restoredConfig.browser).toEqual(nativeConfig.browser);
@@ -2532,7 +2501,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(sync.sync('browser-mode-change')).toMatchObject({
       ok: true,
       configChanged: false,
-      requiresGatewayRestart: false,
     });
   });
 
@@ -2658,7 +2626,7 @@ describe('OpenClaw auth logout config sync', () => {
 
     const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout);
 
-    expect(result).toMatchObject({ ok: true, configChanged: true, requiresGatewayRestart: false });
+    expect(result).toMatchObject({ ok: true, configChanged: true });
     const expected = structuredClone(existing);
     delete expected.models.providers;
     delete expected.agents.defaults.model;
@@ -3107,7 +3075,6 @@ describe('OpenClaw auth logout config sync', () => {
       ok: true,
       configChanged: true,
       secretsChanged: true,
-      requiresGatewayRestart: false,
     });
     expect(sync.collectGatewayLaunchEnvVars()).toEqual(launchEnvironment);
 

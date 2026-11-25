@@ -4,142 +4,6 @@ import { isDeepStrictEqual } from 'node:util';
 import fs from 'fs';
 import path from 'path';
 
-import { DEFAULT_ALLOW_EXTERNAL_EMBED_URLS } from '../../../shared/browser/webpageEmbedSettings';
-import {
-  applyDecisionModelConfiguration,
-  captureDecisionModelConfiguration,
-  releaseDecisionModelDefault,
-  resolveDecisionModelSelection,
-} from './models/decisionModelConfig';
-import {
-  hasOnlyModelDefaultChanges,
-  isModelDefaultsSyncReason,
-  matchesProjectedModelDefaults,
-  projectModelDefaults,
-} from './models/modelDefaultConfigChange';
-import {
-  applyNativeVideoConfiguration,
-  captureNativeVideoConfiguration,
-  resolveNativeVideoSelection,
-} from './models/nativeVideoModelConfig';
-import {
-  applyDefaultOpenClawPluginEntries,
-  applyManagedOpenClawHeartbeatConfig,
-  buildBuiltinMemorySearchConfig,
-  buildDefaultOpenClawPluginEntries,
-  buildLoginScopedOpenClawConfig,
-  buildManagedBundledExtensionEntries,
-  buildManagedExternalAgentEntries,
-  buildManagedOpenClawAcpConfig,
-  buildManagedOpenClawAgentThinkingConfig,
-  buildManagedOpenClawCompactionConfig,
-  buildManagedOpenClawConnectivityConfig,
-  buildManagedOpenClawCronConfig,
-  buildManagedOpenClawEmbeddedAgentConfig,
-  buildManagedOpenClawExecutionToolConfig,
-  buildManagedOpenClawHeartbeatConfig,
-  buildManagedOpenClawModelCatalogConfig,
-  buildManagedOpenClawSandboxConfig,
-  buildManagedOpenClawSecrets,
-  buildManagedOpenClawSessionConfig,
-  buildManagedOpenClawSubagentConfig,
-  buildManagedOpenClawSurfaces,
-  buildManagedOpenClawTtsPluginEntries,
-  buildMissingEmbeddedBrowserResult,
-  buildOpenClawConfigMeta,
-  buildOpenClawHookConfig,
-  buildOpenClawMcpServers,
-  buildProviderSelection,
-  buildVerifiedConfigSyncResult,
-  canonicalizeAgentEntry,
-  constrainAgentEntryToAvailableModels,
-  ensureDir,
-  hasOpenClawConfigChanged,
-  inspectConfiguredPluginPaths,
-  isBundledPluginAvailable,
-  isRecord,
-  isUserToggleableBundledPlugin,
-  listAvailableOpenClawExtensionIds,
-  listInstalledOpenClawExtensionIds,
-  listKnownOpenClawWorkspaceDirs,
-  ManagedMemorySearchConfig,
-  mergeManagedOpenClawBrowserConfig,
-  mergeManagedOpenClawCodeModeConfig,
-  mergeManagedOpenClawSubagentConfig,
-  mergeManagedOpenClawSwarmConfig,
-  mergeManagedOptionalToolPolicy,
-  mergeOpenClawPluginConfig,
-  mergeOpenClawSkillConfig,
-  OPENCLAW_MANAGED_TOOL_DENY,
-  OPENCLAW_MAX_SKILLS_IN_PROMPT,
-  OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
-  OpenClawConfigSyncDeps,
-  OpenClawConfigSyncResult,
-  OpenClawProviderSelection,
-  projectManagedOpenClawBrowserConfig,
-  projectManagedOpenClawExecNotifications,
-  readPreinstalledPluginIds,
-  resolveManagedOpenClawTtsConfig,
-  verifyOpenClawConfigMatches,
-  withMemorySearch,
-} from './openclawConfigBuilders';
-import { buildManagedMcpConfig } from './plugins/mcpAppsConfig';
-import { withComputerControlPolicy } from './policies/computerControlConfig';
-import { hasSpeechToolConfigChanged, mergeLocalSpeechExtensionTtsConfig } from './speech/localSpeechExtensionConfig';
-import { buildManagedLocalSpeechPluginEntries } from './speech/localSpeechPluginConfig';
-import { normalizeNativeTtsConfig } from './speech/nativeTtsConfig';
-import { applyManagedSpeechModelConfiguration, type ManagedSpeechModelSettings } from './speech/speechModelConfig';
-export {
-  applyDefaultOpenClawPluginEntries,
-  applyManagedOpenClawHeartbeatConfig,
-  buildBuiltinMemorySearchConfig,
-  buildDefaultOpenClawPluginEntries,
-  buildManagedAcpxMcpServers,
-  buildManagedAcpxPluginEntry,
-  buildManagedExternalAgentEntries,
-  buildManagedOpenClawAcpConfig,
-  buildManagedOpenClawAgentThinkingConfig,
-  buildManagedOpenClawCompactionConfig,
-  buildManagedOpenClawConnectivityConfig,
-  buildManagedOpenClawCronConfig,
-  buildManagedOpenClawHeartbeatConfig,
-  buildManagedOpenClawModelCatalogConfig,
-  buildManagedOpenClawSandboxConfig,
-  buildManagedOpenClawSandboxToolConfig,
-  buildManagedOpenClawSessionConfig,
-  buildManagedOpenClawSubagentConfig,
-  buildManagedOpenClawTtsPluginEntries,
-  buildOpenClawConfigMeta,
-  buildOpenClawHookConfig,
-  buildOpenClawMcpServers,
-  buildProviderSelection,
-  hasOpenClawConfigChanged,
-  listAvailableOpenClawExtensionIds,
-  listInstalledOpenClawExtensionIds,
-  listManagedOpenClawPluginIds,
-  mergeAgentEntriesWithManagedMainSettings,
-  mergeOpenClawPluginConfig,
-  mergeOpenClawSkillConfig,
-  OPENCLAW_ACP_BACKEND,
-  OPENCLAW_AGENT_TIMEOUT_SECONDS,
-  OPENCLAW_FALLBACK_EXEC_MODE,
-  OPENCLAW_FALLBACK_FS_WORKSPACE_ONLY,
-  OPENCLAW_MAX_SKILLS_IN_PROMPT,
-  OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
-  OPENCLAW_MCP_TOOL_OWNER,
-  OPENCLAW_MODEL_PROVIDER_TIMEOUT_SECONDS,
-  OPENCLAW_SESSION_MAX_ENTRIES,
-  OPENCLAW_SESSION_PRUNE_AFTER,
-  OPENCLAW_SUBAGENT_MAX_CHILDREN_PER_AGENT,
-  OPENCLAW_SUBAGENT_MAX_CONCURRENT,
-  OPENCLAW_SUBAGENT_RUN_TIMEOUT_SECONDS,
-  type OpenClawConfigSyncResult,
-  projectManagedOpenClawBrowserConfig,
-  removeUnavailableOpenClawPluginRegistrations,
-  resolveManagedOpenClawTtsConfig,
-  resolveOpenClawExecHost,
-} from './openclawConfigBuilders';
-
 import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
 import {
   type AgentRuntimeSettings,
@@ -150,6 +14,7 @@ import {
   type BrowserMode as BrowserModeValue,
   normalizeBrowserMode,
 } from '../../../shared/browser/browser';
+import { DEFAULT_ALLOW_EXTERNAL_EMBED_URLS } from '../../../shared/browser/webpageEmbedSettings';
 import {
   createDefaultExternalAgentSettings,
   type ExternalAgentSettings,
@@ -174,17 +39,134 @@ import {
 } from '../../providers/providerApiConfig';
 import { buildAgentEntry, buildManagedAgentEntries } from '../models/openclawAgentModels';
 import { getBuiltinCredentialNodeRuntimeSource } from '../runtime/launch/electronNodeRuntime';
+import {
+  applyManagedOpenClawHeartbeatConfig,
+  buildManagedOpenClawAgentThinkingConfig,
+  buildManagedOpenClawCompactionConfig,
+  buildManagedOpenClawEmbeddedAgentConfig,
+  buildManagedOpenClawHeartbeatConfig,
+  buildManagedOpenClawSessionConfig,
+  buildManagedOpenClawSubagentConfig,
+  canonicalizeAgentEntry,
+  constrainAgentEntryToAvailableModels,
+  listKnownOpenClawWorkspaceDirs,
+  mergeManagedOpenClawSubagentConfig,
+} from './agents/agentProjection';
 import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agents/agentWorkspace';
 import { seedMainRoleFiles } from './agents/mainRoleFiles';
-import { projectLoggedOutOpenClawConfig } from './models/authScopedProjection';
+import {
+  buildManagedOpenClawSurfaces,
+  buildOpenClawConfigMeta,
+  mergeManagedOpenClawBrowserConfig,
+  projectManagedOpenClawBrowserConfig,
+} from './configCompatibility';
+import { ensureDir, isRecord } from './configShape';
+import {
+  buildMissingEmbeddedBrowserResult,
+  buildVerifiedConfigSyncResult,
+  hasOpenClawConfigChanged,
+  type OpenClawConfigSyncResult,
+  verifyOpenClawConfigMatches,
+} from './configVerification';
+import { buildLoginScopedOpenClawConfig, projectLoggedOutOpenClawConfig } from './models/authScopedProjection';
 import { revokeBuiltinCredentialFile, syncBuiltinCredentialFile } from './models/builtinCredentialFile';
-import { containsBuiltinCredentialRef } from './models/builtinSecretProjection';
+import { buildManagedOpenClawSecrets, containsBuiltinCredentialRef } from './models/builtinSecretProjection';
+import {
+  applyDecisionModelConfiguration,
+  captureDecisionModelConfiguration,
+  releaseDecisionModelDefault,
+  resolveDecisionModelSelection,
+} from './models/decisionModelConfig';
+import { matchesProjectedModelDefaults, projectModelDefaults } from './models/modelDefaultConfigChange';
+import {
+  applyNativeVideoConfiguration,
+  captureNativeVideoConfiguration,
+  resolveNativeVideoSelection,
+} from './models/nativeVideoModelConfig';
+import {
+  buildBuiltinMemorySearchConfig,
+  buildManagedOpenClawModelCatalogConfig,
+  buildProviderSelection,
+  type OpenClawProviderSelection,
+  withMemorySearch,
+} from './models/providerProjection';
 import { restrictCredentialFile, syncProviderSecretFile } from './models/providerSecretFile';
-import { collectWorkspaceExtensionInventory, type WorkspaceExtensionInventory } from './plugins/extensionInventory';
+import {
+  collectWorkspaceExtensionInventory,
+  inspectConfiguredPluginPaths,
+  inspectOpenClawExtensionSources,
+  isUserToggleableBundledPlugin,
+  listAvailableOpenClawExtensionIds,
+  type OpenClawExtensionSources,
+  readPreinstalledPluginIds,
+  type WorkspaceExtensionInventory,
+} from './plugins/extensionInventory';
+import { buildManagedMcpConfig } from './plugins/mcpAppsConfig';
+import {
+  buildManagedExternalAgentEntries,
+  buildManagedOpenClawAcpConfig,
+  buildOpenClawHookConfig,
+  buildOpenClawMcpServers,
+} from './plugins/mcpProjection';
 import { mergeNativeMcpOverrides } from './plugins/nativeMcpOverrides';
+import {
+  applyDefaultOpenClawPluginEntries,
+  buildDefaultOpenClawPluginEntries,
+  buildManagedBundledExtensionEntries,
+  mergeOpenClawPluginConfig,
+  mergeOpenClawSkillConfig,
+} from './plugins/pluginProjection';
+import { withComputerControlPolicy } from './policies/computerControlConfig';
+import {
+  buildManagedOpenClawConnectivityConfig,
+  buildManagedOpenClawCronConfig,
+  buildManagedOpenClawExecutionToolConfig,
+  buildManagedOpenClawSandboxConfig,
+  mergeManagedOpenClawCodeModeConfig,
+  mergeManagedOpenClawSwarmConfig,
+  mergeManagedOptionalToolPolicy,
+  OPENCLAW_MANAGED_TOOL_DENY,
+  OPENCLAW_MAX_SKILLS_IN_PROMPT,
+  OPENCLAW_MAX_SKILLS_PROMPT_CHARS,
+  projectManagedOpenClawExecNotifications,
+} from './policies/executionPolicyProjection';
+import { hasSpeechToolConfigChanged, mergeLocalSpeechExtensionTtsConfig } from './speech/localSpeechExtensionConfig';
+import { buildManagedLocalSpeechPluginEntries } from './speech/localSpeechPluginConfig';
+import { normalizeNativeTtsConfig } from './speech/nativeTtsConfig';
+import {
+  buildManagedOpenClawTtsPluginEntries,
+  resolveManagedOpenClawTtsConfig,
+} from './speech/onlineSpeechProjection';
+import { applyManagedSpeechModelConfiguration, type ManagedSpeechModelSettings } from './speech/speechModelConfig';
+
+type OpenClawConfigSyncDeps = {
+  engineManager: OpenClawEngineManager;
+  getCoworkConfig: () => CoworkConfig;
+  getAgentRuntimeSettings?: () => AgentRuntimeSettings;
+  getExternalAgentSettings?: () => ExternalAgentSettings;
+  getMcpServers?: () => McpServerRecord[];
+  getNativeMcpDataBindings?: () => readonly NativeMcpDataBinding[];
+  getHooks?: () => OpenClawHookRecord[];
+  getAgents?: () => Agent[];
+  getAppPluginEntries?: () => Record<string, unknown>;
+  getAppPluginDefaults?: (externalIds: readonly string[] | null) => Record<
+    string, { defaultEnabled: boolean; userToggleable: boolean }
+  >;
+  getAppPluginPolicy?: () => { sandboxTools?: string[]; surfaces?: Record<string, unknown> };
+  getBrowserMode?: () => BrowserModeValue;
+  getControlUiEnabled?: () => boolean;
+  getDecisionModelCategory?: () => unknown;
+  getNativeVideoCategory?: () => unknown;
+  getSpeechModelSettings?: () => ManagedSpeechModelSettings;
+  getLocalSttConfig?: () => Record<string, unknown> | null;
+  getLocalTtsConfig?: () => Record<string, unknown> | null;
+  getLocalSpeechExtensionTtsConfig?: () => Record<string, unknown> | null;
+  getSpeechOutputState?: () => { enabled: boolean; mode: 'local' | 'online' };
+  getWindowsSandboxEnvironment?: () => Record<string, string>;
+};
 
 export type ModelDefaultsConfigPublication = {
-  result: OpenClawConfigSyncResult;
+  result: Pick<OpenClawConfigSyncResult, 'ok' | 'changed' | 'error'>;
   isCurrent: () => boolean;
   matchesRuntimeConfig: (config: unknown) => boolean;
 };
@@ -245,10 +227,7 @@ export class OpenClawConfigSync {
   private readonly getSpeechOutputState: () => { enabled: boolean; mode: 'local' | 'online' };
   private readonly getWindowsSandboxEnvironment: () => Record<string, string>;
 
-  constructor(deps: OpenClawConfigSyncDeps & {
-    getControlUiEnabled?: () => boolean;
-    getNativeMcpDataBindings?: () => readonly NativeMcpDataBinding[];
-  }) {
+  constructor(deps: OpenClawConfigSyncDeps) {
     this.getNativeVideoCategory = deps.getNativeVideoCategory ?? (() => undefined);
     this.getSpeechModelSettings = deps.getSpeechModelSettings;
     this.getDecisionModelCategory = deps.getDecisionModelCategory ?? (() => undefined);
@@ -357,7 +336,6 @@ export class OpenClawConfigSync {
         ok: false,
         changed: false,
         configChanged: false,
-        requiresGatewayRestart: false,
         configPath: this.engineManager.getConfigPath(),
         error: t(
           videoConfigurationFailed
@@ -370,7 +348,6 @@ export class OpenClawConfigSync {
 
   private syncLoggedOutConfig(): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
-    let temporaryPath: string | undefined;
     try {
       // Even a locked snapshot must not keep its provider configured in Gateway.
       let secretsChanged = false;
@@ -385,7 +362,7 @@ export class OpenClawConfigSync {
         content = fs.readFileSync(configPath, 'utf8');
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || revokeFailed) throw error;
-        return { ok: true, changed: secretsChanged, configChanged: false, requiresGatewayRestart: false,
+        return { ok: true, changed: secretsChanged, configChanged: false,
           configPath, configMissing: true };
       }
       let existing: unknown;
@@ -414,37 +391,32 @@ export class OpenClawConfigSync {
       }
       const changed = !isDeepStrictEqual(existing, next);
       if (changed) {
-        temporaryPath = `${configPath}.tmp-${randomUUID()}`;
-        this.writeConfigTemporaryFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`);
-        if (fs.readFileSync(configPath, 'utf8') !== content)
-          throw new Error('The native configuration changed before logout publication.');
-        fs.renameSync(temporaryPath, configPath);
-        temporaryPath = undefined;
+        this.withStagedConfig(configPath, `${JSON.stringify(next, null, 2)}\n`, commit => {
+          if (fs.readFileSync(configPath, 'utf8') !== content)
+            throw new Error('The native configuration changed before logout publication.');
+          commit();
+        });
       }
       const verified = changed
         ? buildVerifiedConfigSyncResult(configPath, next, true, true)
-        : { ok: true, changed: false, configChanged: false, requiresGatewayRestart: false, configPath };
+        : { ok: true, changed: false, configChanged: false, configPath };
       if (!verified.ok) return verified;
       if (revokeFailed) return { ...verified, ok: false, error: 'Failed to revoke the built-in model credential snapshot.' };
       return { ...verified, changed: changed || secretsChanged, secretsChanged };
     } catch (error) {
       return {
-        ok: false, changed: false, configChanged: false, requiresGatewayRestart: false, configPath,
+        ok: false, changed: false, configChanged: false, configPath,
         error: error instanceof Error ? error.message : String(error),
       };
-    } finally {
-      if (temporaryPath && fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
     }
   }
 
   syncModelDefaults(): ModelDefaultsConfigPublication {
     const configPath = this.engineManager.getConfigPath();
     const failed = (error: string): ModelDefaultsConfigPublication => ({
-      result: { ok: false, changed: false, configChanged: false, requiresGatewayRestart: false,
-        configPath, error },
+      result: { ok: false, changed: false, error },
       isCurrent: () => false, matchesRuntimeConfig: () => false,
     });
-    let temporaryPath: string | undefined;
     try {
       const content = fs.readFileSync(configPath, 'utf8');
       const current: unknown = JSON.parse(content);
@@ -467,21 +439,19 @@ export class OpenClawConfigSync {
       }
       const next = projectModelDefaults(current, primary, targets);
       const changed = hasOpenClawConfigChanged(content, next);
-      let publishedContent = content;
+      const publishedContent = changed ? `${JSON.stringify(next, null, 2)}\n` : content;
       if (changed) {
-        publishedContent = `${JSON.stringify(next, null, 2)}\n`;
-        temporaryPath = `${configPath}.tmp-${process.pid}-${Date.now()}`;
-        this.writeConfigTemporaryFile(temporaryPath, publishedContent);
-        if (fs.readFileSync(configPath, 'utf8') !== content)
-          return failed('The native configuration changed before model publication.');
-        fs.renameSync(temporaryPath, configPath);
-        temporaryPath = undefined;
+        const published = this.withStagedConfig(configPath, publishedContent, commit => {
+          if (fs.readFileSync(configPath, 'utf8') !== content) return false;
+          commit();
+          return true;
+        });
+        if (!published) return failed('The native configuration changed before model publication.');
       }
       const verification = verifyOpenClawConfigMatches(configPath, next);
       if (!verification.ok) return failed(verification.error || 'Model default publication could not be verified.');
       return {
-        result: { ok: true, changed, configChanged: changed, requiresGatewayRestart: false,
-          secretsChanged: false, modelDefaultsOnly: true, configPath },
+        result: { ok: true, changed },
         isCurrent: () => {
           try { return fs.readFileSync(configPath, 'utf8') === publishedContent; } catch { return false; }
         },
@@ -489,10 +459,6 @@ export class OpenClawConfigSync {
       };
     } catch {
       return failed('The model defaults could not be published to the existing native configuration.');
-    } finally {
-      if (temporaryPath) {
-        try { fs.unlinkSync(temporaryPath); } catch { /* Only this uncommitted temporary file. */ }
-      }
     }
   }
 
@@ -540,17 +506,14 @@ export class OpenClawConfigSync {
     return {
       changed,
       publish: assertCurrent => {
-        const publish = (temporaryPath?: string) => publishNativeMcpDataReceipt(configPath, receipt, () => {
+        const publish = (commit?: () => void) => publishNativeMcpDataReceipt(configPath, receipt, () => {
           assertCurrent();
           if (fs.readFileSync(configPath, 'utf8') !== original)
             throw new Error('The native configuration changed before plugin data publication.');
-          if (temporaryPath) fs.renameSync(temporaryPath, configPath);
+          commit?.();
         });
-        if (!changed) return publish();
-        const temporaryPath = `${configPath}.${randomUUID()}.tmp`;
-        this.writeConfigTemporaryFile(temporaryPath, content);
-        try { publish(temporaryPath); }
-        finally { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); }
+        if (changed) this.withStagedConfig(configPath, content, publish);
+        else publish();
       },
       isCurrent: () => {
         try { return fs.readFileSync(configPath, 'utf8') === content; } catch { return false; }
@@ -572,6 +535,7 @@ export class OpenClawConfigSync {
     config: Record<string, unknown>,
     configPath: string,
     workspaceInventory: WorkspaceExtensionInventory | undefined,
+    extensionSources: OpenClawExtensionSources,
     previousConfig?: Record<string, unknown> | null,
   ): void {
     this.nativeMcpDataReceipt = projectNativeMcpData(config, this.getNativeMcpDataBindings?.() ?? [],
@@ -621,7 +585,7 @@ export class OpenClawConfigSync {
         agents: this.getAgents?.() ?? [],
         existingConfig: config,
       }),
-      workspaceInventory,
+      { workspace: workspaceInventory, sources: extensionSources },
     );
     if (this.nativeVideoSelection && availableExtensionIds === null && previousConfig) {
       captureNativeVideoConfiguration(previousConfig)(config);
@@ -690,7 +654,6 @@ export class OpenClawConfigSync {
         ok: false,
         changed: false,
         configChanged: false,
-        requiresGatewayRestart: false,
         configPath,
         error: `OpenClaw config sync failed: custom provider name "${providerNameValidation.displayName}" ${reason}. Rename it in Settings before starting the engine.`,
       };
@@ -706,84 +669,78 @@ export class OpenClawConfigSync {
 
     const allProvidersMap: Record<string, OpenClawProviderSelection['providerConfig']> =
       Object.create(null) as Record<string, OpenClawProviderSelection['providerConfig']>;
-    let primaryModel = '';
-    let providerSelection: OpenClawProviderSelection | null = null;
-    let memorySearchConfig: ManagedMemorySearchConfig = { enabled: false };
-    if (apiResolution.config) {
-      const { baseURL, apiKey, model, apiType } = apiResolution.config;
-      const modelId = model.trim();
-      if (!modelId) {
-        return {
-          ok: false,
-          changed: false,
-          configChanged: false,
-          requiresGatewayRestart: false,
-          configPath,
-          error: 'OpenClaw config sync failed: resolved model is empty.',
-        };
-      }
+    const { baseURL, apiKey, model, apiType } = apiResolution.config;
+    const modelId = model.trim();
+    if (!modelId) {
+      return {
+        ok: false,
+        changed: false,
+        configChanged: false,
+        configPath,
+        error: 'OpenClaw config sync failed: resolved model is empty.',
+      };
+    }
 
-      const providerName = apiResolution.providerMetadata?.providerName ?? '';
-      providerSelection = buildProviderSelection({
-        apiKey,
-        baseURL,
-        modelId,
-        apiType,
-        providerName,
-        supportsImage: apiResolution.providerMetadata?.supportsImage,
-        modelName: apiResolution.providerMetadata?.modelName,
-        displayName: apiResolution.providerMetadata?.displayName,
-        contextLength: apiResolution.providerMetadata?.contextLength,
-        maxTokens: apiResolution.providerMetadata?.maxTokens,
-        headers: apiResolution.config.headers,
-      });
-      primaryModel = providerSelection.primaryModel;
+    const providerName = apiResolution.providerMetadata?.providerName ?? '';
+    const providerSelection = buildProviderSelection({
+      apiKey,
+      baseURL,
+      modelId,
+      apiType,
+      providerName,
+      supportsImage: apiResolution.providerMetadata?.supportsImage,
+      modelName: apiResolution.providerMetadata?.modelName,
+      displayName: apiResolution.providerMetadata?.displayName,
+      contextLength: apiResolution.providerMetadata?.contextLength,
+      maxTokens: apiResolution.providerMetadata?.maxTokens,
+      headers: apiResolution.config.headers,
+    });
+    const primaryModel = providerSelection.primaryModel;
 
-      const enabledProviders = resolveAllEnabledProviderConfigs();
-      memorySearchConfig = buildBuiltinMemorySearchConfig(enabledProviders);
-      for (const p of enabledProviders) {
-        for (const m of [...p.models, ...p.embeddingModels]) {
-          const sel = buildProviderSelection({
-            apiKey: p.apiKey,
-            baseURL: p.baseURL,
-            modelId: m.id,
-            apiType: p.apiType,
-            providerName: p.providerName,
-            supportsImage: m.supportsImage,
-            modelName: m.name,
-            displayName: p.displayName,
-            contextLength: m.contextLength,
-            maxTokens: m.maxTokens,
-            headers: p.headers,
-          });
-          if (!allProvidersMap[sel.providerId]) {
-            allProvidersMap[sel.providerId] = { ...sel.providerConfig, models: [] };
-          }
-          const existing = allProvidersMap[sel.providerId];
-          const alreadyHas = existing.models.some(em => em.id === sel.providerConfig.models[0]?.id);
-          if (!alreadyHas && sel.providerConfig.models.length > 0) {
-            existing.models.push(...sel.providerConfig.models);
-          }
+    const enabledProviders = resolveAllEnabledProviderConfigs();
+    const memorySearchConfig = buildBuiltinMemorySearchConfig(enabledProviders);
+    for (const p of enabledProviders) {
+      for (const m of [...p.models, ...p.embeddingModels]) {
+        const sel = buildProviderSelection({
+          apiKey: p.apiKey,
+          baseURL: p.baseURL,
+          modelId: m.id,
+          apiType: p.apiType,
+          providerName: p.providerName,
+          supportsImage: m.supportsImage,
+          modelName: m.name,
+          displayName: p.displayName,
+          contextLength: m.contextLength,
+          maxTokens: m.maxTokens,
+          headers: p.headers,
+        });
+        if (!allProvidersMap[sel.providerId]) {
+          allProvidersMap[sel.providerId] = { ...sel.providerConfig, models: [] };
         }
-      }
-
-      if (!allProvidersMap[providerSelection.providerId]) {
-        allProvidersMap[providerSelection.providerId] = providerSelection.providerConfig;
-      } else {
-        const existing = allProvidersMap[providerSelection.providerId];
-        const alreadyHas = existing.models.some(
-          em => em.id === providerSelection.providerConfig.models[0]?.id,
-        );
-        if (!alreadyHas && providerSelection.providerConfig.models.length > 0) {
-          existing.models.push(...providerSelection.providerConfig.models);
+        const existing = allProvidersMap[sel.providerId];
+        const alreadyHas = existing.models.some(em => em.id === sel.providerConfig.models[0]?.id);
+        if (!alreadyHas && sel.providerConfig.models.length > 0) {
+          existing.models.push(...sel.providerConfig.models);
         }
       }
     }
 
+    if (!allProvidersMap[providerSelection.providerId]) {
+      allProvidersMap[providerSelection.providerId] = providerSelection.providerConfig;
+    } else {
+      const existing = allProvidersMap[providerSelection.providerId];
+      const alreadyHas = existing.models.some(
+        em => em.id === providerSelection.providerConfig.models[0]?.id,
+      );
+      if (!alreadyHas && providerSelection.providerConfig.models.length > 0) {
+        existing.models.push(...providerSelection.providerConfig.models);
+      }
+    }
+
     const appEntries = this.getAppPluginEntries?.() ?? {};
-    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
-      this.engineManager.getStateDir(),
-    );
+    const extensionSources = inspectOpenClawExtensionSources(this.engineManager.getStateDir());
+    const { isBundledAvailable, installed } = extensionSources;
+    const trustedInstalledExtensionIds = installed.ids;
     const configuredInventory = inspectConfiguredPluginPaths(existingPlugins, workspaceInventory);
     const appPolicies = this.getAppPluginDefaults(
       configuredInventory.complete ? [...trustedInstalledExtensionIds, ...configuredInventory.ids] : null,
@@ -794,13 +751,13 @@ export class OpenClawConfigSync {
     const resolvedWorkspaceDir = workspaceDir ? path.resolve(workspaceDir) : defaultWorkspaceDir;
     seedMainRoleFiles(this.engineManager.getStateDir(), this.engineManager.getRuntimeRoot?.());
     const preinstalledPluginIds = readPreinstalledPluginIds().filter(
-      id => !isUserToggleableBundledPlugin(id, appPolicies) && isBundledPluginAvailable(id),
+      id => !isUserToggleableBundledPlugin(id, appPolicies) && isBundledAvailable(id),
     );
     const agentRuntimeSettings = this.getAgentRuntimeSettings();
     const browserMode = normalizeBrowserMode(this.getBrowserMode?.());
     if (
       browserMode === BrowserMode.Embedded &&
-      !isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
+      !isBundledAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
     ) {
       return buildMissingEmbeddedBrowserResult(configPath);
     }
@@ -820,12 +777,13 @@ export class OpenClawConfigSync {
         mcpServerRecords,
         coworkConfig.executionMode === 'sandbox',
         coworkConfig.sandboxNetworkEnabled,
+        isBundledAvailable,
       ),
-      ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
+      ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledAvailable),
       ...(!this.getSpeechModelSettings ? buildManagedOpenClawTtsPluginEntries(managedTtsConfig) : {}),
       ...appEntries,
     };
-    const defaultPluginEntries = buildDefaultOpenClawPluginEntries(isBundledPluginAvailable, appPolicies);
+    const defaultPluginEntries = buildDefaultOpenClawPluginEntries(isBundledAvailable, appPolicies);
     const mcpServers = mergeNativeMcpOverrides(
       existingConfig,
       buildOpenClawMcpServers(mcpServerRecords, agentRuntimeSettings.mcp.requestTimeoutSeconds),
@@ -841,8 +799,7 @@ export class OpenClawConfigSync {
         agents: this.getAgents?.() ?? [],
         existingConfig,
       }),
-      workspaceInventory,
-      configuredInventory,
+      { workspace: workspaceInventory, configured: configuredInventory, sources: extensionSources },
     );
     const hookConfig = buildOpenClawHookConfig(this.getHooks?.() ?? []);
     const connectivityConfig = buildManagedOpenClawConnectivityConfig(
@@ -1010,8 +967,6 @@ export class OpenClawConfigSync {
       meta: buildOpenClawConfigMeta(this.engineManager.getDesiredVersion(), existingConfig?.meta),
     };
 
-    // IM channel config syncing removed — channels disabled pending future adaptation
-
     const scopedConfig =
       isAuthLogin && existingConfig
         ? buildLoginScopedOpenClawConfig(existingConfig, managedConfig)
@@ -1038,7 +993,6 @@ export class OpenClawConfigSync {
         ok: false,
         changed: false,
         configChanged: false,
-        requiresGatewayRestart: false,
         configPath,
         error: 'Failed to prepare managed model provider credentials.',
       };
@@ -1056,56 +1010,20 @@ export class OpenClawConfigSync {
         },
       };
     }
-    this.applyManagedRuntimeConfiguration(configToPersist, configPath, workspaceInventory, existingConfig);
-    const nextContent = `${JSON.stringify(configToPersist, null, 2)}\n`;
-    const configChanged = hasOpenClawConfigChanged(currentContent, configToPersist);
-    if (configChanged) {
-      try {
-        this.publishConfigFile(configPath, nextContent);
-      } catch (error) {
-        return {
-          ok: false,
-          changed: false,
-          configChanged: false,
-          requiresGatewayRestart: false,
-          configPath,
-          error: error instanceof Error ? error.message : String(error),
-        };
-      }
-    }
-
-    if (!configChanged) publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => {});
-    const verified = buildVerifiedConfigSyncResult(
-      configPath, configToPersist, configChanged,
-      configChanged && hasSpeechToolConfigChanged(existingConfig, configToPersist),
-    );
+    this.applyManagedRuntimeConfiguration(configToPersist, configPath, workspaceInventory, extensionSources, existingConfig);
+    const verified = this.publishProjectedConfig(configPath, currentContent, existingConfig, configToPersist);
     if (!verified.ok) return verified;
 
     return {
       ...verified,
-      changed: configChanged || preparedSecrets.secretsChanged,
+      changed: verified.changed || preparedSecrets.secretsChanged,
       secretsChanged: preparedSecrets.secretsChanged,
-      modelDefaultsOnly:
-        isModelDefaultsSyncReason(reason) &&
-        hasOnlyModelDefaultChanges(existingConfig, configToPersist),
     };
   }
 
-  /**
-   * Collect the managed environment passed to the OpenClaw Gateway process.
-   * This includes plaintext values for `${VAR}` placeholders as well as runtime-only
-   * settings that cannot be represented in openclaw.json.
-   */
+  /** Collect the settings inherited by the Gateway child process at launch. */
   collectGatewayLaunchEnvVars(): Record<string, string> {
-    const env: Record<string, string> = {};
-
-    // Custom keys use file SecretRefs; built-in JWTs use private exec SecretRefs.
-    // No provider API key belongs in the Gateway launch environment.
-    Object.assign(env, this.getWindowsSandboxEnvironment());
-
-    // IM channel secrets removed — channels disabled pending future adaptation
-
-    return env;
+    return { ...this.getWindowsSandboxEnvironment() };
   }
 
   /**
@@ -1175,52 +1093,65 @@ export class OpenClawConfigSync {
     return { ownership: 'explicit', entries };
   }
 
-  /** Write a file only if its content has changed. */
-  private syncFileIfChanged(filePath: string, content: string): void {
+  /** Stage private bytes next to the live file so the Gateway sees one atomic rename. */
+  private withStagedConfig<T>(
+    configPath: string,
+    content: string,
+    publish: (commit: () => void) => T,
+  ): T {
+    const temporaryPath = `${configPath}.tmp-${randomUUID()}`;
+    fs.writeFileSync(temporaryPath, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    let committed = false;
     try {
-      const existing = fs.readFileSync(filePath, 'utf8');
-      if (existing === content) return;
-    } catch {
-      // File doesn't exist yet
-    }
-    if (content) {
-      this.atomicWriteFile(filePath, content);
-    } else {
-      // Empty content — create empty file if it doesn't exist
-      if (!fs.existsSync(filePath)) {
-        fs.writeFileSync(filePath, '', 'utf8');
+      restrictCredentialFile(temporaryPath);
+      fs.writeFileSync(temporaryPath, content, 'utf8');
+      return publish(() => {
+        fs.renameSync(temporaryPath, configPath);
+        committed = true;
+      });
+    } finally {
+      if (!committed) {
+        try {
+          fs.rmSync(temporaryPath, { force: true });
+        } catch {
+          // Keep the publication failure available to the caller.
+        }
       }
-    }
-  }
-
-  /** Restrict native configuration before writing credentials into a temporary file. */
-  private writeConfigTemporaryFile(filePath: string, content: string): void {
-    let created = false;
-    try {
-      fs.writeFileSync(filePath, '', { encoding: 'utf8', mode: 0o600, flag: 'wx' });
-      created = true;
-      restrictCredentialFile(filePath);
-      fs.writeFileSync(filePath, content, 'utf8');
-    } catch (error) {
-      if (created && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      throw error;
     }
   }
 
   private publishConfigFile(configPath: string, content: string): void {
     ensureDir(path.dirname(configPath));
-    const tmpPath = `${configPath}.tmp-${Date.now()}`;
-    this.writeConfigTemporaryFile(tmpPath, content);
-    try {
-      publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => fs.renameSync(tmpPath, configPath));
-    } finally { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); }
+    this.withStagedConfig(configPath, content, commit =>
+      publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, commit));
   }
 
-  /** Atomic file write via tmp + rename, consistent with openclaw.json writes. */
-  private atomicWriteFile(filePath: string, content: string): void {
-    const tmpPath = `${filePath}.tmp-${Date.now()}`;
-    fs.writeFileSync(tmpPath, content, 'utf8');
-    fs.renameSync(tmpPath, filePath);
+  private publishProjectedConfig(
+    configPath: string,
+    currentContent: string,
+    previousConfig: unknown,
+    expectedConfig: Record<string, unknown>,
+    changed = hasOpenClawConfigChanged(currentContent, expectedConfig),
+  ): OpenClawConfigSyncResult {
+    try {
+      if (changed) {
+        this.publishConfigFile(configPath, `${JSON.stringify(expectedConfig, null, 2)}\n`);
+      } else {
+        publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => {});
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        changed: false,
+        configChanged: false,
+        configPath,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    return buildVerifiedConfigSyncResult(
+      configPath, expectedConfig, changed,
+      changed && hasSpeechToolConfigChanged(previousConfig, expectedConfig),
+    );
   }
 
   /**
@@ -1236,6 +1167,8 @@ export class OpenClawConfigSync {
     workspaceInventory: WorkspaceExtensionInventory | undefined,
   ): OpenClawConfigSyncResult {
     const coworkConfig = this.getCoworkConfig();
+    const extensionSources = inspectOpenClawExtensionSources(this.engineManager.getStateDir());
+    const { isBundledAvailable, installed } = extensionSources;
     const configuredWorkspaceDir = (coworkConfig.workingDirectory || '').trim();
     const resolvedWorkspaceDir = configuredWorkspaceDir
       ? path.resolve(configuredWorkspaceDir)
@@ -1245,7 +1178,7 @@ export class OpenClawConfigSync {
     const browserMode = normalizeBrowserMode(this.getBrowserMode?.());
     if (
       browserMode === BrowserMode.Embedded &&
-      !isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
+      !isBundledAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
     ) {
       return buildMissingEmbeddedBrowserResult(configPath);
     }
@@ -1268,9 +1201,7 @@ export class OpenClawConfigSync {
       this.getSpeechOutputState(),
     );
     const appEntries = this.getAppPluginEntries?.() ?? {};
-    const trustedInstalledExtensionIds = listInstalledOpenClawExtensionIds(
-      this.engineManager.getStateDir(),
-    );
+    const trustedInstalledExtensionIds = installed.ids;
     const appPolicies = this.getAppPluginDefaults(trustedInstalledExtensionIds);
     const bundledExtensionEntries = {
       ...buildManagedBundledExtensionEntries(
@@ -1280,12 +1211,13 @@ export class OpenClawConfigSync {
         mcpServerRecords,
         coworkConfig.executionMode === 'sandbox',
         coworkConfig.sandboxNetworkEnabled,
+        isBundledAvailable,
       ),
-      ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledPluginAvailable),
+      ...buildManagedLocalSpeechPluginEntries(this.getLocalSttConfig(), isBundledAvailable),
       ...(!this.getSpeechModelSettings ? buildManagedOpenClawTtsPluginEntries(managedTtsConfig) : {}),
       ...appEntries,
     };
-    const defaultPluginEntries = buildDefaultOpenClawPluginEntries(isBundledPluginAvailable, appPolicies);
+    const defaultPluginEntries = buildDefaultOpenClawPluginEntries(isBundledAvailable, appPolicies);
     let minimalConfig: Record<string, unknown> = withMemorySearch(
       {
         skills: mergeOpenClawSkillConfig({}, {}),
@@ -1421,44 +1353,27 @@ export class OpenClawConfigSync {
         previousConfig.meta,
       );
     }
-    this.applyManagedRuntimeConfiguration(minimalConfig, configPath, workspaceInventory);
+    this.applyManagedRuntimeConfiguration(minimalConfig, configPath, workspaceInventory, extensionSources);
     minimalConfig = projectManagedOpenClawExecNotifications(
       projectManagedOpenClawBrowserConfig(withComputerControlPolicy(minimalConfig)),
     );
-    const nextContent = `${JSON.stringify(minimalConfig, null, 2)}\n`;
-    const buildMinimalSyncResult = (
-      expectedConfig: Record<string, unknown>,
-      changed: boolean,
-    ): OpenClawConfigSyncResult => {
-      publishNativeMcpDataReceipt(configPath, this.nativeMcpDataReceipt, () => {});
-      return buildVerifiedConfigSyncResult(
-        configPath, expectedConfig, changed,
-        changed && hasSpeechToolConfigChanged(previousConfig, expectedConfig),
-      );
-    };
+    if (!hasOpenClawConfigChanged(currentContent, minimalConfig)) {
+      return this.publishProjectedConfig(configPath, currentContent, previousConfig, minimalConfig, false);
+    }
 
     const isAuthLogin = reason === BuiltinModelSyncReason.AuthLogin;
-    if (isAuthLogin && currentContent && currentContent !== nextContent) {
+    if (isAuthLogin && isRecord(previousConfig)) {
       try {
-        const existing = previousConfig;
-        if (isRecord(existing)) {
-          const sanitizedConfig = withComputerControlPolicy(
-            buildLoginScopedOpenClawConfig(existing, minimalConfig),
-          );
-          this.applyManagedRuntimeConfiguration(sanitizedConfig, configPath, workspaceInventory);
-          const sanitizedContent = `${JSON.stringify(sanitizedConfig, null, 2)}\n`;
-          if (hasOpenClawConfigChanged(currentContent, sanitizedConfig)) {
-            this.publishConfigFile(configPath, sanitizedContent);
-            return buildMinimalSyncResult(sanitizedConfig, true);
-          }
-          return buildMinimalSyncResult(sanitizedConfig, false);
-        }
+        const sanitizedConfig = withComputerControlPolicy(
+          buildLoginScopedOpenClawConfig(previousConfig, minimalConfig),
+        );
+        this.applyManagedRuntimeConfiguration(sanitizedConfig, configPath, workspaceInventory, extensionSources);
+        return this.publishProjectedConfig(configPath, currentContent, previousConfig, sanitizedConfig);
       } catch (error) {
         return {
           ok: false,
           changed: false,
           configChanged: false,
-          requiresGatewayRestart: false,
           configPath,
           error: error instanceof Error ? error.message : String(error),
         };
@@ -1469,209 +1384,183 @@ export class OpenClawConfigSync {
     // user configuration), don't downgrade it to the minimal version.
     // Check for models (API configured), plugin entries, or gateway.mode already set.
     // Authentication sync was sanitized above so unrelated user-owned config survives.
-    if (currentContent && currentContent !== nextContent) {
+    if (isRecord(previousConfig)) {
       try {
-        const existing = previousConfig;
-        if (isRecord(existing)) {
-          const canonicalExisting = projectManagedOpenClawBrowserConfig(existing);
-          const hasHookConfig = Object.keys(hookConfig).length > 0;
-          const hasSubstantiveConfig =
-            Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
-            Boolean(
-              isRecord(canonicalExisting.plugins) &&
-              (canonicalExisting.plugins.entries ||
-                Array.isArray(canonicalExisting.plugins.allow) ||
-                Array.isArray(canonicalExisting.plugins.deny) ||
-                typeof canonicalExisting.plugins.enabled === 'boolean'),
-            ) ||
-            Boolean(isRecord(canonicalExisting.gateway) && canonicalExisting.gateway.mode);
-          if (hasHookConfig || hasSubstantiveConfig) {
-            const existingDiagnostics = isRecord(canonicalExisting.diagnostics)
-              ? canonicalExisting.diagnostics
-              : {};
-            const existingAgents = isRecord(canonicalExisting.agents)
-              ? canonicalExisting.agents
-              : {};
-            const existingDefaults = isRecord(existingAgents.defaults)
-              ? existingAgents.defaults
-              : {};
-            const minimalAgents = isRecord(minimalConfig.agents) ? minimalConfig.agents : {};
-            const minimalEntries = isRecord(minimalAgents.entries) ? minimalAgents.entries : {};
-            const existingEntries = isRecord(existingAgents.entries) ? existingAgents.entries : {};
-            const mergedDefaults: Record<string, unknown> = {
-              ...existingDefaults,
-              modelSelectionScope: 'session',
-              timeoutSeconds: agentRuntimeSettings.agent.runTimeoutSeconds,
-              systemAgent: { agentId: 'main' },
-              heartbeat: buildManagedOpenClawHeartbeatConfig(),
-              // Replace rather than deep-merge so stale managed keys are removed.
-              compaction: buildManagedOpenClawCompactionConfig(),
-              subagents: mergeManagedOpenClawSubagentConfig(
-                existingDefaults.subagents,
-                buildManagedOpenClawSubagentConfig(agentRuntimeSettings, false),
-              ),
-              workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
-              cwd: resolvedWorkspaceDir,
-              skipBootstrap: true,
-              sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
-            };
-            if (agentRuntimeSettings.agent.maxConcurrent === null) {
-              delete mergedDefaults.maxConcurrent;
-            } else {
-              mergedDefaults.maxConcurrent = agentRuntimeSettings.agent.maxConcurrent;
-            }
-            if (agentRuntimeSettings.agent.thinking) {
-              mergedDefaults.thinkingDefault = agentRuntimeSettings.agent.thinking;
-            } else {
-              delete mergedDefaults.thinkingDefault;
-            }
-            const existingTools = isRecord(canonicalExisting.tools) ? canonicalExisting.tools : {};
-            const existingPlugins = isRecord(canonicalExisting.plugins)
-              ? canonicalExisting.plugins
-              : {};
-            const configuredInventory = inspectConfiguredPluginPaths(existingPlugins, workspaceInventory);
-            const existingDefaultPluginEntries = buildDefaultOpenClawPluginEntries(
-              isBundledPluginAvailable,
-              this.getAppPluginDefaults(
-                configuredInventory.complete ? [...trustedInstalledExtensionIds, ...configuredInventory.ids] : null,
-              ),
-            );
-            const existingHooks = isRecord(canonicalExisting.hooks)
-              ? { ...canonicalExisting.hooks }
-              : {};
-            // Internal Hook selection is owned by the product Store, including
-            // its empty state. Preserve unrelated native webhook settings.
-            delete existingHooks.internal;
-            const availableExtensionIds = listAvailableOpenClawExtensionIds(
-              this.engineManager.getStateDir(),
-              existingPlugins,
-              listKnownOpenClawWorkspaceDirs({
-                stateDir: this.engineManager.getStateDir(),
-                mainWorkspaceDir: resolvedWorkspaceDir,
-                agents: this.getAgents?.() ?? [],
-                existingConfig: canonicalExisting,
-              }),
-              workspaceInventory,
-              configuredInventory,
-            );
-            const mergedBrowserConfig = projectManagedOpenClawBrowserConfig(
-              withMemorySearch(
-                {
-                  ...canonicalExisting,
-                  skills: mergeOpenClawSkillConfig(
-                    isRecord(canonicalExisting.skills) ? canonicalExisting.skills : {},
-                    {},
-                  ),
-                  models: {
-                    ...(isRecord(canonicalExisting.models) ? canonicalExisting.models : {}),
-                    ...buildManagedOpenClawModelCatalogConfig(),
-                  },
-                  diagnostics: {
-                    ...existingDiagnostics,
-                    otel: {
-                      enabled: false,
-                    },
-                  },
-                  agents: {
-                    ...existingAgents,
-                    ownership: 'explicit',
-                    defaults: mergedDefaults,
-                    entries: Object.fromEntries(
-                      Object.entries({ ...existingEntries, ...minimalEntries }).map(
-                        ([id, entry]) => [
-                          id,
-                          {
-                            ...(isRecord(existingEntries[id]) ? existingEntries[id] : {}),
-                            ...(isRecord(entry) ? entry : {}),
-                          },
-                        ],
-                      ),
-                    ),
-                  },
-                  acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
-                  session: buildManagedOpenClawSessionConfig(canonicalExisting.session),
-                  mcp: buildManagedMcpConfig(
-                    canonicalExisting.mcp,
-                    mergeNativeMcpOverrides(canonicalExisting, mcpServers, extensionMcpNames, retiredMcpNames),
-                    agentRuntimeSettings.mcp,
-                  ),
-                  update: connectivityConfig.update,
-                  transcripts: connectivityConfig.transcripts,
-                  browser: minimalConfig.browser,
-                  hooks: {
-                    ...existingHooks,
-                    ...(isRecord(hookConfig.hooks) ? hookConfig.hooks : {}),
-                  },
-                  tools: {
-                    ...existingTools,
-                    ...mergeManagedOptionalToolPolicy(existingTools),
-                    deny: [...OPENCLAW_MANAGED_TOOL_DENY],
-                    sessions: connectivityTools.sessions,
-                    codeMode: mergeManagedOpenClawCodeModeConfig(
-                      existingTools.codeMode,
-                      agentRuntimeSettings,
-                    ),
-                    swarm: mergeManagedOpenClawSwarmConfig(
-                      existingTools.swarm,
-                      agentRuntimeSettings,
-                    ),
-                    ...buildManagedOpenClawExecutionToolConfig(
-                      coworkConfig.executionMode || 'local',
-                      existingTools,
-                      this.getAppPluginPolicy?.().sandboxTools,
-                    ),
-                  },
-                  plugins: mergeOpenClawPluginConfig(
-                    applyDefaultOpenClawPluginEntries(existingPlugins, existingDefaultPluginEntries),
-                    bundledExtensionEntries,
-                    [...trustedInstalledExtensionIds, ...Object.keys(existingDefaultPluginEntries)],
-                    availableExtensionIds,
-                    Object.keys(appEntries),
-                  ),
-                  meta: minimalConfig.meta,
-                },
-                { enabled: false },
-              ),
-            );
-            const mergedConfig = projectManagedOpenClawExecNotifications(mergedBrowserConfig);
-            this.applyManagedRuntimeConfiguration(mergedConfig, configPath, workspaceInventory);
-            const configToWrite = withComputerControlPolicy(mergedConfig);
-            const mergedContent = `${JSON.stringify(configToWrite, null, 2)}\n`;
-            if (hasOpenClawConfigChanged(currentContent, configToWrite)) {
-              this.publishConfigFile(configPath, mergedContent);
-              return buildMinimalSyncResult(configToWrite, true);
-            }
-            return buildMinimalSyncResult(configToWrite, false);
+        const canonicalExisting = projectManagedOpenClawBrowserConfig(previousConfig);
+        const hasHookConfig = Object.keys(hookConfig).length > 0;
+        const hasSubstantiveConfig =
+          Boolean(isRecord(canonicalExisting.models) && canonicalExisting.models.providers) ||
+          Boolean(
+            isRecord(canonicalExisting.plugins) &&
+            (canonicalExisting.plugins.entries ||
+              Array.isArray(canonicalExisting.plugins.allow) ||
+              Array.isArray(canonicalExisting.plugins.deny) ||
+              typeof canonicalExisting.plugins.enabled === 'boolean'),
+          ) ||
+          Boolean(isRecord(canonicalExisting.gateway) && canonicalExisting.gateway.mode);
+        if (hasHookConfig || hasSubstantiveConfig) {
+          const existingDiagnostics = isRecord(canonicalExisting.diagnostics)
+            ? canonicalExisting.diagnostics
+            : {};
+          const existingAgents = isRecord(canonicalExisting.agents)
+            ? canonicalExisting.agents
+            : {};
+          const existingDefaults = isRecord(existingAgents.defaults)
+            ? existingAgents.defaults
+            : {};
+          const minimalAgents = isRecord(minimalConfig.agents) ? minimalConfig.agents : {};
+          const minimalEntries = isRecord(minimalAgents.entries) ? minimalAgents.entries : {};
+          const existingEntries = isRecord(existingAgents.entries) ? existingAgents.entries : {};
+          const mergedDefaults: Record<string, unknown> = {
+            ...existingDefaults,
+            modelSelectionScope: 'session',
+            timeoutSeconds: agentRuntimeSettings.agent.runTimeoutSeconds,
+            systemAgent: { agentId: 'main' },
+            heartbeat: buildManagedOpenClawHeartbeatConfig(),
+            // Replace rather than deep-merge so stale managed keys are removed.
+            compaction: buildManagedOpenClawCompactionConfig(),
+            subagents: mergeManagedOpenClawSubagentConfig(
+              existingDefaults.subagents,
+              buildManagedOpenClawSubagentConfig(agentRuntimeSettings, false),
+            ),
+            workspace: resolveManagedAgentWorkspaceRoot(this.engineManager.getStateDir()),
+            cwd: resolvedWorkspaceDir,
+            skipBootstrap: true,
+            sandbox: buildManagedOpenClawSandboxConfig(coworkConfig.executionMode || 'local'),
+          };
+          if (agentRuntimeSettings.agent.maxConcurrent === null) {
+            delete mergedDefaults.maxConcurrent;
+          } else {
+            mergedDefaults.maxConcurrent = agentRuntimeSettings.agent.maxConcurrent;
           }
+          if (agentRuntimeSettings.agent.thinking) {
+            mergedDefaults.thinkingDefault = agentRuntimeSettings.agent.thinking;
+          } else {
+            delete mergedDefaults.thinkingDefault;
+          }
+          const existingTools = isRecord(canonicalExisting.tools) ? canonicalExisting.tools : {};
+          const existingPlugins = isRecord(canonicalExisting.plugins)
+            ? canonicalExisting.plugins
+            : {};
+          const configuredInventory = inspectConfiguredPluginPaths(existingPlugins, workspaceInventory);
+          const existingDefaultPluginEntries = buildDefaultOpenClawPluginEntries(
+            isBundledAvailable,
+            this.getAppPluginDefaults(
+              configuredInventory.complete ? [...trustedInstalledExtensionIds, ...configuredInventory.ids] : null,
+            ),
+          );
+          const existingHooks = isRecord(canonicalExisting.hooks)
+            ? { ...canonicalExisting.hooks }
+            : {};
+          // Internal Hook selection is owned by the product Store, including
+          // its empty state. Preserve unrelated native webhook settings.
+          delete existingHooks.internal;
+          const availableExtensionIds = listAvailableOpenClawExtensionIds(
+            this.engineManager.getStateDir(),
+            existingPlugins,
+            listKnownOpenClawWorkspaceDirs({
+              stateDir: this.engineManager.getStateDir(),
+              mainWorkspaceDir: resolvedWorkspaceDir,
+              agents: this.getAgents?.() ?? [],
+              existingConfig: canonicalExisting,
+            }),
+            { workspace: workspaceInventory, configured: configuredInventory, sources: extensionSources },
+          );
+          const mergedBrowserConfig = projectManagedOpenClawBrowserConfig(
+            withMemorySearch(
+              {
+                ...canonicalExisting,
+                skills: mergeOpenClawSkillConfig(
+                  isRecord(canonicalExisting.skills) ? canonicalExisting.skills : {},
+                  {},
+                ),
+                models: {
+                  ...(isRecord(canonicalExisting.models) ? canonicalExisting.models : {}),
+                  ...buildManagedOpenClawModelCatalogConfig(),
+                },
+                diagnostics: {
+                  ...existingDiagnostics,
+                  otel: {
+                    enabled: false,
+                  },
+                },
+                agents: {
+                  ...existingAgents,
+                  ownership: 'explicit',
+                  defaults: mergedDefaults,
+                  entries: Object.fromEntries(
+                    Object.entries({ ...existingEntries, ...minimalEntries }).map(
+                      ([id, entry]) => [
+                        id,
+                        {
+                          ...(isRecord(existingEntries[id]) ? existingEntries[id] : {}),
+                          ...(isRecord(entry) ? entry : {}),
+                        },
+                      ],
+                    ),
+                  ),
+                },
+                acp: buildManagedOpenClawAcpConfig(externalAgentSettings),
+                session: buildManagedOpenClawSessionConfig(canonicalExisting.session),
+                mcp: buildManagedMcpConfig(
+                  canonicalExisting.mcp,
+                  mergeNativeMcpOverrides(canonicalExisting, mcpServers, extensionMcpNames, retiredMcpNames),
+                  agentRuntimeSettings.mcp,
+                ),
+                update: connectivityConfig.update,
+                transcripts: connectivityConfig.transcripts,
+                browser: minimalConfig.browser,
+                hooks: {
+                  ...existingHooks,
+                  ...(isRecord(hookConfig.hooks) ? hookConfig.hooks : {}),
+                },
+                tools: {
+                  ...existingTools,
+                  ...mergeManagedOptionalToolPolicy(existingTools),
+                  deny: [...OPENCLAW_MANAGED_TOOL_DENY],
+                  sessions: connectivityTools.sessions,
+                  codeMode: mergeManagedOpenClawCodeModeConfig(
+                    existingTools.codeMode,
+                    agentRuntimeSettings,
+                  ),
+                  swarm: mergeManagedOpenClawSwarmConfig(
+                    existingTools.swarm,
+                    agentRuntimeSettings,
+                  ),
+                  ...buildManagedOpenClawExecutionToolConfig(
+                    coworkConfig.executionMode || 'local',
+                    existingTools,
+                    this.getAppPluginPolicy?.().sandboxTools,
+                  ),
+                },
+                plugins: mergeOpenClawPluginConfig(
+                  applyDefaultOpenClawPluginEntries(existingPlugins, existingDefaultPluginEntries),
+                  bundledExtensionEntries,
+                  [...trustedInstalledExtensionIds, ...Object.keys(existingDefaultPluginEntries)],
+                  availableExtensionIds,
+                  Object.keys(appEntries),
+                ),
+                meta: minimalConfig.meta,
+              },
+              { enabled: false },
+            ),
+          );
+          const mergedConfig = projectManagedOpenClawExecNotifications(mergedBrowserConfig);
+          this.applyManagedRuntimeConfiguration(mergedConfig, configPath, workspaceInventory, extensionSources);
+          const configToWrite = withComputerControlPolicy(mergedConfig);
+          return this.publishProjectedConfig(configPath, currentContent, previousConfig, configToWrite);
         }
       } catch (error) {
         return {
           ok: false,
           changed: false,
           configChanged: false,
-          requiresGatewayRestart: false,
           configPath,
           error: error instanceof Error ? error.message : String(error),
         };
       }
     }
 
-    if (!hasOpenClawConfigChanged(currentContent, minimalConfig)) {
-      return buildMinimalSyncResult(minimalConfig, false);
-    }
-
-    try {
-      this.publishConfigFile(configPath, nextContent);
-      return buildMinimalSyncResult(minimalConfig, true);
-    } catch (error) {
-      return {
-        ok: false,
-        changed: false,
-        configChanged: false,
-        requiresGatewayRestart: false,
-        configPath,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    return this.publishProjectedConfig(configPath, currentContent, previousConfig, minimalConfig, true);
   }
 }

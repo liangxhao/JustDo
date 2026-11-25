@@ -281,12 +281,10 @@ import {
 } from './openclaw/config/models/builtinCredentialFile';
 import { isDecisionModelManaged } from './openclaw/config/models/decisionModelConfig';
 import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
-import {
-  buildProviderSelection,
-  listInstalledOpenClawExtensionIds,
-  listManagedOpenClawPluginIds,
-} from './openclaw/config/openclawConfigSync';
+import { buildProviderSelection } from './openclaw/config/models/providerProjection';
 import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
+import { listInstalledOpenClawExtensionIds } from './openclaw/config/plugins/extensionInventory';
+import { listManagedOpenClawPluginIds } from './openclaw/config/plugins/pluginProjection';
 import {
   buildLocalSpeechExtensionSttConfig,
   buildLocalSpeechExtensionTtsConfig,
@@ -963,8 +961,8 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
       getHookStore,
       disconnectGatewayClient: () => getCoworkEngineService().disconnectGatewayClient(),
       connectGatewayClient: () => getCoworkEngineService().connectGatewayClient(),
-      requestGateway: <T>(method: string, params?: unknown) =>
-        getCoworkEngineService().requestGateway<T>(method, params),
+      requestGateway: (method, params, options) =>
+        getCoworkEngineService().requestGateway(method, params, options),
       getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
       getModelAuthSessionId: getActiveBuiltinModelCredentialSessionId,
       getBrowserMode: () =>

@@ -83,7 +83,7 @@ flowchart LR
 
 ### 1.2 保存后会生成什么
 
-关键实现位于 [openclawConfigBuilders.ts](../../src/main/openclaw/config/openclawConfigBuilders.ts)，
+ACP 与 MCP 配置投影位于 [mcpProjection.ts](../../src/main/openclaw/config/plugins/mcpProjection.ts)，
 由 [openclawConfigSync.ts](../../src/main/openclaw/config/openclawConfigSync.ts)统一写入受管配置：
 
 | 配置位置                                       | 生成规则                                                                             |

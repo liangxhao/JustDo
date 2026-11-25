@@ -11,6 +11,7 @@ import { OPENCLAW_MANAGED_TOOL_DENY } from '../../../src/main/openclaw/config/po
 import type { ManagedSpeechModelSettings } from '../../../src/main/openclaw/config/speech/speechModelConfig';
 import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../../src/main/providers/builtinModelCredential';
 import { setStoreGetter } from '../../../src/main/providers/providerApiConfig';
+import { AgentRuntimeThinkingLevel, createDefaultAgentRuntimeSettings } from '../../../src/shared/agents/agentRuntimeSettings';
 import { BrowserMode } from '../../../src/shared/browser/browser';
 import { BuiltinModelSyncReason } from '../../../src/shared/providers/builtinModels';
 import { defaultLocalSpeechExtensionSettings } from '../../../src/shared/speech/localSpeechExtensionSettings';
@@ -108,6 +109,44 @@ function retainedConfig(canonicalVoice: boolean) {
   };
 }
 const nativeTest = test.skipIf(!nativeAvailable);
+
+nativeTest('ordinary agent settings keep the native Gateway on the hot-reload path', () => {
+  const directory = temporary();
+  const configPath = path.join(directory, 'openclaw.json');
+  let settings = createDefaultAgentRuntimeSettings();
+  setStoreGetter(() => ({ get: () => ({
+    model: { defaultModel: 'chat', defaultModelProvider: 'internal' },
+    providers: { internal: { enabled: true, apiKey: 'synthetic-key',
+      baseUrl: 'http://models.example.test/v1', models: [{ id: 'chat' }] } },
+  }) }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: { getConfigPath: () => configPath, getStateDir: () => directory,
+      getDesiredVersion: () => targetVersion.slice(1) },
+    getCoworkConfig: () => ({ workingDirectory: path.join(directory, 'project'),
+      executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgentRuntimeSettings: () => settings,
+    getBrowserMode: () => BrowserMode.User,
+  } as never);
+  expect(sync.sync('startup')).toMatchObject({ ok: true, configChanged: true });
+  const previousConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+  settings = {
+    ...settings,
+    agent: { ...settings.agent, thinking: AgentRuntimeThinkingLevel.Low },
+  };
+  expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: true });
+  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+  const [result] = assess([{ label: 'default thinking level', config, previousConfig }]);
+  expect(result.schemaSuccess, JSON.stringify(result.schemaIssues)).toBe(true);
+  expect(result.reloadPlan).toMatchObject({
+    changedPaths: ['agents.defaults.thinkingDefault'],
+    restartGateway: false,
+    restartReasons: [],
+  });
+  expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
+}, 120_000);
+
 nativeTest.each([false, true])('built-in login and logout stay hot-reloadable with custom provider=%s', custom => {
   const directory = temporary();
   const configPath = path.join(directory, 'openclaw.json');
@@ -148,7 +187,7 @@ nativeTest.each([false, true])('built-in login and logout stay hot-reloadable wi
         iat: now, exp: now + 300, jti: 'reload-fixture',
       }), 'fixture-signature'].join('.'), userAccount: 'reload@example.test', expiresAt: now + 300 });
     } else clearActiveBuiltinModelCredential();
-    expect(sync.sync(reason)).toMatchObject({ ok: true, configChanged: true, requiresGatewayRestart: false });
+    expect(sync.sync(reason)).toMatchObject({ ok: true, configChanged: true });
     const config = read();
     expect(config.gateway).toEqual(initialGateway);
     if (!signedIn) expect(config.plugins).toEqual(previousConfig.plugins);

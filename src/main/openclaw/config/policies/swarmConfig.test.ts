@@ -1,10 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
 import { createDefaultAgentRuntimeSettings } from '../../../../shared/agents/agentRuntimeSettings';
-import {
-  buildLoginScopedOpenClawConfig,
-  mergeManagedOpenClawSwarmConfig,
-} from '../openclawConfigBuilders';
+import { buildLoginScopedOpenClawConfig } from '../models/authScopedProjection';
+import { mergeManagedOpenClawSwarmConfig } from './executionPolicyProjection';
 
 describe('managed Swarm capacity', () => {
   test('overwrites managed capacity without mutating or losing unknown settings', () => {

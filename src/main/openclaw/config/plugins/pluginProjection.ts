@@ -14,7 +14,7 @@ import {
 import type { McpServerRecord } from '../../../plugins/mcp';
 import { isRecord } from '../configShape';
 import {
-  isBundledPluginAvailable,
+  inspectBundledPluginSources,
   isUserToggleableBundledPlugin,
   readPreinstalledPluginIds,
 } from './extensionInventory';
@@ -281,7 +281,7 @@ export const mergeOpenClawSkillConfig = (
 };
 
 export const buildDefaultOpenClawPluginEntries = (
-  isAvailable: (id: string) => boolean = isBundledPluginAvailable,
+  isAvailable: (id: string) => boolean = inspectBundledPluginSources().isBundledAvailable,
   appPolicies: Record<string, { defaultEnabled: boolean; userToggleable: boolean }> = {},
 ): Record<string, unknown> =>
   Object.fromEntries(
@@ -304,32 +304,35 @@ export const buildDefaultOpenClawPluginEntries = (
 
 /** Keep required adapters available; feature settings control their actual use. */
 export const buildManagedCapabilityPluginEntries = (
-  isAvailable: (id: string) => boolean = isBundledPluginAvailable,
+  isAvailable: (id: string) => boolean = inspectBundledPluginSources().isBundledAvailable,
 ): Record<string, Record<string, unknown>> =>
   Object.fromEntries(
     APPLICATION_CAPABILITY_PLUGIN_IDS.filter(isAvailable).map(id => [id, { enabled: true }]),
   );
 export const listManagedOpenClawPluginIds = (
   appPolicies: Record<string, { defaultEnabled: boolean; userToggleable: boolean }> = {},
-): string[] => [
-  ...new Set([
-    ...(isBundledPluginAvailable(OpenClawExtensionId.BROWSER) ? [OpenClawExtensionId.BROWSER] : []),
-    ...(isBundledPluginAvailable(OpenClawExtensionId.CUA_COMPUTER)
-      ? [OpenClawExtensionId.CUA_COMPUTER]
-      : []),
-    ...Object.keys(buildManagedCapabilityPluginEntries()),
-    ...readPreinstalledPluginIds().filter(
-      id => !isUserToggleableBundledPlugin(id, appPolicies) && isBundledPluginAvailable(id),
-    ),
-    ...bundledOpenClawExtensions
-      .filter(
-        extension =>
-          !isUserToggleableBundledPlugin(extension.id, appPolicies) &&
-          isBundledPluginAvailable(extension.id),
-      )
-      .map(extension => extension.id),
-  ]),
-];
+): string[] => {
+  const { isBundledAvailable } = inspectBundledPluginSources();
+  return [
+    ...new Set([
+      ...(isBundledAvailable(OpenClawExtensionId.BROWSER) ? [OpenClawExtensionId.BROWSER] : []),
+      ...(isBundledAvailable(OpenClawExtensionId.CUA_COMPUTER)
+        ? [OpenClawExtensionId.CUA_COMPUTER]
+        : []),
+      ...Object.keys(buildManagedCapabilityPluginEntries(isBundledAvailable)),
+      ...readPreinstalledPluginIds().filter(
+        id => !isUserToggleableBundledPlugin(id, appPolicies) && isBundledAvailable(id),
+      ),
+      ...bundledOpenClawExtensions
+        .filter(
+          extension =>
+            !isUserToggleableBundledPlugin(extension.id, appPolicies) &&
+            isBundledAvailable(extension.id),
+        )
+        .map(extension => extension.id),
+    ]),
+  ];
+};
 
 export const buildManagedBundledExtensionEntries = (
   agentRuntimeSettings: AgentRuntimeSettings,
@@ -338,23 +341,24 @@ export const buildManagedBundledExtensionEntries = (
   mcpServers: readonly McpServerRecord[],
   windowsSandboxEnabled: boolean,
   sandboxNetworkEnabled: boolean,
+  isAvailable: (id: string) => boolean,
 ): Record<string, Record<string, unknown>> => {
   const embeddedBrowserEnabled = browserMode === BrowserMode.Embedded;
   return {
     [OpenClawExtensionId.BROWSER]: { enabled: !embeddedBrowserEnabled },
-    ...buildManagedCapabilityPluginEntries(),
+    ...buildManagedCapabilityPluginEntries(isAvailable),
     ...buildBundledExtensionEntries(
-      isBundledPluginAvailable,
+      isAvailable,
       agentRuntimeSettings.automation.approvalTimeoutMinutes,
       windowsSandboxEnabled,
       sandboxNetworkEnabled,
     ),
-    ...(isBundledPluginAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
+    ...(isAvailable(OpenClawExtensionId.EMBEDDED_BROWSER)
       ? {
           [OpenClawExtensionId.EMBEDDED_BROWSER]: { enabled: embeddedBrowserEnabled },
         }
       : {}),
-    ...(isBundledPluginAvailable(OpenClawExtensionId.ACPX)
+    ...(isAvailable(OpenClawExtensionId.ACPX)
       ? {
           [OpenClawExtensionId.ACPX]: buildManagedAcpxPluginEntry(
             externalAgentSettings,
@@ -363,7 +367,7 @@ export const buildManagedBundledExtensionEntries = (
           ),
         }
       : {}),
-    ...(isBundledPluginAvailable(OpenClawExtensionId.ASK_USER_QUESTION)
+    ...(isAvailable(OpenClawExtensionId.ASK_USER_QUESTION)
       ? {
           [OpenClawExtensionId.ASK_USER_QUESTION]: {
             enabled: true,

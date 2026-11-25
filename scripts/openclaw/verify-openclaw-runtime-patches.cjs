@@ -65,7 +65,7 @@ const BUILD_RECIPE_FILES = [
   'scripts/runtime/setup-node-runtime.cjs',
   'src/main/core/network/trustedCertificates.ts',
   'src/main/openclaw/runtime/mcpPackageRunner.ts',
-  'src/main/openclaw/config/openclawConfigBuilders.ts',
+  'src/main/openclaw/config/openclawConfigSync.ts',
   'src/main/openclaw/config/configShape.ts',
   'src/main/openclaw/config/configCompatibility.ts',
   'src/main/openclaw/config/configVerification.ts',

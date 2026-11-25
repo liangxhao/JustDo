@@ -1,6 +1,10 @@
 import { expect, test } from 'vitest';
 
-import { buildDefaultOpenClawPluginEntries, isUserToggleableBundledPlugin,mergeOpenClawPluginConfig } from './openclawConfigBuilders';
+import { isUserToggleableBundledPlugin } from './plugins/extensionInventory';
+import {
+  buildDefaultOpenClawPluginEntries,
+  mergeOpenClawPluginConfig,
+} from './plugins/pluginProjection';
 
 test.each([false, true])('preserves declared desktop user settings while replacing managed roster (enabled=%s)', enabled => {
   const id = 'example-desktop-owner';

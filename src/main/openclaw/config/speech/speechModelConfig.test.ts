@@ -17,7 +17,8 @@ import {
 } from './speechModelConfig';
 
 vi.mock('../models/providerSecretFile', () => ({ restrictCredentialFile: vi.fn() }));
-vi.mock('./localSpeechExtensionConfig', () => ({
+vi.mock('./localSpeechExtensionConfig', async importOriginal => ({
+  ...await importOriginal<typeof import('./localSpeechExtensionConfig')>(),
   buildLocalSpeechExtensionSttConfig: vi.fn(() => ({
     mode: 'local',
     command: 'local-stt',
