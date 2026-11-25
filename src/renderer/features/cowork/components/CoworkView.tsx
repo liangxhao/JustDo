@@ -1526,23 +1526,12 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
       } = startResult;
 
       if (!startedSession && (startError || startCancelled)) {
-        if (worktree && !pendingStartRef.current?.canonicalSessionId) {
+        const canonicalSessionId = pendingStart.canonicalSessionId;
+        if (worktree && !canonicalSessionId) {
           cancelledStartStopped = true;
           return false;
         }
-        if (appWorkspaceRequestId && !pendingStartRef.current?.canonicalSessionId) {
-          flushSync(() => {
-            homeApps.rollback(tempSessionId);
-            mcpAppTabs.promote(tempSessionId, HOME_DISPLAY_SESSION_KEY);
-            promoteDisplaySession(tempSessionId, HOME_DISPLAY_SESSION_KEY);
-            if (store.getState().cowork.currentSession?.id === tempSessionId)
-              dispatch(clearCurrentSession());
-          });
-        }
-        const failedSessionId =
-          pendingStartRef.current?.requestId === requestId
-            ? (pendingStartRef.current.canonicalSessionId ?? tempSessionId)
-            : tempSessionId;
+        const failedSessionId = canonicalSessionId ?? tempSessionId;
         if (!startCancelled && unconfirmedInitialSessionId === failedSessionId) return false;
         const selected = store.getState().cowork.currentSession;
         const failedSessionKey =
@@ -1563,14 +1552,29 @@ const CoworkView = forwardRef<CoworkViewHandle, CoworkViewProps>((props, ref) =>
         chatWrapperRef.current?.clearSending(temporarySessionKey, undefined, {
           localPlaceholder: true,
         });
-        if (startCancelled && store.getState().cowork.currentSession?.id === tempSessionId) {
-          pendingPromptRef.current = null;
-          pendingSendMotionRef.current = undefined;
-          pendingAttachmentsRef.current = [];
-          pendingGatewayPromptRef.current = undefined;
-          // No canonical session was created. The unchanged home draft remains
-          // available because this submission returns false to the composer.
-          dispatch(clearCurrentSession());
+        const restoreHome =
+          !canonicalSessionId && store.getState().cowork.currentSession?.id === tempSessionId;
+        if (restoreHome || (appWorkspaceRequestId && !canonicalSessionId)) {
+          flushSync(() => {
+            if (appWorkspaceRequestId) {
+              homeApps.rollback(tempSessionId);
+              mcpAppTabs.promote(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+            }
+            promoteDisplaySession(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+            if (!restoreHome) return;
+            promoteBrowserPanelTabs(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+            browserPanelRefs.current.forEach(panel =>
+              panel.promoteRecordingSession(tempSessionId, HOME_DISPLAY_SESSION_KEY),
+            );
+            promotePendingBrowserTabs(tempSessionId, HOME_DISPLAY_SESSION_KEY);
+            pendingPromptRef.current = null;
+            pendingSendMotionRef.current = undefined;
+            pendingAttachmentsRef.current = [];
+            pendingGatewayPromptRef.current = undefined;
+            pendingInitialGoalRef.current = null;
+            // The unsuccessful start leaves the Home composer draft intact.
+            dispatch(clearCurrentSession());
+          });
         }
         cancelledStartStopped = true;
         return false;

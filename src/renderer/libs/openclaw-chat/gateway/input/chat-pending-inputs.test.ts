@@ -216,6 +216,10 @@ describe('native accepted input recovery', () => {
     await f.refresh(page([pending]));
     expect(f.project().messages).toEqual([]);
     expect(f.project().suppressOptimistic).toBe(true);
+
+    f.request.mockRejectedValueOnce(new Error('transport still unavailable'));
+    await f.refresh(page([]));
+    expect(f.project()).toEqual({ messages: [], suppressOptimistic: true });
   });
   test.each(['not_found', 'not_visible'])(
     'retires a truncated input without run correlation when native lookup says %s',
@@ -383,13 +387,25 @@ describe('native accepted input recovery', () => {
     expect(f.consumed).toHaveBeenCalledOnce();
   });
 
-  test('an exact missing receipt also reloads canonical history after consumption', async () => {
-    const f = fixture();
-    f.request.mockResolvedValue({ inputReceipts: [] });
-    await f.refresh(page([input(1)]));
-    expect(f.project().messages).toEqual([]);
-    expect(f.consumed).toHaveBeenCalledOnce();
-  });
+  test.each(['missing receipt', 'pending detail not found'])(
+    'retains the optimistic input while reloading history on %s', async scenario => {
+      const f = fixture();
+      const pending = input(1);
+      delete pending.queued;
+      f.state.chatRunId = pending.runId!;
+      f.state.pendingUserMessage = { role: 'user', content: 'Input 1', text: 'Input 1', timestamp: 1000 };
+      if (scenario === 'pending detail not found') {
+        pending.message.__openclaw = { id: 'pending:1', truncated: true };
+        f.request.mockResolvedValueOnce({ ok: false, unavailableReason: 'not_found' });
+      }
+      f.request.mockResolvedValueOnce({ inputReceipts: [] });
+
+      await f.refresh(page([pending]));
+
+      expect(f.project()).toEqual({ messages: [], suppressOptimistic: false });
+      expect(f.consumed).toHaveBeenCalledOnce();
+    },
+  );
 
   test('does not duplicate an input promoted into a canonical user message', async () => {
     const f = fixture();

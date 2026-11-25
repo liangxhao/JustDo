@@ -92,13 +92,8 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
     if (!container) return;
 
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
-    chat.classList.toggle('full-width', fullWidth);
-    if (assistantName) {
-      chat.assistantName = assistantName;
-    }
     container.appendChild(chat);
     chatRef.current = chat;
-    onChatElementChange?.(chat);
 
     const syncTheme = () => {
       chat.classList.toggle('dark', document.documentElement.classList.contains('dark'));
@@ -111,21 +106,25 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
       attributeFilter: ['class'],
     });
 
-    const handleSearchMatchCountChange = (event: Event) => {
-      const detail = (event as CustomEvent<{ total?: number; index?: number }>).detail;
-      onSearchMatchCountChange?.(detail?.total ?? 0, detail?.index ?? -1);
-    };
-    chat.addEventListener('search-match-count-change', handleSearchMatchCountChange);
-
     return () => {
       themeObserver.disconnect();
-      chat.removeEventListener('search-match-count-change', handleSearchMatchCountChange);
       chat.controller = null;
       chat.remove();
       chatRef.current = null;
-      onChatElementChange?.(null);
     };
-  }, [assistantName, fullWidth, onChatElementChange, onSearchMatchCountChange]);
+  }, []);
+
+  useEffect(() => {
+    chatRef.current?.classList.toggle('full-width', fullWidth);
+  }, [fullWidth]);
+
+  useEffect(() => {
+    const chat = chatRef.current;
+    if (!chat || !onChatElementChange) return;
+    onChatElementChange(chat);
+    chat.requestUpdate();
+    return () => onChatElementChange(null);
+  }, [onChatElementChange]);
 
   useEffect(() => {
     const chat = chatRef.current;
@@ -178,13 +177,21 @@ const ChatMessageDisplay: React.FC<ChatMessageDisplayProps> = ({
   useEffect(() => {
     const chat = chatRef.current;
     if (!chat) return;
+    const handleSearchMatchCountChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ total?: number; index?: number }>).detail;
+      onSearchMatchCountChange?.(detail?.total ?? 0, detail?.index ?? -1);
+    };
+    chat.addEventListener('search-match-count-change', handleSearchMatchCountChange);
     chat.searchQuery = searchQuery;
     chat.searchCaseSensitive = searchCaseSensitive;
     const ownerWindow = chat.ownerDocument.defaultView ?? window;
     const frame = ownerWindow.requestAnimationFrame(() => {
       onSearchMatchCountChange?.(chat.getSearchMatchCount(), -1);
     });
-    return () => ownerWindow.cancelAnimationFrame(frame);
+    return () => {
+      ownerWindow.cancelAnimationFrame(frame);
+      chat.removeEventListener('search-match-count-change', handleSearchMatchCountChange);
+    };
   }, [onSearchMatchCountChange, searchCaseSensitive, searchQuery]);
 
   useEffect(() => {

@@ -38,6 +38,49 @@ test('renders an ordinary first send as a user bubble while native custody is pe
   expect(bubble?.querySelector('[data-pending-input-state="queued"]')).toBeNull();
 });
 
+test('keeps the first user bubble after consumption until the matching history row can replace it', async () => {
+  const controller = new ChatController();
+  const sessionId = 'native-first';
+  const runId = 'first-run';
+  const request = vi.fn().mockResolvedValue({
+    sessionId,
+    inputReceipts: [{ runId, state: 'consumed', consumedByEventId: 'canonical-user' }],
+  });
+  Object.assign(controller.state, {
+    sessionKey: 'agent:main:first-send', currentSessionId: sessionId, connected: true,
+    chatRunId: runId, chatSending: true,
+    pendingUserMessage: { role: 'user', content: 'First prompt', text: 'First prompt', timestamp: 1000 },
+    client: { request },
+  });
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.controller = controller;
+  document.body.append(chat);
+  const internal = controller as unknown as {
+    notify(): void;
+    setCurrentSessionMessages(messages: unknown[], options: { resetLoadedHistory: boolean }): void;
+  };
+  const reloadHistory = vi.fn();
+  const refresh = (messages: unknown[]) => refreshNativePendingInputs(controller.state,
+    { sessionId, messages, pendingInputs: { total: 0, items: [] } }, () => internal.notify(), reloadHistory);
+  await refresh([]);
+  await chat.updateComplete;
+  expect(reloadHistory).toHaveBeenCalledOnce();
+  expect(chat.shadowRoot!.querySelector('.chat-group--user')?.textContent).toContain('First prompt');
+
+  const committed = [{
+    role: 'user', content: 'Committed input', timestamp: 1000,
+    __openclaw: { id: 'canonical-user', seq: 1, idempotencyKey: 'aggregate:user' },
+  }];
+  request.mockRejectedValueOnce(new Error('Receipt read unavailable'));
+  internal.setCurrentSessionMessages(committed, { resetLoadedHistory: true });
+  await refresh(committed);
+  internal.notify();
+  await chat.historyRenderComplete;
+  expect(chat.shadowRoot!.querySelectorAll('.chat-group--user')).toHaveLength(1);
+  expect(chat.shadowRoot!.querySelector('[data-entry-id="canonical-user"]')?.textContent)
+    .toContain('Committed input');
+});
+
 test.each(['cancelled', 'interrupted'] as const)('keeps %s status in the user footer without enabling transcript mutation actions', async state => {
   const controller = new ChatController();
   controller.state.sessionKey = 'agent:main:justdo:fixture';

@@ -923,6 +923,16 @@ export class CoworkService {
       const result = await cowork.startSession({
         ...options,
         ...(stopDispatch ? { rendererDispatch: true } : {}),
+      }).catch((error): Awaited<ReturnType<typeof cowork.startSession>> => {
+        if (!stopDispatch || dispatchedSessionId || options.worktree || options.appWorkspaceRequestId)
+          throw error;
+        // Only this delegated path proves chat.send has not been called. Fence
+        // an already received handoff that is still awaiting its session row.
+        const cancelled = nativeStart.cancelled;
+        nativeStart.cancelled = true;
+        return cancelled
+          ? { success: false, cancelled: true }
+          : { success: false, error: 'coworkInitialDispatchUnavailable' };
       });
       if (nativeStart.deleted || (nativeStart.deletion && (await nativeStart.deletion))) {
         return { session: null, cancelled: true };

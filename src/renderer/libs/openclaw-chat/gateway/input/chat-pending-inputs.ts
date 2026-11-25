@@ -1,3 +1,4 @@
+import { isHiddenNativeMessage } from '@shared/openclaw/messageVisibility';
 import {
   filterNativePendingInputsByReceipts,
   type NativePendingInput,
@@ -26,6 +27,7 @@ type PendingView = {
   items: NativePendingInput[];
   failed: boolean;
   suppressedOptimistic?: ChatState['pendingUserMessage'];
+  consumedOptimistic?: { message: NonNullable<ChatState['pendingUserMessage']>; entryId: string };
 };
 // Display-only native custody, not transcript entries or execution identities.
 // A new history snapshot replaces this view; nothing survives a renderer reload.
@@ -51,8 +53,9 @@ export async function refreshNativePendingInputs(
   onChange: () => void,
   onConsumed: () => void,
 ): Promise<void> {
+  const previous = views.get(state);
   const view: PendingView = {
-    revision: (views.get(state)?.revision ?? 0) + 1,
+    revision: (previous?.revision ?? 0) + 1,
     sessionKey: state.sessionKey,
     sessionId: state.currentSessionId,
     generation: state.transcript.historyGeneration,
@@ -61,6 +64,12 @@ export async function refreshNativePendingInputs(
     items: [],
     failed: false,
   };
+  if (previous && isScopeCurrent(state, previous) && state.pendingUserMessage) {
+    if (previous.suppressedOptimistic === state.pendingUserMessage)
+      view.suppressedOptimistic = previous.suppressedOptimistic;
+    if (previous.consumedOptimistic?.message === state.pendingUserMessage)
+      view.consumedOptimistic = previous.consumedOptimistic;
+  }
   views.set(state, view);
   const assertHistoryScope = (response: unknown) => {
     const sessionId = asRecord(response)?.sessionId;
@@ -80,16 +89,15 @@ export async function refreshNativePendingInputs(
       return;
     }
     const items = new Map<string, NativePendingInput>();
-    let stagedOptimistic: ChatState['pendingUserMessage'] | undefined;
     let previousCursor = Infinity;
     for (;;) {
       if (!isScopeCurrent(state, view)) return;
-      for (const input of page.items) items.set(input.id, { ...input });
-      if (
-        state.pendingUserMessage &&
-        [...items.values()].some(input => input.runId && input.runId === state.chatRunId)
-      )
-        stagedOptimistic = state.pendingUserMessage;
+      for (const input of page.items) {
+        items.set(input.id, { ...input });
+        if (input.runId && input.runId === state.chatRunId && isHiddenNativeMessage(input.message)) {
+          view.suppressedOptimistic = state.pendingUserMessage;
+        }
+      }
       if (page.nextBefore === undefined) break;
       if (page.nextBefore >= previousCursor)
         throw new Error('Pending input cursor did not advance');
@@ -113,6 +121,9 @@ export async function refreshNativePendingInputs(
       if (!isTruncatedHistoryMessage(input.message)) continue;
       const id = asRecord(input.message.__openclaw)?.id;
       if (typeof id !== 'string') continue;
+      const optimisticMessage = input.runId && input.runId === state.chatRunId
+        ? state.pendingUserMessage
+        : null;
       // Pending IDs are native display identities, not raw transcript offsets.
       // Never fall back to the transcript-only chunk/file bridge.
       try {
@@ -130,13 +141,16 @@ export async function refreshNativePendingInputs(
           (result.unavailableReason === 'not_found' || result.unavailableReason === 'not_visible')
         ) {
           retiredIds.add(input.id);
-          if (input.runId && input.runId === state.chatRunId && state.pendingUserMessage)
-            view.suppressedOptimistic = state.pendingUserMessage;
+          if (result.unavailableReason === 'not_visible' && optimisticMessage)
+            view.suppressedOptimistic = optimisticMessage;
           if (result.unavailableReason === 'not_found') onConsumed();
           continue;
         }
         const full = result?.ok === true ? asRecord(result.message) : null;
-        if (full) input.message = { ...full, __openclaw: { ...asRecord(full.__openclaw), id } };
+        if (full) {
+          input.message = { ...full, __openclaw: { ...asRecord(full.__openclaw), id } };
+          if (optimisticMessage && isHiddenNativeMessage(full)) view.suppressedOptimistic = optimisticMessage;
+        }
       } catch {
         // A transport/size failure does not establish withdrawal. Keep the
         // native truncated placeholder, but never override an explicit miss.
@@ -157,6 +171,8 @@ export async function refreshNativePendingInputs(
     for (let offset = 0; offset < runIds.length; offset += 50) {
       if (!isScopeCurrent(state, view)) return;
       const batch = runIds.slice(offset, offset + 50);
+      const optimisticMessage = state.pendingUserMessage;
+      const optimisticRunId = state.chatRunId;
       const latest = asRecord(
         await view.client.request('chat.history', {
           sessionKey: view.sessionKey,
@@ -178,17 +194,15 @@ export async function refreshNativePendingInputs(
         input =>
           input.message.display !== false && !recovered.some(current => current.id === input.id),
       );
-      if (
-        state.pendingUserMessage &&
-        receipts?.some(receipt => {
-          const record = asRecord(receipt);
-          return (
-            record?.runId === state.chatRunId &&
-            (record?.state === 'consumed' || record?.cancelled === true)
-          );
-        })
-      )
-        view.suppressedOptimistic = state.pendingUserMessage;
+      if (optimisticMessage && optimisticRunId) {
+        const receipt = receipts?.map(asRecord).find(record => record?.runId === optimisticRunId);
+        if (receipt?.cancelled === true) {
+          view.suppressedOptimistic = optimisticMessage;
+        } else if (receipt?.state === 'consumed' && typeof receipt.consumedByEventId === 'string') {
+          // Custody can end before the durable user row reaches this timeline.
+          view.consumedOptimistic = { message: optimisticMessage, entryId: receipt.consumedByEventId };
+        }
+      }
       const consumed = receipts?.some(receipt => {
         const record = asRecord(receipt);
         return (
@@ -208,7 +222,6 @@ export async function refreshNativePendingInputs(
     }
     if (!isScopeCurrent(state, view)) return;
     view.items = recovered;
-    view.suppressedOptimistic ??= stagedOptimistic;
     onChange();
   } catch {
     if (isScopeCurrent(state, view)) {
@@ -267,22 +280,33 @@ export function projectNativePendingInputs(
         );
       }),
   );
-  let suppressOptimistic =
-    !!state.pendingUserMessage && view.suppressedOptimistic === state.pendingUserMessage;
+  const consumed = view.consumedOptimistic;
+  let suppressOptimistic = !!state.pendingUserMessage && (
+    view.suppressedOptimistic === state.pendingUserMessage ||
+    (consumed?.message === state.pendingUserMessage && visibleHistory.some(message =>
+      typeof message.role === 'string' && message.role.toLowerCase() === 'user' &&
+      message.__openclaw?.id === consumed.entryId &&
+      !isHiddenNativeMessage(message),
+    ))
+  );
   const messages = [...visibleHistory];
   for (const input of [...view.items].sort((a, b) => a.acceptedAt - b.acceptedAt)) {
-    if (state.pendingUserMessage && input.runId && input.runId === state.chatRunId) {
-      suppressOptimistic = true;
-    }
-    if (
-      input.message.display === false ||
-      (!includeQueued && isFollowupInput(input)) ||
-      (input.runId &&
-        (persistedRunIds.has(input.runId) || persistedInputKeys.has(`${input.runId}:user`)))
-    )
+    if (input.message.display === false || (!includeQueued && isFollowupInput(input))) continue;
+    const runId = input.runId;
+    const replacesOptimistic = Boolean(state.pendingUserMessage && runId && runId === state.chatRunId);
+    const inputKey = `${runId}:user`;
+    if (runId && (persistedRunIds.has(runId) || persistedInputKeys.has(inputKey))) {
+      suppressOptimistic ||= replacesOptimistic && visibleHistory.some(message => {
+        if (message.role !== 'user' || isHiddenNativeMessage(message)) return false;
+        const key = asRecord(message)?.idempotencyKey;
+        return (readExplicitMessageRunId(message) ?? key) === runId ||
+          key === inputKey || message.__openclaw?.idempotencyKey === inputKey;
+      });
       continue;
+    }
     const projected = asRecord(projectGatewayHistoryForDisplay([input.message])[0]);
     if (!projected) continue;
+    suppressOptimistic ||= replacesOptimistic;
     const message = {
       ...projected,
       role: 'user',

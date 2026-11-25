@@ -60,6 +60,7 @@ function setup(success = true) {
     return { success: true };
   });
   const start = vi.fn(() => nativeResult);
+  const getSession = vi.fn().mockResolvedValue({ success: true, session: canonical });
   vi.stubGlobal('window', {
     location: { protocol: 'http:' },
     dispatchEvent: vi.fn(),
@@ -70,13 +71,13 @@ function setup(success = true) {
           return unsubscribe;
         },
         respondNativeSessionDispatch: respond,
-        getSession: vi.fn().mockResolvedValue({ success: true, session: canonical }),
+        getSession,
         startSession: start,
       },
     },
   });
   store.dispatch(setCurrentSession(temporary));
-  return { start, respond, unsubscribe, deliver: () => listener!(request) };
+  return { start, getSession, respond, unsubscribe, deliver: () => listener!(request) };
 }
 
 afterEach(() => {
@@ -167,6 +168,56 @@ describe('actual service initial native handoff', () => {
       clientTurnId: request.clientTurnId,
     });
     expect(onInitialDispatchPendingChange).not.toHaveBeenCalled();
+  });
+
+  it('returns a start failure and prevents late dispatch if IPC rejects during the session lookup', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fixture = setup();
+    const ipc = Promise.withResolvers<unknown>();
+    const row = Promise.withResolvers<{ success: boolean; session: CoworkSession }>();
+    fixture.start.mockReturnValueOnce(ipc.promise);
+    fixture.getSession.mockReturnValueOnce(row.promise);
+    const beforeSessionSelected = vi.fn();
+    const dispatchInitialTurn = vi.fn();
+    const pending = coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      { beforeSessionSelected, dispatchInitialTurn },
+    );
+    fixture.deliver();
+    expect(fixture.getSession).toHaveBeenCalledOnce();
+
+    ipc.reject(new Error('Start IPC disconnected'));
+    await expect(pending).resolves.toMatchObject({ session: null, error: 'coworkInitialDispatchUnavailable' });
+    row.resolve({ success: true, session: canonical });
+
+    await vi.waitFor(() => expect(fixture.respond).toHaveBeenCalledWith(
+      expect.objectContaining({ success: false, requestSent: false }),
+    ));
+    expect(dispatchInitialTurn).not.toHaveBeenCalled();
+    expect(beforeSessionSelected).not.toHaveBeenCalled();
+    expect(store.getState().cowork.currentSession?.id).toBe(temporary.id);
+    expect(store.getState().cowork.isStreaming).toBe(false);
+  });
+
+  it('keeps a promoted send active when the start IPC reply is lost', async () => {
+    const fixture = setup();
+    const ipc = Promise.withResolvers<unknown>();
+    fixture.start.mockReturnValueOnce(ipc.promise);
+    const dispatchInitialTurn = vi.fn().mockResolvedValue({ runId: request.clientTurnId });
+    const pending = coworkService.startSession(
+      { prompt: 'Synthetic', clientTurnId: request.clientTurnId },
+      { dispatchInitialTurn },
+    );
+    fixture.deliver();
+    await vi.waitFor(() => expect(fixture.respond).toHaveBeenCalledOnce());
+
+    const error = new Error('Start IPC disconnected');
+    ipc.reject(error);
+    await expect(pending).rejects.toBe(error);
+
+    expect(dispatchInitialTurn).toHaveBeenCalledOnce();
+    expect(store.getState().cowork.currentSession?.id).toBe(canonical.id);
+    expect(selectCurrentSessionMainRuntimeRunning(store.getState())).toBe(true);
   });
 
   it('clears streaming for the promoted selection after a definite pre-send failure', async () => {
