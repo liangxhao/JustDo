@@ -18,7 +18,11 @@ import {
 
 afterEach(() => vi.useRealTimers());
 
-function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1], maxContinuations = 0) {
+function fixture(
+  timing?: Parameters<typeof createExternalAgentExecution>[1],
+  maxContinuations = 0,
+  transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE,
+) {
   const runtime = new EventEmitter();
   const session = {
     id: 'local',
@@ -48,7 +52,7 @@ function fixture(timing?: Parameters<typeof createExternalAgentExecution>[1], ma
     ): Promise<unknown> => {
       if (method === 'sessions.describe') return Promise.resolve({ session: { key: 'native-key', ...identity } });
       if (method === AUTOMATIC_ERROR_RETRY_FAILURE_METHOD)
-        return Promise.resolve({ ..._params as object, identityMatched: true, errorCode: REPEATED_TOOL_ERROR_CODE });
+        return Promise.resolve({ ..._params as object, identityMatched: true, errorCode: transcriptErrorCode });
       if (method === 'agent' || method === 'chat.send')
         return new Promise(resolve => {
           finishAgent = resolve;
@@ -161,6 +165,7 @@ const fullResponse = (text = fullReply, snapshot = cappedReply) => ({
 const cappedReceipt = { ...receipt, terminalReply: { disposition: 'visible', text: cappedReply } };
 const repeatedToolFailureCopy =
   'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.';
+const missingReplyCopy = "⚠️ Agent couldn't generate a response. Please try again.";
 const emitTerminal = (f: ReturnType<typeof fixture>, text = cappedReply, seq = 1) =>
   f.runtime.emit('gatewayEvent', {
     event: 'agent',
@@ -180,8 +185,12 @@ const emitTerminal = (f: ReturnType<typeof fixture>, text = cappedReply, seq = 1
   });
 
 describe('external execution ownership', () => {
-  it('continues one logical external request with exact fresh native attempts and keeps errors internal until final failure', async () => {
-    const f = fixture({ retryDelayMs: 0 }, 2);
+  it.each([
+    { ruleId: 'repeated-tool-error', copy: repeatedToolFailureCopy, transcriptErrorCode: REPEATED_TOOL_ERROR_CODE, evidence: {} },
+    { ruleId: 'reply-generation-exhausted', copy: missingReplyCopy, transcriptErrorCode: null,
+      evidence: { stopReason: 'error', replyGenerationExhausted: true } },
+  ])('continues an external request after $ruleId and holds errors until final failure', async ({ ruleId, copy, transcriptErrorCode, evidence }) => {
+    const f = fixture({ retryDelayMs: 0 }, 2, transcriptErrorCode);
     f.identity.activeRunIds = [];
     const onRetryPrepared = vi.fn();
     const onRetry = vi.fn();
@@ -220,15 +229,15 @@ describe('external execution ownership', () => {
       });
       if (!attempt) emit(1, 'assistant', {
         itemId: 'scoped', assistantTextScope: { id: 'model-output' },
-        text: repeatedToolFailureCopy, delta: repeatedToolFailureCopy,
+        text: copy, delta: copy,
       });
       emit(2, 'assistant', {
-        itemId: 'native-failure', text: repeatedToolFailureCopy,
-        ...(attempt ? { delta: '', replace: true } : { delta: repeatedToolFailureCopy }),
+        itemId: 'native-failure', text: copy,
+        ...(attempt ? { delta: '', replace: true } : { delta: copy }),
       });
-      emit(3, 'lifecycle', { phase: 'finishing', livenessState: 'blocked', error: repeatedToolFailureCopy });
+      emit(3, 'lifecycle', { phase: 'finishing', livenessState: 'blocked', error: copy });
       emit(4, 'lifecycle', {
-        phase: 'error', executionSettled: true, error: attempt === 2 ? 'final failure' : repeatedToolFailureCopy,
+        ...evidence, phase: 'error', executionSettled: true, error: attempt === 2 ? 'final failure' : copy,
       });
     }
     await rejected;
@@ -237,7 +246,7 @@ describe('external execution ownership', () => {
     const output = f.onEvent.mock.calls.map(([event]) => ({ runId: event.runId, data: event.data }));
     expect(output.filter(event => event.data.text)).toEqual([{
       runId: f.input.runId,
-      data: expect.objectContaining({ itemId: 'scoped', text: repeatedToolFailureCopy }),
+      data: expect.objectContaining({ itemId: 'scoped', text: copy }),
     }]);
     expect(output.filter(event => event.data.phase === 'finishing')).toEqual(
       Array.from({ length: 3 }, () => expect.objectContaining({ data: { phase: 'finishing', livenessState: 'blocked' } })),
@@ -247,14 +256,16 @@ describe('external execution ownership', () => {
     }]);
     expect(f.publishAutomaticErrorRetry).toHaveBeenLastCalledWith(expect.objectContaining({
       phase: 'failed', attempt: 2, runs: [
-        expect.objectContaining({ disposition: 'superseded' }),
-        expect.objectContaining({ disposition: 'superseded' }),
+        expect.objectContaining({ disposition: 'superseded', ruleId }),
+        expect.objectContaining({ disposition: 'superseded', ruleId }),
         expect.objectContaining({ disposition: 'final' }),
       ],
     }));
   });
 
-  it.each([0, 1])('delivers genuine unscoped assistant copy on success with %i retries configured', async maxContinuations => {
+  it.each([
+    [0, repeatedToolFailureCopy], [1, repeatedToolFailureCopy], [1, missingReplyCopy],
+  ])('delivers genuine unscoped assistant copy on success with %i retries configured (%s)', async (maxContinuations, copy) => {
     const f = fixture(undefined, maxContinuations);
     const outcome = f.execute({ ...f.input, isRetryCurrent: () => true });
     await vi.waitFor(() => expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1));
@@ -263,7 +274,7 @@ describe('external execution ownership', () => {
       payload: {
         seq: 1, sessionKey: 'native-key', sessionId: 'native-id', runId: 'run',
         lifecycleGeneration: 'generation-1', stream: 'assistant',
-        data: { itemId: 'model-output', text: repeatedToolFailureCopy, delta: repeatedToolFailureCopy },
+        data: { itemId: 'model-output', text: copy, delta: copy },
       },
     });
     await Promise.resolve();
@@ -276,10 +287,10 @@ describe('external execution ownership', () => {
       },
     });
     await vi.waitFor(() => expect(f.onEvent).toHaveBeenCalledTimes(2));
-    emitTerminal(f, repeatedToolFailureCopy, 3);
-    await expect(outcome).resolves.toBe(repeatedToolFailureCopy);
+    emitTerminal(f, copy, 3);
+    await expect(outcome).resolves.toBe(copy);
     expect(f.onEvent.mock.calls.map(([event]) => event.stream)).toEqual(['assistant', 'tool', 'lifecycle']);
-    expect(f.onEvent.mock.calls[0][0].data.text).toBe(repeatedToolFailureCopy);
+    expect(f.onEvent.mock.calls[0][0].data.text).toBe(copy);
   });
 
   it.each([true, false])('selects the requested model before dispatch, with first native creation %s', async fresh => {

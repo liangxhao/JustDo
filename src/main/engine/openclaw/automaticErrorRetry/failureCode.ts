@@ -1,7 +1,8 @@
 import type { GatewayClientLike, NativeRunTerminalReceipt } from '../../gateway/types';
 import type { AutomaticErrorRetryBinding, AutomaticErrorRetrySettledReceipt } from './coordinator';
 import {
-  CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE, TRANSCRIPT_PROJECTION_REBUILDING_CODE,
+  CONTEXT_OVERFLOW_ERROR_CODE, REPLY_GENERATION_EXHAUSTED_CODE, SESSION_READER_FAILURE_CODE,
+  TRANSCRIPT_PROJECTION_REBUILDING_CODE,
 } from './rules';
 import { logSessionReaderRecovery } from './sessionReaderRecoveryLog';
 
@@ -29,6 +30,14 @@ export function readNativeRetryFailureCode(
   data: Record<string, unknown>,
   nativeSessionId: string,
 ): NativeRunTerminalReceipt['observedFailureCode'] {
+  if (
+    data.replyGenerationExhausted === true && data.phase === 'error' && data.executionSettled === true &&
+    data.stopReason === 'error' && data.executionStarted !== false && data.aborted !== true &&
+    data.yielded !== true && !data.timeoutPhase &&
+    data.status !== 'timeout' && data.status !== 'timed_out'
+  ) {
+    return REPLY_GENERATION_EXHAUSTED_CODE;
+  }
   if (
     data.phase === 'error' && data.executionSettled === true && data.aborted !== true &&
     data.yielded !== true && !data.timeoutPhase &&
@@ -60,8 +69,9 @@ export async function readAutomaticErrorRetryFailureCode(
       receipt.clientGeneration !== binding.clientGeneration) return null;
   if ('source' in receipt && (receipt.stopReason === 'timeout' || receipt.stopReason === 'restart' ||
       receipt.stopReason === 'superseded')) return null;
-  if (!('source' in receipt) && receipt.observedFailureCode === TRANSCRIPT_PROJECTION_REBUILDING_CODE) {
-    return TRANSCRIPT_PROJECTION_REBUILDING_CODE;
+  if (!('source' in receipt) && (receipt.observedFailureCode === TRANSCRIPT_PROJECTION_REBUILDING_CODE ||
+      receipt.observedFailureCode === REPLY_GENERATION_EXHAUSTED_CODE)) {
+    return receipt.observedFailureCode;
   }
   const sessionReaderError = isSessionReaderErrorHint(receipt.error);
   const log = (check: Parameters<typeof logSessionReaderRecovery>[1]) => {
@@ -94,6 +104,7 @@ export async function readAutomaticErrorRetryFailureCode(
   if (typeof response.errorCode === 'string' && response.errorCode !== CONTEXT_OVERFLOW_ERROR_CODE &&
       response.errorCode !== SESSION_READER_FAILURE_CODE &&
       response.errorCode !== TRANSCRIPT_PROJECTION_REBUILDING_CODE &&
+      response.errorCode !== REPLY_GENERATION_EXHAUSTED_CODE &&
       /^[A-Za-z0-9_.:-]{1,128}$/u.test(response.errorCode)) {
     log({ stage: 'execution_failure', outcome: 'different_failure' });
     return response.errorCode;

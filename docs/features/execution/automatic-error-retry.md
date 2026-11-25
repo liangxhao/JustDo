@@ -16,11 +16,12 @@
 
 规则只包含 `id`、`errorCodes`、`fixedPrompt`；重复 ID/错误码或空提示被拒绝。
 已登记连续相同工具失败 `openclaw_repeated_tool_error`、上下文溢出 `context_overflow`、
-会话读取许可失效 `session_reader_not_current` 和会话历史索引重建
-`session_transcript_projection_rebuilding`。规则共用同一续跑额度。
+会话读取许可失效 `session_reader_not_current`、会话历史索引重建
+`session_transcript_projection_rebuilding` 和原生补答耗尽 `reply_generation_exhausted`。
+规则共用同一续跑额度。
 连续工具失败的反馈要求检查已有结果、修正参数或换用可用方法。
 上下文溢出的反馈要求从已保存的进度继续，先核对可能已有副作用的操作，并限制文件读取和
-命令回传的内容。读取许可失效和历史索引重建的反馈从原会话中已保存的用户输入继续，
+命令回传的内容。读取许可失效、历史索引重建和原生补答耗尽的反馈从原会话中已保存的用户输入继续，
 先核对已有操作结果。
 
 各规则复用同一个调度器和 Goal 交接。错误识别模块按来源核对原生失败证据。
@@ -96,6 +97,12 @@ Runtime Services 的只读 `runtimeServices.executionFailure`
 命中后直接进入共用的阶梯等待和续跑派发。会话历史的读取由 OpenClaw 在执行续跑时负责。
 后继运行也以同一错误结算时，只要仍有额度，就进入下一次续跑。
 
+原生补答耗尽使用同一运行的已结算错误事件，要求 `stopReason:error` 和
+`replyGenerationExhausted:true`，覆盖 OpenClaw 确认已耗尽内部补答的空回复和仅推理回复。
+该标记随普通聊天与后端执行的原生生命周期发布。应用排除取消、让出和超时后进入共用等待，
+续跑时先核对已有进度和操作结果。通用报错文案仅用于呈现，缺少耗尽标记的 `agent.wait`
+或历史记录无法确认这一类失败。
+
 发送前重新准备当前工作目录和权限，复核原始发送归属、key、SID、revision、客户端代次及
 活动运行。沿用现有 `agent` RPC，传入 `expectedExistingSessionId`、
 `expectedExistingSessionLifecycleRevision`、稳定幂等键、`internal_system` provenance
@@ -163,7 +170,12 @@ MCP 资源由各自连接管理，后继运行重新建立与新原生运行的�
 测试覆盖规则与共用预算、旧设置、实际 Main 准备与错误延后、内部发送、拒绝/未知 ACK、
 停止与身份竞态、先终态后 ACK、`agent.wait`、Goal 单后继和计数，以及实际聊天组件的
 首次错误绘制、历史接管、工具/文件/部分正文保留和最终错误放开。
-历史索引重建的回归覆盖实时终态归类，以及连续同类失败使用完整的共用续跑额度。
+历史索引重建和原生补答耗尽的回归覆盖实时终态归类，以及连续同类失败使用完整的共用续跑额度。
+原生补答耗尽另覆盖外部流与历史投影、同文案的成功回复，以及缺少原生标记时保留失败。
+隔离 Gateway 用本地合成模型重放两个 ID 不同的空 `delta` 及流结束标记。普通聊天和后端
+执行各发起两次模型请求，并发布与当前运行精确关联的补答耗尽终态。
+通用 app-server 在约 10 秒后于同一会话发起新运行，返回正常回复并完成原客户端轮次。
+实时输出和历史不显示中间错误或内部提示，历史接口将两条原生空助手消息投影为空 `agentMessage`。
 
 使用冻结运行包和本地合成模型执行真实 Gateway 端到端验证。连续相同工具失败用例覆盖
 Windows CLI、入站 ACP、通用 app-server 和 Chromium 中实际加载的 Chrome 侧栏。四个入口均

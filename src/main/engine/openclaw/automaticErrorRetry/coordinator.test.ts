@@ -12,7 +12,7 @@ import {
   type AutomaticErrorRetryWaitReceipt,
 } from './coordinator';
 import {
-  CONTEXT_OVERFLOW_ERROR_CODE, createAutomaticErrorRetryRuleIndex, REPEATED_TOOL_ERROR_CODE,
+  CONTEXT_OVERFLOW_ERROR_CODE, createAutomaticErrorRetryRuleIndex, REPEATED_TOOL_ERROR_CODE, REPLY_GENERATION_EXHAUSTED_CODE,
   SESSION_READER_FAILURE_CODE, TRANSCRIPT_PROJECTION_REBUILDING_CODE,
 } from './rules';
 
@@ -416,7 +416,7 @@ describe('automatic retry rule registry', () => {
   it('registers the supported native codes and rejects duplicate codes and IDs', () => {
     expect([...createAutomaticErrorRetryRuleIndex().keys()]).toEqual([
       REPEATED_TOOL_ERROR_CODE, CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE,
-      TRANSCRIPT_PROJECTION_REBUILDING_CODE,
+      TRANSCRIPT_PROJECTION_REBUILDING_CODE, REPLY_GENERATION_EXHAUSTED_CODE,
     ]);
     expect(() => createAutomaticErrorRetryRuleIndex([
       { id: 'a', errorCodes: ['same'], fixedPrompt: 'a' }, { id: 'b', errorCodes: ['same'], fixedPrompt: 'b' },

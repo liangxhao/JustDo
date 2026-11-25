@@ -4,7 +4,8 @@ import type { NativeRunTerminalReceipt } from '../../gateway/types';
 import type { AutomaticErrorRetryBinding, AutomaticErrorRetrySettledReceipt } from './coordinator';
 import { readAutomaticErrorRetryFailureCode, readNativeRetryFailureCode } from './failureCode';
 import {
-  CONTEXT_OVERFLOW_ERROR_CODE, SESSION_READER_FAILURE_CODE, TRANSCRIPT_PROJECTION_REBUILDING_CODE,
+  CONTEXT_OVERFLOW_ERROR_CODE, REPLY_GENERATION_EXHAUSTED_CODE, SESSION_READER_FAILURE_CODE,
+  TRANSCRIPT_PROJECTION_REBUILDING_CODE,
 } from './rules';
 
 const binding: AutomaticErrorRetryBinding = {
@@ -80,6 +81,30 @@ describe('exact native retry error code reader', () => {
     })).toBe(TRANSCRIPT_PROJECTION_REBUILDING_CODE);
     expect(request).not.toHaveBeenCalled();
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, { ...receipt, error })).toBeNull();
+  });
+
+  it('selects reply recovery only from a settled native error marked as exhausted', async () => {
+    const error = "Your request couldn't be completed: Agent couldn't generate a response. Please try again.";
+    const native = { phase: 'error', executionSettled: true, stopReason: 'error', error };
+    const observedFailureCode = readNativeRetryFailureCode({ ...native, replyGenerationExhausted: true }, binding.nativeSessionId);
+    expect(observedFailureCode).toBe(REPLY_GENERATION_EXHAUSTED_CODE);
+    expect(readNativeRetryFailureCode(native, binding.nativeSessionId)).toBeUndefined();
+    for (const nonTerminal of [
+      { executionSettled: false }, { executionStarted: false }, { phase: 'end' }, { aborted: true }, { yielded: true },
+      { stopReason: 'superseded' }, { stopReason: 'timeout' }, { timeoutPhase: 'model_response' }, { status: 'timeout' },
+    ]) {
+      expect(readNativeRetryFailureCode({ ...native, replyGenerationExhausted: true, ...nonTerminal }, binding.nativeSessionId))
+        .toBeUndefined();
+    }
+
+    const request = vi.fn(async () => ({ ...observation, errorCode: REPLY_GENERATION_EXHAUSTED_CODE }));
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, { ...receipt, error, observedFailureCode }))
+      .toBe(REPLY_GENERATION_EXHAUSTED_CODE);
+    expect(request).not.toHaveBeenCalled();
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, { ...receipt, error })).toBeNull();
+    const { agentSeq: _agentSeq, ...waitReceipt } = receipt;
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, { ...waitReceipt, source: 'agent.wait', error }))
+      .toBeNull();
   });
 
   it('requires the native reader failure report and its exact saved user input on the current branch', async () => {

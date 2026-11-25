@@ -6,11 +6,16 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
 
 const contextOverflowCopy =
   'Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model.';
+const missingReplyCopy = "Agent couldn't generate a response. Please try again.";
 const nativeRetryFailureCopies = new Set([
   'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.',
   contextOverflowCopy,
   `${contextOverflowCopy} Completed tool actions were not replayed; verify their effects before retrying.`,
   'This conversation is too long for the model. Try /compact, or start a new conversation with /new.',
+  missingReplyCopy,
+  `⚠️ ${missingReplyCopy}`,
+  `Your request couldn't be completed: ${missingReplyCopy}`,
+  `Your request couldn't be completed: ⚠️ ${missingReplyCopy}`,
 ]);
 
 export function isKnownAutomaticRetryFailureCopy(value: unknown): boolean {

@@ -59,6 +59,8 @@ describe('automatic error retry display projection', () => {
   it.each([
     'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.',
     'This conversation is too long for the model. Try /compact, or start a new conversation with /new.',
+    "⚠️ Agent couldn't generate a response. Please try again.",
+    "Your request couldn't be completed: Agent couldn't generate a response. Please try again.",
   ])('hides native failure copy in public history while retaining partial text and media (%s)', failureCopy => {
     const copy = { type: 'text', text: failureCopy };
     const partial = { type: 'text', text: 'Useful partial answer' };

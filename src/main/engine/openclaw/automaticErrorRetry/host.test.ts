@@ -288,24 +288,33 @@ describe('automatic error retry host transport', () => {
     }
   });
 
-  it('uses all three configured continuations for repeated settled projection failures without reading history', async () => {
+  it.each([
+    { ruleId: 'transcript-projection-rebuilding', data: { error: `Session transcript projection is rebuilding: ${nativeSessionId}` } },
+    { ruleId: 'reply-generation-exhausted', data: { stopReason: 'error', replyGenerationExhausted: true } },
+  ])('uses all three configured continuations for repeated $ruleId failures without reading history', async ({ ruleId, data }) => {
     const f = fixture(null);
     await f.arm();
-    const error = `Session transcript projection is rebuilding: ${nativeSessionId}`;
-    const observedFailureCode = readNativeRetryFailureCode({ phase: 'error', executionSettled: true, error }, nativeSessionId);
-    const failure = (runId: string) => ({ ...terminal(runId), error, observedFailureCode });
+    const observedFailureCode = readNativeRetryFailureCode({ phase: 'error', executionSettled: true, ...data }, nativeSessionId);
+    const failure = (runId: string) => ({ ...terminal(runId), error: data.error, observedFailureCode });
 
     let runId = rootRunId;
     for (const attempt of [1, 2, 3]) {
       expect(f.host.coordinator.observeSettled(failure(runId))).toBe(true);
       await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledTimes(attempt));
       const params = f.agentCalls()[attempt - 1]?.[1];
-      expect(params).toMatchObject({ expectedExistingSessionId: nativeSessionId, suppressPromptPersistence: true });
+      expect(params).toMatchObject({
+        expectedExistingSessionId: nativeSessionId,
+        expectedExistingSessionLifecycleRevision: lifecycleRevision,
+        message: expect.stringContaining('Continue the task requested in the saved user message'),
+        inputProvenance: { kind: 'internal_system', sourceTool: 'execution-error-retry' },
+        suppressPromptPersistence: true,
+      });
       runId = params!.idempotencyKey as string;
     }
 
     expect(f.host.coordinator.observeSettled(failure(runId))).toBe(false);
     expect(f.host.getPresentation(sessionId)).toMatchObject({ phase: AutomaticErrorRetryPhase.Failed, attempt: 3 });
+    expect(f.rows.get(rootRunId)?.automaticErrorRetry?.ruleId).toBe(ruleId);
     expect(f.agentCalls()).toHaveLength(3);
     expect(f.request.mock.calls.map(([method]) => method)).not.toContain('chat.history');
   });
