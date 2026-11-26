@@ -31,12 +31,14 @@ async function request(
   method: string,
   params: Record<string, unknown>,
   connectionId = 'connection',
+  signal?: AbortSignal,
 ) {
   const respond = vi.fn();
   if (!connections.has(connectionId)) connections.set(connectionId, new AbortController());
   await handlers.get(method)!({
     params,
     respond,
+    signal,
     client: { connId: connectionId, connectionSignal: connections.get(connectionId)!.signal },
     hasCurrentClientAuthority: () => live,
   });
@@ -45,7 +47,7 @@ async function request(
     throw Object.assign(new Error(call[2]?.message ?? 'RPC failed'), { details: call[2]?.details });
   return call[1];
 }
-const admit = (override: Record<string, unknown> = {}) =>
+const admit = (override: Record<string, unknown> = {}, signal?: AbortSignal) =>
   request(DRAWIO_CANVAS_METHOD, {
     ...scope,
     viewId: 'mcp-app-original',
@@ -53,7 +55,7 @@ const admit = (override: Record<string, unknown> = {}) =>
     source: admitted,
     diagramId: snapshot.diagramId,
     ...override,
-  });
+  }, undefined, signal);
 const prepareOnly = (override: Record<string, unknown> = {}, connectionId?: string) =>
   request(
     DRAWIO_CANVAS_METHOD,
@@ -116,6 +118,24 @@ afterEach(() => {
 });
 
 describe('authenticated draw.io editing adapter', () => {
+  it.each(['service restart', 'request cancellation'])(
+    'rejects the old request before the first SDK dispatch after %s',
+    async event => {
+      const controller = new AbortController();
+      const pending = admit({}, controller.signal);
+      if (event === 'service restart') {
+        service.stop();
+        service.start({ gatewayEvents: { emit: emitted } });
+      } else {
+        controller.abort();
+      }
+
+      await expect(pending).rejects.toThrow('Diagram operation unavailable');
+      expect(sdk.dispatch).not.toHaveBeenCalled();
+      await expect(admit()).resolves.toEqual({ admitted: true });
+    },
+  );
+
   it('marks only pre-dispatch send rejection as proof that no native request was issued', async () => {
     await expect(request(DRAWIO_SEND_METHOD, {
       ...scope, send: { ...scope, idempotencyKey: 'invalid' }, canvases: [],

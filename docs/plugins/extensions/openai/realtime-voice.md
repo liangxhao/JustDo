@@ -8,13 +8,15 @@
 
 端点支持 HTTP(S)／WS(S) 规范化为服务 WebSocket，保留部署前缀，拒绝 URL 用户名/密码、fragment 和全部 query。当前只支持 `gateway-relay`、PCM16 单声道 24 kHz 输入/输出、VAD 自动轮次和 `agent-consult`。未接入浏览器 WebRTC、SIP、managed-room、手动音频 commit 或断线续传。
 
+通过端点和凭据检查的连接请求按需加载 WebSocket 模块，加载后再次核验连接代次与取消状态。加载期间关闭会话时，该次连接不会创建 socket。
+
 原生 Talk 持有实时会话、字幕、双向音频和助手委托。宿主须准备并核对精确的 native session/进程/连接身份，再桥接有界音频和播放标记；创建结果未知时不重试创建或重放音频。旧代次 close/interrupt 不能作用于替换后的会话。麦克风/扬声器静音属于宿主本地媒体控制；`cancelOutput` 和关闭 Talk 可请求取消关联助手运行，关闭 ACK 不构成准确 whole-run 终态。
 
 Gateway relay 的 `toolCall` 通知需要宿主完成公开协议握手：对本会话的助手委托调用 `talk.client.toolCall`，按 ACK 中的确切 `runId` 取得可呈现结果，再交回 `talk.session.submitToolResult`。原生准入负责转录 flush、权限与运行绑定；宿主不重复 `chat.send`，不使用最新消息猜测结果，也不因 ACK 未知而重试。助手委托最终正文可能由原生隐藏，实际语音字幕才是最终可见回答。partial 字幕仅是原生实时事件，final 提供真实 `voice:<relaySessionId>:<entryId>` 标识，与原生消息 ID 相同；宿主可在现有聊天控制器中临时渲染并按 ID 接替，不能据此制造执行终态。
 
 原生同时声明的 `openclaw_agent_control` 通过固定 `talk.session.steer` 调用处理，保留原生模式分类、当前 voice session 运行归属及权限检查，有界结果原样交回对应 `submitToolResult`。执行取消的回执与工具调用本身被撤销保持区分。未知工具仅得到固定的不支持错误；所有工具共用 callId 防重与连接/来源栅栏，不提供任意 RPC 转发。
 
-包内 `tests/realtime-voice-profile.test.ts` 与配套显式 native probe 验证受管注册、配置、SecretRef、音频 descriptor 和当前锁定 SDK。
+包内 `tests/realtime-voice-profile.test.ts` 与配套显式 native probe 验证受管注册、配置、SecretRef、音频 descriptor、WebSocket 加载期间关闭会话以及当前锁定 SDK。
 
 `tests/speech-realtime-wire.test.ts` 与配套 native probe 使用真实 `127.0.0.1` 随机端口 WebSocket 假模型服务，运行受管 provider 和实际 OpenAI bridge。服务独立核对部署前缀与 model query、Bearer／无密钥握手，以及 `session.update` 中任意已配置模型、音色、输入转录模型、PCM16／24 kHz 和 VAD 设置；不从生产 codec 生成期望值。测试传输实际音频字节，覆盖用户及助手增量／最终字幕、响应结束、function call／结果帧、输出取消与截断、取消后的迟到音频、正常关闭、启动错误和非法 Base64 音频。非法音频关闭后以有界连接事件守卫确认受管 bridge 没有重连。
 

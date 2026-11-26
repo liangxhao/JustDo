@@ -2,7 +2,6 @@ import path from 'node:path';
 
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { normalizeResolvedSecretInputString } from 'openclaw/plugin-sdk/secret-input';
-import { resolveExplicitTtsOverrides, synthesizeSpeech } from 'openclaw/plugin-sdk/tts-runtime';
 
 import {
   normalizeSpeechServiceBaseUrl,
@@ -111,6 +110,10 @@ export function registerSpeechSynthesis(api: OpenClawPluginApi): void {
             },
           },
         };
+        const { resolveExplicitTtsOverrides, synthesizeSpeech } = await import(
+          'openclaw/plugin-sdk/tts-runtime'
+        );
+        assertCurrent();
         const overrides = resolveExplicitTtsOverrides({
           cfg: requestConfig,
           prefsPath,

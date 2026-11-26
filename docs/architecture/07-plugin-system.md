@@ -40,6 +40,13 @@ MCP 的公共配置、传输方式与写入输入由 `shared/plugins/mcp.ts` 定
 
 内置原生扩展可通过包元数据 `openclaw.bundledPolicy.userToggleable` 声明用户可切换，默认启用取自原生清单。配置同步只读取已组装运行时的内置声明。已安装目录或显式配置加载路径中识别出的同 ID 扩展按各自来源处理，已有启停选择继续保留。
 
+`activation.onStartup` 控制显式启动加载。OpenClaw 也会根据启用状态、工具和可信工具策略契约、
+已选 provider 等原生规则在启动时加载扩展。依赖这些规则的扩展将 `onStartup` 设为 `false`，
+在注册期发布首个请求需要的 RPC、Hook 和服务，将可延后的实现留到实际调用。
+Runtime Services 提供必需的执行与所有权服务。ACPX 在启动时发布原生后端、诊断和 Pi
+会话目录注册，首次 ACP 操作或会话目录请求加载各自实现。Smart Canvas 的清单声明
+`activation.onStartup: false` 和 `visualize` 技能路径。紧凑卡片由原生 `show_widget` 处理。
+
 `plugins/sdk/` 保存公开 App SDK 和构建工具开发包，使用 npm workspace 或打包制品接入；扩展发现仍只扫描 `plugins/extensions/`。源码位置、发布和消费契约见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 Chrome Assistant 位于 `plugins/chrome-extensions/chrome-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。

@@ -6,7 +6,7 @@
     "agent-team": { "label": "Agent Team", "description": "Local group discussions." }
   },
   "activation": {
-    "onStartup": true,
+    "onStartup": false,
     "onCapabilities": ["tool"]
   },
   "contracts": {

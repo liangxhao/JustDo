@@ -6,7 +6,7 @@ import {
   prepareHarnessNativeMcpAppPreview,
   type SessionMcpRuntime,
 } from 'openclaw/plugin-sdk/agent-harness-runtime';
-import { materializeStaticMcpToolsForHarnessRun } from 'openclaw/plugin-sdk/codex-mcp-projection';
+import type { materializeStaticMcpToolsForHarnessRun } from 'openclaw/plugin-sdk/codex-mcp-projection';
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
@@ -107,6 +107,10 @@ export function registerMcpAppHistory(api: OpenClawPluginApi) {
           const files = await dispatch('sessions.files.list', { sessionKey, agentId, path: '.' });
           if (typeof files.root !== 'string' || initial?.execNode || initial?.repositoryWorkspaceId)
             throw new Error('App workspace unavailable');
+          const { materializeStaticMcpToolsForHarnessRun } = await import(
+            'openclaw/plugin-sdk/codex-mcp-projection'
+          );
+          assertCurrent();
           // Public SDK borrows the native MCP manager and applies current tool policy.
           // Only its resources_read operation is used; business tools are never called.
           tools = await materializeStaticMcpToolsForHarnessRun({

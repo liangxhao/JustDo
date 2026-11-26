@@ -3,7 +3,6 @@ import path from 'node:path';
 
 import { createCustodyClient } from '@runtime-services/sdk/custody-client';
 import { toOpenClawSessionPermissionMode } from '@runtime-services/sdk/permissions';
-import { getGroupThreadDeliverySession } from 'openclaw/plugin-sdk/channel-inbound';
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import type { ReplyPayload } from 'openclaw/plugin-sdk/reply-payload';
 import { getSessionEntry, patchSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
@@ -112,12 +111,16 @@ export function registerDiscussionService(api: OpenClawPluginApi): void {
   };
   const deliver = async (to: string, payload: ReplyPayload) => {
     const roomId = to.replace(/^(?:agent-team:)?(?:group:)?/, '');
-    const identity = getGroupThreadDeliverySession();
+    const revision = serviceRevision;
     const send = outbound.get(roomId);
+    const { getGroupThreadDeliverySession } = await import('openclaw/plugin-sdk/channel-inbound');
+    const identity = getGroupThreadDeliverySession();
     if (
       stopped ||
+      revision !== serviceRevision ||
       !identity ||
       !send ||
+      outbound.get(roomId) !== send ||
       identity.sessionKey !== teamDiscussionSessionKey(roomId, identity.agentId)
     )
       throw new Error('teamDiscussionInvalidMembers');

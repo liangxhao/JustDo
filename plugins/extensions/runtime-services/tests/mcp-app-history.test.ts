@@ -9,14 +9,12 @@ const sdk = vi.hoisted(() => ({
   dispatch: vi.fn(),
   materialize: vi.fn(),
   preview: vi.fn(),
+  loadProjection: vi.fn(),
 }));
 vi.mock('openclaw/plugin-sdk/agent-scope-runtime', () => ({ resolveAgentDir: () => '/agent' }));
 vi.mock('openclaw/plugin-sdk/agent-harness-runtime', () => ({
   getPluginToolMeta: (tool: { mcp: unknown }) => ({ mcp: tool.mcp }),
   prepareHarnessNativeMcpAppPreview: sdk.preview,
-}));
-vi.mock('openclaw/plugin-sdk/codex-mcp-projection', () => ({
-  materializeStaticMcpToolsForHarnessRun: sdk.materialize,
 }));
 vi.mock('openclaw/plugin-sdk/gateway-method-runtime', () => ({
   dispatchGatewayMethod: sdk.dispatch,
@@ -151,7 +149,13 @@ function fixture() {
   };
 }
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.doMock('openclaw/plugin-sdk/codex-mcp-projection', async () => {
+    await sdk.loadProjection();
+    return { materializeStaticMcpToolsForHarnessRun: sdk.materialize };
+  });
+});
 
 describe('authenticated MCP App history recovery', () => {
   it('requires native session visibility before reading any transcript or MCP resource', async () => {
@@ -189,6 +193,38 @@ describe('authenticated MCP App history recovery', () => {
       expect(sdk.materialize).not.toHaveBeenCalled();
     },
   );
+
+  it('does not borrow MCP tools when the client is revoked during projection loading', async () => {
+    const f = fixture();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    sdk.loadProjection.mockImplementation(async () => {
+      started.resolve();
+      await release.promise;
+    });
+
+    const pending = f.invoke(MCP_APP_HISTORY_VIEW_METHOD);
+    try {
+      await Promise.race([
+        started.promise,
+        pending.then(() => {
+          throw new Error('MCP history request completed before loading its projection');
+        }),
+      ]);
+      f.revoke();
+    } finally {
+      release.resolve();
+    }
+    const respond = await pending;
+
+    expect(respond).toHaveBeenLastCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: 'UNAVAILABLE' }),
+    );
+    expect(sdk.materialize).not.toHaveBeenCalled();
+    expect(f.read).not.toHaveBeenCalled();
+  });
 
   it('returns only the recorded result for the original tool and matching defaulted input', async () => {
     const f = fixture();

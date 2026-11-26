@@ -138,7 +138,12 @@ it('continues independent items and retries all failed items without replaying s
 it('retains uncertain slots across restart and does not accept settlement without cleanup', async () => {
   const f = fixture(); const id = f.create(100, 'recovery'); await f.tick();
   const active = f.store.get(id)!.nodes.filter(node => node.batchItem && node.runId);
-  f.restart(); await f.tick();
+  expect(active).toHaveLength(5);
+  f.restart();
+  expect(f.store.get(id)!.nodes.filter(node => node.status === 'uncertain')).toMatchObject(
+    active.map(node => ({ id: node.id, runId: node.runId })),
+  );
+  await f.tick();
   expect(f.store.batches.occupiedCount()).toBe(5);
   expect(f.host.launch).toHaveBeenCalledTimes(5);
   for (const node of active) f.settled.set(node.runId!, { status: 'ok', endedAt: Date.now(), executionSettled: true });

@@ -91,7 +91,7 @@ export class FlowEngine {
     readonly host: FlowHost,
   ) {
     // A persisted receipt proves acceptance, not continued liveness after restart.
-    for (const flow of store.all()) {
+    for (const flow of store.recoveryCandidates()) {
       if (
         flow.nodes.some(
           node => node.kind !== 'batch' && ['running', 'preparing'].includes(node.status),
@@ -581,10 +581,9 @@ export class FlowEngine {
     if (!this.enabled || this.ticking) return;
     this.ticking = true;
     try {
-      for (const entry of this.store.all()) {
+      for (const flowId of this.store.flowIds('unfinished')) {
         if (!this.enabled) break;
-        if (['completed', 'cancelled'].includes(entry.status)) continue;
-        await this.advance(entry.id, true, false);
+        await this.advance(flowId, true, false);
       }
       // Reconcile every occupied slot before granting one turn per flow. The
       // persisted cursor also prevents newest-first starvation after restart.
@@ -595,7 +594,7 @@ export class FlowEngine {
         this.store.batches.occupiedCount() < (this.host.capacity?.() ?? FLOW_LIMITS.parallel)
       ) {
         progressed = false;
-        const flows = this.store.all().filter(flow => flow.status === 'running');
+        const flows = this.store.runningFlowRevisions();
         const cursor = flows.findIndex(flow => flow.id === this.store.batches.cursor());
         const ordered = [...flows.slice(cursor + 1), ...flows.slice(0, cursor + 1)];
         for (const entry of ordered) {
@@ -606,7 +605,7 @@ export class FlowEngine {
             break;
           const before = entry.revision;
           await this.advance(entry.id, false, true);
-          if (this.store.get(entry.id)?.revision !== before) {
+          if (this.store.revision(entry.id) !== before) {
             progressed = true;
             this.store.batches.setCursor(entry.id);
           }

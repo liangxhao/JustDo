@@ -21,19 +21,27 @@ export interface DiscussionReceipt {
 /** Native extension admission receipts contain identities, never message bodies. */
 export class DiscussionLedger {
   readonly owner = randomUUID();
+  private directoryReady = false;
+
   constructor(
     private readonly directory: string,
     private readonly preserveInterrupted = false,
     private readonly onWrite?: (receipt: DiscussionReceipt) => void,
-  ) {
-    mkdirSync(directory, { recursive: true });
+  ) {}
+
+  private prepareDirectory(): void {
+    if (this.directoryReady) return;
+    mkdirSync(this.directory, { recursive: true });
+    this.directoryReady = true;
   }
   private file(id: string): string {
     if (!isTeamDiscussionId(id)) throw new Error('teamDiscussionInvalidInput');
     return path.join(this.directory, `${id}.json`);
   }
   closeRoom(id: string): void {
-    writeFileSync(`${this.file(id)}.closed`, '', { mode: 0o600 });
+    const target = `${this.file(id)}.closed`;
+    this.prepareDirectory();
+    writeFileSync(target, '', { mode: 0o600 });
   }
   isRoomClosed(id: string): boolean {
     return existsSync(`${this.file(id)}.closed`);
@@ -88,6 +96,7 @@ export class DiscussionLedger {
   }
   write(receipt: DiscussionReceipt): void {
     const target = this.file(receipt.discussionId);
+    this.prepareDirectory();
     const temporary = `${target}.${this.owner}.tmp`;
     writeFileSync(temporary, JSON.stringify(receipt), { mode: 0o600 });
     renameSync(temporary, target);

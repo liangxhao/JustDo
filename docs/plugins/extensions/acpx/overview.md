@@ -13,6 +13,12 @@ adapter processes, isolated adapter state, and permission mediation.
 
 - Startup probing is disabled by default so an unavailable optional adapter
   does not mark the entire ACP backend unhealthy.
+- Gateway startup loads the registration entry for the ACP backend, diagnostic RPC,
+  and Pi session catalog. The locked Gateway resolves these capabilities from its
+  active registry, so their descriptors are available on the first request.
+  The packaged entry imports separate runtime modules only when an ACP operation,
+  explicit diagnostic, or Pi catalog operation needs them. Diagnostic errors use
+  the native redactor before the RPC replies.
 - The product catalog selects which protocol adapters are shipped. Agent executables
   are supplied by the user and are never bundled. Adapter commands are
   build-time definitions and are never accepted from desktop settings.

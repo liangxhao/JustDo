@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
-import { Type } from 'typebox';
+import * as Type from 'typebox/type';
 
 import {
   ASK_USER_ID_PATTERN,

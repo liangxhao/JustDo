@@ -25,6 +25,7 @@
     },
     "build": {
       "bundledDist": false,
+      "splitRuntime": true,
       "openclawVersion": "2026.10.7"
     },
     "release": {

@@ -29,6 +29,7 @@ const code = buildSync({
   bundle: true,
   platform: 'node',
   format: 'cjs',
+  supported: { 'dynamic-import': false },
   tsconfigRaw: { compilerOptions: { jsx: 'react-jsx' } },
   write: false,
   external: ['openclaw/plugin-sdk/*', 'typebox'],

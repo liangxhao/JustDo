@@ -12,6 +12,29 @@ process.env.OPENCLAW_HOME = fixtureRoot;
 process.env.OPENCLAW_STATE_DIR = fixtureRoot;
 process.env.OPENAI_API_KEY = 'unrelated-environment-key';
 const compiled = path.join(fixtureRoot, 'managed-realtime-voice.mjs');
+const require = createRequire(import.meta.url);
+const transportPath = pathToFileURL(path.join(fixtureRoot, 'delayed-websocket.mjs')).href;
+const transportLoad = Promise.withResolvers();
+const releaseTransport = Promise.withResolvers();
+let constructedSockets = 0;
+const transportControlsKey = Symbol.for('openai-voice-probe-transport-load');
+globalThis[transportControlsKey] = {
+  loading: transportLoad.resolve,
+  ready: releaseTransport.promise,
+  constructed: () => constructedSockets++,
+};
+await fs.writeFile(new URL(transportPath), `
+import WebSocket from ${JSON.stringify(pathToFileURL(require.resolve('ws')).href)};
+const controls = globalThis[Symbol.for(${JSON.stringify(Symbol.keyFor(transportControlsKey))})];
+controls.loading();
+await controls.ready;
+export default class extends WebSocket {
+  constructor(...args) {
+    controls.constructed();
+    super(...args);
+  }
+}
+`);
 const compilation = {
   bundle: true,
   platform: 'node',
@@ -21,6 +44,16 @@ const compilation = {
     js: 'import { createRequire as makeRequire } from "node:module"; const require = makeRequire(import.meta.url);',
   },
   plugins: [
+    {
+      name: 'delayed-realtime-transport',
+      setup(builder) {
+        builder.onResolve({ filter: /^ws$/ }, args =>
+          args.kind === 'dynamic-import' && args.importer.endsWith('realtime-voice-bridge.ts')
+            ? { path: transportPath, external: true }
+            : undefined,
+        );
+      },
+    },
     {
       name: 'locked-public-sdk',
       setup(builder) {
@@ -165,7 +198,6 @@ assert.equal(connectionCount, 0);
 const source = path.join(repoRoot, 'plugins/extensions/openai');
 const manifest = JSON.parse(await fs.readFile(path.join(source, 'openclaw.plugin.json'), 'utf8'));
 assert.deepEqual(manifest.contracts.realtimeVoiceProviders, ['openai']);
-const require = createRequire(import.meta.url);
 const asar = require('@electron/asar');
 async function nativeOwner(prefix, symbol, declaration) {
   const directory = path.join(runtimeRoot, 'dist');
@@ -361,7 +393,35 @@ const bridge = provider.createBridge({
   onError: () => {},
 });
 try {
+  assert.equal(constructedSockets, 0);
+  const cancelled = provider.createBridge({
+    cfg,
+    providerConfig: resolved,
+    onAudio() {},
+    onClearAudio() {},
+    onClose() {},
+    onError() {},
+  });
+  const pending = cancelled.connect();
+  try {
+    await Promise.race([
+      transportLoad.promise,
+      pending.then(() => {
+        throw new Error('Voice connected without loading its transport');
+      }),
+    ]);
+    cancelled.close();
+    await pending;
+  } finally {
+    releaseTransport.resolve();
+  }
+  await import(transportPath);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(constructedSockets, 0, 'The cancelled connection must never construct a socket');
+  assert.equal(connectionCount, 0);
+
   await bridge.connect();
+  assert.equal(constructedSockets, 1);
   assert.equal(receivedHeaders.authorization, undefined);
   assert.equal(forbiddenAuthCalls, 0);
   const update = messages.find(event => event.type === 'session.update');
@@ -397,6 +457,7 @@ try {
   authenticated.close();
   bridge.close();
 } finally {
+  delete globalThis[transportControlsKey];
   server.clients.forEach(client => client.terminate());
   await new Promise(resolve => server.close(resolve));
   await fs.rm(compiled, { force: true });

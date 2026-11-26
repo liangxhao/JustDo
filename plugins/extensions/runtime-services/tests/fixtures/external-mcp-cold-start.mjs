@@ -80,6 +80,7 @@ const rpc = async (name, params) => {
 
 try {
   registerExternalMcp(api);
+  assert.equal(globalThis.externalMcpColdTransportLoaded, undefined);
   assert.equal(factory.contextVersion, 2);
   assert.equal(factory.create(context), null);
   assert.equal(typeof cleanup.cleanup, 'function');
@@ -94,6 +95,7 @@ try {
     serverCount: 1,
     toolCount: 1,
   });
+  assert.equal(globalThis.externalMcpColdTransportLoaded, true);
   // A separately registered native factory instance must see the same lease.
   registerExternalMcp(api);
   assert.equal(factory.create({ ...context, sessionId: 'other' }), null);

@@ -30,12 +30,11 @@ export class FlowNotifier {
   }
 
   async tick(): Promise<void> {
-    for (const entry of this.store.all()) {
+    for (const flowId of this.store.flowIds('all')) {
       if (!this.enabled) break;
       // Native execution and user controls can advance other flows during send.
-      const snapshot = this.store.get(entry.id);
+      const snapshot = this.store.getBlocked(flowId);
       if (!snapshot) continue;
-      if (snapshot.status !== 'blocked') continue;
       const nodes = snapshot.nodes.filter(
         node => node.error || ['failed', 'uncertain'].includes(node.status),
       );

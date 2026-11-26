@@ -129,8 +129,7 @@ React composer 仍负责消费用户确认的草稿；归组不改变这些层�
 
 Smart Canvas 的 `visualize` 技能将完整 HTML、交互式 3D、游戏和复杂模拟默认交给独立
 网页 embed；已有网址直接引用，小型自包含卡片或需要草稿桥的控件才使用 `show_widget`。
-插件只注册固定组件 `interactive-answer`，不拆装完整 HTML、不拦截图片或补齐联网参数。
-普通 Widget 保留原生 CSP、CDN 资源和人工确认草稿协议，不提供业务联网适配。
+紧凑卡片使用原生 HTML/SVG，受原生 CSP、CDN 资源规则和人工确认草稿协议约束。
 独立网页的认证静态托管、浏览器代理、稳定实例、放大及侧栏投影见
 [消息中的独立网页](../features/chat/webpage-embeds.md)。
 
@@ -324,7 +323,7 @@ iframe；内容使用扣除标题和建议后的剩余高度，随所属窗口�
 
 原生私有 prompt port 只接收当前 frame 的真实用户激活，检查可见性、焦点、当前会话和长度/速率；拒绝 slash/执行前缀。草稿能力默认关闭，由当前 React consumer 的实时回调决定；只读会话或转录修改时撤销该能力、清除旧建议，并在私有消息、重建与加入草稿入口再次校验。能力切换保留原 iframe、端口与本地选择，不重新读取文档。建议以可读文字在紧凑行内区域展示供用户确认，可信「加入草稿」点击只追加当前 composer 文字，保留附件与已有草稿；发送仍由用户操作。
 
-没有 dashboard/MCP/tool/resource 权限。固定组件不访问外部网络，原生任意 HTML 类型仍沿用原生 CSP/CDN/media 边界，不承诺全类型断网。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [现行说明与验证边界](../features/chat/interactive-answers.md)。
+没有 dashboard/MCP/tool/resource 权限。HTML 卡片沿用原生 CSP/CDN/media 边界。用户入口与限制见 [交互式回答](../features/chat/interactive-answers.md)，未完成验收见 [现行说明与验证边界](../features/chat/interactive-answers.md)。
 
 ## 4. 工作区分离与实际文档
 

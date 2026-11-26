@@ -5,6 +5,8 @@ import { afterEach, expect, test, vi } from 'vitest';
 
 import type { Flow, FlowNode } from '../../contracts/flow';
 import { FlowStore } from '../../data/store';
+import { FlowEngine } from '../../execution/engine';
+import { FlowNotifier } from '../../management/notifications';
 
 const cleanups: Array<() => void> = [];
 afterEach(() => cleanups.splice(0).forEach(clean => clean()));
@@ -77,6 +79,56 @@ test('projects metadata across all history without hydrating any workflow or ite
   store.put(flow);
   expect(store.summary([flow.parentKey])).toEqual({ count: 26, running: false });
   expect(store.activity()).toEqual({ parentKeys: [] });
+});
+
+test('recovers unfinished work and polls without hydrating completed or cancelled graphs', async () => {
+  const { flow, store } = fixture();
+  const worker: FlowNode = {
+    id: 'worker', kind: 'work', title: 'Work', task: 'Inspect', deps: [], access: 'read',
+    status: 'running', sessionKey: 'worker-session', runId: 'existing-run', attempt: 1,
+    agentId: 'main', agentName: 'Main',
+  };
+  const history = {
+    ...flow, id: 'history', requestId: 'history', status: 'completed' as const,
+    parentKey: 'agent:main:justdo:history', nodes: [{ ...worker, status: 'done' as const }],
+  };
+  store.insert(history);
+  store.insert({ ...history, id: 'cancelled', requestId: 'cancelled', status: 'cancelled', nodes: [] });
+  store.insert({ ...flow, status: 'paused', nodes: [{ ...worker, runId: 'pending-run' }] });
+  store.insert({
+    ...flow, id: 'preparing-batch', requestId: 'preparing-batch', status: 'paused',
+    nodes: [{
+      id: 'batch', kind: 'batch', title: 'Batch', task: 'Inspect', deps: [], access: 'read',
+      status: 'preparing', sessionKey: '', agentId: 'main', agentName: 'Main',
+    }],
+  });
+
+  const restarted = new FlowStore(flow.cwd);
+  try {
+    // The store has completed compatibility repair. Recovery and polling should
+    // leave historical payloads and batch working sets alone after that pass.
+    const hydrate = vi.spyOn(restarted.batches, 'hydrate');
+    const wait = vi.fn(async () => ({ status: 'pending' }));
+    const launch = vi.fn(async () => ({ runId: 'replacement' }));
+    const engine = new FlowEngine(restarted, {
+      prepare: async () => {}, launch, wait, cancel: async () => {}, deliver: async () => {},
+    });
+    const notifier = new FlowNotifier(restarted, { send: async () => {} });
+    await engine.tick();
+    await notifier.tick();
+
+    expect(wait).toHaveBeenCalledExactlyOnceWith('pending-run');
+    expect(launch).not.toHaveBeenCalled();
+    expect(restarted.get(flow.id)?.nodes[0]).toMatchObject({ status: 'uncertain', runId: 'pending-run' });
+    expect(restarted.get('preparing-batch')?.nodes[0].status).toBe('queued');
+    expect(hydrate.mock.calls.map(([value]) => value.id)).not.toContain('history');
+    expect(hydrate.mock.calls.map(([value]) => value.id)).not.toContain('cancelled');
+    expect(restarted.forParents([history.parentKey]).map(value => value.id)).toEqual([
+      'cancelled', 'history',
+    ]);
+  } finally {
+    restarted.close();
+  }
 });
 
 test.each(['preparing', 'running', 'uncertain'] as const)(

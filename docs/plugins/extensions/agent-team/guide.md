@@ -430,6 +430,8 @@ Required Runtime Services 提供通用执行准入、inert session 托管及精�
 
 Team 不要求宿主保留业务专属门面、preload/IPC 或业务组件；原生注册、桌面 Main 与 Browser 入口均由本包声明，通过已安装 SDK 接入。
 
+Gateway 依据原生工具声明和启用策略注册 Team 工具、RPC 和服务。协作回执正文、讨论历史、群聊和讨论总结使用的会话正文、群聊投递与回复 SDK 在对应请求执行时加载。
+
 协作消息详情 `collaboration.messages` 和公开群聊历史 `teamDiscussion.history` 归 Agent Team 的对应执行域，只在插件启用时读取原生正文。模式提示、协作投递、讨论输入解析/序列化、房间/轮次协议、业务 ledger 及 RPC 全部在 Team 内部。
 
 Runtime Services 按 `admission/`、`custody/` 提供与业务无关的能力，停用后保留的是精确资源的准入、收据及取消围栏。旧 `teamDiscussion.offlineControl` 不再提供常驻兼容入口，Main 清理直接使用通用 RPC；通用 FIFO 仍只提供容量和显式释放，不推断执行已完成。

@@ -1,8 +1,7 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import { Type } from 'typebox';
 
-import { readConfig, transcribeFile } from './transcribe';
-import { readOnlineConfig, transcribeOnlineFile } from './online';
+import { readLocalConfig } from './config';
 
 export const TOOL_NAME = 'transcribe_audio';
 
@@ -26,7 +25,7 @@ export default {
         const configured = currentConfig();
         if (
           (configured as { mode?: unknown } | undefined)?.mode !== 'online' &&
-          !readConfig(configured)
+          !readLocalConfig(configured)
         )
           return null;
         return {
@@ -48,6 +47,7 @@ export default {
               const selection = currentConfig();
               const signature = JSON.stringify(selection);
               const assertCurrent = () => {
+                signal?.throwIfAborted();
                 ctx.assertInvocationCurrent?.();
                 if (signature !== JSON.stringify(currentConfig()))
                   throw new Error('Speech settings changed. Start a new transcription.');
@@ -60,17 +60,22 @@ export default {
                   ctx.fsPolicy?.workspaceOnly ?? api.config.tools?.fs?.workspaceOnly === true,
                 assertCurrent,
               };
-              const result =
-                (selection as { mode?: unknown } | undefined)?.mode === 'online'
-                  ? await transcribeOnlineFile(audioPath, readOnlineConfig(selection), options)
-                  : await transcribeFile(
-                      audioPath,
-                      readConfig(selection) ??
-                        (() => {
-                          throw new Error('The local transcription model is unavailable.');
-                        })(),
-                      options,
-                    );
+              let result;
+              if ((selection as { mode?: unknown } | undefined)?.mode === 'online') {
+                const { readOnlineConfig, transcribeOnlineFile } = await import('./online');
+                assertCurrent();
+                result = await transcribeOnlineFile(
+                  audioPath,
+                  readOnlineConfig(selection),
+                  options,
+                );
+              } else {
+                const config = readLocalConfig(selection);
+                if (!config) throw new Error('The local transcription model is unavailable.');
+                const { transcribeFile } = await import('./transcribe');
+                assertCurrent();
+                result = await transcribeFile(audioPath, config, options);
+              }
               return { content: [{ type: 'text' as const, text: result.text }], details: result };
             } finally {
               busy = false;

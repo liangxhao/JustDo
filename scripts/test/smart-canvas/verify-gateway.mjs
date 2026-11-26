@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { Script } from 'node:vm';
 import { resolveNativeSmokeTarget } from '../../../tests/openclaw/runtime/native-smoke-target.mjs';
 
 const require = createRequire(import.meta.url);
@@ -63,110 +62,51 @@ const buildInfo = JSON.parse(await readFile(path.join(runtime, 'runtime-build-in
 const fixture = await mkdtemp(path.join(os.tmpdir(), 'smart-canvas-gateway-'));
 const state = path.join(fixture, 'state');
 const workspace = path.join(fixture, 'project');
+const bundledSkillsDir = path.join(fixture, 'bundled-skills');
 const pluginRoot = path.join(fixture, 'runtime/dist/extensions/smart-canvas');
+const loadTracePath = path.join(fixture, 'smart-canvas-module-loads.log');
 const configPath = path.join(fixture, 'openclaw.json');
 const token = randomBytes(24).toString('hex');
-const ui = {
-  version: 1,
-  language: 'en',
-  summary: 'Delivery options',
-  note: 'Example data · Workdays / CNY',
-  blocks: [
-    {
-      type: 'table',
-      id: 'table',
-      title: 'Delivery data',
-      columns: [
-        { id: 'name', label: 'Name', type: 'text' },
-        { id: 'days', label: 'Days', type: 'number' },
-      ],
-      rows: [
-        ['Lean', 39],
-        ['Balanced', 18],
-        ['Fast', 11],
-        ['Small batch', 22],
-        ['Extended scope', 28],
-        ['Pilot', 7],
-        ['Phased delivery', 16],
-      ],
-    },
-    {
-      type: 'compare',
-      id: 'compare',
-      title: 'Plans',
-      metrics: ['Days', 'Cost'],
-      items: [
-        { id: 'lean', title: 'Lean', values: [39, 81900] },
-        { id: 'balanced', title: 'Balanced', values: [18, 75600] },
-      ],
-    },
-    {
-      type: 'chart',
-      id: 'chart',
-      title: 'Delivery',
-      chartType: 'line',
-      labels: ['Day 1', 'Day 2', 'Day 3'],
-      unit: 'hours',
-      series: [
-        { id: 'balanced', label: 'Balanced', values: [-4, 0, 7] },
-        { id: 'lean', label: 'Lean', values: [-2, 1, 4] },
-      ],
-    },
-    {
-      type: 'form',
-      id: 'form',
-      title: 'Requirements',
-      fields: [
-        { id: 'topic', label: 'Topic', type: 'text', value: 'Synthetic', required: true },
-        { id: 'budget', label: 'Budget', type: 'number', value: 80000, min: 0, max: 1000000 },
-        {
-          id: 'plan',
-          label: 'Plan',
-          type: 'select',
-          value: 'Balanced',
-          options: ['Lean', 'Balanced'],
-        },
-        { id: 'confirmed', label: 'Confirmed', type: 'checkbox', value: true },
-        {
-          id: 'features',
-          label: 'Features',
-          type: 'multiselect',
-          value: ['Search'],
-          options: ['Search', 'Export', 'Charts'],
-          required: true,
-        },
-      ],
-    },
-    {
-      type: 'steps',
-      id: 'steps',
-      title: 'Explanation',
-      items: [
-        { title: 'Choose inputs', body: 'Use explicit assumptions.' },
-        { title: 'Compare', body: 'Check the common source data.' },
-      ],
-    },
-  ],
+const widgetMarker = 'Synthetic native HTML widget';
+const widgetArgs = {
+  title: 'Synthetic HTML selection',
+  kind: 'html',
+  widget_code: `<main>
+  <h2>${widgetMarker}</h2>
+  <label>Value <input id="value-input" type="range" min="1" max="10" value="2"></label>
+  <output id="value">2</output>
+  <button id="follow" type="button">Analyze this selection</button>
+</main>
+<script>
+  const input = document.getElementById('value-input');
+  input.addEventListener('input', () => {
+    document.getElementById('value').textContent = input.value;
+  });
+  document.getElementById('follow').addEventListener('click', event => {
+    if (event.isTrusted) void openclaw.prompt.send('Analyze the synthetic selection: ' + input.value);
+  });
+</script>`,
 };
-const registeredWidgetKind = 'interactive-answer';
-const rendererPath = '/__smart_canvas__/ui.js';
-const widgetArgs = verifyToolDispatch
-  ? {
-      title: 'Synthetic native HTML',
-      kind: 'html',
-      widget_code:
-        '<main><h2>Synthetic native dispatcher widget</h2><label>Value <input id="value-input" type="range" min="1" max="10" value="2"></label><output id="value">2</output><button id="follow" type="button">Analyze this selection</button></main><script>document.getElementById("value-input").addEventListener("input",event=>{document.getElementById("value").textContent=event.target.value});document.getElementById("follow").addEventListener("click",event=>{if(event.isTrusted)void openclaw.prompt.send("Analyze the synthetic selection: "+document.getElementById("value-input").value)});</script>',
-    }
-  : {
-      title: 'Synthetic interactive components',
-      kind: registeredWidgetKind,
-      widget_code: JSON.stringify(ui),
-    };
 const modelRequests = [];
 const nativeToolResults = new Map();
 const nativeDispatchResults = new Map();
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hash = value => createHash('sha256').update(value).digest('hex');
+async function readLoadTrace() {
+  try {
+    return await readFile(loadTracePath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  }
+}
+
+function assertWidgetHtml(html) {
+  for (const marker of [widgetMarker, 'id="value-input"', 'id="follow"']) {
+    assert.ok(html.includes(marker), `Native widget HTML missing ${marker}`);
+  }
+}
+
 let gateway;
 let launcherLifecycle;
 let gatewayLog = '';
@@ -183,12 +123,13 @@ const provider = http.createServer(async (request, response) => {
     const tools = input.tools ?? [];
     const widget = tools.find(tool => tool.function?.name === 'show_widget');
     const dispatcher = tools.find(tool => tool.function?.name === 'tool_call');
-    const widgetSchema = widget ? JSON.stringify(widget.function.parameters) : '';
-    const registeredKind = widgetSchema.includes(registeredWidgetKind);
-    assert.ok(
-      !widgetSchema.includes('scenario-explorer'),
-      'Retired scenario kind is not advertised',
-    );
+    if (widget) {
+      assert.deepEqual(
+        widget.function.parameters.properties.kind.enum,
+        ['html'],
+        'Native show_widget exposes only HTML source kinds',
+      );
+    }
     const messages = input.messages ?? [];
     const turnStart = messages.findLastIndex(
       message =>
@@ -217,7 +158,6 @@ const provider = http.createServer(async (request, response) => {
     }
     modelRequests.push({
       headless,
-      registeredKind,
       widgetAvailable: Boolean(widget),
       dispatcherAvailable: Boolean(dispatcher),
       interactionSeen:
@@ -230,7 +170,7 @@ const provider = http.createServer(async (request, response) => {
       'No uncontrolled model loop',
     );
     const invoke =
-      !headless && (verifyToolDispatch ? Boolean(dispatcher) : registeredKind) && !completed;
+      !headless && (verifyToolDispatch ? Boolean(dispatcher) : Boolean(widget)) && !completed;
     const toolCall = {
       id: `fixture-widget-${modelRequests.length}`,
       type: 'function',
@@ -536,6 +476,7 @@ function assertDispatcherHistory(history, docId) {
 try {
   await mkdir(state);
   await mkdir(workspace);
+  await mkdir(bundledSkillsDir);
   const lifecycleFile = path.join(fixture, 'host-lifecycle.cjs');
   require('esbuild').buildSync({
     entryPoints: [path.join(root, 'src/main/openclaw/runtime/launch/openclawLauncher.ts')],
@@ -553,6 +494,19 @@ try {
   } finally {
     console.log = print;
   }
+  const pluginManifest = JSON.parse(
+    await readFile(path.join(pluginRoot, 'openclaw.plugin.json'), 'utf8'),
+  );
+  assert.deepEqual(pluginManifest.activation, { onStartup: false });
+  const pluginPackage = JSON.parse(await readFile(path.join(pluginRoot, 'package.json'), 'utf8'));
+  assert.deepEqual(pluginPackage.openclaw.extensions, ['./index.js']);
+  // Observe evaluation of the copied plugin entry without changing its registration behavior.
+  const pluginEntry = path.join(pluginRoot, 'index.js');
+  const entrySource = await readFile(pluginEntry, 'utf8');
+  await writeFile(
+    pluginEntry,
+    `${entrySource}\nimport { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(loadTracePath)}, "entry\\n");\n`,
+  );
   await new Promise(resolve => provider.listen(0, '127.0.0.1', resolve));
   const providerPort = provider.address().port;
   const port = await adjacentLoopbackPorts();
@@ -624,6 +578,8 @@ try {
     OPENCLAW_STATE_DIR: state,
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_BUNDLED_PLUGINS_DIR: path.dirname(pluginRoot),
+    // Isolate the plugin's skill from the upstream skill with the same name.
+    OPENCLAW_BUNDLED_SKILLS_DIR: bundledSkillsDir,
     OPENCLAW_TEST_TRUST_BUNDLED_PLUGINS_DIR: '1',
     OPENCLAW_NO_RESPAWN: '1',
     OPENCLAW_SKIP_CHANNELS: '1',
@@ -642,8 +598,18 @@ try {
   if (verifyToolDispatch) {
     assert.equal(initialPlugin?.enabled, false);
     assert.ok(['disabled', 'unloaded'].includes(initialPlugin?.runtime?.state));
-  } else
-    assert.equal(initialPlugin?.runtime?.state, 'active', 'Plugin really loaded in locked Gateway');
+  } else {
+    assert.equal(initialPlugin?.enabled, true);
+    assert.notEqual(initialPlugin?.runtime?.state, 'active', 'Enabled plugin remains unloaded');
+  }
+  const visualizePath = await realpath(path.join(pluginRoot, 'skills', 'visualize', 'SKILL.md'));
+  const hasSmartCanvasSkill = async client => {
+    const { skills } = await client.rpc('skills.status', { agentId: 'main' });
+    const skill = skills.find(entry => entry.name === 'visualize');
+    return skill?.eligible === true && path.relative(visualizePath, await realpath(skill.filePath)) === '';
+  };
+  assert.equal(await hasSmartCanvasSkill(inline), !verifyToolDispatch);
+  assert.equal(await readLoadTrace(), '', 'Startup and skill discovery do not load Smart Canvas');
   const headlessKey = 'agent:main:smart-canvas:fixture-headless';
   const inlineKey = 'agent:main:smart-canvas:fixture-inline';
   await runTurn(headless, headlessKey, 'fixture-headless: Explain the synthetic delivery inputs.');
@@ -658,16 +624,17 @@ try {
   });
   assert.equal(blocked.ok, false);
   assert.equal(blocked.error.code, 'not_found');
+  assert.equal(await readLoadTrace(), '', 'Headless requests do not load Smart Canvas');
   const inlineTurn = await runTurn(
     inline,
     inlineKey,
-    'fixture-inline: Show the synthetic interactive components.',
+    'fixture-inline: Show the synthetic HTML selection.',
   );
   assert.ok(
     modelRequests.some(
       request =>
         !request.headless &&
-        (verifyToolDispatch ? request.dispatcherAvailable : request.registeredKind),
+        (verifyToolDispatch ? request.dispatcherAvailable : request.widgetAvailable),
     ),
     'Inline client receives the requested real native tool surface',
   );
@@ -707,37 +674,45 @@ try {
   for (const marker of [
     'openclaw:widget-prompt-offer',
     'Content-Security-Policy',
-    verifyToolDispatch ? 'Synthetic native dispatcher widget' : rendererPath,
   ])
     assert.ok(view.html.includes(marker), `Canonical document missing ${marker}`);
+  assertWidgetHtml(view.html);
   assert.ok(!view.html.includes(token));
   assert.ok(view.sandboxUrl && view.sandboxPort);
   assert.equal((await fetch(`http://127.0.0.1:${port}${descriptor.view.url}`)).status, 401);
-  if (!verifyToolDispatch) {
-    const resource = await fetch(`http://127.0.0.1:${view.sandboxPort}${rendererPath}`);
-    assert.equal(
-      resource.status,
-      200,
-      'Registered public renderer served by native sandbox origin',
-    );
-    assert.match(resource.headers.get('content-type'), /^text\/javascript/);
-    const rendererSource = await resource.text();
-    assert.ok(rendererSource.length > 0, 'Public renderer has executable source');
-    new Script(rendererSource);
-    assert.ok(rendererSource.includes('scenario-draft-policy'));
-    assert.equal(
-      (await fetch(`http://127.0.0.1:${view.sandboxPort}/__smart_canvas__/scenario.js`)).status,
-      404,
-      'Retired scenario renderer is not a public resource',
-    );
-    assert.equal(
-      (await fetch(`http://127.0.0.1:${view.sandboxPort}/__smart_canvas__/unregistered.js`)).status,
-      404,
-      'Unregistered paths are not public resources',
-    );
-    for (const block of ui.blocks)
-      assert.ok(view.html.includes(block.title), `Composed document includes ${block.type}`);
+  const pinnedName = 'synthetic-html-selection';
+  async function readPinned(client) {
+    const board = await client.rpc('board.get', { sessionKey: inlineKey, agentId: 'main' });
+    const widget = board.widgets.find(candidate => candidate.name === pinnedName);
+    assert.equal(widget?.contentKind, 'html');
+    assert.equal(widget.contentOwner, 'html');
+    assert.equal(widget.grantState, 'none');
+    assert.ok(widget.frameUrl && widget.sandboxUrl, 'Gateway returns an authenticated board view');
+    const url = new URL(widget.frameUrl, `http://127.0.0.1:${port}`);
+    const response = await fetch(url);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/html/);
+    const html = await response.text();
+    assertWidgetHtml(html);
+    return { instanceId: widget.instanceId, revision: widget.revision, htmlHash: hash(html) };
   }
+  let pinned;
+  if (!verifyToolDispatch) {
+    const result = await inline.rpc('tools.invoke', {
+      name: 'show_widget',
+      sessionKey: inlineKey,
+      args: { ...widgetArgs, pin: true, name: pinnedName },
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.error ?? result));
+    pinned = await readPinned(inline);
+    const removedKind = await inline.rpc('tools.invoke', {
+      name: 'show_widget',
+      sessionKey: inlineKey,
+      args: { ...widgetArgs, kind: 'interactive-answer', widget_code: '{}' },
+    });
+    assert.equal(removedKind.ok, false, 'Native show_widget rejects the retired source kind');
+  }
+  assert.equal(await readLoadTrace(), '', 'Native widget calls do not load Smart Canvas');
   await assert.rejects(
     inline.rpc('canvas.document.view', { docId: 'cv_missing_fixture' }),
     /unavailable/i,
@@ -841,20 +816,6 @@ try {
     );
     assert.equal(receipt.prompt, 'fixture-interaction: budget=5000');
     if (verifyPresentation) {
-      const documents = [];
-      for (const [name, kind, data] of [['ui', 'interactive-answer', ui]]) {
-        const result = await inline.rpc('tools.invoke', {
-          name: 'show_widget',
-          sessionKey: inlineKey,
-          args: { title: data.summary, kind, widget_code: JSON.stringify(data) },
-        });
-        assert.equal(result.ok, true);
-        const descriptor = findCanvas(result);
-        assert.ok(descriptor);
-        const view = await inline.rpc('canvas.document.view', { docId: descriptor.view.id });
-        documents.push({ name, descriptor, view });
-      }
-      documents.push({ name: 'html', descriptor: promptDoc, view: promptView });
       const outputDirectory = path.join(root, '.agent-tasks/smart-canvas/presentation');
       const presentationPath = path.join(fixture, 'presentation.json');
       await writeFile(
@@ -863,14 +824,15 @@ try {
           viewerOrigin,
           gatewayUrl: `ws://127.0.0.1:${port}`,
           outputDirectory,
-          documents,
+          descriptor: promptDoc,
+          view: promptView,
         }),
       );
       const output = await runBrowserProbe('verify-presentation.cjs', presentationPath);
       const evidence = JSON.parse(
         output.split('\n').find(line => line.startsWith('{"presentation"')),
       );
-      assert.equal(evidence.screenshots, 25);
+      assert.equal(evidence.screenshots, 5);
       assert.equal(evidence.htmlFormSubmission, true);
       await writeFile(
         path.join(outputDirectory, 'verification.json'),
@@ -893,11 +855,12 @@ try {
       bridgeResolutionIsNotModelReceipt: true,
       explicitFollowupReachedModelAndHistory: true,
       ...(verifyPresentation
-        ? { presentationScreenshots: 25, readableHostSuggestion: true, htmlFormSubmission: true }
+        ? { presentationScreenshots: 5, readableHostSuggestion: true, htmlFormSubmission: true }
         : {}),
     };
   }
   const callsBeforeRestart = modelRequests.length;
+  const modulesBeforeRestart = await readLoadTrace();
   await stopGateway();
   await startGateway(port, env);
   const restored = await connect(port, ['tool-events', 'inline-widgets']);
@@ -906,6 +869,12 @@ try {
     JSON.stringify(
       await restored.rpc('chat.history', { sessionKey: inlineKey, limit: 20 }),
     ).includes(docId),
+  );
+  if (pinned) assert.deepEqual(await readPinned(restored), pinned);
+  assert.equal(
+    await readLoadTrace(),
+    modulesBeforeRestart,
+    'Restart and views leave Smart Canvas cold',
   );
   if (verifyToolDispatch)
     assert.equal(
@@ -977,7 +946,7 @@ try {
     );
     for (const output of documents.slice(1)) {
       const retained = await restored.rpc('canvas.document.view', { docId: output.view.id });
-      assert.ok(retained.html.includes(rendererPath));
+      assertWidgetHtml(retained.html);
     }
     assert.equal(
       hash((await restored.rpc('canvas.document.view', { docId })).html),
@@ -1000,6 +969,7 @@ try {
       durationMs: Date.now() - started,
     };
   }
+  const modulesBeforeDisable = await readLoadTrace();
   await stopGateway();
   config.plugins.entries['smart-canvas'].enabled = false;
   await writeFile(configPath, JSON.stringify(config));
@@ -1009,29 +979,26 @@ try {
   const disabledPlugin = disabledCatalog.plugins.find(plugin => plugin.id === 'smart-canvas');
   assert.equal(disabledPlugin?.enabled, false);
   assert.ok(['disabled', 'unloaded'].includes(disabledPlugin?.runtime?.state));
-  await runTurn(
-    disabled,
-    'agent:main:smart-canvas:fixture-disabled',
-    'fixture-disabled: Explain the synthetic delivery inputs.',
-  );
-  assert.equal(
-    modelRequests.at(-1).registeredKind,
-    false,
-    'Explicit disable removes the registered kind',
-  );
+  assert.equal(await hasSmartCanvasSkill(disabled), false);
+  const disabledKey = 'agent:main:smart-canvas:fixture-disabled';
+  await runTurn(disabled, disabledKey, 'fixture-disabled: Show the synthetic HTML selection.');
   if (!verifyToolDispatch) {
+    assert.equal(modelRequests.at(-1).widgetAvailable, true, 'Native HTML remains available');
+    const disabledHistory = await disabled.rpc('chat.history', {
+      sessionKey: disabledKey,
+      limit: 20,
+    });
+    const disabledDescriptor = findCanvas(disabledHistory);
+    assert.ok(disabledDescriptor, 'Native HTML renders with Smart Canvas disabled');
     const disabledView = await disabled.rpc('canvas.document.view', { docId });
     assert.equal(
       hash(disabledView.html),
       htmlHash,
       'Disabling a plugin does not rewrite stored documents',
     );
-    assert.equal(
-      (await fetch(`http://127.0.0.1:${disabledView.sandboxPort}${rendererPath}`)).status,
-      404,
-      'Explicit disable removes the public renderer registration',
-    );
+    assert.deepEqual(await readPinned(disabled), pinned);
   }
+  assert.equal(await readLoadTrace(), modulesBeforeDisable, 'Disabled plugin stays cold');
   console.log(
     JSON.stringify({
       ok: true,
@@ -1046,7 +1013,7 @@ try {
             historyWrapper: true,
             nativePromptBridge: true,
           }
-        : { pluginLoaded: true, publicRenderer: true }),
+        : { startupDeferred: true, nativeHtmlKeepsPluginCold: true }),
       headlessCapRejected: true,
       nativeToolSchema: true,
       managedManifest: true,
@@ -1056,14 +1023,7 @@ try {
       noDuplicateExecution: true,
       explicitDisable: true,
       ...(!verifyToolDispatch
-        ? { disabledDocumentRetained: true, disabledResourceRejected: true }
-        : {}),
-      ...(!verifyToolDispatch
-        ? {
-            controlledUi: true,
-            componentKinds: ui.blocks.map(block => block.type),
-            registeredSourceKind: registeredWidgetKind,
-          }
+        ? { disabledDocumentRetained: true, pinnedDocumentRetained: true }
         : {}),
       ...(retention ? { retention } : {}),
       localModelRequests: modelRequests.length,
@@ -1093,7 +1053,7 @@ try {
         docId,
         toolResult,
         token,
-        livePrompt: 'fixture-live: Show the synthetic interactive components.',
+        livePrompt: 'fixture-live: Show the synthetic HTML selection.',
       }),
       { mode: 0o600 },
     );

@@ -1,5 +1,4 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
-import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
 import {
   isTeamDiscussionAgentId,
@@ -29,8 +28,12 @@ const messageText = (value: unknown): string => {
 export function registerDiscussionHistory(api: OpenClawPluginApi): void {
   api.registerGatewayMethod(
     TeamDiscussionGateway.History,
-    async ({ params, respond }) => {
-      try {
+    async ({ params, respond, signal, hasCurrentClientAuthority }) => {
+      const assertCurrent = () => {
+        signal?.throwIfAborted();
+        api.lifecycle.signal?.throwIfAborted();
+        if (hasCurrentClientAuthority?.() === false)
+          throw new Error('teamDiscussionHistoryUnavailable');
         const plugins = api.runtime.config.current().plugins;
         if (
           plugins?.enabled === false ||
@@ -39,6 +42,9 @@ export function registerDiscussionHistory(api: OpenClawPluginApi): void {
           (plugins?.allow?.length && !plugins.allow.includes('agent-team'))
         )
           throw new Error('Agent Team is disabled.');
+      };
+      try {
+        assertCurrent();
         if (
           !isTeamDiscussionId(params.roomId) ||
           !Array.isArray(params.members) ||
@@ -52,6 +58,10 @@ export function registerDiscussionHistory(api: OpenClawPluginApi): void {
         const order = new Map((params.discussionIds as string[]).map((id, index) => [id, index]));
         const seenInputs = new Set<string>();
         const messages: TeamDiscussionMessage[] = [];
+        const { readVisibleSessionTranscriptMessageEntries } = await import(
+          'openclaw/plugin-sdk/session-transcript-runtime'
+        );
+        assertCurrent();
         for (const value of params.members) {
           const member = asRecord(value);
           if (!isTeamDiscussionAgentId(member.agentId) || !isTeamDiscussionId(member.sessionId))

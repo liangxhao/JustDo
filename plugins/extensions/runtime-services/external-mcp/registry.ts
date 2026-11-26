@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 
-import { AjvJsonSchemaValidator } from '@modelcontextprotocol/client/validators/ajv';
-
 import type {
   ExternalMcpCloseRequest,
   ExternalMcpOpenRequest,
@@ -167,6 +165,7 @@ export class ExternalMcpRegistry {
     ]);
     lease.preparation = (async () => {
       try {
+        const { AjvJsonSchemaValidator } = await import('@modelcontextprotocol/client/validators/ajv');
         for (const server of request.servers) {
           assertOwner();
           this.assertCurrent(lease);

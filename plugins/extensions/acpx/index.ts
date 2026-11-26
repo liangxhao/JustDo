@@ -3,7 +3,6 @@
  * wires reply-dispatch hooks into the plugin SDK runtime.
  */
 import { tryDispatchAcpReplyHook } from 'openclaw/plugin-sdk/acp-runtime-backend';
-import { redactSensitiveText } from 'openclaw/plugin-sdk/security-runtime';
 
 import { createAcpxRuntimeService } from './register.runtime.js';
 import type { OpenClawPluginApi } from './runtime-api.js';
@@ -61,10 +60,16 @@ const plugin = {
           ).doctorAgent(agentId);
           respond(true, report);
         } catch (error) {
-          const message = error instanceof Error ? error.message : 'ACP agent test failed.';
+          const security = await import('openclaw/plugin-sdk/security-runtime').catch(
+            () => undefined,
+          );
+          const message =
+            security && error instanceof Error
+              ? security.redactSensitiveText(error.message).slice(0, 2_000)
+              : 'ACP agent test failed.';
           respond(false, undefined, {
             code: 'UNAVAILABLE',
-            message: redactSensitiveText(message).slice(0, 2_000),
+            message,
           });
         }
       },

@@ -12,6 +12,10 @@ plan-mode、agent-team 和 Swarm Workflow 的规划门禁统一读取原生
 `agent_turn_prepare` 注入规划约束，
 `registerTrustedToolPolicy` 在执行前阻止已知变更工具。
 
+清单设置 `activation.onStartup: false`。启用插件时，OpenClaw 根据 `present_plan`
+工具和 `plan-mode-read-only` 可信策略契约，在就绪前注册会话状态、工具、Hook 和审核 RPC。
+只有已开启计划模式的会话需要分类动作型工具时，才导入 SDK 的动作分类模块。
+
 计划工具统一命名为 `present_plan`，
 保持 direct-only，不注册或识别旧工具名；
 Tool Search 分发器由原生对实际目标再次执行策略。动作型工具使用上游

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -40,13 +41,15 @@ describe('speech protocol source bundling', () => {
         const pkg = JSON.parse(fs.readFileSync(path.join(fixture, 'package.json'), 'utf8'));
         const manifest = JSON.parse(fs.readFileSync(path.join(fixture, 'openclaw.plugin.json'), 'utf8'));
         const entries = [...pkg.openclaw.extensions, manifest.capabilityCatalogEntry, ...(pkg.openclaw.build?.workerEntries ?? []), ...auxiliaryEntries.map(name => './' + name + '.js')].filter(Boolean);
-        for (const entry of entries) {
+        const chunks = fs.readdirSync(fixture).filter(name => /^runtime-.*\.js$/.test(name));
+        const bundledCode = [...entries, ...chunks].map(entry => {
           expect(entry).toMatch(/\.js$/);
           const code = fs.readFileSync(path.join(fixture, entry), 'utf8');
           expect(code).not.toMatch(/(?:from\s*|import\s*\()\s*['"][^'"]*(?:sdk\/speech-protocols|@speech\/protocols)/);
           expect(code).not.toMatch(/(?:from\s*|import\s*\()\s*['"][^'"]*application\/src/);
-        }
-        expect(fs.readFileSync(path.join(fixture, 'index.js'), 'utf8')).toContain(
+          return code;
+        });
+        expect(bundledCode.join('\n')).toContain(
           id === 'stt-local-cli' ? 'openai-transcription-http' : 'openai-speech-http',
         );
         expect(fs.existsSync(path.join(fixture, 'node_modules'))).toBe(false);
@@ -55,4 +58,42 @@ describe('speech protocol source bundling', () => {
       }
     },
   );
+});
+
+it('loads OpenCC only when the packaged STT tool executes', () => {
+  const buildRoot = path.resolve('build');
+  fs.mkdirSync(buildRoot, { recursive: true });
+  const fixture = fs.mkdtempSync(path.join(buildRoot, 'stt-entry-'));
+  try {
+    bundleProductExtension(path.resolve('plugins/extensions/stt-local-cli'), fixture);
+    execFileSync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `
+        import assert from 'node:assert/strict';
+        import { registerHooks } from 'node:module';
+        import { pathToFileURL } from 'node:url';
+
+        registerHooks({
+          resolve(specifier, context, nextResolve) {
+            if (specifier === 'opencc-js/t2cn') throw new Error('OpenCC resolved');
+            return nextResolve(specifier, context);
+          },
+        });
+        const { default: plugin } = await import(pathToFileURL(process.argv[1]).href);
+        let factory;
+        plugin.register({
+          config: {},
+          pluginConfig: { mode: 'local', command: process.execPath, args: [], modelId: 'test', language: 'zh' },
+          registerTool: create => { factory = create; },
+        });
+        const tool = factory({});
+        assert.equal(tool.name, 'transcribe_audio');
+        await assert.rejects(tool.execute('fixture', { audio_path: process.execPath }), /OpenCC resolved/);
+      `,
+      path.join(fixture, 'index.js'),
+    ], { timeout: 15_000, windowsHide: true });
+  } finally {
+    fs.rmSync(fixture, { recursive: true, force: true });
+  }
 });

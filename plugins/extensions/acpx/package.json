@@ -21,6 +21,9 @@
     "extensions": [
       "./index.ts"
     ],
+    "build": {
+      "splitRuntime": true
+    },
     "compat": {
       "pluginApi": ">=2026.10.7"
     }

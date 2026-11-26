@@ -1,19 +1,7 @@
 import { createAppExecutionSourceBindings } from '@app-plugin/sdk/execution-source';
-import {
-  dispatchChannelInboundTurn,
-  getGroupThreadDeliverySession,
-  resolveGroupThreadConfig,
-  resolveGroupThreadMentionFacts,
-  runGroupThread,
-} from 'openclaw/plugin-sdk/channel-inbound';
 import type { OpenClawConfig, OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
 import type { ReplyPayload } from 'openclaw/plugin-sdk/reply-payload';
-import {
-  dispatchReplyWithBufferedBlockDispatcher,
-  SILENT_REPLY_TOKEN,
-} from 'openclaw/plugin-sdk/reply-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
-import { appendSessionTranscriptMessageByIdentity } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
 import { type DiscussionResources, parseDiscussionResources } from '../contracts/agentTeamSettings';
 import {
@@ -118,6 +106,21 @@ export async function executeGroupDiscussion(options: DiscussionExecutionOptions
     }
     return { member, sessionKey };
   };
+  const [
+    {
+      dispatchChannelInboundTurn,
+      getGroupThreadDeliverySession,
+      resolveGroupThreadConfig,
+      resolveGroupThreadMentionFacts,
+      runGroupThread,
+    },
+    { dispatchReplyWithBufferedBlockDispatcher, SILENT_REPLY_TOKEN },
+    { appendSessionTranscriptMessageByIdentity },
+  ] = await Promise.all([
+    import('openclaw/plugin-sdk/channel-inbound'),
+    import('openclaw/plugin-sdk/reply-runtime'),
+    import('openclaw/plugin-sdk/session-transcript-runtime'),
+  ]);
   for (const member of members) assertMember(member.agentId);
   const cfg: OpenClawConfig = {
     ...options.cfg,

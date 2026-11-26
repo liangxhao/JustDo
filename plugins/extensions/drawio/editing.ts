@@ -1,6 +1,4 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
-import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
-import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 import { type CanvasOwner, DiagramCanvasState } from './canvas-state';
 import {
@@ -15,16 +13,18 @@ import {
   DRAWIO_SERVER,
   type PreparedDiagramCanvas,
 } from './contracts';
-// Bundled by the plugin build; no application imports or filesystem XML reads.
-import { validateDiagram } from './editor-resource.mjs';
 import { diagramUpdateReference } from './update-result';
+
+type DispatchGatewayMethod =
+  typeof import('openclaw/plugin-sdk/gateway-method-runtime').dispatchGatewayMethod;
+type ValidateDiagram = typeof import('./editor-resource.mjs').validateDiagram;
 
 const object = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 const text = (v: unknown, max = 512) =>
   typeof v === 'string' && v.length > 0 && v.length <= max ? v : '';
 const id = (v: unknown) => (/^diagram-[a-zA-Z0-9-]{1,100}$/.test(text(v)) ? (v as string) : '');
-function snapshot(value: unknown): DiagramSnapshot {
+function snapshot(value: unknown, validateDiagram: ValidateDiagram): DiagramSnapshot {
   const input = object(value);
   const diagram = validateDiagram(input);
   if (!id(input.diagramId) || !text(input.contentStamp, 128))
@@ -39,6 +39,7 @@ function snapshot(value: unknown): DiagramSnapshot {
 // The public SDK projects this native retryable admission error to code/message.
 // Only these two read-only preparation methods may wait for the same authority.
 async function readPreparedView(
+  dispatchGatewayMethod: DispatchGatewayMethod,
   method: 'mcp.app.view' | 'mcp.app.readResource',
   params: Record<string, unknown>,
   assertCurrent: () => void,
@@ -103,22 +104,27 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
   // Only the latest prepare/owner cleanup on this authenticated socket may
   // finish. Native request cancellation does not cancel background RPC work.
   const preparations = new Map<string, object>();
-  const serviceOwner = Symbol('drawio-canvas-service');
+  let validateDiagram: ValidateDiagram | undefined;
+  const loadValidator = async () =>
+    (validateDiagram ??= (await import('./editor-resource.mjs')).validateDiagram);
+  let serviceOwner: symbol | undefined;
   api.registerService({
     id: 'drawio-canvas',
     start(ctx) {
+      serviceOwner = Symbol('drawio-canvas-service');
       state.owner = serviceOwner;
       state.canvases.emit = viewId =>
         ctx.gatewayEvents?.emit('canvas-changed', { viewId }, { scope: 'operator.admin' });
     },
     stop() {
-      if (state.owner !== serviceOwner) return;
+      if (!serviceOwner || state.owner !== serviceOwner) return;
       preparations.clear();
       for (const admission of state.admissions.values()) admission.dispose();
       state.admissions.clear();
       state.canvases.close();
       state.recovered.clear();
       state.owner = undefined;
+      serviceOwner = undefined;
     },
   });
 
@@ -127,14 +133,40 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
     message: 'Diagram operation unavailable. Reopen or prepare the current canvas.',
   };
   type Invocation = Parameters<Parameters<OpenClawPluginApi['registerGatewayMethod']>[1]>[0];
-  async function ownerFor(invocation: Invocation, viewId: string): Promise<CanvasOwner> {
-    const { params, client, hasCurrentClientAuthority } = invocation;
+  async function ownerFor(invocation: Invocation, viewId: string) {
+    const { params, client, hasCurrentClientAuthority, signal } = invocation;
     const sessionKey = text(params.sessionKey);
     const sessionId = text(params.sessionId);
     const agentId = text(params.agentId, 128);
     if (!sessionKey.startsWith(`agent:${agentId}:`) || !sessionId || !agentId || !client?.connId)
       throw new Error('Invalid diagram owner');
+    const invocationOwner = serviceOwner;
+    const assertAvailable = () => {
+      const cfg = api.runtime.config.current();
+      if (
+        !invocationOwner ||
+        serviceOwner !== invocationOwner ||
+        state.owner !== invocationOwner ||
+        client.connectionSignal?.aborted ||
+        hasCurrentClientAuthority?.() === false ||
+        cfg.mcp?.apps?.enabled !== true ||
+        cfg.plugins?.enabled === false ||
+        cfg.plugins?.entries?.drawio?.enabled === false
+      )
+        throw new Error('Diagram owner changed');
+    };
+    const assertRequestAvailable = () => {
+      signal?.throwIfAborted();
+      assertAvailable();
+    };
+    assertRequestAvailable();
+    const [{ dispatchGatewayMethod }, { getSessionEntry }] = await Promise.all([
+      import('openclaw/plugin-sdk/gateway-method-runtime'),
+      import('openclaw/plugin-sdk/session-store-runtime'),
+    ]);
+    assertRequestAvailable();
     const history = await dispatchGatewayMethod('chat.history', { sessionKey, agentId, limit: 1 });
+    assertRequestAvailable();
     const identity = object(history.payload);
     if (!history.ok || identity.sessionKey !== sessionKey || identity.sessionId !== sessionId)
       throw new Error('Diagram session changed');
@@ -142,31 +174,32 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
     if (initial?.sessionId !== sessionId) throw new Error('Diagram session changed');
     const lifecycleRevision = initial.lifecycleRevision;
     const assertCurrent = () => {
-      const cfg = api.runtime.config.current();
+      assertAvailable();
       const entry = getSessionEntry({ sessionKey, agentId, readConsistency: 'latest' });
-      if (
-        state.owner !== serviceOwner ||
-        client.connectionSignal?.aborted ||
-        hasCurrentClientAuthority?.() === false ||
-        cfg.mcp?.apps?.enabled !== true ||
-        cfg.plugins?.enabled === false ||
-        cfg.plugins?.entries?.drawio?.enabled === false ||
-        entry?.sessionId !== sessionId ||
-        entry.lifecycleRevision !== lifecycleRevision
-      )
+      if (entry?.sessionId !== sessionId || entry.lifecycleRevision !== lifecycleRevision)
         throw new Error('Diagram owner changed');
     };
     assertCurrent();
-    return { sessionKey, sessionId, agentId, connectionId: client.connId, viewId, assertCurrent };
+    const owner: CanvasOwner = {
+      sessionKey,
+      sessionId,
+      agentId,
+      connectionId: client.connId,
+      viewId,
+      assertCurrent,
+    };
+    return { owner, dispatchGatewayMethod };
   }
 
   async function verifySource(
     owner: CanvasOwner,
+    dispatchGatewayMethod: DispatchGatewayMethod,
     diagramId: string,
     admitted: Record<string, unknown>,
     assertCurrent: () => void,
   ): Promise<DiagramSource> {
     const result = await readPreparedView(
+      dispatchGatewayMethod,
       'mcp.app.view',
       {
         sessionKey: owner.sessionKey,
@@ -192,6 +225,7 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
     // Resolve the original mint on the admitted view's exact native connection.
     const uri = `diagram://origin/${diagramId}`;
     const origin = await readPreparedView(
+      dispatchGatewayMethod,
       'mcp.app.readResource',
       {
         sessionKey: owner.sessionKey,
@@ -224,7 +258,7 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
   api.registerGatewayMethod(
     DRAWIO_CANVAS_METHOD,
     async invocation => {
-      const { params, respond } = invocation;
+      const { params, respond, signal } = invocation;
       const preparationKey = JSON.stringify([
         invocation.client?.connId,
         params.sessionKey,
@@ -245,8 +279,9 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
             throw new Error('Too many diagram preparations');
           preparations.set(preparationKey, gate);
         }
-        const owner = await ownerFor(invocation, viewId);
+        const { owner, dispatchGatewayMethod } = await ownerFor(invocation, viewId);
         const assertPreparation = () => {
+          signal?.throwIfAborted();
           owner.assertCurrent();
           if (gatesPreparation && preparations.get(preparationKey) !== gate)
             throw new Error('Diagram preparation superseded');
@@ -271,9 +306,10 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
           if (params.action === 'admit' && !state.admissions.has(key)) {
             // Admission records only immutable provenance. Model selection can
             // retire native App interaction grants without changing this editor.
-            const source = Object.freeze({
-              ...(await verifySource(owner, diagramId, admitted, assertPreparation)),
-            });
+            const verified = await verifySource(
+              owner, dispatchGatewayMethod, diagramId, admitted, assertPreparation,
+            );
+            const source = Object.freeze({ ...verified });
             assertPreparation();
             for (const [previousKey, previous] of state.admissions) {
               try {
@@ -311,7 +347,9 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
             respond(true, { admitted: true });
             return;
           }
-          const current = snapshot(params.snapshot);
+          const validator = validateDiagram ?? (await loadValidator());
+          assertPreparation();
+          const current = snapshot(params.snapshot, validator);
           respond(true, {
             token: state.canvases.prepare(
               owner,
@@ -328,11 +366,19 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
           const status = ack.status;
           if (status !== 'applied' && status !== 'conflict' && status !== 'failed')
             throw new Error('Invalid diagram acknowledgement');
+          let result: Parameters<DiagramCanvasState['acknowledge']>[3];
+          if (status === 'applied') {
+            const validator = validateDiagram ?? (await loadValidator());
+            assertPreparation();
+            result = { status, snapshot: snapshot(ack.snapshot, validator) };
+          } else {
+            result = { status };
+          }
           state.canvases.acknowledge(
             owner,
             token,
             text(params.operationId, 128),
-            status === 'applied' ? { status, snapshot: snapshot(ack.snapshot) } : { status },
+            result,
           );
           respond(true, {});
         } else if (params.action === 'detach') {
@@ -366,11 +412,11 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
   api.registerGatewayMethod(
     DRAWIO_SEND_METHOD,
     async invocation => {
-      const { params, respond } = invocation;
+      const { params, respond, signal } = invocation;
       let runId = '';
       let issued = false;
       try {
-        const owner = await ownerFor(invocation, '');
+        const { owner, dispatchGatewayMethod } = await ownerFor(invocation, '');
         const send = object(params.send);
         runId = text(send.idempotencyKey, 256);
         if (
@@ -386,6 +432,7 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
             throw new Error('Invalid prepared canvas');
           return entry as unknown as PreparedDiagramCanvas;
         });
+        signal?.throwIfAborted();
         state.canvases.freeze(owner, runId, prepared);
         owner.assertCurrent();
         issued = true;
@@ -474,7 +521,10 @@ export function registerDiagramEditing(api: OpenClawPluginApi) {
                 !text(input.baseContentStamp, 128)
               )
                 throw new Error('Invalid diagram update');
-              const diagram = validateDiagram(input);
+              const validator = validateDiagram ?? (await loadValidator());
+              signal?.throwIfAborted();
+              ctx.assertInvocationCurrent();
+              const diagram = validator(input);
               const receipt = await state.canvases.update(
                 runId,
                 toolCallId,

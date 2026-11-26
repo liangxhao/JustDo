@@ -4,7 +4,7 @@
 
 ## 服务配置
 
-兼容性、能力与配置 schema 以 [package.json](../../../../plugins/extensions/typesafe/package.json) 和 [openclaw.plugin.json](../../../../plugins/extensions/typesafe/openclaw.plugin.json) 为准；来源及本地改动见 [UPSTREAM.md](../../../../plugins/extensions/typesafe/UPSTREAM.md)。注册保持延迟加载，不注册替代原生决策工具或独立模型选择机制。
+兼容性、能力与配置 schema 以 [package.json](../../../../plugins/extensions/typesafe/package.json) 和 [openclaw.plugin.json](../../../../plugins/extensions/typesafe/openclaw.plugin.json) 为准；来源及本地改动见 [UPSTREAM.md](../../../../plugins/extensions/typesafe/UPSTREAM.md)。原生按默认或 Agent 专属 `decisionModel` 的 provider 选择加载插件，选择变化由原生热重载应用。`decision_evaluate` 和模型选择继续由原生提供。
 
 - `serviceUrl` 是显式 HTTP(S) API 基址，可包含 `/v1` 等路径前缀；不得含 URL 用户名／密码、query 或 fragment。服务须实现 System One，插件在基址后请求 `/systemone`，仅兼容聊天补全接口不足以使用。
 - `apiKey` 使用 manifest 声明的结构化 SecretRef，由原生预先准备。`serviceUrl` 路径发送 Bearer 认证；宿主负责受限存储、SecretRef 发布、轮换及原生刷新，不把密钥放进提示词或普通日志。
@@ -32,6 +32,8 @@
 ## 打包与状态单例
 
 上游来源由 [UPSTREAM.md](../../../../plugins/extensions/typesafe/UPSTREAM.md) 锁定。宿主的 local-extension 流水线安装锁定生产依赖、针对宿主 SDK 预编译并保留许可证，不依赖未来发布的 npm 包。
+
+同步注册读取 manifest 的配置 schema。预编译将 evaluator、HTTP transport 和 TypeBox 校验拆到首次评估加载的模块，provider 就绪检查只读取当前配置及原生已准备的凭据。
 
 Gateway bundle 与动态插件必须解析到同一组原生 `secret-input-runtime` ESM 状态所有者，包含 prepared secrets、配置快照/准备作用域、环境发布、auth revision/ownership/read cache、不可用 owner 和错误类。将这些模块分别内联会产生空凭据快照、失效错误缓存或破坏 `instanceof` 分类；不能靠修改原生凭据算法或能力检查补救。构建从锁定 pristine 包重建并保留这些外部模块。
 

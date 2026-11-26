@@ -49,8 +49,6 @@ Use supplied data, inline assets and local JavaScript. For native resource limit
 links or the optional human-confirmed draft bridge, read
 [native HTML](references/native-html.md).
 
-When its fixed table/chart/form components fit and the kind is advertised, use
-`interactive-answer`; read [fixed components](references/fixed-components.md).
 No visualization library is preloaded. Keep explicit file/app deliverables and
 user-selected presentation paths intact.
 

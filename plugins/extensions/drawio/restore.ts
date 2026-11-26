@@ -4,9 +4,6 @@ import path from 'node:path';
 
 import type { SessionMcpRuntime } from 'openclaw/plugin-sdk/agent-harness-runtime';
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
-import { dispatchGatewayMethod } from 'openclaw/plugin-sdk/gateway-method-runtime';
-import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
-import { readVisibleSessionTranscriptMessageEntries } from 'openclaw/plugin-sdk/session-transcript-runtime';
 
 import {
   type DiagramSource,
@@ -96,7 +93,7 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
   for (const method of [DRAWIO_RESTORE_METHOD, DRAWIO_CURRENT_METHOD])
     api.registerGatewayMethod(
       method,
-      async ({ params, respond, client, hasCurrentClientAuthority }) => {
+      async ({ params, respond, client, hasCurrentClientAuthority, signal }) => {
         try {
           const epoch = serviceEpoch;
           const { sessionKey, sessionId, viewId, agentId } = params;
@@ -109,7 +106,36 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
             !sessionKey.startsWith(`agent:${agentId}:`)
           )
             throw new Error('Invalid diagram identity');
+          const assertAvailable = () => {
+            const cfg = api.runtime.config.current();
+            if (
+              !active ||
+              serviceEpoch !== epoch ||
+              client?.connectionSignal?.aborted ||
+              hasCurrentClientAuthority?.() === false ||
+              cfg.mcp?.apps?.enabled !== true ||
+              cfg.plugins?.enabled === false ||
+              cfg.plugins?.entries?.drawio?.enabled === false
+            )
+              throw new Error('Diagram session changed');
+          };
+          const assertRequestAvailable = () => {
+            signal?.throwIfAborted();
+            assertAvailable();
+          };
+          assertRequestAvailable();
+          const [
+            { dispatchGatewayMethod },
+            { getSessionEntry },
+            { readVisibleSessionTranscriptMessageEntries },
+          ] = await Promise.all([
+            import('openclaw/plugin-sdk/gateway-method-runtime'),
+            import('openclaw/plugin-sdk/session-store-runtime'),
+            import('openclaw/plugin-sdk/session-transcript-runtime'),
+          ]);
+          assertRequestAvailable();
           const history = await dispatchGatewayMethod('chat.history', { sessionKey, limit: 1 });
+          assertRequestAvailable();
           const identity = history.payload as { sessionKey?: string; sessionId?: string };
           if (
             !history.ok ||
@@ -121,26 +147,22 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
           if (initial?.sessionId !== sessionId) throw new Error('Diagram session changed');
           const lifecycleRevision = initial.lifecycleRevision;
           const assertCurrent = () => {
-            const cfg = api.runtime.config.current();
+            assertAvailable();
             const entry = getSessionEntry({ sessionKey, agentId, readConsistency: 'latest' });
-            if (
-              !active || serviceEpoch !== epoch ||
-              client?.connectionSignal?.aborted ||
-              hasCurrentClientAuthority?.() === false ||
-              cfg.mcp?.apps?.enabled !== true ||
-              cfg.plugins?.enabled === false ||
-              cfg.plugins?.entries?.drawio?.enabled === false ||
-              entry?.sessionId !== sessionId || entry.lifecycleRevision !== lifecycleRevision
-            )
+            if (entry?.sessionId !== sessionId || entry.lifecycleRevision !== lifecycleRevision)
               throw new Error('Diagram session changed');
           };
-          assertCurrent();
+          const assertRequestCurrent = (assertOwner = assertCurrent) => {
+            signal?.throwIfAborted();
+            assertOwner();
+          };
+          assertRequestCurrent();
           const entries = await readVisibleSessionTranscriptMessageEntries({
             sessionKey,
             sessionId,
             agentId,
           });
-          assertCurrent();
+          assertRequestCurrent();
           const messages = entries.map(entry => entry.message);
           const editing = getDiagramEditingState();
           const recoveredSource = editing.recovered.get(viewId)?.source;
@@ -162,12 +184,12 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
                 assertCurrent();
                 readAdmittedDiagramSource(owner, params.diagramId as string);
               };
-              assertSourceCurrent();
+              assertRequestCurrent(assertSourceCurrent);
               const editor = await editorResource();
-              assertSourceCurrent();
+              assertRequestCurrent(assertSourceCurrent);
               const { prepareHarnessNativeMcpAppPreview } =
                 await import('openclaw/plugin-sdk/agent-harness-runtime');
-              assertSourceCurrent();
+              assertRequestCurrent(assertSourceCurrent);
               const preview = await prepareHarnessNativeMcpAppPreview({
                 runtime: resourceRuntime(sessionId, sessionKey, assertSourceCurrent, editor),
                 agentId,
@@ -179,13 +201,13 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
                 toolResult: { content: [] },
                 allowedAppToolNames: new Set(),
               });
-              assertSourceCurrent();
+              assertRequestCurrent(assertSourceCurrent);
               const resourceViewId = record(record(preview?.mcpAppPreview).mcpApp).viewId;
               if (typeof resourceViewId !== 'string') throw new Error('Diagram UI unavailable');
               const result = await dispatchGatewayMethod('mcp.app.view', {
                 sessionKey, agentId, viewId: resourceViewId,
               });
-              assertSourceCurrent();
+              assertRequestCurrent(assertSourceCurrent);
               if (!result.ok) throw new Error('Diagram UI unavailable');
               const payload = record(result.payload);
               if (typeof payload.html !== 'string' || typeof payload.sandboxUrl !== 'string' ||
@@ -247,13 +269,13 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
             agentId,
           };
           const editor = await editorResource();
-          assertCurrent();
+          assertRequestCurrent();
           // This plugin-owned adapter serves its own immutable UI only. It never
           // reconnects MCP, executes create_diagram, or reinstates old tool grants.
           const runtime = resourceRuntime(sessionId, sessionKey, assertCurrent, editor);
           const { prepareHarnessNativeMcpAppPreview } =
             await import('openclaw/plugin-sdk/agent-harness-runtime');
-          assertCurrent();
+          assertRequestCurrent();
           const preview = await prepareHarnessNativeMcpAppPreview({
             runtime,
             agentId,
@@ -268,12 +290,13 @@ export function registerDiagramRecovery(api: OpenClawPluginApi) {
           const newViewId = (preview?.mcpAppPreview as { mcpApp?: { viewId?: string } })?.mcpApp
             ?.viewId;
           if (!newViewId) throw new Error('Diagram UI unavailable');
+          assertRequestCurrent();
           const result = await dispatchGatewayMethod('mcp.app.view', {
             sessionKey,
             agentId,
             viewId: newViewId,
           });
-          assertCurrent();
+          assertRequestCurrent();
           if (!result.ok) throw new Error('Diagram UI unavailable');
           editing.recovered.set(newViewId, { source, diagramId });
           if (editing.recovered.size > 128)

@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
-import { isReplaySafeToolCall } from 'openclaw/plugin-sdk/agent-harness-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
-import { Type } from 'typebox';
+import * as Type from 'typebox/type';
 
 const PLUGIN_ID = 'plan-mode';
 const STATE_NAMESPACE = 'state';
@@ -199,12 +198,12 @@ const isReadOnlyShellCommand = (params: unknown): boolean => {
   });
 };
 
-const isMutatingTool = (event: {
+const isMutatingTool = async (event: {
   toolName: string;
   toolKind?: string;
   derivedPaths?: readonly string[];
   params?: unknown;
-}): boolean => {
+}): Promise<boolean> => {
   const normalized = event.toolName.trim().toLowerCase();
   if (normalized === 'team_discussion')
     return !isRecord(event.params) || event.params.action !== 'read';
@@ -216,6 +215,7 @@ const isMutatingTool = (event: {
     return !isReadOnlyShellCommand(event.params);
   }
   if (REPLAY_CLASSIFIED_TOOLS.has(normalized) || normalized.endsWith('_actions')) {
+    const { isReplaySafeToolCall } = await import('openclaw/plugin-sdk/agent-harness-runtime');
     return !isReplaySafeToolCall(normalized, event.params);
   }
   return (
@@ -363,9 +363,9 @@ const plugin = {
     api.registerTrustedToolPolicy({
       id: POLICY_ID,
       description: 'Blocks explicit mutation tools while a session is in Plan mode.',
-      evaluate: (event, context) => {
+      evaluate: async (event, context) => {
         const state = context.getSessionExtension?.(STATE_NAMESPACE);
-        if (!isRecord(state) || state.enabled !== true || !isMutatingTool(event)) return;
+        if (!isRecord(state) || state.enabled !== true || !(await isMutatingTool(event))) return;
         return {
           allow: false,
           reason:

@@ -662,7 +662,7 @@ Main KV `activity.reportingSchedule` 只保存北京时间日期、已预留窗�
 插件负责业务表、私有数据文件、持久回执及其恢复规则。宿主不在此重复维护插件表清单或业务状态机；它只负责提供同库事务、schema 初始化与通用资源保护。包被移走后，其业务存储说明应随包保留。
 
 - [协作插件存储](../plugins/extensions/agent-team/persistence.md)。
-- [工作流插件存储](../plugins/extensions/swarm-workflow/persistence.md)。
+- [工作流插件存储与恢复查询](../plugins/extensions/swarm-workflow/persistence.md)。
 
 ### 通用插件资源保护账本
 

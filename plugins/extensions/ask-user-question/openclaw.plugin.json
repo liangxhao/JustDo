@@ -3,7 +3,7 @@
   "name": "Ask User Question",
   "description": "Rich structured questions for the desktop application.",
   "activation": {
-    "onStartup": true,
+    "onStartup": false,
     "onCapabilities": ["tool"]
   },
   "contracts": {

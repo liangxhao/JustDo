@@ -42,6 +42,7 @@ export class FlowStore {
       'PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS flows (id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, parent_key TEXT NOT NULL, revision INTEGER NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS flows_parent ON flows(parent_key);',
     );
     this.batches = new BatchStore(this.db);
+    // Preserve index repair for history written before batch execution records existed.
     for (const flow of this.all()) this.batches.persist(flow);
   }
   all(): Flow[] {
@@ -49,6 +50,44 @@ export class FlowStore {
       .prepare('SELECT payload FROM flows ORDER BY rowid DESC')
       .all()
       .map(row => this.batches.hydrate(JSON.parse(String(row.payload))));
+  }
+  recoveryCandidates(): Flow[] {
+    return this.db
+      .prepare(
+        `SELECT f.payload FROM flows f WHERE
+        EXISTS (SELECT 1 FROM json_each(f.payload, '$.nodes') n WHERE
+          (json_extract(n.value, '$.kind') IS NOT 'batch'
+            AND json_extract(n.value, '$.status') IN ('preparing','running')) OR
+          (json_extract(n.value, '$.kind') = 'batch'
+            AND json_extract(n.value, '$.status') = 'preparing'
+            AND json_extract(n.value, '$.batchInput') IS NULL)) OR
+        EXISTS (SELECT 1 FROM batch_items b WHERE b.flow_id=f.id
+          AND b.status IN ('preparing','running'))
+        ORDER BY f.rowid DESC`,
+      )
+      .all()
+      .map(row => this.batches.hydrate(JSON.parse(String(row.payload))));
+  }
+  flowIds(scope: 'all' | 'unfinished'): string[] {
+    return this.db
+      .prepare(
+        scope === 'all'
+          ? 'SELECT id FROM flows ORDER BY rowid DESC'
+          : `SELECT id FROM flows WHERE json_extract(payload, '$.status') IS NOT 'completed'
+              AND json_extract(payload, '$.status') IS NOT 'cancelled' ORDER BY rowid DESC`,
+      )
+      .all()
+      .map(row => String(row.id));
+  }
+  runningFlowRevisions(): Array<{ id: string; revision: number }> {
+    return this.db
+      .prepare("SELECT id, revision FROM flows WHERE json_extract(payload, '$.status') = 'running' ORDER BY rowid DESC")
+      .all()
+      .map(row => ({ id: String(row.id), revision: Number(row.revision) }));
+  }
+  revision(id: string): number | undefined {
+    const row = this.db.prepare('SELECT revision FROM flows WHERE id=?').get(id);
+    return row ? Number(row.revision) : undefined;
   }
   forParents(parentKeys: readonly string[]): Flow[] {
     const keys = [...new Set(parentKeys)];
@@ -91,6 +130,12 @@ export class FlowStore {
   get(id: string, itemId?: string): Flow | undefined {
     const row = this.db.prepare('SELECT payload FROM flows WHERE id=?').get(id);
     return row ? this.batches.hydrate(JSON.parse(String(row.payload)), itemId) : undefined;
+  }
+  getBlocked(id: string): Flow | undefined {
+    const row = this.db
+      .prepare("SELECT payload FROM flows WHERE id=? AND json_extract(payload, '$.status') = 'blocked'")
+      .get(id);
+    return row ? this.batches.hydrate(JSON.parse(String(row.payload))) : undefined;
   }
   insert(flow: Flow): void {
     this.transaction(() => {

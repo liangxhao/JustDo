@@ -4,8 +4,9 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { readLocalConfig } from '../config';
 import { readOnlineConfig, requestOnlineTranscription, transcribeOnlineFile } from '../online';
-import { readConfig, type RunCommand } from '../transcribe';
+import type { RunCommand } from '../transcribe';
 
 const http = vi.hoisted(() => ({
   fetch: vi.fn(),
@@ -80,7 +81,12 @@ describe('configured online attachment transcription', () => {
   it('requires explicit online fields and resolved credentials without a public or local default', () => {
     expect(config.apiKey).toBe('');
     expect(
-      readConfig({ command: path.resolve('asr.exe'), args: [], modelId: 'old', language: 'en' }),
+      readLocalConfig({
+        command: path.resolve('asr.exe'),
+        args: [],
+        modelId: 'old',
+        language: 'en',
+      }),
     ).toBeNull();
     for (const value of [
       { mode: 'online' },

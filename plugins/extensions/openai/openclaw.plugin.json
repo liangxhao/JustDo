@@ -17,7 +17,7 @@
     }
   ],
   "activation": {
-    "onStartup": true
+    "onStartup": false
   },
   "enabledByDefault": true,
   "providers": [

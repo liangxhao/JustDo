@@ -7,7 +7,7 @@ import {
   RealtimeVoiceSessionLifecycle,
   toStringifiedError,
 } from 'openclaw/plugin-sdk/realtime-voice-provider';
-import WebSocket from 'ws';
+import type WebSocket from 'ws';
 
 import { normalizeSpeechServiceBaseUrl, SPEECH_PROTOCOL_IDS } from '../../sdk/speech-protocols/index.js';
 import { requireSpeechIdentifier } from './intranet-config.js';
@@ -67,11 +67,12 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
     if (this.lifecycle.phase() === 'terminal') {
       return;
     }
-    if (!this.lifecycle.isReady() || this.ws?.readyState !== WebSocket.OPEN) {
+    const ws = this.ws;
+    if (!this.lifecycle.isReady() || !ws || ws.readyState !== ws.OPEN) {
       this.lifecycle.enqueuePendingAudio(audio);
       return;
     }
-    if (this.ws.bufferedAmount > OPENAI_REALTIME_MAX_BUFFERED_AUDIO_BYTES) {
+    if (ws.bufferedAmount > OPENAI_REALTIME_MAX_BUFFERED_AUDIO_BYTES) {
       this.droppedInputAudioFrames += 1;
       const now = Date.now();
       if (now - this.lastInputAudioDropWarningAt >= OPENAI_REALTIME_AUDIO_DROP_WARN_INTERVAL_MS) {
@@ -167,7 +168,7 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
   }
 
   isConnected(): boolean {
-    return this.lifecycle.isReady() && this.ws?.readyState === WebSocket.OPEN;
+    return this.lifecycle.isReady() && this.isTransportOpen();
   }
 
   private async doConnect(lifecycleConnection: RealtimeVoiceSessionConnection): Promise<void> {
@@ -179,16 +180,24 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
       timeoutError: () => new Error('OpenAI realtime connection timeout'),
       onTimeout: () => activeWs?.terminate(),
       onAbort: () => {
-        if (activeWs && activeWs.readyState !== WebSocket.CLOSED) {
+        if (activeWs && activeWs.readyState !== activeWs.CLOSED) {
           activeWs.close(1000, 'connection canceled');
         }
       },
     });
 
-    const openWebSocket = (resolvedConnection: {
+    const openWebSocket = async (resolvedConnection: {
       url: string;
       headers: Record<string, string>;
     }) => {
+      if (attempt.settled) {
+        return;
+      }
+      if (!this.lifecycle.isCurrent(lifecycleConnection) || lifecycleConnection.signal.aborted) {
+        attempt.resolve();
+        return;
+      }
+      const { default: Socket } = await import('ws');
       if (attempt.settled) {
         return;
       }
@@ -201,7 +210,7 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
       attempt.startTimeout();
       const debugProxy = this.runtime.resolveDebugProxySettings();
       const proxyAgent = this.runtime.createDebugProxyWebSocketAgent(debugProxy);
-      const ws = new WebSocket(resolvedConnection.url, {
+      const ws = new Socket(resolvedConnection.url, {
         headers: resolvedConnection.headers,
         maxPayload: OPENAI_VOICE_WS_MAX_PAYLOAD_BYTES,
         ...(proxyAgent ? { agent: proxyAgent } : {}),
@@ -213,7 +222,7 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
         if (!attempt.rejectStartup(error)) {
           return;
         }
-        if (ws.readyState !== WebSocket.CLOSED) {
+        if (ws.readyState !== ws.CLOSED) {
           ws.close(1000, 'startup failed');
         }
       };
@@ -337,24 +346,20 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
       attempt.reject(toStringifiedError(error));
       return attempt.promise;
     }
-    if (connectionOrPromise instanceof Promise) {
-      void connectionOrPromise.then(openWebSocket).catch((error: unknown) => {
-        if (
-          !this.lifecycle.isCurrent(lifecycleConnection) ||
-          this.lifecycle.terminalOutcome(lifecycleConnection) === 'completed'
-        ) {
-          attempt.resolve();
-          return;
-        }
-        attempt.reject(toStringifiedError(error));
-      });
-    } else {
-      try {
-        openWebSocket(connectionOrPromise);
-      } catch (error) {
-        attempt.reject(toStringifiedError(error));
+    const opening =
+      connectionOrPromise instanceof Promise
+        ? connectionOrPromise.then(openWebSocket)
+        : openWebSocket(connectionOrPromise);
+    void opening.catch((error: unknown) => {
+      if (
+        !this.lifecycle.isCurrent(lifecycleConnection) ||
+        this.lifecycle.terminalOutcome(lifecycleConnection) === 'completed'
+      ) {
+        attempt.resolve();
+        return;
       }
-    }
+      attempt.reject(toStringifiedError(error));
+    });
     await attempt.promise;
   }
 
@@ -422,7 +427,7 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
     try {
       this.config.onError?.(error);
     } finally {
-      if (ws.readyState !== WebSocket.CLOSED) {
+      if (ws.readyState !== ws.CLOSED) {
         ws.close(close.code, close.reason);
       } else {
         this.notifyClose(connection, 'error');
@@ -444,7 +449,7 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
 
   protected sendEvent(event: { type: string; [key: string]: unknown }, detail?: string): void {
     const ws = this.ws;
-    if (ws?.readyState === WebSocket.OPEN) {
+    if (ws && ws.readyState === ws.OPEN) {
       const { type } = event;
       const payload = JSON.stringify(event);
       ws.send(payload);
@@ -458,7 +463,8 @@ export class OpenAIRealtimeBridge extends OpenAIRealtimeEvents implements Realti
   }
 
   protected isTransportOpen(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    const ws = this.ws;
+    return ws !== null && ws.readyState === ws.OPEN;
   }
 
   protected rotateExpiredSession(): void {

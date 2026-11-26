@@ -1,4 +1,4 @@
-import { Type } from 'typebox';
+import * as Type from 'typebox/type';
 
 export const BROWSER_TOOL_ACTIONS = [
   'doctor',

@@ -7,21 +7,10 @@ URL. Compact self-contained cards and conversation draft actions use the native
 `show_widget` tool. Design skills can supply source and appearance; Smart Canvas
 completes the visible delivery.
 
-The plugin registers one optional `interactive-answer` content kind for tables,
-comparisons, charts, forms and expandable steps. Custom compact layouts use
-native HTML/SVG directly. Complete webpages retain their ordinary HTML, assets
-and loaders in the separate webpage viewer. No networking adapter, tool hook,
-HTTP route, additional tool or runtime patch is registered.
-
-## Ownership
-
-- `ui/` owns fixed component schema, document composition, renderer, labels and styles.
-- `document/` owns the shared serialization and renderer-loading helpers.
-- `skills/visualize/` owns viewer selection and its on-demand authoring references.
-- `tests/` owns fixed-component and resource-loading tests.
-
-The plugin is enabled by default; configuration preserves explicit enable/disable
-choices. Disabling it does not delete native history or rewrite saved documents.
+The plugin is enabled by default and sets `activation.onStartup` to `false`.
+Its manifest declares the `visualize` skill, which links to its authoring references.
+Gateway owns native tool admission, HTML wrapping and authenticated document
+reads. The app owns the webpage viewer and the draft confirmation UI.
 
 ## Delivery
 
@@ -50,26 +39,10 @@ data, inline assets and local interaction; no library is preloaded. Native CSP
 and capability checks remain authoritative. Do not add pinning or network
 capabilities to adapt complete webpages. The [native HTML reference](../../../../plugins/extensions/smart-canvas/skills/visualize/references/native-html.md)
 covers resource constraints, links and the optional human-confirmed draft bridge.
-A bridge receipt confirms local suggestion delivery, not model execution; the
-user still sends through the normal composer.
+A bridge receipt confirms local suggestion delivery. The user still sends
+through the normal composer.
 
-For `kind: "interactive-answer"`, `widget_code` is a JSON string with `version`,
-`language`, `summary` and `blocks`. Its schema, limits and complete examples are
-in [fixed components](../../../../plugins/extensions/smart-canvas/skills/visualize/references/fixed-components.md). The source
-is capped at 64 KiB and eight blocks; unknown fields and executable content are
-rejected. The native resource is `/__smart_canvas__/ui.js`, and native storage
-records the kind as `smart-canvas:interactive-answer`.
-
-| Component | Local behavior                                               |
-| --------- | ------------------------------------------------------------ |
-| table     | Search, stable sorting, five-row pages and row details.      |
-| compare   | Select options with common metrics.                          |
-| chart     | Line/bar series toggles and a source data table.             |
-| form      | Text, numbers, selection, checkboxes and multiple selection. |
-| steps     | Keyboard-accessible expandable explanations.                 |
-
-Local inputs survive component switches. Reloading restores the supplied defaults;
-no selection store or historical document update API is added. Optional follow-up
-creates a bounded, reviewable draft for the user's existing confirmation flow.
+History entries for the retired `interactive-answer` kind remain. Their cards
+can no longer render. Use a new native HTML card to display that content again.
 
 See [content delivery](content-delivery.md) for resource and integration boundaries.

@@ -1,10 +1,11 @@
+import path from 'node:path';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import plugin from '../index';
 
 const execution = vi.hoisted(() => ({ local: vi.fn(), online: vi.fn() }));
 vi.mock('../transcribe', () => ({
-  readConfig: (value: { mode?: string } | undefined) => (value?.mode === 'local' ? value : null),
   transcribeFile: execution.local,
 }));
 vi.mock('../online', () => ({
@@ -66,13 +67,43 @@ describe('one configured transcription tool', () => {
     f.setConfig(undefined);
     expect(f.factory(f.context)).toBeNull();
   });
+  it('registers a configured local tool and only executes the selected local model', async () => {
+    const f = fixture();
+    const config = {
+      mode: 'local',
+      command: path.resolve('asr.exe'),
+      args: [],
+      modelId: 'local-model',
+      language: 'auto',
+    };
+    f.setConfig(config);
+    const tool = f.factory(f.context);
+    execution.local.mockResolvedValue({ text: 'local result' });
+
+    await expect(
+      tool.execute('call', { audio_path: '/permitted/audio.wav' }),
+    ).resolves.toMatchObject({
+      content: [{ type: 'text', text: 'local result' }],
+    });
+    expect(execution.local).toHaveBeenCalledWith(
+      '/permitted/audio.wav',
+      config,
+      expect.any(Object),
+    );
+    expect(execution.online).not.toHaveBeenCalled();
+  });
   it('blocks concurrent runs and rejects a retained selection before upload, then releases busy state', async () => {
     const f = fixture();
     const tool = f.factory(f.context);
     let complete!: () => void;
+    let started!: () => void;
+    const executionStarted = new Promise<void>(resolve => {
+      started = resolve;
+    });
     execution.online.mockImplementationOnce(async (_path, _config, options) => {
       await new Promise<void>(resolve => {
         complete = resolve;
+        started();
       });
       options.assertCurrent();
       return { text: 'old' };
@@ -81,6 +112,7 @@ describe('one configured transcription tool', () => {
     await expect(tool.execute('second', { audio_path: '/permitted/audio.wav' })).rejects.toThrow(
       'Another transcription',
     );
+    await executionStarted;
     f.setConfig({ mode: 'online', baseUrl: 'http://other/v1' });
     complete();
     await expect(running).rejects.toThrow('settings changed');

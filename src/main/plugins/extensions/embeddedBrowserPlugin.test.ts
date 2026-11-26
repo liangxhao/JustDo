@@ -132,7 +132,7 @@ const requestedEnvelope = (emit: ReturnType<typeof vi.fn>) => {
   expect(emit).toHaveBeenCalledOnce();
   const [eventName, payload, options] = emit.mock.calls[0] as [
     string,
-    { requestId: string; sessionKey: string; command: unknown; run: unknown },
+    { requestId: string; sessionKey: string; command: unknown; run: unknown; admissionRevision: number },
     unknown,
   ];
   expect(eventName).toBe('requested');
@@ -687,7 +687,7 @@ describe('Embedded browser extension', () => {
     );
     expect(emit).toHaveBeenLastCalledWith(
       'revoked',
-      { run: request.run },
+      { run: request.run, admissionRevision: request.admissionRevision },
       { scope: 'operator.read' },
     );
     expect(emit.mock.calls.filter(([name]) => name === 'released')).toEqual([]);

@@ -1,4 +1,5 @@
 // Run manually after the complete host runtime build; uses isolated state and makes no model requests.
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const net = require('node:net');
@@ -20,6 +21,7 @@ const { pathToFileURL } = require('node:url');
     'acpx',
     'ask-user-question',
     'automation-permission',
+    'embedded-browser',
     'plan-mode',
     'runtime-services',
     'code-mode-quickjs',
@@ -66,20 +68,15 @@ const { pathToFileURL } = require('node:url');
       if (child.exitCode !== null) throw new Error('Gateway exited: ' + child.exitCode);
       try {
         if (
-          (await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(800) })).ok
+          (await fetch(`http://127.0.0.1:${port}/startupz`, { signal: AbortSignal.timeout(800) })).ok
         )
           break;
       } catch {}
       await new Promise(r => setTimeout(r, 500));
     }
-    const file = fs
-      .readdirSync(path.join(root, 'dist'))
-      .find(
-        f =>
-          /^client-.*\.mjs$/.test(f) &&
-          fs.readFileSync(path.join(root, 'dist', f), 'utf8').includes('GatewayClient as t'),
-      );
-    const { t: GatewayClient } = await import(pathToFileURL(path.join(root, 'dist', file)).href);
+    const { GatewayClient } = await import(
+      pathToFileURL(path.join(root, 'dist/plugin-sdk/gateway-runtime.js')).href
+    );
     const hello = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Gateway handshake timed out')), 20000);
       client = new GatewayClient({
@@ -100,9 +97,20 @@ const { pathToFileURL } = require('node:url');
       client.start();
     });
     const methods = hello.features?.methods ?? [];
-    for (const method of ['progressCard.refresh', 'sessions.create', 'acpx.agent.doctor'])
+    for (const method of [
+      'progressCard.refresh',
+      'sessions.create',
+      'acpx.agent.doctor',
+      'planMode.list',
+      'planMode.resolve',
+      'askUserQuestion.list',
+      'askUserQuestion.resolve',
+      'embeddedBrowser.resolve',
+    ])
       if (!methods.includes(method)) throw new Error('Missing method: ' + method);
     await client.request('health', {});
+    assert.deepEqual(await client.request('planMode.list', {}), { requests: [] });
+    assert.deepEqual(await client.request('askUserQuestion.list', {}), { requests: [] });
     const session = await client.request('sessions.create', {
       key: 'agent:main:justdo:smoke',
       cwd: workspace,

@@ -12,9 +12,10 @@ it('rejects a retained history handler after disable and restores native history
   let enabled = true;
   const methods = new Map<
     string,
-    (call: { params: unknown; respond: ReturnType<typeof vi.fn> }) => Promise<void>
+    (call: { params: unknown; respond: ReturnType<typeof vi.fn>; signal?: AbortSignal }) => Promise<void>
   >();
   registerDiscussionHistory({
+    lifecycle: { signal: new AbortController().signal },
     runtime: {
       config: { current: () => ({ plugins: { entries: { 'agent-team': { enabled } } } }) },
     },
@@ -37,6 +38,15 @@ it('rejects a retained history handler after disable and restores native history
   });
   expect(sdk.transcript).not.toHaveBeenCalled();
   enabled = true;
+  const request = new AbortController();
+  const pending = handler({ params, respond, signal: request.signal });
+  request.abort();
+  await pending;
+  expect(respond).toHaveBeenLastCalledWith(false, undefined, {
+    code: 'invalid_request',
+    message: 'teamDiscussionHistoryUnavailable',
+  });
+  expect(sdk.transcript).not.toHaveBeenCalled();
   await handler({ params, respond });
   expect(respond).toHaveBeenLastCalledWith(true, { messages: [] });
   expect(sdk.transcript).toHaveBeenCalledWith({
@@ -52,6 +62,7 @@ it('retains native inbound attachments and public delivery attachments without l
     (call: { params: unknown; respond: ReturnType<typeof vi.fn> }) => Promise<void>
   >();
   registerDiscussionHistory({
+    lifecycle: { signal: new AbortController().signal },
     runtime: {
       config: { current: () => ({ plugins: { entries: { 'agent-team': { enabled: true } } } }) },
     },

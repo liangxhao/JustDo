@@ -7,7 +7,7 @@
   ],
   "enabledByDefault": false,
   "activation": {
-    "onStartup": true
+    "onStartup": false
   },
   "contracts": {
     "decisionProviders": [

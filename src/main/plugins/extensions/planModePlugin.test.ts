@@ -105,25 +105,28 @@ describe('Plan mode extension', () => {
     }
   });
 
-  test('blocks discussion side effects in Plan mode while allowing public history reads', () => {
+  test('blocks discussion side effects in Plan mode while allowing public history reads', async () => {
     const registered = registerPlugin();
     const enabled = { getSessionExtension: () => ({ enabled: true }) };
     for (const action of ['create', 'send', 'stop', undefined, 'unknown']) {
       expect(
-        registered.policy?.({ toolName: 'team_discussion', params: { action } }, enabled),
+        await registered.policy?.({ toolName: 'team_discussion', params: { action } }, enabled),
       ).toMatchObject({ allow: false });
     }
     expect(
-      registered.policy?.({ toolName: 'team_discussion', params: { action: 'read' } }, enabled),
+      await registered.policy?.(
+        { toolName: 'team_discussion', params: { action: 'read' } },
+        enabled,
+      ),
     ).toBeUndefined();
     expect(
-      registered.policy?.(
+      await registered.policy?.(
         { toolName: 'team_discussion', params: { action: 'create' } },
         { getSessionExtension: () => ({ enabled: false }) },
       ),
     ).toBeUndefined();
   });
-  test('injects planning instructions and blocks mutations while preserving read-only research', () => {
+  test('injects planning instructions and blocks mutations while preserving read-only research', async () => {
     const registered = registerPlugin();
     expect(registered.registerSessionExtension).toHaveBeenCalledWith(
       expect.objectContaining({ namespace: 'state', sessionEntrySlotKey: 'planMode' }),
@@ -139,35 +142,46 @@ describe('Plan mode extension', () => {
     expect(prepared.prependContext).not.toContain('Plan mode has been disabled');
 
     const policyContext = { getSessionExtension: () => ({ enabled: true, updatedAt: 1 }) };
-    expect(registered.policy?.({ toolName: 'write', params: {} }, policyContext)).toMatchObject({
+    expect(
+      await registered.policy?.({ toolName: 'write', params: {} }, policyContext),
+    ).toMatchObject({
       allow: false,
     });
     expect(
-      registered.policy?.({ toolName: 'read', params: { path: 'README.md' } }, policyContext),
+      await registered.policy?.({ toolName: 'read', params: { path: 'README.md' } }, policyContext),
     ).toBeUndefined();
     expect(
-      registered.policy?.(
+      await registered.policy?.(
         { toolName: 'present_plan', params: {}, derivedPaths: ['should-not-block'] },
         policyContext,
       ),
     ).toBeUndefined();
     expect(
-      registered.policy?.({ toolName: 'browser', params: { action: 'snapshot' } }, policyContext),
+      await registered.policy?.(
+        { toolName: 'browser', params: { action: 'snapshot' } },
+        policyContext,
+      ),
     ).toBeUndefined();
     expect(
-      registered.policy?.({ toolName: 'message', params: { action: 'send' } }, policyContext),
+      await registered.policy?.({ toolName: 'message', params: { action: 'send' } }, policyContext),
     ).toMatchObject({ allow: false });
     expect(
-      registered.policy?.({ toolName: 'sessions_spawn', params: {} }, policyContext),
+      await registered.policy?.({ toolName: 'sessions_spawn', params: {} }, policyContext),
     ).toMatchObject({ allow: false });
     expect(
-      registered.policy?.({ toolName: 'exec', params: { command: 'rg TODO src' } }, policyContext),
+      await registered.policy?.(
+        { toolName: 'exec', params: { command: 'rg TODO src' } },
+        policyContext,
+      ),
     ).toBeUndefined();
     expect(
-      registered.policy?.({ toolName: 'exec', params: { command: 'rm -rf build' } }, policyContext),
+      await registered.policy?.(
+        { toolName: 'exec', params: { command: 'rm -rf build' } },
+        policyContext,
+      ),
     ).toMatchObject({ allow: false });
     expect(
-      registered.policy?.(
+      await registered.policy?.(
         {
           toolName: 'exec',
           params: { command: 'Get-ChildItem *.ts -Force | Select-Object Mode, Name' },
@@ -176,13 +190,13 @@ describe('Plan mode extension', () => {
       ),
     ).toBeUndefined();
     expect(
-      registered.policy?.(
+      await registered.policy?.(
         { toolName: 'exec', params: { command: 'Get-ChildItem | Remove-Item' } },
         policyContext,
       ),
     ).toMatchObject({ allow: false });
     expect(
-      registered.policy?.(
+      await registered.policy?.(
         { toolName: 'exec', params: { command: 'Get-Content (Remove-Item target)' } },
         policyContext,
       ),
@@ -210,9 +224,9 @@ describe('Plan mode extension', () => {
     ['dismiss_task', { task_id: 'task-1' }, true],
     ['tool_call', { id: 'write' }, false],
     ['tool_search_code', { code: 'return await openclaw.tools.call("read", {})' }, true],
-  ])('classifies %s action %#', (toolName, params, blocked) => {
+  ])('classifies %s action %#', async (toolName, params, blocked) => {
     const registered = registerPlugin();
-    const result = registered.policy?.(
+    const result = await registered.policy?.(
       { toolName, params },
       { getSessionExtension: () => ({ enabled: true, updatedAt: 1 }) },
     );

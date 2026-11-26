@@ -11,6 +11,9 @@
     "extensions": [
       "./index.ts"
     ],
+    "build": {
+      "splitRuntime": true
+    },
     "bundledPolicy": {
       "userToggleable": true
     }

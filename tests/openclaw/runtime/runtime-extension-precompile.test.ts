@@ -71,6 +71,40 @@ afterEach(() => {
 });
 
 describe('local extension packaging', () => {
+  test('emits opted-in runtime code as a lazy module beside the main entry', async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-split-runtime-'));
+    roots.push(runtimeRoot);
+    const outputDir = path.join(runtimeRoot, 'dist', 'extensions', 'split-fixture');
+    fs.mkdirSync(outputDir, { recursive: true });
+    const pkgPath = path.join(outputDir, 'package.json');
+    fs.writeFileSync(
+      pkgPath,
+      JSON.stringify({
+        type: 'module',
+        openclaw: { extensions: ['./index.ts'], build: { splitRuntime: true } },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(outputDir, 'index.ts'),
+      'export const readRuntime = () => import("./deferred.ts").then(module => module.asset);',
+    );
+    fs.writeFileSync(
+      path.join(outputDir, 'deferred.ts'),
+      'export const asset = new URL("./runtime-resource.txt", import.meta.url).href;',
+    );
+
+    await precompileOpenClawExtensions(runtimeRoot, { required: true });
+
+    const [entry] = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).openclaw.extensions;
+    const entryPath = path.resolve(outputDir, entry);
+    expect(entry).toBe('./index.js');
+    expect(fs.readFileSync(entryPath, 'utf8')).not.toContain('runtime-resource.txt');
+    const runtime = await import(pathToFileURL(entryPath).href);
+    expect(await runtime.readRuntime()).toBe(
+      pathToFileURL(path.join(outputDir, 'runtime-resource.txt')).href,
+    );
+  });
+
   test.each([
     ['setup-api.ts', 'setup-api.js'],
     ['setup-api.mts', 'setup-api.mjs'],

@@ -91,7 +91,7 @@ test('replaces the entire native directory and compiles main, setup, policy, cat
   expect(fs.existsSync(path.join(target, 'index.js'))).toBe(true);
 });
 
-test('binds retained speech production sources and contracts to the runtime fingerprint', () => {
+test('binds retained speech and MCP production sources to the runtime fingerprint', () => {
   const files = listBuildRecipeFiles(path.resolve('.')).map((file: string) =>
     path.relative('.', file).replaceAll('\\', '/'),
   );
@@ -111,6 +111,7 @@ test('binds retained speech production sources and contracts to the runtime fing
     'plugins/sdk/speech-protocols/index.ts',
     'plugins/extensions/stt-local-cli/online.ts',
     'plugins/extensions/tts-local-cli/online.ts',
+    'plugins/extensions/runtime-services/mcp-app-history.ts',
     'plugins/extensions/runtime-services/speech.ts',
     'plugins/extensions/runtime-services/contracts/speech.ts',
   ])
@@ -120,16 +121,14 @@ test('binds retained speech production sources and contracts to the runtime fing
   );
 });
 
-test('binds Smart Canvas UI sources while excluding unused assets and tests', () => {
+test('binds Smart Canvas activation metadata while excluding unused assets and tests', () => {
   const files = listBuildRecipeFiles(path.resolve('.')).map((file: string) =>
     path.relative('.', file).replaceAll('\\', '/'),
   );
   for (const name of [
     'index.ts',
-    'document/resource-bootstrap.ts',
-    'document/serialization.ts',
-    'ui/content-kind.ts',
-    'ui/runtime.ts',
+    'openclaw.plugin.json',
+    'package.json',
   ])
     expect(files).toContain(`plugins/extensions/smart-canvas/${name}`);
   expect(

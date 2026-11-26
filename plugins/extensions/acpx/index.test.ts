@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const { dispatch, createService } = vi.hoisted(() => ({
+const { dispatch, createService, getRuntime, redact } = vi.hoisted(() => ({
   dispatch: vi.fn(),
+  getRuntime: vi.fn(),
+  redact: vi.fn(),
   createService: vi.fn((_params: unknown) => ({
     id: 'fixture',
     start: async () => {},
@@ -10,8 +12,9 @@ const { dispatch, createService } = vi.hoisted(() => ({
 }));
 vi.mock('openclaw/plugin-sdk/acp-runtime-backend', () => ({
   tryDispatchAcpReplyHook: dispatch,
-  getAcpRuntimeBackend: () => undefined,
+  getAcpRuntimeBackend: getRuntime,
 }));
+vi.mock('openclaw/plugin-sdk/security-runtime', () => ({ redactSensitiveText: redact }));
 vi.mock('./register.runtime.js', () => ({ createAcpxRuntimeService: createService }));
 vi.mock('./src/pi-session-catalog-plugin.js', () => ({ registerPiSessionCatalog: vi.fn() }));
 
@@ -44,5 +47,27 @@ describe('managed ACP plugin registration', () => {
       expect.any(Function),
       { scope: 'operator.read' },
     );
+  });
+
+  it('redacts an adapter error before returning it to the caller', async () => {
+    getRuntime.mockReturnValueOnce({
+      runtime: { doctorAgent: vi.fn().mockRejectedValue(new Error('private adapter output')) },
+    });
+    redact.mockReturnValueOnce('redacted adapter output');
+    const registerGatewayMethod = vi.fn();
+    plugin.register({
+      pluginConfig: { diagnosticAgents: ['fixture'] },
+      registerService: vi.fn(),
+      registerGatewayMethod,
+      on: vi.fn(),
+    } as never);
+
+    const respond = vi.fn();
+    await registerGatewayMethod.mock.calls[0][1]({ params: { agentId: 'fixture' }, respond });
+
+    expect(respond).toHaveBeenCalledExactlyOnceWith(false, undefined, {
+      code: 'UNAVAILABLE',
+      message: 'redacted adapter output',
+    });
   });
 });

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "openclaw": {
+    "build": { "splitRuntime": true },
     "extensions": [
       "./index.ts"
     ]

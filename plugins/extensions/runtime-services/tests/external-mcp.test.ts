@@ -294,26 +294,37 @@ describe('session-scoped external MCP', () => {
     ).toMatchObject({ ok: true });
   });
 
+  it('does not connect when preparation is cancelled before schema validation loads', async () => {
+    const f = fixture();
+    const controller = new AbortController();
+    const opened = f.registry.open(f.request(), controller.signal);
+
+    controller.abort();
+
+    await expect(opened).rejects.toThrow('could not be prepared');
+    expect(f.connect).not.toHaveBeenCalled();
+  });
+
   it('cleans a late connection when the owner closes during preparation', async () => {
     const f = fixture();
     const request = f.request();
-    let complete!: (value: ExternalMcpConnection) => void;
+    const started = Promise.withResolvers<void>();
+    const connection = Promise.withResolvers<ExternalMcpConnection>();
     const late: ExternalMcpConnection = {
       tools: [],
       invoke: vi.fn(),
       close: vi.fn(async () => {}),
     };
-    f.connect.mockImplementationOnce(
-      () =>
-        new Promise(resolve => {
-          complete = resolve;
-        }),
-    );
+    f.connect.mockImplementationOnce(() => {
+      started.resolve();
+      return connection.promise;
+    });
     const opened = f.registry.open(request);
-    const rejected = expect(opened).rejects.toThrow('could not be prepared');
+    await started.promise;
     const closed = f.registry.close(request);
-    complete(late);
-    await Promise.all([rejected, closed]);
+    connection.resolve(late);
+    await expect(opened).rejects.toThrow('could not be prepared');
+    await closed;
     expect(late.close).toHaveBeenCalled();
     expect(f.registry.hasTools(contextFor(request))).toBe(false);
   });

@@ -3,7 +3,7 @@
   "name": "Embedded Browser",
   "description": "Controls the live browser panel in the desktop application.",
   "activation": {
-    "onStartup": true,
+    "onStartup": false,
     "onCapabilities": ["tool"]
   },
   "contracts": {

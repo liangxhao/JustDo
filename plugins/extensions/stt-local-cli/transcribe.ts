@@ -7,6 +7,8 @@ import { promisify } from 'node:util';
 
 import OpenCC from 'opencc-js/t2cn';
 
+import type { TranscriptionConfig } from './config';
+
 const execFileAsync = promisify(execFile);
 const requireDependency = createRequire(import.meta.url);
 const resolveDecoder = (): string => requireDependency('@ffmpeg-installer/ffmpeg').path;
@@ -31,13 +33,6 @@ const AUDIO_EXTENSIONS = new Set([
   '.mkv',
 ]);
 
-export type TranscriptionConfig = {
-  mode: 'local';
-  command: string;
-  args: string[];
-  modelId: string;
-  language: string;
-};
 export type RunCommand = (command: string, args: string[], signal: AbortSignal) => Promise<string>;
 
 const runCommand: RunCommand = async (command, args, signal) => {
@@ -76,22 +71,6 @@ export function parseTranscript(stdout: string): string {
     }
   }
   return '';
-}
-
-export function readConfig(value: unknown): TranscriptionConfig | null {
-  if (!value || typeof value !== 'object') return null;
-  const config = value as Partial<TranscriptionConfig>;
-  if (
-    config.mode !== 'local' ||
-    typeof config.command !== 'string' ||
-    !path.isAbsolute(config.command) ||
-    !Array.isArray(config.args) ||
-    !config.args.every(arg => typeof arg === 'string') ||
-    typeof config.modelId !== 'string' ||
-    typeof config.language !== 'string'
-  )
-    return null;
-  return config as TranscriptionConfig;
 }
 
 export type TranscriptionOptions = {

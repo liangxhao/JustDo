@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -13,7 +13,10 @@ afterEach(() => {
 it('consumes admission across restarts and preserves exact native run identities', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'team-ledger-'));
   roots.push(root);
-  const first = new DiscussionLedger(root);
+  const receiptDirectory = path.join(root, 'receipts');
+  const first = new DiscussionLedger(receiptDirectory);
+  expect(first.read('discussion')).toBeUndefined();
+  expect(existsSync(receiptDirectory)).toBe(false);
   const executions = [
     {
       discussionId: 'discussion',
@@ -33,14 +36,14 @@ it('consumes admission across restarts and preserves exact native run identities
     executions,
   });
   expect(first.read('discussion')?.state).toBe('running');
-  const restarted = new DiscussionLedger(root);
+  const restarted = new DiscussionLedger(receiptDirectory);
   expect(restarted.read('discussion')).toMatchObject({
     state: 'unknown',
     fingerprint: 'sha256-only',
     executions,
   });
-  expect(readdirSync(root)).toEqual(['discussion.json']);
-  expect(readFileSync(path.join(root, 'discussion.json'), 'utf8')).not.toMatch(
+  expect(readdirSync(receiptDirectory)).toEqual(['discussion.json']);
+  expect(readFileSync(path.join(receiptDirectory, 'discussion.json'), 'utf8')).not.toMatch(
     /message|prompt|content/,
   );
 });
@@ -116,9 +119,12 @@ it('retains the accepted native identity when generic receipt publication fails'
 it('keeps room deletion closed across native service restarts', () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'team-ledger-'));
   roots.push(root);
-  const ledger = new DiscussionLedger(root);
+  const receiptDirectory = path.join(root, 'receipts');
+  const ledger = new DiscussionLedger(receiptDirectory);
+  expect(ledger.isRoomClosed('deleted-room')).toBe(false);
+  expect(existsSync(receiptDirectory)).toBe(false);
   ledger.closeRoom('deleted-room');
-  expect(new DiscussionLedger(root).isRoomClosed('deleted-room')).toBe(true);
+  expect(new DiscussionLedger(receiptDirectory).isRoomClosed('deleted-room')).toBe(true);
 });
 
 it('does not invent a terminal for an explicitly uncertain execution after restarting', () => {

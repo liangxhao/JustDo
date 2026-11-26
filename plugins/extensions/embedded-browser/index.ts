@@ -8,7 +8,6 @@ import {
   readAppExecutionSourceBinding,
 } from '@app-plugin/sdk/execution-source';
 import type { OpenClawPluginApi, OpenClawPluginGatewayEvents } from 'openclaw/plugin-sdk/core';
-import { saveMediaBuffer } from 'openclaw/plugin-sdk/media-store';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 import {
@@ -121,7 +120,10 @@ const findScreenshotImage = (
   return undefined;
 };
 
-const appendScreenshotShareHint = async (content: unknown[]): Promise<unknown[]> => {
+const appendScreenshotShareHint = async (
+  content: unknown[],
+  assertCurrent: () => void,
+): Promise<unknown[]> => {
   const image = findScreenshotImage(content);
   if (!image) return content;
 
@@ -132,6 +134,8 @@ const appendScreenshotShareHint = async (content: unknown[]): Promise<unknown[]>
       throw new Error('Screenshot exceeds the outbound media limit.');
     }
     const extension = image.mimeType === 'image/jpeg' ? 'jpg' : 'png';
+    const { saveMediaBuffer } = await import('openclaw/plugin-sdk/media-store');
+    assertCurrent();
     const saved = await saveMediaBuffer(
       buffer,
       image.mimeType,
@@ -649,17 +653,23 @@ const plugin = {
                   operationSignal,
                   executionSource ?? undefined,
                 );
-                operationSignal?.throwIfAborted();
-                call.assertCurrent();
+                const assertCallCurrent = call.assertCurrent;
+                const assertOperationCurrent = () => {
+                  operationSignal?.throwIfAborted();
+                  assertCallCurrent();
+                };
+                assertOperationCurrent();
                 if (!response.ok) throw new Error(response.error);
                 if (isRecord(response.result) && Array.isArray(response.result.content)) {
                   const details = isRecord(response.result.details) ? response.result.details : {};
                   const content =
                     readString(input.action) === 'screenshot'
-                      ? await appendScreenshotShareHint(response.result.content)
+                      ? await appendScreenshotShareHint(
+                          response.result.content,
+                          assertOperationCurrent,
+                        )
                       : response.result.content;
-                  operationSignal?.throwIfAborted();
-                  call.assertCurrent();
+                  assertOperationCurrent();
                   return {
                     ...response.result,
                     content:

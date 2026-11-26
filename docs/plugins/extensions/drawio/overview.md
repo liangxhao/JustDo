@@ -41,6 +41,15 @@ choice, inject a host prompt, or add a runtime patch. The independent plugin too
 `drawio_diagram` reads/updates an already prepared canvas; creation still uses MCP.
 Disabling the plugin removes its skill from native discovery.
 
+For enabled installations, the declared `drawio_diagram` tool brings its factory
+and authenticated editor RPCs into the Gateway startup registry even with
+`activation.onStartup: false`. Native Gateway dispatch and session SDK modules
+load during the first authorized canvas request. Transcript SDK loading waits
+for a current-diagram or recovery request. The packaged registration entry
+loads a separate XML validator module on the first prepare, applied
+acknowledgment, or diagram update that needs validation. After each deferred
+step the caller rechecks its existing native authority before use.
+
 The App-only `open_editor` tool advertises a global entrypoint under
 `_meta['openai/ui'].entrypoints`. It opens an empty graph through native App
 discovery and launch, using the same bundled UI resource as `create_diagram`.

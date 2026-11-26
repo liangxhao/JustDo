@@ -33,7 +33,8 @@ describe("plugin ownership and configuration", () => {
     ).toBe(false);
     expect(Check(ConfigSchema, { timeoutMs: 60001 })).toBe(false);
     expect(Check(ConfigSchema, {})).toBe(true);
-    expect(manifest.configSchema).toEqual(structuredClone(ConfigSchema));
+    expect(plugin.configSchema.jsonSchema).toEqual(manifest.configSchema);
+    expect(ConfigSchema.properties.timeoutMs.default).toBe(runtimeConfig(undefined).timeoutMs);
     expect(manifest.configContracts.secretInputs.paths).toEqual([
       { path: "apiKey", expected: "string", ownerKind: "capability" },
     ]);

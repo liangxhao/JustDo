@@ -6,7 +6,7 @@
   "contracts": { "tools": ["drawio_diagram"], "gatewayMethodDispatch": ["authenticated-request"] },
   "categories": ["productivity"],
   "skills": ["./skills"],
-  "activation": { "onStartup": true, "onCapabilities": ["tool"] },
+  "activation": { "onStartup": false, "onCapabilities": ["tool"] },
   "mcpServers": {
     "drawio": { "command": "node", "args": ["./assets/server.cjs"] }
   },

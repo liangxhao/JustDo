@@ -263,17 +263,40 @@ describe('managed reply speech RPC', () => {
     expect(f.respond.mock.calls[0][0]).toBe(false);
   });
 
+  it('does not prepare synthesis when the request is cancelled during runtime loading', async () => {
+    const f = fixture();
+    const request = new AbortController();
+
+    const pending = f.invoke(undefined, { signal: request.signal });
+    request.abort();
+    await pending;
+
+    expect(resolveExplicitTtsOverrides).not.toHaveBeenCalled();
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(f.respond).toHaveBeenCalledWith(
+      false,
+      undefined,
+      expect.objectContaining({ code: 'UNAVAILABLE' }),
+    );
+  });
+
   it('discards late output after the managed profile changes', async () => {
     const f = fixture();
-    let finish!: (result: Awaited<ReturnType<typeof synthesizeSpeech>>) => void;
-    vi.mocked(synthesizeSpeech).mockReturnValue(
-      new Promise(resolve => {
-        finish = resolve;
-      }),
-    );
+    const started = Promise.withResolvers<void>();
+    const synthesis = Promise.withResolvers<Awaited<ReturnType<typeof synthesizeSpeech>>>();
+    vi.mocked(synthesizeSpeech).mockImplementation(() => {
+      started.resolve();
+      return synthesis.promise;
+    });
     const pending = f.invoke();
+    await started.promise;
     f.cfg.plugins.entries['runtime-services'].config.replySpeech.model = 'new-reader-model';
-    finish({ success: true, provider: 'openai', audioBuffer: audio, fileExtension: '.wav' });
+    synthesis.resolve({
+      success: true,
+      provider: 'openai',
+      audioBuffer: audio,
+      fileExtension: '.wav',
+    });
     await pending;
     expect(f.respond.mock.calls[0][0]).toBe(false);
   });

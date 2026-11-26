@@ -1,5 +1,4 @@
 import type { OpenClawPluginApi } from 'openclaw/plugin-sdk/core';
-import { withCodexSessionTranscriptMirrorWriteLock } from 'openclaw/plugin-sdk/codex-session-transcript-runtime';
 import { getSessionEntry } from 'openclaw/plugin-sdk/session-store-runtime';
 
 const managed = (key?: string) => Boolean(key && /^agent:[^:]+:justdo:[^:]+$/.test(key));
@@ -10,8 +9,12 @@ export function registerCollaborationHistory(api: OpenClawPluginApi): void {
     api.runtime.gateway.request(method, params, { scopes: ['operator.admin', 'operator.read'] });
   api.registerGatewayMethod(
     'collaboration.messages',
-    async ({ params, respond }) => {
-      try {
+    async ({ params, respond, signal, hasCurrentClientAuthority }) => {
+      const assertCurrent = () => {
+        signal?.throwIfAborted();
+        api.lifecycle.signal?.throwIfAborted();
+        if (hasCurrentClientAuthority?.() === false)
+          throw new Error('Collaboration message lookup failed.');
         const plugins = api.runtime.config.current().plugins;
         if (
           plugins?.enabled === false ||
@@ -20,6 +23,9 @@ export function registerCollaborationHistory(api: OpenClawPluginApi): void {
           (plugins?.allow?.length && !plugins.allow.includes('agent-team'))
         )
           throw new Error('Agent Team is disabled.');
+      };
+      try {
+        assertCurrent();
         const lookups = Array.isArray(params.lookups) ? params.lookups : [];
         if (!lookups.length || lookups.length > 16)
           throw new Error('Invalid collaboration message lookup.');
@@ -56,6 +62,10 @@ export function registerCollaborationHistory(api: OpenClawPluginApi): void {
           group.push(item);
           groups.set(item.sessionKey, group);
         }
+        const { withCodexSessionTranscriptMirrorWriteLock } = await import(
+          'openclaw/plugin-sdk/codex-session-transcript-runtime'
+        );
+        assertCurrent();
         for (const group of groups.values()) {
           const first = group[0];
           // The UUID in a managed session key is the product conversation ID,

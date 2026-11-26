@@ -35,6 +35,7 @@ OpenClaw 拥有消息、公开群发言、Thinking、工具结果与待发正文
 Agent Team schema 定义 team_discussion_rooms（固定成员映射、cwd、只读/权限、revision、generation、状态及来源任务）、team_discussion_runs（requestId / fingerprint / active slot / 状态）、team_discussion_executions（discussionId、成员、精确 sessionKey / sessionId / lifecycleRevision / runId / outcome）、team_discussion_task_links 和 team_discussion_deleted_rooms。
 
 只有房间元数据，不存正文。部分删除记录在成员元数据，compare-and-delete 成功后逐一标记；删除墓碑阻止复用旧 roomId。SDK 准备的 `state/plugin-data/agent-team/discussion-receipts/` 保存无正文 admission / close receipt；消息与公开 channel-final mirror 均属于 OpenClaw native transcript。
+讨论与汇总的回执子目录在首次写入回执或关闭标记时创建。服务启动时注册原生入口，查询可直接读取已有回执。
 
 详见 [Agent Team 现行契约](guide.md)。
 

@@ -408,7 +408,15 @@ function bundleProductExtension(sourceDir, targetDir, runtimeRoot) {
   require('esbuild').buildSync({
     ...bundleOptions,
     entryPoints: [path.resolve(sourceDir, entries[0])],
-    outfile: path.join(targetDir, 'index.js'),
+    ...(pkg.openclaw?.build?.splitRuntime === true
+      ? {
+          splitting: true,
+          outdir: targetDir,
+          entryNames: 'index',
+          // Lazy modules resolve platform resources relative to this directory.
+          chunkNames: 'runtime-[name]-[hash]',
+        }
+      : { outfile: path.join(targetDir, 'index.js') }),
   });
   if (pkg.openclaw?.build?.bundleFromSource === true) {
     // Native discovery loads setup/policy/contract entries independently. Like

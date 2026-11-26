@@ -2,6 +2,7 @@
   "id": "automation-permission",
   "name": "Automation Permission",
   "description": "Applies native session permissions to automation mutations.",
+  "activation": { "onStartup": false },
   "contracts": {
     "trustedToolPolicies": ["native-session-automation-permission"]
   },

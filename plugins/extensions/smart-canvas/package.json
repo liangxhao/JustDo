@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "openclaw": {
+    "build": {
+      "bundleFromSource": true
+    },
     "extensions": [
       "./index.ts"
     ]

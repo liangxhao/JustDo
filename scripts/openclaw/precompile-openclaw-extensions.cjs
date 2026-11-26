@@ -138,7 +138,9 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
       : {};
     const declaredEntries = [
       manifest.capabilityCatalogEntry,
-      ...(pkg.openclaw?.runtimeBundled === true ? (pkg.openclaw?.build?.workerEntries ?? []) : []),
+      ...(pkg.openclaw?.runtimeBundled === true || pkg.openclaw?.build?.bundleFromSource === true
+        ? (pkg.openclaw?.build?.workerEntries ?? [])
+        : []),
     ];
     for (const entryRel of declaredEntries) {
       if (typeof entryRel !== 'string' || !/\.(?:ts|mts|cts)$/.test(entryRel)) continue;
@@ -169,6 +171,10 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
             : '.js';
         const outFile = entry.entryAbs.replace(/\.(?:tsx?|mts|cts)$/, outputExtension);
         const outRel = entry.entryRel.replace(/\.(?:tsx?|mts|cts)$/, outputExtension);
+        const splitRuntime = entry === mainEntry && pkg.openclaw?.build?.splitRuntime === true;
+        if (splitRuntime && outputExtension === '.cjs') {
+          throw new Error('Runtime code splitting requires an ESM entry');
+        }
         await esbuild.build({
           entryPoints: [entry.entryAbs],
           bundle: true,
@@ -189,7 +195,15 @@ async function precompileOpenClawExtensions(runtimeDir, options = {}) {
               }
             : {}),
           target: 'es2023',
-          outfile: outFile,
+          ...(splitRuntime
+            ? {
+                splitting: true,
+                // Keep lazy modules beside the entry so their package-relative resources resolve.
+                outdir: path.dirname(outFile),
+                outExtension: { '.js': outputExtension },
+                chunkNames: 'runtime-[name]-[hash]',
+              }
+            : { outfile: outFile }),
           // Bundle all dependencies except SDK imports (resolved by jiti at runtime).
           // This inlines typebox and other small deps so the runtime
           // doesn't need them in node_modules.

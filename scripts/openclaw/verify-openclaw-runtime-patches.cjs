@@ -98,6 +98,7 @@ const BUILD_RECIPE_FILES = [
   'plugins/extensions/runtime-services/index.ts',
   'plugins/extensions/runtime-services/openclaw.plugin.json',
   'plugins/extensions/runtime-services/package.json',
+  'plugins/extensions/runtime-services/mcp-app-history.ts',
   'plugins/extensions/runtime-services/speech.ts',
   'plugins/extensions/runtime-services/contracts/speech.ts',
   'plugins/extensions/runtime-services/contracts/external-mcp.ts',

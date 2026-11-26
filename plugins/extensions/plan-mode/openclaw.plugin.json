@@ -3,7 +3,7 @@
   "name": "Plan Mode",
   "description": "Session-scoped planning workflow for the desktop application.",
   "activation": {
-    "onStartup": true,
+    "onStartup": false,
     "onCapabilities": ["tool"]
   },
   "contracts": {

@@ -142,6 +142,7 @@ test.each(['precompile', 'sync'] as const)(
       fs.writeFileSync(
         path.join(sdkRoot, 'process.mjs'),
         [
+          'globalThis.externalMcpColdTransportLoaded = true;',
           'export function isPidDefinitelyDead(pid) {',
           "  try { process.kill(pid, 0); return false; } catch (error) { return error.code === 'ESRCH'; }",
           '}',
