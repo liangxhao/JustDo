@@ -7,7 +7,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CredentialReaderExitCode } from '../../../../../plugins/extensions/runtime-services/contracts/model-auth';
-import { BUILTIN_MODEL_USER_ACCOUNT_FIELD } from '../../../providers/builtinModelCredential';
+import { BUILTIN_MODEL_USER_ACCOUNT_FIELD, type BuiltinModelCredential } from '../../../providers/builtinModelCredential';
 import {
   BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE, openBuiltinCredential, publishBuiltinCredentialFile,
   revokeBuiltinCredentialFile, sealBuiltinCredential, syncBuiltinCredentialFile as syncCredentialFile,
@@ -35,10 +35,11 @@ const source = () => ({
   memory: { search: { remote: { apiKey: { source: 'exec', provider: BUILTIN_SECRET_SOURCE, id: BUILTIN_SECRET_ID } } } },
 });
 const secret = 'synthetic-short-lived-jwt';
-const credential = { accessToken: secret, userAccount: 'test-user', expiresAt: Math.floor(Date.now() / 1000) + 300 };
+const issuedAt = Math.floor(Date.now() / 1000);
+const credential = { authType: 'jwt' as const, accessToken: secret, userAccount: 'test-user', issuedAt, expiresAt: issuedAt + 300 };
 const sessionId = 'a'.repeat(32);
 const runtimeSource = { executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex') };
-const syncBuiltinCredentialFile = (config: Record<string, unknown>, state: string, value: typeof credential | null, session = sessionId) =>
+const syncBuiltinCredentialFile = (config: Record<string, unknown>, state: string, value: BuiltinModelCredential | null, session = sessionId) =>
   syncCredentialFile(config, state, value ? { credential: value, authSessionId: session } : null, () => runtimeSource)!;
 
 describe('opaque JSON builtin credentials', () => {
@@ -135,7 +136,10 @@ describe('opaque JSON builtin credentials', () => {
     const file = path.join(state, 'credentials', 'credentials.json');
     const published = fs.readFileSync(file);
     expect(JSON.parse(openBuiltinCredential(published)))
-      .toMatchObject({ ...renewed, authSessionId: sessionId });
+      .toEqual({
+        accessToken: renewed.accessToken, userAccount: renewed.userAccount, expiresAt: renewed.expiresAt,
+        authType: renewed.authType, authSessionId: sessionId,
+      });
     expect(publishBuiltinCredentialFile(state, binding)).toBe(false);
     expect(syncBuiltinCredentialFile(first.config, state, renewed).secretsChanged).toBe(false);
     expect(fs.readFileSync(file)).toEqual(published);
@@ -239,28 +243,20 @@ describe('opaque JSON builtin credentials', () => {
     expect(JSON.stringify({ args: provider.args, env: provider.env })).not.toContain(secret);
   });
 
-  it('replaces the derived binary snapshot and revokes both known snapshot names', () => {
+  it('reports a failed snapshot revocation and removes it on retry', () => {
     const state = directory();
-    fs.mkdirSync(path.join(state, 'credentials'));
-    const legacy = path.join(state, 'credentials', 'credentials.bin');
-    fs.writeFileSync(legacy, 'obsolete encrypted snapshot');
     syncBuiltinCredentialFile(source(), state, credential);
-    expect(fs.existsSync(legacy)).toBe(false);
-    expect(JSON.parse(fs.readFileSync(path.join(state, 'credentials', 'credentials.json'), 'utf8')).version).toBe(1);
-    fs.writeFileSync(legacy, 'obsolete encrypted snapshot');
-    const unlink = fs.unlinkSync.bind(fs);
-    vi.spyOn(fs, 'unlinkSync').mockImplementation(file => {
-      if (String(file).endsWith('credentials.json')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
-      unlink(file);
+    const snapshot = path.join(state, 'credentials', 'credentials.json');
+    vi.spyOn(fs, 'unlinkSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
     });
     expect(() => revokeBuiltinCredentialFile(state)).toThrow('denied');
-    expect(fs.existsSync(legacy)).toBe(false);
-    vi.restoreAllMocks();
-    revokeBuiltinCredentialFile(state);
-    expect(fs.existsSync(path.join(state, 'credentials', 'credentials.json'))).toBe(false);
+    expect(fs.existsSync(snapshot)).toBe(true);
+    expect(revokeBuiltinCredentialFile(state)).toBe(true);
+    expect(fs.existsSync(snapshot)).toBe(false);
   });
 
-  it('revokes the binary on logout and does not load a credential for custom-only config', () => {
+  it('revokes the snapshot on logout and does not load a credential for custom-only config', () => {
     const state = directory();
     syncBuiltinCredentialFile(source(), state, credential);
     const loggedOut = syncBuiltinCredentialFile({}, state, null);

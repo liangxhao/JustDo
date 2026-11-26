@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { ProviderName } from '../../shared/providers';
 import {
   clearActiveBuiltinModelCredential,
+  inspectBuiltinModelCredential,
   setActiveBuiltinModelCredential,
 } from '../providers/builtinModelCredential';
 import { SessionTitleGenerator } from './sessionTitleGenerator';
@@ -29,11 +30,7 @@ test('generateTitle adds the short-lived JWT only for the built-in provider', as
     }),
     'test-signature',
   ].join('.');
-  setActiveBuiltinModelCredential({
-    accessToken,
-    userAccount: 'user-123',
-    expiresAt: nowSeconds + 300,
-  });
+  setActiveBuiltinModelCredential(inspectBuiltinModelCredential(accessToken, 'user-123').credential!);
   const fetchMock = vi.fn(
     async () =>
       new Response(JSON.stringify({ choices: [{ message: { content: '测试标题' } }] }), {

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 
 import type { BuiltinModelAuthConfig } from '../../config/builtinModelAuth';
+import { type BuiltinModelAuthIssue, BuiltinModelRefreshErrorCode } from '../../shared/providers/builtinModels';
 import { getMacAddress } from '../core/network/macAddress';
 import {
   BuiltinModelAuthDiagnosticEvent,
@@ -92,6 +93,13 @@ export function requiresBuiltinModelUserAction(error: unknown): error is Builtin
     (error.reason === BuiltinModelAuthDiagnosticReason.HttpRejected &&
       (error.httpStatus === 401 || error.httpStatus === 403))
   );
+}
+
+export function describeBuiltinModelAuthIssue(error: unknown): BuiltinModelAuthIssue | null {
+  if (!requiresBuiltinModelUserAction(error)) return null;
+  return error.reason === BuiltinModelAuthDiagnosticReason.DeviceUnavailable
+    ? { errorCode: BuiltinModelRefreshErrorCode.DeviceUnavailable }
+    : { errorCode: BuiltinModelRefreshErrorCode.ExchangeHttpError, httpStatus: error.httpStatus };
 }
 
 type Login = { mtoken: string; account: string; identity: string };
@@ -248,6 +256,14 @@ export class BuiltinModelTokenExchange {
     let httpStatus: number | undefined;
     let credentialCode: BuiltinModelCredentialFailureCode | undefined;
     let timeoutSignal: AbortSignal | undefined;
+    const ownsLogin = (): boolean => {
+      if (generation !== this.generation) return false;
+      if (readLogin(this.dependencies.userInfoPath)?.identity === login.identity) return true;
+      try { this.invalidate(); } catch {
+        // Snapshot revocation logs its own failure. Still discard the old exchange.
+      }
+      return false;
+    };
     try {
       const endpoint = new URL(config.tokenExchangeUrl);
       if (!['http:', 'https:'].includes(endpoint.protocol) || endpoint.username || endpoint.password || endpoint.hash) {
@@ -270,7 +286,8 @@ export class BuiltinModelTokenExchange {
       if (!response.ok) {
         httpStatus = response.status;
         await response.body?.cancel().catch((): void => undefined);
-        if ([400, 401, 403].includes(response.status) && generation === this.generation) {
+        if (!ownsLogin()) return null;
+        if ([400, 401, 403].includes(response.status)) {
           clearActiveBuiltinModelCredential();
           try { this.dependencies.onInvalidated?.(); } catch {
             // Snapshot revocation logs its own failure. Preserve the HTTP result
@@ -302,13 +319,12 @@ export class BuiltinModelTokenExchange {
       }
       stage = 'identity';
       // Re-read identity after the request: a late response must not restore a logged-out account.
-      if (generation !== this.generation) return null;
-      if (readLogin(this.dependencies.userInfoPath)?.identity !== login.identity ||
-        JSON.stringify(this.dependencies.getConfig()) !== JSON.stringify(config)) {
+      if (!ownsLogin()) return null;
+      if (JSON.stringify(this.dependencies.getConfig()) !== JSON.stringify(config)) {
         this.invalidate();
         return null;
       }
-      setActiveBuiltinModelCredential(credential, config.maxJwtLifetimeSeconds);
+      if (!setActiveBuiltinModelCredential(credential)) return null;
       writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.ExchangeSucceeded, {
         generation, elapsedMs: Date.now() - startedAt,
         expiresInSeconds: Math.floor(credential.expiresAt - Date.now() / 1000),
@@ -316,7 +332,7 @@ export class BuiltinModelTokenExchange {
       });
       return getActiveBuiltinModelCredential();
     } catch (error) {
-      if (generation !== this.generation) return null;
+      if (!ownsLogin()) return null;
       const networkCode = stage === 'request' && !(error instanceof TokenExchangeError) && !timeoutSignal?.aborted
         ? resolveNetworkErrorCode(error) : undefined;
       const reason = error instanceof TokenExchangeError

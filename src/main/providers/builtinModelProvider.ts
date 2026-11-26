@@ -216,14 +216,11 @@ export async function syncBuiltinModelProvider(
       if (!isCurrentBuiltinModelSync(store, syncState)) return false;
       const appConfig = store.get<AppConfig>('app_config') || {};
       const providers = { ...(appConfig.providers ?? {}) };
-      const previousBuiltinApiKey = providers[ProviderName.BuiltinModels]?.apiKey?.trim() || '';
-      const shouldClearLegacyApiKey =
-        appConfig.model?.defaultModelProvider === ProviderName.BuiltinModels ||
-        (Boolean(previousBuiltinApiKey) && appConfig.api?.key === previousBuiltinApiKey);
+      const builtinIsDefault = appConfig.model?.defaultModelProvider === ProviderName.BuiltinModels;
       const sanitizedApi = appConfig.api
         ? {
             ...appConfig.api,
-            ...(shouldClearLegacyApiKey ? { key: '' } : {}),
+            ...(builtinIsDefault ? { key: '' } : {}),
           }
         : undefined;
 
@@ -286,7 +283,7 @@ export async function syncBuiltinModelProvider(
         ...appConfig,
         api: {
           ...appConfig.api,
-          key: shouldClearLegacyApiKey ? '' : appConfig.api?.key || '',
+          key: builtinIsDefault ? '' : appConfig.api?.key || '',
           baseUrl: appConfig.api?.baseUrl || baseUrl,
         },
         model: nextModel,

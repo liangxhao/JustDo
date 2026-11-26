@@ -16,7 +16,7 @@ export type ProvidersConfig = NonNullable<AppConfig['providers']>;
 export type ProviderConfig = ProvidersConfig[string];
 
 export type ProviderConnectionTestResult = {
-  success: boolean;
+  status?: 'testing' | ModelConnectionTestStatus;
   message: string;
   provider: ProviderType;
   providerName: string;
@@ -24,7 +24,6 @@ export type ProviderConnectionTestResult = {
   modelLabel?: string;
   modelId?: string;
   log?: string;
-  isRunning?: boolean;
   modelResults?: ModelConnectionTestResult[];
 };
 
@@ -34,7 +33,7 @@ export type ModelConnectionTestResult = {
   modelId: string;
   detail: string;
   log?: string;
-  status?: 'pending' | 'testing' | 'success' | 'failed';
+  status?: 'pending' | 'testing' | ModelConnectionTestStatus;
 };
 
 export type ModelConnectionTestStatus = 'success' | 'failed';

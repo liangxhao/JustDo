@@ -4,7 +4,6 @@ import { AppConfigIpc, type AppConfigPatch } from '../../../shared/app/appConfig
 import { buildCustomProviderRenameAliases, ProviderName } from '../../../shared/providers';
 import {
   BuiltinModelIpc,
-  BuiltinModelRefreshErrorCode,
   type BuiltinModelRefreshResult,
 } from '../../../shared/providers/builtinModels';
 import {
@@ -14,11 +13,8 @@ import {
 import { reconcileLocalSpeechCatalog } from '../../../shared/speech/localSpeechSettings';
 import { enqueueAppConfigUpdate } from '../../data/appConfigUpdateQueue';
 import type { SqliteStore } from '../../data/sqliteStore';
-import {
-  BuiltinModelAuthDiagnosticReason,
-  getBuiltinModelAuthErrorCode,
-} from '../../providers/builtinModelAuthDiagnostics';
-import { requiresBuiltinModelUserAction } from '../../providers/builtinModelTokenExchange';
+import { getBuiltinModelAuthErrorCode } from '../../providers/builtinModelAuthDiagnostics';
+import { describeBuiltinModelAuthIssue } from '../../providers/builtinModelTokenExchange';
 
 interface StoreHandlerDependencies {
   getStore: () => SqliteStore;
@@ -166,23 +162,11 @@ export const registerStoreHandlers = ({
     try {
       return await refreshBuiltinModels() ? { success: true } : { success: false, skipped: true };
     } catch (error) {
-      if (!requiresBuiltinModelUserAction(error)) {
-        console.error(`[BuiltinModelProvider] Manual refresh failed ${JSON.stringify({
-          diagnosticCode: getBuiltinModelAuthErrorCode(error),
-        })}`);
-        return { success: false, skipped: true };
-      }
-      const errorCode = error.reason === BuiltinModelAuthDiagnosticReason.DeviceUnavailable
-        ? BuiltinModelRefreshErrorCode.DeviceUnavailable : BuiltinModelRefreshErrorCode.ExchangeHttpError;
-      const httpStatus = errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError ? error.httpStatus : undefined;
+      const issue = describeBuiltinModelAuthIssue(error);
       console.error(`[BuiltinModelProvider] Manual refresh failed ${JSON.stringify({
-        errorCode, httpStatus, diagnosticCode: getBuiltinModelAuthErrorCode(error),
+        ...issue, diagnosticCode: getBuiltinModelAuthErrorCode(error),
       })}`);
-      return {
-        success: false,
-        errorCode,
-        ...(httpStatus === undefined ? {} : { httpStatus }),
-      };
+      return issue ? { success: false, ...issue } : { success: false, skipped: true };
     }
   });
 };

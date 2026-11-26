@@ -20,7 +20,7 @@ describe('BuiltinModelCredentialMonitor', () => {
   test('refreshes shortly before the active JWT becomes unusable', () => {
     expect(
       resolveBuiltinModelCredentialExpiryDelayMs(
-        { accessToken: 'token', userAccount: 'user', expiresAt: 1_300 },
+        { authType: 'jwt', accessToken: 'token', userAccount: 'user', issuedAt: 1_000, expiresAt: 1_300 },
         1_000_000,
       ),
     ).toBe(240_000);
@@ -34,8 +34,10 @@ describe('BuiltinModelCredentialMonitor', () => {
     });
     const unwatchFile = vi.fn();
     const refreshed: BuiltinModelCredential = {
+      authType: 'jwt',
       accessToken: 'token',
       userAccount: 'user',
+      issuedAt: 1_999_999_700,
       expiresAt: 2_000_000_000,
     };
     const refresh = vi.fn(async () => refreshed);

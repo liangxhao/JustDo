@@ -329,6 +329,7 @@ describe('OpenClawConfigSyncService', () => {
     });
     const engineManager = {
       getStatus,
+      getConfigPath: () => options.configPath ?? 'openclaw.json',
       getStateDir: () => options.stateDir,
       withStoppedGatewayForMutation: vi.fn(),
       getGatewayConfigReloadGeneration: vi.fn(() => 7),
@@ -477,6 +478,12 @@ describe('OpenClawConfigSyncService', () => {
       getWindowsSandboxEnvironment: vi.fn(() => ({})),
     } as never);
     const configSync = {
+      withdrawStaleBuiltinBeforeLaunch: vi.fn((_authSessionId: string | null): {
+        ok: boolean;
+        changed: boolean;
+        configChanged: boolean;
+        configPath: string;
+      } | undefined => undefined),
       prepareWorkspaceExtensionInventory: vi.fn(async () => ({
         workspace: new Map(), configured: new Map(),
       })),
@@ -1348,12 +1355,12 @@ describe('OpenClawConfigSyncService', () => {
   });
 
   it('hot-reloads login when the Gateway environment is unchanged', async () => {
-    const secrets = {
-      JUSTDO_APIKEY_CUSTOM_1: 'custom-secret',
+    const launchEnvironment = {
+      PATH: 'runtime-bin',
     };
     const harness = createHarness({
-      previousSecrets: secrets,
-      nextSecrets: secrets,
+      previousSecrets: launchEnvironment,
+      nextSecrets: launchEnvironment,
       waitForReload: true,
     });
 
@@ -2252,6 +2259,173 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.requestGateway.mock.calls.some(([method]) => method === 'secrets.reload')).toBe(false);
     expect(harness.stopGateway).not.toHaveBeenCalled();
     expect(harness.startGateway).not.toHaveBeenCalled();
+  });
+
+  function builtinRenewalHarness(phase: 'ready' | 'running' = 'running') {
+    let authSessionId: string | null = 'current-login';
+    let authOwnerId = 'current-login';
+    let appliedRevision = 'applied-config-revision';
+    const getExtensionMcpServerNames = vi.fn(async () => new Set<string>());
+    const harness = createHarness({
+      phase, configChanged: false, getExtensionMcpServerNames,
+      getModelAuthSessionId: () => authSessionId,
+      getModelAuthSessionOwnerId: () => authOwnerId,
+    });
+    const previousResult = harness.configSync.sync();
+    const publication = { path: 'openclaw.json', isCurrent: () => true };
+    const result = { ...previousResult, publication, builtinCredentialSessionId: 'current-login' };
+    harness.configSync.sync.mockReset().mockImplementation((...args: unknown[]) =>
+      args[0] === 'auth-logout' ? previousResult : result);
+    const original = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params, options) => {
+      if (method === 'config.patch') {
+        expect(params).toEqual({ raw: '{}', baseHash: 'raw-config-hash' });
+        return { ok: true, noop: true, path: publication.path, changedPaths: [] };
+      }
+      const response = await original(method, params, options);
+      return method === 'config.get'
+        ? { ...response, hash: 'raw-config-hash', appliedConfigHash: appliedRevision }
+        : response;
+    });
+    return {
+      ...harness, getExtensionMcpServerNames,
+      setAuthSessionId: (value: string | null) => {
+        authSessionId = value;
+        if (value) authOwnerId = value;
+      },
+      setAppliedRevision: (value: string) => { appliedRevision = value; },
+    };
+  }
+
+  it('renews an already loaded built-in route without republishing Gateway configuration', async () => {
+    const harness = builtinRenewalHarness();
+    await expect(harness.service.syncConfig({ reason: 'auth-login' })).resolves.toMatchObject({
+      success: true, hostPolicyVerified: true,
+    });
+    harness.requestGateway.mockClear();
+    harness.configSync.sync.mockClear();
+    harness.getExtensionMcpServerNames.mockClear();
+
+    await expect(harness.service.reloadBuiltinModelCredential()).resolves.toMatchObject({
+      success: true, hostPolicyVerified: true,
+    });
+    expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'secrets.reload')).toHaveLength(1);
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    expect(harness.getExtensionMcpServerNames).not.toHaveBeenCalled();
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('does not reload a credential into an older source revision even if the disk projection is unchanged', async () => {
+    const harness = builtinRenewalHarness();
+    await harness.service.syncConfig({ reason: 'auth-login' });
+    harness.requestGateway.mockClear();
+    harness.configSync.sync.mockClear();
+    harness.setAppliedRevision('older-revision');
+
+    await expect(harness.service.reloadBuiltinModelCredential()).resolves.toMatchObject({
+      success: false, configSynced: false,
+    });
+    expect(harness.configSync.sync).toHaveBeenCalledOnce();
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'secrets.reload')).toBe(false);
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('keeps the source proof obligation when settings sync follows an unconfirmed credential reload', async () => {
+    const harness = builtinRenewalHarness();
+    await harness.service.syncConfig({ reason: 'auth-login' });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params, options) => {
+      if (method === 'secrets.reload') harness.setAppliedRevision('older-revision');
+      return request(method, params, options);
+    });
+    await expect(harness.service.reloadBuiltinModelCredential()).resolves.toMatchObject({ success: false });
+    harness.requestGateway.mockClear();
+
+    await expect(harness.service.syncConfig({ reason: 'settings' })).resolves.toMatchObject({ success: false });
+    expect(harness.requestGateway.mock.calls.some(([method]) => method === 'secrets.reload')).toBe(false);
+  });
+
+  it('continues settings sync when the credential expires while proving its loaded configuration', async () => {
+    const harness = builtinRenewalHarness();
+    await harness.service.syncConfig({ reason: 'auth-login' });
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params, options) => {
+      if (method === 'secrets.reload') harness.setAppliedRevision('older-revision');
+      return request(method, params, options);
+    });
+    await expect(harness.service.reloadBuiltinModelCredential()).resolves.toMatchObject({ success: false });
+    harness.setAppliedRevision('applied-config-revision');
+    harness.requestGateway.mockImplementation(async (method, params, options) => {
+      if (method === 'config.patch') harness.setAuthSessionId(null);
+      return request(method, params, options);
+    });
+
+    await expect(harness.service.syncConfig({ reason: 'settings' }))
+      .resolves.toMatchObject({ success: true, configSynced: true, hostPolicyVerified: true });
+    expect(harness.configSync.sync).toHaveBeenLastCalledWith('auth-logout', undefined, undefined,
+      { allowExpiredBuiltinSnapshot: true });
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('orders logout behind credential acknowledgement and ignores a superseded acknowledgement', async () => {
+    const harness = builtinRenewalHarness();
+    await harness.service.syncConfig({ reason: 'auth-login' });
+    harness.configSync.sync.mockClear();
+    const sent = Promise.withResolvers<void>();
+    const ack = Promise.withResolvers<{ ok: true }>();
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params, options) => {
+      if (method !== 'secrets.reload') return request(method, params, options);
+      sent.resolve();
+      return ack.promise;
+    });
+    const renewal = harness.service.reloadBuiltinModelCredential();
+    await sent.promise;
+    harness.setAuthSessionId(null);
+    const logout = harness.service.syncConfig({ reason: 'auth-logout' });
+    expect(harness.configSync.sync).not.toHaveBeenCalled();
+    ack.resolve({ ok: true });
+
+    await expect(renewal).resolves.toMatchObject({ success: false, configSynced: false });
+    await expect(logout).resolves.toMatchObject({ success: true, configSynced: true });
+    expect(harness.configSync.sync.mock.calls.map(args => args[0])).toEqual(['auth-logout']);
+  });
+
+  it.each([null, 'replacement-login'])('withdraws a stale startup route before launch with current binding %s', async activeBinding => {
+    const harness = builtinRenewalHarness('ready');
+    await expect(harness.service.syncConfig({ reason: 'startup' })).resolves.toMatchObject({
+      success: true, builtinCredentialSessionId: 'current-login',
+    });
+    expect(harness.configSync.sync).toHaveBeenCalledOnce();
+    harness.setAuthSessionId(activeBinding);
+    harness.configSync.withdrawStaleBuiltinBeforeLaunch.mockReturnValue({
+      ok: true, changed: true, configChanged: true, configPath: 'openclaw.json',
+    });
+
+    await expect(harness.service.startGatewayWithExecutionPolicy()).resolves.toMatchObject({ phase: 'running' });
+    expect(harness.configSync.withdrawStaleBuiltinBeforeLaunch).toHaveBeenCalledExactlyOnceWith(activeBinding);
+    expect(harness.configSync.withdrawStaleBuiltinBeforeLaunch.mock.invocationCallOrder[0])
+      .toBeLessThan(harness.startGateway.mock.invocationCallOrder[0]);
+  });
+
+  it('drops an auth projection queued by a previous login before it does configuration work', async () => {
+    const harness = builtinRenewalHarness();
+    const prepStarted = Promise.withResolvers<void>();
+    const prep = Promise.withResolvers<Set<string>>();
+    harness.getExtensionMcpServerNames.mockImplementationOnce(() => {
+      prepStarted.resolve();
+      return prep.promise;
+    });
+    const settings = harness.service.syncConfig({ reason: 'settings' });
+    await prepStarted.promise;
+    const login = harness.service.syncConfig({ reason: 'auth-login' });
+    harness.setAuthSessionId('replacement-login');
+    prep.resolve(new Set());
+    await settings;
+
+    await expect(login).resolves.toMatchObject({ success: false, configSynced: false });
+    expect(harness.getExtensionMcpServerNames).toHaveBeenCalledOnce();
+    expect(harness.configSync.sync).toHaveBeenCalledOnce();
   });
 
   it('cleans retired provider auth profiles through the Gateway without failing the config sync', async () => {

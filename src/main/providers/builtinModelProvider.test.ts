@@ -7,6 +7,7 @@ import { BuiltinModelAuthCoordinator } from './builtinModelAuthCoordinator';
 import {
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
+  inspectBuiltinModelCredential,
   setActiveBuiltinModelCredential,
   setActiveBuiltinModelDevelopmentApiKey,
 } from './builtinModelCredential';
@@ -37,7 +38,7 @@ const createCredential = () => {
     }),
     'test-signature',
   ].join('.');
-  return { accessToken, userAccount: 'user-123', expiresAt: nowSeconds + 300 };
+  return inspectBuiltinModelCredential(accessToken, 'user-123').credential!;
 };
 
 describe('syncBuiltinModelProvider', () => {
@@ -228,6 +229,7 @@ describe('syncBuiltinModelProvider', () => {
     const lifecycle = new BuiltinModelLifecycle({
       getStore: () => store,
       syncOpenClawConfig: vi.fn(async () => ({ success: true })),
+      reloadBuiltinModelCredential: vi.fn(async () => ({ success: true })),
       notifyCatalogChanged,
       notifyRuntimeModelsChanged: vi.fn(),
       scheduleCatalogRetry: () => monitor.scheduleCatalogRetry(),
@@ -248,9 +250,11 @@ describe('syncBuiltinModelProvider', () => {
       unwatchFile: vi.fn(),
     });
     try {
-      await lifecycle.loadStartupCatalog(BuiltinModelAccess.Enabled);
+      await coordinator.prepareStartup(hasCredential =>
+        lifecycle.loadStartupCatalog(hasCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled),
+      );
       expect(config).toMatchObject({ providers: { builtin_models: { models: [] } } });
-      coordinator.initialize(credential);
+      coordinator.recordStartupProjection('session');
       monitor.start(credential);
 
       await vi.advanceTimersByTimeAsync(90_000);
@@ -710,7 +714,7 @@ describe('syncBuiltinModelProvider', () => {
       providers: {
         builtin_models: {
           enabled: true,
-          apiKey: 'legacy-key',
+          apiKey: '',
           baseUrl: 'https://example.test/v1',
           models: [{ id: 'chat', name: 'Chat', enabled: true }],
           embeddingModels: [{ id: 'embedding', name: 'Embedding' }],

@@ -1,8 +1,10 @@
-import { afterEach, expect, test, vi } from 'vitest';
-
 import {
   buildModelConnectionTestRequestBody,
   MODEL_CONNECTION_TEST_REQUEST_PURPOSE,
+} from '@shared/network/network';
+import { afterEach, expect, test, vi } from 'vitest';
+
+import {
   MODEL_CONNECTION_TEST_TIMEOUT_MS,
   selectModelsForConnectionTest,
   withModelConnectionTestTimeout,

@@ -5,7 +5,13 @@ import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { startLocalModelServer } from '../../../../tests/fixtures/localModelServer';
-import { type ApiFetchOptions, NetworkFetchPurpose, NetworkIpc } from '../../../shared/network/network';
+import {
+  type ApiFetchOptions,
+  type BuiltinModelProbeRequest,
+  type BuiltinModelProbeResult,
+  NetworkFetchPurpose,
+  NetworkIpc,
+} from '../../../shared/network/network';
 import type { OutboundHeaderPolicyConfig } from '../../core/network/outboundHeaderPolicyConfig';
 
 const testProviderConfig = vi.hoisted(() => ({ enabled: true, baseUrl: 'http://127.0.0.1:1/v1' }));
@@ -48,12 +54,22 @@ vi.mock('../../core/network/outboundHeaderPolicyConfig', async importOriginal =>
 
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../../config/builtinModels';
 import { publishOutboundHeaderUserInfoCache } from '../../core/network/outboundHeaderPolicyConfig';
-import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../providers/builtinModelCredential';
+import { BuiltinModelAuthDiagnosticReason } from '../../providers/builtinModelAuthDiagnostics';
+import {
+  clearActiveBuiltinModelCredential,
+  getBuiltinModelCredentialSessionOwnerId,
+  inspectBuiltinModelCredential,
+  setActiveBuiltinModelCredential,
+} from '../../providers/builtinModelCredential';
+import { BuiltinModelTokenExchangeError } from '../../providers/builtinModelTokenExchange';
 import { registerNetworkHandlers as registerHandlers } from './network';
 
 type ApiFetchHandler = (event: unknown, options: ApiFetchOptions) => Promise<unknown>;
-const registerNetworkHandlers = (getMainWindow = (): BrowserWindow | null => null) =>
-  registerHandlers({ getMainWindow });
+const registerNetworkHandlers = (
+  getMainWindow = (): BrowserWindow | null => null,
+  hasBuiltinModel = (modelId: string) => modelId === 'team-model',
+  renewBuiltinModelCredential: Parameters<typeof registerHandlers>[0]['renewBuiltinModelCredential'] = async () => {},
+) => registerHandlers({ getMainWindow, hasBuiltinModel, renewBuiltinModelCredential });
 
 beforeEach(() => {
   testProviderConfig.baseUrl = 'http://127.0.0.1:1/v1';
@@ -162,8 +178,28 @@ const installJwt = () => {
   const token = [encode({ alg: 'RS256', kid: 'fixture' }), encode({
     sub: 'test-user', iss: 'https://login.test', aud: 'justdo-litellm', iat: now, exp: now + 300, jti: 'fixture',
   }), 'signature'].join('.');
-  setActiveBuiltinModelCredential({ accessToken: token, userAccount: 'test-user', expiresAt: now + 300 });
+  setActiveBuiltinModelCredential(inspectBuiltinModelCredential(token, 'test-user').credential!);
   return token;
+};
+
+const expireJwt = () => {
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(2_000_000_000_000);
+  installJwt();
+  clock.mockReturnValue(2_000_000_300_000);
+  return clock;
+};
+
+const createBuiltinProbe = (renew?: Parameters<typeof registerHandlers>[0]['renewBuiltinModelCredential']) => {
+  const mainFrame = {};
+  const sender = Object.assign(new EventEmitter(), { id: 44, mainFrame, isDestroyed: () => false });
+  const window = { webContents: sender, isDestroyed: () => false } as unknown as BrowserWindow;
+  const event = { sender, senderFrame: mainFrame };
+  const request = { modelId: 'team-model', requestId: 'builtin-probe' };
+  registerNetworkHandlers(() => window, undefined, renew);
+  const handler = mocks.handle.mock.calls.find(([channel]) => channel === NetworkIpc.TestBuiltinModel)![1] as (
+    event: unknown, request: BuiltinModelProbeRequest,
+  ) => Promise<BuiltinModelProbeResult>;
+  return { handler, event, request };
 };
 
 test('completes an authenticated model probe against a real loopback fake model', async () => {
@@ -173,17 +209,20 @@ test('completes an authenticated model probe against a real loopback fake model'
     const token = installJwt();
     mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
     mocks.fetch.mockImplementation((url, init) => fetch(url, init));
-    registerNetworkHandlers();
-    const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-    const result = await handler({}, {
-      url: `${local.baseUrl}/chat/completions`, method: 'POST', headers: {},
-      body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
+    const { handler, event, request } = createBuiltinProbe();
+
+    const result = await handler(event, request);
+
+    expect(result).toMatchObject({
+      outcome: 'completed',
+      response: { ok: true, data: { choices: [{ message: { content: 'local fixture reply' } }] } },
     });
-    expect(result).toMatchObject({ ok: true, data: { choices: [{ message: { content: 'local fixture reply' } }] } });
     expect(local.requests).toHaveLength(1);
     expect(local.requests[0].headers['x-access-jwt']).toBe(token);
     expect(local.requests[0].headers.authorization).toBe(`Bearer ${token}`);
-    expect(JSON.parse(local.requests[0].body)).toEqual(JSON.parse(probeBody));
+    expect(JSON.parse(local.requests[0].body)).toEqual({
+      ...JSON.parse(probeBody), max_tokens: 64, metadata: { request_purpose: 'connection_test' },
+    });
     expect(JSON.stringify(result)).not.toContain(token);
   } finally {
     await local.close();
@@ -274,55 +313,226 @@ test('retains the transport error when no HTTP response was received', async () 
 test('rejects an unconfigured built-in probe without sending credentials or making a request', async () => {
   testProviderConfig.baseUrl = '';
   installJwt();
-  registerNetworkHandlers();
-  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-  expect(await handler({}, {
-    url: '/chat/completions', method: 'POST', headers: {},
-    body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
-  })).toMatchObject({ ok: false });
+  const { handler, event, request } = createBuiltinProbe();
+  await expect(handler(event, request)).resolves.toEqual({ outcome: 'interrupted' });
   expect(mocks.fetch).not.toHaveBeenCalled();
 });
 
 test('authenticates a built-in probe in Main without exposing its JWT to Renderer', async () => {
   const token = installJwt();
-  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
-  mocks.fetch.mockResolvedValue(new Response('{"choices":[]}', { headers: { 'content-type': 'application/json' } }));
-  registerNetworkHandlers();
-  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-  const headers = { 'x-access-jwt': 'untrusted', 'x-user-account': 'wrong-account' };
-  const result = await handler({}, {
-    url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST',
-    headers, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
+  mocks.applyMainProcessOutboundHeaderPolicy.mockReturnValue({
+    'x-access-jwt': 'untrusted', 'x-user-account': 'wrong-account',
   });
-  expect(result).toMatchObject({ ok: true });
+  const escapedToken = `\\u${token.charCodeAt(0).toString(16).padStart(4, '0')}${token.slice(1)}`;
+  const body = JSON.stringify({ error: { [token]: 'echoed key', message: `echo ${token}` } }).replaceAll(token, escapedToken);
+  mocks.fetch.mockResolvedValue(new Response(body, {
+    status: 403, headers: { 'content-type': 'application/json', 'x-echo-token': token },
+  }));
+  const { handler, event, request } = createBuiltinProbe();
+
+  const result = await handler(event, request);
+
+  expect(result).toMatchObject({
+    outcome: 'completed',
+    response: { ok: false, status: 403, data: { error: { '[redacted]': 'echoed key', message: 'echo [redacted]' } } },
+  });
   expect(JSON.stringify(result)).not.toContain(token);
   expect(mocks.fetch.mock.calls[0][1]).toMatchObject({
     redirect: 'error', headers: { Authorization: `Bearer ${token}`, 'X-ACCESS-JWT': token, 'X-User-Account': 'test-user' },
   });
   expect(mocks.fetch.mock.calls[0][1].headers).not.toHaveProperty('x-access-jwt');
-  expect(headers['x-access-jwt']).toBe('untrusted');
 });
 
-test('does not inject a JWT into custom model requests', async () => {
+test('keeps a custom probe\'s own authentication at the same endpoint as the built-in provider', async () => {
   const token = installJwt();
   mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
   mocks.fetch.mockResolvedValue(new Response('{}'));
   registerNetworkHandlers();
   const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-  await handler({}, { url: 'https://custom.test/v1/chat/completions', method: 'POST',
-    headers: {}, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest });
+  await handler({}, { url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST',
+    headers: { Authorization: 'Bearer custom-api-key' }, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest });
+  expect(mocks.fetch.mock.calls[0][1]).toMatchObject({ headers: { Authorization: 'Bearer custom-api-key' } });
   expect(JSON.stringify(mocks.fetch.mock.calls)).not.toContain(token);
 });
 
-test('refuses a built-in probe when login credentials are unavailable', async () => {
-  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
-  registerNetworkHandlers();
-  const handler = mocks.handle.mock.calls.find(([channel]) => channel === 'api:fetch')![1] as ApiFetchHandler;
-  expect(await handler({}, {
-    url: `${BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl}/chat/completions`, method: 'POST',
-    headers: {}, body: probeBody, purpose: NetworkFetchPurpose.ModelConnectionTest,
-  })).toMatchObject({ ok: false });
+test('continues the same probe once the current login renews its expired credential', async () => {
+  const clock = expireJwt();
+  try {
+    const sessionId = getBuiltinModelCredentialSessionOwnerId();
+    const renewed = Promise.withResolvers<void>();
+    const renew = vi.fn(() => renewed.promise);
+    const { handler, event, request } = createBuiltinProbe(renew);
+    mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+    mocks.fetch.mockResolvedValue(new Response('{}'));
+
+    const probe = handler(event, request);
+    expect(renew).toHaveBeenCalledOnce();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+
+    const validToken = installJwt();
+    expect(getBuiltinModelCredentialSessionOwnerId()).toBe(sessionId);
+    renewed.resolve();
+    await expect(probe).resolves.toMatchObject({ outcome: 'completed', response: { ok: true } });
+    expect(mocks.fetch).toHaveBeenCalledOnce();
+    expect(mocks.fetch.mock.calls[0]?.[1]).toMatchObject({ headers: { Authorization: `Bearer ${validToken}` } });
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('ends a probe without sending when the current login cannot restore a credential', async () => {
+  const clock = expireJwt();
+  const renew = vi.fn(async () => {});
+  const { handler, event, request } = createBuiltinProbe(renew);
+  try {
+    await expect(handler(event, request)).resolves.toEqual({ outcome: 'interrupted' });
+    expect(renew).toHaveBeenCalledOnce();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('does not start a probe from a catalog whose login has already been cleared', async () => {
+  const renew = vi.fn(async () => { installJwt(); });
+  const { handler, event, request } = createBuiltinProbe(renew);
+  await expect(handler(event, request)).resolves.toEqual({ outcome: 'interrupted' });
+  expect(renew).not.toHaveBeenCalled();
   expect(mocks.fetch).not.toHaveBeenCalled();
+});
+
+test('returns the actual authentication rejection without sending to the model', async () => {
+  const clock = expireJwt();
+  const renew = vi.fn(async () => {
+    clearActiveBuiltinModelCredential();
+    throw new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.HttpRejected, 403);
+  });
+  const { handler, event, request } = createBuiltinProbe(renew);
+  try {
+    await expect(handler(event, request)).resolves.toEqual({
+      outcome: 'authentication-rejected',
+      issue: { errorCode: 'exchange-http-error', httpStatus: 403 },
+    });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('releases a cancelled probe without interrupting its shared credential refresh', async () => {
+  const clock = expireJwt();
+  const renewed = Promise.withResolvers<void>();
+  const { handler, event, request } = createBuiltinProbe(() => renewed.promise);
+  const cancel = mocks.handle.mock.calls.find(([channel]) => channel === NetworkIpc.CancelFetch)![1];
+  const probe = handler(event, request);
+
+  try {
+    cancel(event, request.requestId);
+    await expect(probe).resolves.toEqual({ outcome: 'interrupted' });
+
+    installJwt();
+    renewed.resolve();
+    await renewed.promise;
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('does not send an older probe when another login obtains the next credential', async () => {
+  const clock = expireJwt();
+  try {
+    const renewed = Promise.withResolvers<void>();
+    const { handler, event, request } = createBuiltinProbe(() => renewed.promise);
+    const probe = handler(event, request);
+    clearActiveBuiltinModelCredential();
+    installJwt();
+    renewed.resolve();
+
+    await expect(probe).resolves.toEqual({ outcome: 'interrupted' });
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('uses the renewed in-memory credential while Gateway snapshot publication is retried', async () => {
+  const clock = expireJwt();
+  try {
+    let token = '';
+    const { handler, event, request } = createBuiltinProbe(async () => {
+      token = installJwt();
+      throw new Error('snapshot busy');
+    });
+    mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+    mocks.fetch.mockResolvedValue(new Response('{}'));
+
+    await expect(handler(event, request)).resolves.toMatchObject({ outcome: 'completed', response: { ok: true } });
+    expect(mocks.fetch.mock.calls[0]?.[1]).toMatchObject({ headers: { Authorization: `Bearer ${token}` } });
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('contains an internal built-in probe preparation failure without exposing the reason', async () => {
+  const token = installJwt();
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation(() => {
+    throw new Error(`private error ${token}`);
+  });
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  try {
+    const { handler, event, request } = createBuiltinProbe();
+    await expect(handler(event, request)).resolves.toEqual({ outcome: 'interrupted' });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(token);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test('restricts built-in probes to the main frame, the current catalog and a Main-owned request', async () => {
+  installJwt();
+  const { handler, event, request } = createBuiltinProbe();
+  const arbitraryDestination = { ...request, url: 'https://other.test/v1/chat/completions' };
+
+  await expect(handler({ ...event, senderFrame: {} }, request)).rejects.toThrow('main application frame');
+  await expect(handler(event, arbitraryDestination)).rejects.toThrow('Invalid model connection test request');
+  await expect(handler(event, { ...request, modelId: 'stale-model' })).resolves.toEqual({ outcome: 'interrupted' });
+  expect(mocks.fetch).not.toHaveBeenCalled();
+});
+
+test('discards an in-flight built-in probe result after a same-account sign-out and sign-in', async () => {
+  installJwt();
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  const { promise, resolve } = Promise.withResolvers<Response>();
+  mocks.fetch.mockReturnValue(promise);
+  const { handler, event, request } = createBuiltinProbe();
+  const pending = handler(event, request);
+  expect(mocks.fetch).toHaveBeenCalledOnce();
+
+  clearActiveBuiltinModelCredential();
+  installJwt();
+  resolve(new Response('{}'));
+
+  await expect(pending).resolves.toEqual({ outcome: 'interrupted' });
+});
+
+test('cancels a built-in probe through the existing fetch cancellation channel', async () => {
+  installJwt();
+  mocks.applyMainProcessOutboundHeaderPolicy.mockImplementation((_url, headers) => headers);
+  const { promise, resolve } = Promise.withResolvers<Response>();
+  mocks.fetch.mockReturnValue(promise);
+  const { handler, event, request } = createBuiltinProbe();
+  const cancel = mocks.handle.mock.calls.find(([channel]) => channel === NetworkIpc.CancelFetch)![1];
+  const pending = handler(event, request);
+  const signal = (mocks.fetch.mock.calls[0]?.[1] as RequestInit | undefined)?.signal;
+
+  cancel(event, request.requestId);
+  resolve(new Response('{}'));
+
+  expect(signal?.aborted).toBe(true);
+  await expect(pending).resolves.toEqual({ outcome: 'interrupted' });
 });
 
 test('applies the outbound-header policy to API fetch requests', async () => {

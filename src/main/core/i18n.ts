@@ -212,10 +212,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
     extensionPackageOwnershipUnconfirmed: '暂时无法确认扩展包与原生条目的归属，请稍后刷新状态。',
     extensionSkillSyncFailed: '扩展开关已保存，但 插件技能同步未完成。请重试同一开关操作。',
     skillSettingApplyUnconfirmed: '技能设置已保存，暂时无法同步状态。',
-    builtinModelAuthenticationUnavailable: '内置模型认证已失效，请等待登录凭据刷新。',
-    credentialStorageUnavailable: '操作系统安全凭据存储不可用，无法安全保存内置凭据。',
-    credentialDecryptionFailed: '无法使用当前操作系统账户解密应用凭据。',
-    builtinCredentialTargetMismatch: '内置模型凭据只能用于指定的模型请求地址。',
     // Tray menu
     trayStartConversation: '发起对话',
     traySettings: '设置',
@@ -494,13 +490,6 @@ const translations: Record<LanguageType, Record<string, string>> = {
       'The extension setting was saved, but the extension skills could not be synchronized. Retry the same toggle.',
     skillSettingApplyUnconfirmed:
       'The skill setting was saved, but its status could not be synchronized.',
-    builtinModelAuthenticationUnavailable:
-      'Built-in model authentication is unavailable. Wait for login credentials to refresh.',
-    credentialStorageUnavailable: 'Secure operating-system credential storage is unavailable.',
-    credentialDecryptionFailed:
-      'Failed to unlock the application credential with this operating-system account.',
-    builtinCredentialTargetMismatch:
-      'Built-in model credentials can only be used with the designated model request URL.',
     // Tray menu
     trayStartConversation: 'Start Conversation',
     traySettings: 'Settings',

@@ -76,7 +76,7 @@ describe.skipIf(process.platform !== 'win32')('minimal model authentication evid
         event: 'exchange.failed', stage: 'request', reason: 'SYNTHETIC_PRIVATE_VALUE',
         errorCode: 'SYNTHETIC_PRIVATE_VALUE', networkCode: 'ECONNRESET',
         token: 'eyJprivate.eyJprivate.signature', account: 'PRIVATE_PERSON',
-        path: 'C:\\Users\\PRIVATE_PERSON\\credentials.bin', url: 'https://private.example/internal',
+        path: 'C:\\Users\\PRIVATE_PERSON\\credentials.json', url: 'https://private.example/internal',
       }),
       `[2026-11-04 21:30:00.200] [error] [OpenClaw stderr] ${degraded}`,
       diagnostic('2026-11-04 21:30:00.500', { event: 'snapshot.observed', basis: 'snapshot_observation', snapshotState: 'valid', sessionMatch: 'mismatch' }),

@@ -4,6 +4,7 @@ import type { SqliteStore } from '../data/sqliteStore';
 import {
   BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER,
   clearActiveBuiltinModelCredential,
+  inspectBuiltinModelCredential,
   setActiveBuiltinModelCredential,
 } from './builtinModelCredential';
 import {
@@ -40,11 +41,7 @@ describe('built-in provider credential resolution', () => {
       }),
       'test-signature',
     ].join('.');
-    setActiveBuiltinModelCredential({
-      accessToken,
-      userAccount: 'user-123',
-      expiresAt: nowSeconds + 300,
-    });
+    setActiveBuiltinModelCredential(inspectBuiltinModelCredential(accessToken, 'user-123').credential!);
   };
 
   const setBuiltinStore = (): void => {

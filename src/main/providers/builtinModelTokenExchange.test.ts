@@ -457,16 +457,34 @@ test.each([
   expect(getActiveBuiltinModelCredential()).toBeNull();
 });
 
-test('discards a late exchange response after the login file switches accounts', async () => {
+test.each([
+  ['successful', () => success()],
+  ['rejected', () => new Response(null, { status: 401 })],
+] as const)('discards a late %s exchange after the login file switches accounts', async (_outcome, response) => {
   login();
-  let resolve!: (response: Response) => void;
-  const { service } = setup(vi.fn(() => new Promise<Response>(next => { resolve = next; })));
-  const request = service.refresh();
+  const fetch = vi.fn(async () => success());
+  const onInvalidated = vi.fn();
+  const service = new BuiltinModelTokenExchange({
+    userInfoPath: path.join(directory, 'user_info.json'),
+    getConfig: () => config,
+    fetch,
+    onInvalidated,
+  });
+  const initial = await service.refresh();
+  onInvalidated.mockClear();
+  vi.setSystemTime((NOW + 241) * 1000);
+  const delayed = Promise.withResolvers<Response>();
+  fetch.mockReturnValueOnce(delayed.promise);
+  const renewal = service.refresh();
+  expect(getActiveBuiltinModelCredential()).toBe(initial);
+
   login('user-2', 'other-mtoken');
-  resolve(success());
-  expect(await request).toBeNull();
+  delayed.resolve(response());
+  await expect(renewal).resolves.toBeNull();
   expect(getActiveBuiltinModelCredential()).toBeNull();
-  expect(console.info).not.toHaveBeenCalled();
+  expect(onInvalidated).toHaveBeenCalledOnce();
+  expect(console.info).toHaveBeenCalledOnce();
+  expect(errorLog).not.toHaveBeenCalled();
 });
 
 test('keeps a still-valid JWT during a temporary outage but clears it before expiration', async () => {

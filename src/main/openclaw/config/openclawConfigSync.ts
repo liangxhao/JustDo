@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import fs from 'fs';
 import path from 'path';
 
+import { MODEL_AUTH_SESSION_ENV } from '../../../../plugins/extensions/runtime-services/contracts/model-auth';
 import { normalizeOpenClawAgentId } from '../../../shared/agents/agentId';
 import {
   type AgentRuntimeSettings,
@@ -69,7 +70,7 @@ import {
   verifyOpenClawConfigMatches,
 } from './configVerification';
 import { buildLoginScopedOpenClawConfig, projectLoggedOutOpenClawConfig } from './models/authScopedProjection';
-import { revokeBuiltinCredentialFile, syncBuiltinCredentialFile } from './models/builtinCredentialFile';
+import { BUILTIN_SECRET_SOURCE, revokeBuiltinCredentialFile, syncBuiltinCredentialFile } from './models/builtinCredentialFile';
 import { buildManagedOpenClawSecrets, containsBuiltinCredentialRef } from './models/builtinSecretProjection';
 import {
   applyDecisionModelConfiguration,
@@ -286,7 +287,7 @@ export class OpenClawConfigSync {
       allowExpiredBuiltinSnapshot?: true;
     },
   ): OpenClawConfigSyncResult {
-    if (reason === BuiltinModelSyncReason.AuthLogout) return this.syncLoggedOutConfig(context?.allowExpiredBuiltinSnapshot);
+    if (reason === BuiltinModelSyncReason.AuthLogout) return this.syncLoggedOutConfig(context);
     this.decisionSecretsChanged = false;
     this.videoSecretsChanged = false;
     this.speechSecretsChanged = false;
@@ -350,21 +351,49 @@ export class OpenClawConfigSync {
     }
   }
 
-  private syncLoggedOutConfig(allowExpiredBuiltinSnapshot?: true): OpenClawConfigSyncResult {
+  withdrawStaleBuiltinBeforeLaunch(authSessionId: string | null): OpenClawConfigSyncResult | undefined {
+    // Defaults, MCP, and native config writes can change the file after Main's
+    // last full projection. Check the source the new process will actually read.
+    let content: string;
+    let current: unknown;
+    try {
+      content = fs.readFileSync(this.engineManager.getConfigPath(), 'utf8');
+      current = JSON.parse(content);
+    } catch {
+      return; // Gateway owns its normal startup diagnostics for a missing or invalid config.
+    }
+    if (!isRecord(current) || !containsBuiltinCredentialRef(current)) return;
+    const providers = configRecord(configRecord(current.secrets).providers);
+    const provider = configRecord(providers[BUILTIN_SECRET_SOURCE]);
+    if (authSessionId && provider.source === 'exec' &&
+        configRecord(provider.env)[MODEL_AUTH_SESSION_ENV] === authSessionId) return;
+    return this.syncLoggedOutConfig({
+      expectedContent: content,
+      ...(authSessionId ? { preserveBuiltinSnapshot: true } : { allowExpiredBuiltinSnapshot: true }),
+    });
+  }
+
+  private syncLoggedOutConfig(options?: {
+    allowExpiredBuiltinSnapshot?: true;
+    preserveBuiltinSnapshot?: true;
+    expectedContent?: string;
+  }): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
     try {
       // Even a locked snapshot must not keep its provider configured in Gateway.
       let secretsChanged = false;
       let revokeFailed = false;
       try {
-        secretsChanged = revokeBuiltinCredentialFile(this.engineManager.getStateDir(),
-          allowExpiredBuiltinSnapshot ? { allowExpiredSnapshot: true } : undefined);
+        if (!options?.preserveBuiltinSnapshot) {
+          secretsChanged = revokeBuiltinCredentialFile(this.engineManager.getStateDir(),
+            options?.allowExpiredBuiltinSnapshot ? { allowExpiredSnapshot: true } : undefined);
+        }
       } catch {
         revokeFailed = true;
       }
       let content: string;
       try {
-        content = fs.readFileSync(configPath, 'utf8');
+        content = options?.expectedContent ?? fs.readFileSync(configPath, 'utf8');
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || revokeFailed) throw error;
         return { ok: true, changed: secretsChanged, configChanged: false,
@@ -467,7 +496,7 @@ export class OpenClawConfigSync {
         if (!published) return failed('The native configuration changed before model publication.');
       }
       const verification = verifyOpenClawConfigMatches(configPath, next);
-      if (!verification.ok) return failed(verification.error || 'Model default publication could not be verified.');
+      if (verification.ok === false) return failed(verification.error);
       return {
         result: { ok: true, changed },
         isCurrent: () => {

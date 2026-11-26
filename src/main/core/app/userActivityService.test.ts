@@ -25,7 +25,7 @@ vi.mock('../../../config/activityReporting', () => ({
 
 type ServiceOptions = ConstructorParameters<typeof UserActivityService>[0];
 const credential = (userAccount = 'alice', accessToken = 'short-lived-token'): BuiltinModelCredential => ({
-  userAccount, accessToken, expiresAt: Number.MAX_SAFE_INTEGER,
+  authType: 'jwt', userAccount, accessToken, issuedAt: 1_800_000_000, expiresAt: Number.MAX_SAFE_INTEGER,
 });
 const metadata = (totalTokens = 12): UserActivityMetadata => ({
   platform: 'win32',

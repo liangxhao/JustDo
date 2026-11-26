@@ -1,4 +1,3 @@
-export const MODEL_CONNECTION_TEST_REQUEST_PURPOSE = 'connection_test' as const;
 export const MODEL_CONNECTION_TEST_TIMEOUT_MS = 60_000;
 
 export const selectModelsForConnectionTest = <T extends { id: string }>(
@@ -43,22 +42,4 @@ export const withModelConnectionTestTimeout = <T>(
         reject(error);
       },
     );
-  });
-
-export const buildModelConnectionTestRequestBody = (
-  modelId: string,
-  maxTokens: number,
-  includeMetadata = false,
-): string =>
-  JSON.stringify({
-    model: modelId,
-    ...(includeMetadata
-      ? {
-          metadata: {
-            request_purpose: MODEL_CONNECTION_TEST_REQUEST_PURPOSE,
-          },
-        }
-      : {}),
-    messages: [{ role: 'user', content: 'Hi' }],
-    max_tokens: maxTokens,
   });

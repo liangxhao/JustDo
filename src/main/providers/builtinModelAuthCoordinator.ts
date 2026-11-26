@@ -46,12 +46,32 @@ export class BuiltinModelAuthCoordinator {
 
   constructor(private readonly dependencies: Dependencies) {}
 
-  initialize(credential: BuiltinModelCredential | null): void {
+  async prepareStartup(loadCatalog: (hasCredential: boolean) => Promise<void>): Promise<void> {
+    const generation = this.generation;
+    try {
+      await this.dependencies.exchange();
+    } catch (error) {
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.StartupFailed, {
+        errorCode: getBuiltinModelAuthErrorCode(error),
+        willRetry: true,
+      });
+    }
+    if (generation === this.generation) await loadCatalog(this.dependencies.getActiveBinding() !== null);
+  }
+
+  /** Accept the binding actually published by startup configuration. */
+  recordStartupProjection(authSessionId: string | null): void {
+    const binding = this.dependencies.getActiveBinding();
+    if (this.generation !== 0 || (binding?.authSessionId ?? null) !== authSessionId) return;
+    this.applied = binding?.credential ?? null;
+    this.appliedAuthSessionId = authSessionId;
+  }
+
+  stop(): void {
     this.generation += 1;
     this.pendingBackground = null;
-    const binding = this.dependencies.getActiveBinding();
-    this.applied = credential === (binding?.credential ?? null) ? credential : undefined;
-    this.appliedAuthSessionId = this.applied ? binding?.authSessionId ?? null : null;
+    this.applied = undefined;
+    this.appliedAuthSessionId = null;
   }
 
   async refresh(refreshCatalog = false): Promise<BuiltinModelCredential | null> {
@@ -91,8 +111,10 @@ export class BuiltinModelAuthCoordinator {
     try {
       credential = await this.dependencies.exchange();
     } catch (error) {
-      if (!ownsExchange()) return null;
-      if (!this.dependencies.getActiveBinding()) {
+      if (generation !== this.generation) return null;
+      // Concurrent same-login callers share exchange errors. Only the newest
+      // background decision owns reconciliation of an inactive binding.
+      if (ownsExchange() && !this.dependencies.getActiveBinding()) {
         this.applied = undefined;
         this.appliedAuthSessionId = null;
         const cleanup: RefreshDecision = {

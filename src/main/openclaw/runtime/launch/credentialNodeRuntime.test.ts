@@ -62,17 +62,17 @@ describe.skipIf(process.platform !== 'win32')('private Windows credential Node',
     const value = fixture();
     const directory = path.join(value.stateDir, 'credentials');
     fs.mkdirSync(directory);
-    const legacy = path.join(directory, 'credentials.bin');
-    fs.writeFileSync(legacy, 'synthetic obsolete ciphertext');
+    const snapshot = path.join(directory, 'credentials.json');
+    fs.writeFileSync(snapshot, 'synthetic ciphertext');
 
     prepareCredentialNodeRuntime(value.stateDir, value.source);
 
-    expect(fs.readFileSync(legacy, 'utf8')).toBe('synthetic obsolete ciphertext');
+    expect(fs.readFileSync(snapshot, 'utf8')).toBe('synthetic ciphertext');
     const icacls = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe');
     const acl = execFileSync(icacls, [directory], { windowsHide: true, encoding: 'utf8' });
     expect(acl).toContain('(OI)(CI)(F)');
-    fs.unlinkSync(legacy);
-    expect(fs.existsSync(legacy)).toBe(false);
+    fs.unlinkSync(snapshot);
+    expect(fs.existsSync(snapshot)).toBe(false);
   });
 
   it('cleans an incomplete copy on checksum failure and admits no executable', () => {

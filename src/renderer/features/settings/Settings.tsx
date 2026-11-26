@@ -38,7 +38,7 @@ import {
   parseGatewayPortInput,
 } from '@shared/openclaw/gatewayPort';
 import { normalizeOpenClawProviderId } from '@shared/providers';
-import { BuiltinModelRefreshErrorCode } from '@shared/providers/builtinModels';
+import { type BuiltinModelAuthIssue, BuiltinModelRefreshErrorCode } from '@shared/providers/builtinModels';
 import {
   buildProviderModelsUrl,
   DEFAULT_MODEL_CONTEXT_LENGTH,
@@ -175,6 +175,10 @@ const builtinModelRefreshMessages: Record<BuiltinModelRefreshErrorCode, string> 
   [BuiltinModelRefreshErrorCode.DeviceUnavailable]: 'builtinModelRefreshDeviceUnavailable',
   [BuiltinModelRefreshErrorCode.ExchangeHttpError]: 'builtinModelRefreshExchangeHttpError',
 };
+const formatBuiltinModelAuthIssue = ({ errorCode, httpStatus }: BuiltinModelAuthIssue): string =>
+  errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError && httpStatus !== undefined
+    ? i18nService.t('builtinModelRefreshExchangeHttpStatus').replace('{status}', String(httpStatus))
+    : i18nService.t(builtinModelRefreshMessages[errorCode]);
 const buildModelDiscoveryHeaders = (
   apiKey: string,
   customHeaders?: Record<string, string>,
@@ -919,11 +923,7 @@ const Settings: React.FC<SettingsProps> = ({
     try {
       const result = await window.electron.builtinModels.refresh();
       if ('errorCode' in result) {
-        const message = result.errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError &&
-          result.httpStatus !== undefined
-          ? i18nService.t('builtinModelRefreshExchangeHttpStatus').replace('{status}', String(result.httpStatus))
-          : i18nService.t(builtinModelRefreshMessages[result.errorCode]);
-        setError(message);
+        setError(formatBuiltinModelAuthIssue(result));
       } else {
         const refreshedConfig = await configService.reloadFromStore();
         if (refreshedConfig.providers) {
@@ -1603,6 +1603,7 @@ const Settings: React.FC<SettingsProps> = ({
     setIsTesting,
     isDetectingModels,
     enableProvider,
+    onAuthenticationRejected: issue => setError(formatBuiltinModelAuthIssue(issue)),
   });
 
   const handleProxyModeChange = (mode: ProxyMode) => {
@@ -2085,30 +2086,32 @@ const Settings: React.FC<SettingsProps> = ({
               </div>
 
               <div className="mb-3 flex flex-wrap items-center gap-2">
-                <div
-                  className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${
-                    testResult.isRunning
-                      ? 'bg-surface-raised text-secondary'
-                      : testResult.success
-                        ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300'
-                        : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
-                  }`}
-                >
-                  {testResult.isRunning ? (
-                    <ArrowPathIcon className="h-4 w-4 flex-none animate-spin" />
-                  ) : testResult.success ? (
-                    <CheckCircleIcon className="h-4 w-4 flex-none" />
-                  ) : (
-                    <XCircleIcon className="h-4 w-4 flex-none" />
-                  )}
-                  <span className="whitespace-nowrap">
-                    {testResult.isRunning
-                      ? i18nService.t('testing')
-                      : testResult.success
-                        ? i18nService.t('connectionSuccess')
-                        : i18nService.t('connectionFailed')}
-                  </span>
-                </div>
+                {testResult.status && (
+                  <div
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium ${
+                      testResult.status === 'testing'
+                        ? 'bg-surface-raised text-secondary'
+                        : testResult.status === 'success'
+                          ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300'
+                          : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-300'
+                    }`}
+                  >
+                    {testResult.status === 'testing' ? (
+                      <ArrowPathIcon className="h-4 w-4 flex-none animate-spin" />
+                    ) : testResult.status === 'success' ? (
+                      <CheckCircleIcon className="h-4 w-4 flex-none" />
+                    ) : (
+                      <XCircleIcon className="h-4 w-4 flex-none" />
+                    )}
+                    <span className="whitespace-nowrap">
+                      {testResult.status === 'testing'
+                        ? i18nService.t('testing')
+                        : testResult.status === 'success'
+                          ? i18nService.t('connectionSuccess')
+                          : i18nService.t('connectionFailed')}
+                    </span>
+                  </div>
+                )}
                 <span className="rounded-full border border-border bg-surface px-2 py-1 text-xs font-medium text-secondary">
                   stream=false · timeout={MODEL_CONNECTION_TEST_TIMEOUT_MS / 1000}s
                 </span>
@@ -2188,7 +2191,7 @@ const Settings: React.FC<SettingsProps> = ({
                                   : i18nService.t('connectionFailed')}
                           </span>
                         </div>
-                        {!isPending && !isRunningModel && !isPassed && (
+                        {status === 'failed' && (
                           <div className="mt-2 space-y-2 pl-6">
                             {modelResult.detail && (
                               <p className="whitespace-pre-wrap break-words text-[11px] leading-5 text-red-600 dark:text-red-300">

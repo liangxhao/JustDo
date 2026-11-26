@@ -18,6 +18,7 @@ import {
 } from '../../../providers/builtinModelAuthDiagnostics';
 import {
   BUILTIN_TOKEN_MIN_REMAINING_SECONDS,
+  type BuiltinModelCredential,
   type BuiltinModelCredentialBinding,
   isBuiltinModelCredentialUsable,
 } from '../../../providers/builtinModelCredential';
@@ -32,9 +33,12 @@ export { BUILTIN_SECRET_ID, BUILTIN_SECRET_SOURCE };
 // Public wrapping material: protects against direct inspection, not reverse engineering.
 const WRAPPING_CONTEXT = 'model-credential-snapshot/v1';
 const CREDENTIAL_FILE_NAME = 'credentials.json';
-const LEGACY_CREDENTIAL_FILE_NAME = 'credentials.bin';
 const CREDENTIAL_FILE_LIMIT_BYTES = 65_536;
 const wrappingKey = () => createHash('sha256').update(WRAPPING_CONTEXT).digest();
+
+type BuiltinCredentialSnapshot = Pick<BuiltinModelCredential, 'accessToken' | 'userAccount' | 'expiresAt' | 'authType'> & {
+  authSessionId: string;
+};
 
 export function sealBuiltinCredential(value: string): Buffer {
   const nonce = randomBytes(12);
@@ -203,21 +207,20 @@ export function publishBuiltinCredentialFile(
   try {
     const directory = path.join(stateDir, 'credentials');
     const file = path.join(directory, CREDENTIAL_FILE_NAME);
-    const serialized = JSON.stringify({ ...credential, authSessionId });
+    const { accessToken, userAccount, expiresAt, authType } = credential;
+    const snapshot: BuiltinCredentialSnapshot = { accessToken, userAccount, expiresAt, authType, authSessionId };
+    const serialized = JSON.stringify(snapshot);
     fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     if (fs.existsSync(file)) {
       try {
-        if (openBuiltinCredential(readPrivateFile(file)) === serialized) {
-          return retireLegacyCredentialFile(stateDir);
-        }
+        if (openBuiltinCredential(readPrivateFile(file)) === serialized) return false;
       } catch { /* Replace corrupted ciphertext. */ }
     }
     publishPrivateFile(file, sealBuiltinCredential(serialized));
-    retireLegacyCredentialFile(stateDir);
     writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.SnapshotPublished, {
       changed: true, fileKind: 'snapshot', elapsedMs: Date.now() - startedAt,
       remainingSeconds: Math.floor(credential.expiresAt - Date.now() / 1000),
-      authType: credential.authType ?? 'jwt',
+      authType,
     });
     return true;
   } catch (error) {
@@ -225,14 +228,6 @@ export function publishBuiltinCredentialFile(
       reason: BuiltinModelAuthDiagnosticReason.SnapshotWriteFailed,
       fileKind: 'snapshot', errorCode: getBuiltinModelAuthErrorCode(error), elapsedMs: Date.now() - startedAt,
     });
-    throw error;
-  }
-}
-
-function retireLegacyCredentialFile(stateDir: string): boolean {
-  try { fs.unlinkSync(path.join(stateDir, 'credentials', LEGACY_CREDENTIAL_FILE_NAME)); return true; }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw error;
   }
 }
@@ -297,7 +292,7 @@ export function syncBuiltinCredentialFile(
       [BUILTIN_SECRET_SOURCE]: {
         source: 'exec', command, args, env: {
           [MODEL_AUTH_SESSION_ENV]: binding.authSessionId,
-          [MODEL_AUTH_TYPE_ENV]: binding.credential.authType ?? 'jwt',
+          [MODEL_AUTH_TYPE_ENV]: binding.credential.authType,
           ...(process.platform === 'win32' ? {
             // Native config requires uppercase names; supply explicitly because
             // inherited environment snapshots may contain mixed-case SystemRoot.
@@ -325,22 +320,17 @@ function snapshotHasExpired(file: string): boolean {
 
 /** Revoke captured exec providers before awaiting catalog/config cleanup. */
 export function revokeBuiltinCredentialFile(stateDir: string, options?: { allowExpiredSnapshot: true }): boolean {
-  let firstError: unknown;
-  let changed = false;
-  for (const name of [CREDENTIAL_FILE_NAME, LEGACY_CREDENTIAL_FILE_NAME]) {
-    const file = path.join(stateDir, 'credentials', name);
-    try { fs.unlinkSync(file); changed = true; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotRevocationFailed, {
-        reason: BuiltinModelAuthDiagnosticReason.SnapshotRevokeFailed, errorCode: getBuiltinModelAuthErrorCode(error),
-      });
-      // Never take the in-memory token's expiry as evidence about a file we could not remove.
-      if (options?.allowExpiredSnapshot && name === CREDENTIAL_FILE_NAME && snapshotHasExpired(file)) continue;
-      firstError ??= error;
-    }
+  const file = path.join(stateDir, 'credentials', CREDENTIAL_FILE_NAME);
+  try { fs.unlinkSync(file); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotRevocationFailed, {
+      reason: BuiltinModelAuthDiagnosticReason.SnapshotRevokeFailed, errorCode: getBuiltinModelAuthErrorCode(error),
+    });
+    // Never take the in-memory token's expiry as evidence about a file we could not remove.
+    if (options?.allowExpiredSnapshot && snapshotHasExpired(file)) return false;
+    throw error;
   }
-  if (changed) writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.SnapshotRevoked, { changed: true });
-  if (firstError) throw firstError;
-  return changed;
+  writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.SnapshotRevoked, { changed: true });
+  return true;
 }

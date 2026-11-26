@@ -101,6 +101,7 @@ type SyncOpenClawConfigResult = {
   modelDefaultsApplicationPending?: true;
   gatewayRestartDeferred?: true;
   hostPolicyVerified?: boolean;
+  builtinCredentialSessionId?: string;
   status?: OpenClawEngineStatus;
   error?: string;
 };
@@ -109,6 +110,7 @@ type PendingCredentialReload = {
   authSessionId: string | null;
   authReason?: typeof BuiltinModelSyncReason.AuthLogin | typeof BuiltinModelSyncReason.AuthLogout;
   needsSecretsReload: boolean;
+  builtinPublication?: OpenClawConfigPublication;
   recoveryUsed: boolean;
   configApplication?: {
     reloadGeneration: number;
@@ -310,6 +312,10 @@ export class OpenClawConfigSyncService {
   private readonly pendingRetiredProviderIds = new Set<string>();
   private orphanedAuthProfilesReconciled = false;
   private pendingCredentialReload: PendingCredentialReload | null = null;
+  private builtinConfigPublication: {
+    authSessionId: string;
+    publication: OpenClawConfigPublication;
+  } | null = null;
 
   constructor(deps: OpenClawConfigSyncServiceDeps) {
     this.deps = deps;
@@ -324,7 +330,63 @@ export class OpenClawConfigSyncService {
       return this.enqueueSyncOperation(() => this.beginModelDefaultsSync(options, false))
         .then(publication => publication.observation);
     }
+    if (options.reason === BuiltinModelSyncReason.AuthLogin) {
+      const getAuthOwnerId = this.deps.getModelAuthSessionOwnerId ?? this.deps.getModelAuthSessionId;
+      const authOwnerId = getAuthOwnerId?.() ?? null;
+      return this.enqueueSyncOperation(() =>
+        this.syncConfigExclusive(options, () => (getAuthOwnerId?.() ?? null) === authOwnerId));
+    }
     return this.enqueueSyncOperation(() => this.syncConfigExclusive(options));
+  }
+
+  reloadBuiltinModelCredential(): Promise<SyncOpenClawConfigResult> {
+    const authSessionId = this.deps.getModelAuthSessionId?.();
+    return this.enqueueSyncOperation(async () => {
+      const options = { reason: BuiltinModelSyncReason.AuthLogin };
+      const unconfirmed = () => this.unconfirmedCredentialApplication(true);
+      const sessionIsCurrent = () => !!authSessionId && this.deps.getModelAuthSessionId?.() === authSessionId;
+      if (!sessionIsCurrent() || !authSessionId) return unconfirmed();
+      const fallback = () => this.syncConfigExclusive(options, sessionIsCurrent);
+      const manager = this.deps.getOpenClawEngineManager();
+      const published = this.builtinConfigPublication;
+      if (!published || published.authSessionId !== authSessionId ||
+          manager.getStatus().phase !== EnginePhase.Running ||
+          this.pendingCredentialReload || this.deferredRestart || this.pendingRetiredProviderIds.size > 0 ||
+          manager.hasPendingGatewayLaunchEnvironmentChanges()) {
+        return fallback();
+      }
+
+      const { publication } = published;
+      const processGeneration = manager.getGatewayProcessGeneration();
+      const lifecycleGeneration = manager.getGatewayLifecycleGeneration();
+      const isCurrent = () => sessionIsCurrent() &&
+        this.deps.getOpenClawEngineManager() === manager &&
+        manager.getStatus().phase === EnginePhase.Running &&
+        manager.getGatewayProcessGeneration() === processGeneration &&
+        manager.getGatewayLifecycleGeneration() === lifecycleGeneration;
+      const revision = await this.confirmConfigPublication(publication, isCurrent).catch((): undefined => undefined);
+      if (!revision || !isCurrent() || !publication.isCurrent()) return fallback();
+
+      const pending: PendingCredentialReload = {
+        authSessionId, authReason: options.reason, needsSecretsReload: true, recoveryUsed: false,
+        builtinPublication: publication,
+      };
+      this.pendingCredentialReload = pending;
+      const reload = await this.applyPendingCredentialReload(options, false);
+      if (reload) return reload;
+      const ownership = this.getCredentialReloadOwnership(pending);
+      if (!ownership) return unconfirmed();
+      const result = await this.verifySuccessfulConfigApplication({
+        success: true, changed: true, configSynced: true,
+      }, { ownership, preserveGateway: true, credentialOnly: this.orphanedAuthProfilesReconciled });
+      if (!result.success) return result;
+      const appliedRevision = await this.confirmConfigPublication(publication, ownership.isCurrent)
+        .catch((): undefined => undefined);
+      if (appliedRevision !== revision ||
+          !ownership.isCurrent()) return unconfirmed();
+      this.pendingCredentialReload = null;
+      return result;
+    });
   }
 
   /** Reconcile managed data after native mutation. False means no file delta, not a runtime ACK. */
@@ -616,13 +678,27 @@ export class OpenClawConfigSyncService {
 
   private async syncConfigExclusive(
     options: SyncOpenClawConfigOptions,
+    isAuthRequestCurrent?: () => boolean,
   ): Promise<SyncOpenClawConfigResult> {
     if (isModelDefaultsSyncReason(options.reason)) {
       // An explicit mutation context already owns the queue until it returns.
       // Confirm here rather than recursively queuing behind that same owner.
       return (await this.beginModelDefaultsSync(options, true)).observation;
     }
-    const result = await this.applyConfigExclusive(options);
+    if (isAuthRequestCurrent?.() === false) return this.unconfirmedCredentialApplication(true);
+    let result = await this.applyConfigExclusive(options, isAuthRequestCurrent);
+    if (result.success && this.deps.getModelAuthSessionId &&
+        (options.reason === 'startup' || options.reason === 'startup-history') &&
+        (this.deps.getModelAuthSessionId?.() ?? null) === null) {
+      this.pendingRetiredProviderIds.add(OpenClawProviderId.BuiltinModels);
+      if (result.builtinCredentialSessionId) {
+        // Expiry can cross the async boundary after persistence. Withdraw only
+        // that built-in projection; the rest of startup config is already published.
+        const withdrawal = await this.applyLogoutExclusive(true);
+        this.builtinConfigPublication = null;
+        result = { ...withdrawal, changed: result.changed || withdrawal.changed };
+      }
+    }
     const pending = this.pendingCredentialReload;
     const manager = this.deps.getOpenClawEngineManager();
     if (pending && !result.success) return { ...result, configSynced: false };
@@ -726,6 +802,7 @@ export class OpenClawConfigSyncService {
 
   private async applyConfigExclusive(
     options: SyncOpenClawConfigOptions,
+    isAuthRequestCurrent?: () => boolean,
   ): Promise<SyncOpenClawConfigResult> {
     console.log(`[OpenClaw] syncOpenClawConfig: called (reason: ${options.reason})`);
     if (options.reason === BuiltinModelSyncReason.AuthLogout) {
@@ -736,6 +813,7 @@ export class OpenClawConfigSyncService {
     const failApplication = (result: SyncOpenClawConfigResult, error: string) => authReason
       ? { ...unconfirmed(result), error }
       : this.failClosedConfigApplication(result, error);
+    const unapplied = () => unconfirmed({ success: false, changed: false, configSynced: false });
     if (authReason && this.pendingCredentialReload?.authReason === BuiltinModelSyncReason.AuthLogout) {
       this.pendingCredentialReload = null;
     }
@@ -755,8 +833,10 @@ export class OpenClawConfigSyncService {
         'Native extension MCP ownership could not be read; configuration was preserved.',
       );
     }
+    if (isAuthRequestCurrent?.() === false) return unapplied();
     try {
       const bindings = await this.deps.getNativeMcpDataBindings?.() ?? [];
+      if (isAuthRequestCurrent?.() === false) return unapplied();
       const missing = bindings.filter(binding => {
         try { nativeMcpDataDirectory(engineManager.getStateDir(), binding.pluginId); return false; }
         catch { return true; }
@@ -767,6 +847,7 @@ export class OpenClawConfigSyncService {
       return { success: false, changed: false, configSynced: false,
         error: error instanceof Error ? error.message : 'Plugin data is unavailable.' };
     }
+    if (isAuthRequestCurrent?.() === false) return unapplied();
     if (options.discoverExternalMcpServers !== false) {
       try {
         const discovered = discoverOpenClawManagedMcpServers(
@@ -806,7 +887,8 @@ export class OpenClawConfigSyncService {
     const preflightOwnsProcess = (): boolean =>
       this.deps.getOpenClawEngineManager() === engineManager &&
       engineManager.getGatewayProcessGeneration() === preflightProcessGeneration &&
-      (getAuthOwnerId?.() ?? null) === preflightAuthOwnerId;
+      (getAuthOwnerId?.() ?? null) === preflightAuthOwnerId &&
+      isAuthRequestCurrent?.() !== false;
     const preflightIsCurrent = (): boolean =>
       preflightOwnsProcess() &&
       engineManager.getStatus().phase === statusBeforeSync.phase &&
@@ -814,6 +896,7 @@ export class OpenClawConfigSyncService {
     const preflightUnconfirmed = (): SyncOpenClawConfigResult => unconfirmed({
       success: false, changed: false, configSynced: false,
     });
+    if (!preflightIsCurrent()) return preflightUnconfirmed();
     const expectedExecutionMode = this.deps.getCoworkStore().getConfig().executionMode;
     if (expectedExecutionMode === 'sandbox') {
       const sandboxStatus = await this.deps.getWindowsSandboxStatus();
@@ -905,6 +988,10 @@ export class OpenClawConfigSyncService {
       (syncResult.builtinCredentialSessionId && syncResult.builtinCredentialSessionId !== authSessionId)) {
       return preflightUnconfirmed();
     }
+    const { builtinCredentialSessionId, publication } = syncResult;
+    this.builtinConfigPublication = builtinCredentialSessionId && publication
+      ? { authSessionId: builtinCredentialSessionId, publication }
+      : null;
     const publicationAuthIsCurrent = () => (!syncResult.builtinCredentialSessionId && !authReason) ||
       currentAuthSessionId() === authSessionId;
     const publicationOwnsProcess = () => preflightOwnsProcess() && publicationAuthIsCurrent();
@@ -943,6 +1030,7 @@ export class OpenClawConfigSyncService {
     }
     const pending = this.pendingCredentialReload;
     if (pending && (syncResult.configChanged || gatewayLaunchEnvVarsChanged)) {
+      pending.builtinPublication = undefined;
       const previousApplication = pending.configApplication;
       pending.acknowledged = undefined;
       pending.configApplication = {
@@ -956,6 +1044,10 @@ export class OpenClawConfigSyncService {
           previousApplication.processGeneration === processGenerationBeforeSync &&
           previousApplication.lifecycleGeneration === lifecycleGenerationBeforeSync,
       };
+    }
+    if (pending?.authReason === BuiltinModelSyncReason.AuthLogin && syncResult.builtinCredentialSessionId &&
+        syncResult.builtinCredentialSessionId === pending.authSessionId && syncResult.publication) {
+      pending.builtinPublication = syncResult.publication;
     }
     const owesConfigApplication = pending?.configApplication !== undefined;
     const recoverExpiredSettings = async (result: SyncOpenClawConfigResult): Promise<SyncOpenClawConfigResult> => {
@@ -974,6 +1066,11 @@ export class OpenClawConfigSyncService {
       });
     };
     if (pending) {
+      if (pending.builtinPublication && !pending.configApplication) {
+        const revision = await this.confirmConfigPublication(pending.builtinPublication, publicationIsCurrent)
+          .catch((): undefined => undefined);
+        if (!revision || !publicationIsCurrent()) return recoverExpiredSettings(preflightUnconfirmed());
+      }
       const restartForIndependentConfigChange = !authReason && (gatewayLaunchEnvVarsChanged ||
         (pending.configApplication?.requiresHardRestart === true && engineManager.hasPendingGatewayLaunchEnvironmentChanges()));
       const credentialsApplied = await this.applyPendingCredentialReload(options, restartForIndependentConfigChange);
@@ -1011,7 +1108,11 @@ export class OpenClawConfigSyncService {
           execPolicyAlreadyVerified: fallbackExecPolicyVerified,
         },
       );
-      return recoverExpiredSettings(result);
+      const verified = await recoverExpiredSettings(result);
+      const startup = options.reason === 'startup' || options.reason === 'startup-history';
+      if (startup && verified.success && !verified.gatewayRestartDeferred && builtinCredentialSessionId &&
+          publication?.isCurrent()) return { ...verified, builtinCredentialSessionId };
+      return verified;
     }
 
     if (applyMode === 'native-reload') {
@@ -1214,12 +1315,14 @@ export class OpenClawConfigSyncService {
   ): ConfigApplicationOwnership {
     const manager = this.deps.getOpenClawEngineManager();
     const ownsProcess = (): boolean => this.pendingCredentialReload === pending &&
+      this.deps.getOpenClawEngineManager() === manager &&
       (this.deps.getModelAuthSessionId?.() ?? null) === pending.authSessionId &&
       manager.getGatewayProcessGeneration() === identity.processGeneration;
     return {
       ownsProcess,
       isCurrent: () => ownsProcess() && manager.getStatus().phase === 'running' &&
-        manager.getGatewayLifecycleGeneration() === identity.lifecycleGeneration,
+        manager.getGatewayLifecycleGeneration() === identity.lifecycleGeneration &&
+        pending.builtinPublication?.isCurrent() !== false,
     };
   }
 
@@ -1266,25 +1369,31 @@ export class OpenClawConfigSyncService {
       return timeoutMs === undefined ? manager.waitForGatewayConfigReload(generation) :
         manager.waitForGatewayConfigReload(generation, timeoutMs);
     }
-    return manager.waitForGatewayConfigReload(generation, timeoutMs, async () => {
-      const client = this.deps.getGatewayClient();
-      const stillOwnsPublication = () => isCurrent() && client === this.deps.getGatewayClient() && publication.isCurrent();
-      if (!client || !stillOwnsPublication()) return false;
-      const options = { timeoutMs: 5_000 };
-      const snapshot = await client.request<ConfigSnapshot>('config.get', {}, options);
-      if (!stillOwnsPublication() || snapshot.path !== publication.path || snapshot.valid !== true ||
-        typeof snapshot.configRevisionHash !== 'string' || snapshot.configRevisionHash.trim() === '' ||
-        snapshot.configRevisionHash !== snapshot.appliedConfigHash ||
-        typeof snapshot.hash !== 'string' || snapshot.hash.trim() === '') return false;
-      // Native hashes are opaque and config.get can be cached. An empty guarded
-      // patch checks the raw revision against a fresh read and performs no write.
-      const confirmation = await client.request<{ ok?: boolean; noop?: boolean; path?: string; changedPaths?: unknown }>(
-        'config.patch', { raw: '{}', baseHash: snapshot.hash }, options,
-      );
-      return stillOwnsPublication() && confirmation.ok === true && confirmation.noop === true &&
-        confirmation.path === publication.path && Array.isArray(confirmation.changedPaths) &&
-        confirmation.changedPaths.length === 0;
-    });
+    return manager.waitForGatewayConfigReload(generation, timeoutMs,
+      async () => Boolean(await this.confirmConfigPublication(publication, isCurrent)));
+  }
+
+  private async confirmConfigPublication(
+    publication: OpenClawConfigPublication,
+    isCurrent: () => boolean,
+  ): Promise<string | undefined> {
+    const client = this.deps.getGatewayClient();
+    const stillOwnsPublication = () => isCurrent() && client === this.deps.getGatewayClient() && publication.isCurrent();
+    if (!client || !stillOwnsPublication()) return;
+    const options = { timeoutMs: 5_000 };
+    const snapshot = await client.request<ConfigSnapshot>('config.get', {}, options);
+    if (!stillOwnsPublication() || snapshot.path !== publication.path || snapshot.valid !== true ||
+      typeof snapshot.configRevisionHash !== 'string' || snapshot.configRevisionHash.trim() === '' ||
+      snapshot.configRevisionHash !== snapshot.appliedConfigHash ||
+      typeof snapshot.hash !== 'string' || snapshot.hash.trim() === '') return;
+    // Native hashes are opaque and config.get can be cached. An empty guarded
+    // patch checks the raw revision against a fresh read and performs no write.
+    const confirmation = await client.request<{ ok?: boolean; noop?: boolean; path?: string; changedPaths?: unknown }>(
+      'config.patch', { raw: '{}', baseHash: snapshot.hash }, options,
+    );
+    if (stillOwnsPublication() && confirmation.ok === true && confirmation.noop === true &&
+      confirmation.path === publication.path && Array.isArray(confirmation.changedPaths) &&
+      confirmation.changedPaths.length === 0) return snapshot.configRevisionHash;
   }
 
   private async applyPendingCredentialConfig(
@@ -1491,6 +1600,16 @@ export class OpenClawConfigSyncService {
       const engineManager = this.deps.getOpenClawEngineManager();
       const current = engineManager.getStatus();
       const needsStartupPolicy = current.phase !== 'running';
+      if (this.deps.getModelAuthSessionId &&
+          (current.phase === EnginePhase.Ready || current.phase === EnginePhase.Error) &&
+          engineManager.getGatewayProcessId() === null) {
+        const withdrawal = this.getConfigSync().withdrawStaleBuiltinBeforeLaunch(this.deps.getModelAuthSessionId());
+        if (withdrawal) {
+          if (!withdrawal.ok) throw new Error(withdrawal.error || t('enginePreparationFailed'));
+          this.pendingRetiredProviderIds.add(OpenClawProviderId.BuiltinModels);
+          this.builtinConfigPublication = null;
+        }
+      }
       const status = needsStartupPolicy ? await engineManager.startGateway() : current;
       if (status.phase !== 'running') return status;
 
@@ -1526,6 +1645,7 @@ export class OpenClawConfigSyncService {
       execPolicyAlreadyVerified?: boolean;
       executionAdmission?: boolean;
       initializeExecPolicy?: boolean;
+      credentialOnly?: boolean;
       prepareComputerForSend?: boolean;
       ownership?: ConfigApplicationOwnership;
       preserveGateway?: boolean;
@@ -1583,7 +1703,7 @@ export class OpenClawConfigSyncService {
       const superseded = supersededAdmission();
       if (superseded) return superseded;
       if (runtimeConfigResult.verified && execPolicyApplied) {
-        if (options.executionAdmission) {
+        if (options.executionAdmission || options.credentialOnly) {
           const client = options.prepareComputerForSend ? this.deps.getGatewayClient() : null;
           if (options.prepareComputerForSend && client && processGeneration !== undefined && configGeneration !== undefined) {
             this.computerHostPreparation.start({

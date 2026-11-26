@@ -64,7 +64,9 @@ test.skipIf(!available)('model requests reuse their SDK binding but read each fr
         apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
       } } },
     }, directory, {
-      credential: { accessToken: firstToken, userAccount: 'fixture-account', expiresAt: now + 1800 },
+      credential: {
+        authType: 'jwt', accessToken: firstToken, userAccount: 'fixture-account', issuedAt: now, expiresAt: now + 1800,
+      },
       authSessionId: session,
     }, () => ({
       executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),

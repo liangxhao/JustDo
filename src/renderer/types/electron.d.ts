@@ -169,14 +169,7 @@ type WorkboardStopIdentity = import('../../shared/openclaw/workboard').Workboard
 type WorkboardSessionResolution =
   import('../../shared/openclaw/workboard').WorkboardSessionResolution;
 
-interface ApiResponse<T = unknown> {
-  ok: boolean;
-  status: number;
-  statusText: string;
-  headers: Record<string, string>;
-  data: T;
-  error?: string;
-}
+type ApiResponse<T = unknown> = import('../../shared/network/network').ApiResponse<T>;
 
 // Cowork types for IPC
 interface CoworkSession {
@@ -802,6 +795,9 @@ interface IElectronAPI {
   };
   api: {
     fetch: (options: ApiFetchOptions) => Promise<ApiResponse>;
+    testBuiltinModel: (
+      request: import('../../shared/network/network').BuiltinModelProbeRequest,
+    ) => Promise<import('../../shared/network/network').BuiltinModelProbeResult>;
     cancelFetch: (requestId: string) => Promise<void>;
     getOutboundHeaderPolicy: () => Promise<import('../../shared/network/network').OutboundHeaderPolicyView>;
   };

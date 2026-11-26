@@ -11,17 +11,17 @@ export const BuiltinModelRefreshErrorCode = {
 export type BuiltinModelRefreshErrorCode =
   (typeof BuiltinModelRefreshErrorCode)[keyof typeof BuiltinModelRefreshErrorCode];
 
+export type BuiltinModelAuthIssue = {
+  errorCode: BuiltinModelRefreshErrorCode;
+  httpStatus?: number;
+};
+
 export type BuiltinModelRefreshResult =
   | { success: true }
   | { success: false; skipped: true }
-  | {
-      success: false;
-      errorCode: BuiltinModelRefreshErrorCode;
-      httpStatus?: number;
-    };
+  | ({ success: false } & BuiltinModelAuthIssue);
 
 export const BuiltinModelSyncReason = {
   AuthLogin: 'auth-login',
   AuthLogout: 'auth-logout',
-  ManualRefresh: 'manual-refresh',
 } as const;

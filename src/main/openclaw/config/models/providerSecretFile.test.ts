@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { buildBuiltinModelSecretRef } from './builtinSecretProjection';
 import {
   managedProviderHeaderSecretRef,
   managedProviderSecretRef,
@@ -68,12 +69,10 @@ describe('managed provider secret files', () => {
       directory,
       { acme: { apiKey: 'old', headers: {} } },
     );
-    const config = { models: { providers: { builtin: { apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}' } } } };
-    expect(
-      syncProviderSecretFile(config, directory, {
-        BUILTIN_MODELS: { apiKey: 'builtin', headers: {} },
-      }).config,
-    ).toEqual(config);
+    const config = { models: { providers: {
+      builtin_models: { apiKey: buildBuiltinModelSecretRef('X-ACCESS-JWT') },
+    } } };
+    expect(syncProviderSecretFile(config, directory, {}).config).toEqual(config);
     expect(JSON.parse(fs.readFileSync(path.join(directory, 'model-provider-secrets.json'), 'utf8'))).toEqual({});
   });
 

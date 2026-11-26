@@ -3,10 +3,9 @@ import fs from 'node:fs';
 
 import { isRecord, sortJsonValue } from './configShape';
 
-export type OpenClawConfigVerification = {
-  ok: boolean;
-  error?: string;
-};
+type OpenClawConfigVerification =
+  | { ok: true; content: string }
+  | { ok: false; error: string };
 
 export const hasOpenClawConfigChanged = (
   currentContent: string,
@@ -48,7 +47,7 @@ export const verifyOpenClawConfigMatches = (
     };
   }
 
-  return { ok: true };
+  return { ok: true, content: actualContent };
 };
 
 export type OpenClawConfigSyncResult = {
@@ -75,7 +74,7 @@ export const buildVerifiedConfigSyncResult = (
   trackPublication = false,
 ): OpenClawConfigSyncResult => {
   const verification = verifyOpenClawConfigMatches(configPath, expectedConfig);
-  if (!verification.ok) {
+  if (verification.ok === false) {
     return {
       ok: false,
       changed: false,
@@ -85,8 +84,8 @@ export const buildVerifiedConfigSyncResult = (
     };
   }
   const hash = (content: string) => createHash('sha256').update(content).digest('hex');
-  const publishedHash = changed && trackPublication
-    ? hash(`${JSON.stringify(expectedConfig, null, 2)}\n`)
+  const publishedHash = trackPublication
+    ? hash(changed ? `${JSON.stringify(expectedConfig, null, 2)}\n` : verification.content)
     : null;
   return {
     ok: true,

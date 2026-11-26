@@ -40,6 +40,7 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
       apiKey: '', baseURL: 'http://127.0.0.1:9/v1', modelId: 'fixture', apiType: 'openai', providerName: 'builtin_models',
     }).providerConfig;
     expect(provider.request).toEqual({ allowPrivateNetwork: true });
+    const issuedAt = Math.floor(Date.now() / 1000);
     const { config } = syncBuiltinCredentialFile({
       gateway: { mode: 'local' }, plugins: { enabled: false },
       agents: { entries: { main: {} }, defaults: { systemAgent: { agentId: 'main' },
@@ -50,7 +51,9 @@ test.skipIf(!fs.existsSync(dist))('native JWT references protect tokens without 
         models: [{ id: 'fixture' }], embeddingModels: [{ id: 'embedding-fixture' }],
       }]) },
     }, directory, {
-      credential: { accessToken: 'jwt-fixture-one', userAccount: 'user-fixture', expiresAt: Math.floor(Date.now() / 1000) + 300 },
+      credential: {
+        authType: 'jwt', accessToken: 'jwt-fixture-one', userAccount: 'user-fixture', issuedAt, expiresAt: issuedAt + 300,
+      },
       authSessionId: 'a'.repeat(32),
     }, () => ({
       executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),

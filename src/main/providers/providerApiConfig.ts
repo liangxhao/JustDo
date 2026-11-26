@@ -349,11 +349,8 @@ export function resolveAllProviderSecrets(): ProviderManagedSecretValues {
         )
       : providerName;
     result[providerId] = {
-      apiKey: apiKey || 'sk-justdo-local',
-      headers:
-        providerName === 'builtin_models'
-          ? {}
-          : normalizeModelProviderHeaders(providerConfig.headers),
+      apiKey,
+      headers: normalizeModelProviderHeaders(providerConfig.headers),
     };
   }
 

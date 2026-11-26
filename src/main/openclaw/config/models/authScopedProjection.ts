@@ -17,7 +17,6 @@ import {
   BUILTIN_MODEL_SECRET_PROVIDER_ID,
   containsBuiltinMemorySearchRef,
   containsBuiltinModelRef,
-  LEGACY_BUILTIN_MODEL_SECRET_PROVIDER_ID,
 } from './builtinSecretProjection';
 import {
   getModelProviderId,
@@ -42,10 +41,7 @@ export const projectLoggedOutOpenClawConfig = (
     result.models = models;
   }
   const secretProviders = isRecord(existing.secrets) ? existing.secrets.providers : undefined;
-  if (isRecord(secretProviders) && (
-    Object.hasOwn(secretProviders, BUILTIN_MODEL_SECRET_PROVIDER_ID) ||
-    Object.hasOwn(secretProviders, LEGACY_BUILTIN_MODEL_SECRET_PROVIDER_ID)
-  )) {
+  if (isRecord(secretProviders) && Object.hasOwn(secretProviders, BUILTIN_MODEL_SECRET_PROVIDER_ID)) {
     const secrets = buildManagedOpenClawSecrets(existing);
     if (Object.keys(secrets).length) result.secrets = secrets;
     else delete result.secrets;
@@ -163,10 +159,7 @@ export const buildLoginScopedOpenClawConfig = (
       if (routeIdentity && routeMatches.length === 1) managedMatch = routeMatches[0];
     }
     if (!managedMatch) {
-      if (
-        existingApiKey.startsWith(`${MANAGED_PROVIDER_SECRET_SOURCE}:/`) ||
-        /^\$\{JUSTDO_APIKEY_CUSTOM(?:_\d+)?\}$/.test(existingApiKey)
-      ) {
+      if (existingApiKey.startsWith(`${MANAGED_PROVIDER_SECRET_SOURCE}:/`)) {
         delete providers[existingProviderId];
         removedManagedProviderIds.add(existingProviderId.toLowerCase());
       }

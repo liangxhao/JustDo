@@ -1,11 +1,17 @@
-import { NetworkFetchPurpose } from '@shared/network/network';
+import {
+  buildModelConnectionTestRequestBody,
+  BuiltinModelProbeOutcome,
+  type BuiltinModelProbeResult,
+  MODEL_CONNECTION_TEST_MAX_TOKENS,
+  NetworkFetchPurpose,
+} from '@shared/network/network';
+import type { BuiltinModelAuthIssue } from '@shared/providers/builtinModels';
 import { mergeModelProviderHeaders } from '@shared/providers/modelProviderHeaders';
 import { buildOpenAIJsonRequestHeaders } from '@shared/providers/modelRequestHeaders';
 import React from 'react';
 
 import { getProviderDisplayName, isBuiltinModelsProvider } from '@/app/config';
 import {
-  buildModelConnectionTestRequestBody,
   MODEL_CONNECTION_TEST_TIMEOUT_MS,
   selectModelsForConnectionTest,
   withModelConnectionTestTimeout,
@@ -24,31 +30,12 @@ import {
   toConnectivityRecord,
 } from './providerSettingsConfig';
 
-const CONNECTIVITY_TEST_TOKEN_BUDGET = 64;
-
 const waitForNextPaint = () =>
   new Promise<void>(resolve => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => resolve());
     });
   });
-
-const hideBuiltinModelUrlFromLog = (log?: string): string | undefined => {
-  if (!log) {
-    return log;
-  }
-  return log
-    .split('\n')
-    .filter(line => !line.startsWith(`${i18nService.t('testRequestUrl')}:`))
-    .join('\n');
-};
-
-const hideBuiltinModelUrlFromResult = (
-  result: ModelConnectionTestResult,
-): ModelConnectionTestResult => ({
-  ...result,
-  log: hideBuiltinModelUrlFromLog(result.log),
-});
 
 const stringifyConnectivityLogValue = (value: unknown): string => {
   if (typeof value === 'string') {
@@ -106,6 +93,7 @@ interface ModelConnectionTestActionsOptions {
   setIsTesting: React.Dispatch<React.SetStateAction<boolean>>;
   isDetectingModels: boolean;
   enableProvider: (provider: ProviderType) => void;
+  onAuthenticationRejected: (issue: BuiltinModelAuthIssue) => void;
 }
 
 export function createModelConnectionTestActions({
@@ -120,20 +108,15 @@ export function createModelConnectionTestActions({
   setIsTesting,
   isDetectingModels,
   enableProvider,
+  onAuthenticationRejected,
 }: ModelConnectionTestActionsOptions) {
   const showTestResultModal = (
     result: Omit<ProviderConnectionTestResult, 'provider' | 'providerName'>,
     provider: ProviderType,
   ) => {
     const providerConfig = providers[provider];
-    const shouldHideUrl = isBuiltinModelsProvider(provider);
     setTestResult({
       ...result,
-      baseUrl: shouldHideUrl ? undefined : result.baseUrl,
-      log: shouldHideUrl ? hideBuiltinModelUrlFromLog(result.log) : result.log,
-      modelResults: shouldHideUrl
-        ? result.modelResults?.map(hideBuiltinModelUrlFromResult)
-        : result.modelResults,
       provider,
       providerName: getProviderDisplayName(provider, providerConfig),
     });
@@ -152,11 +135,7 @@ export function createModelConnectionTestActions({
       return {
         ...current,
         modelResults: current.modelResults?.map(result =>
-          result.modelId === modelId
-            ? current.provider === 'builtin_models'
-              ? hideBuiltinModelUrlFromResult(nextResult)
-              : nextResult
-            : result,
+          result.modelId === modelId ? nextResult : result,
         ),
       };
     });
@@ -174,7 +153,7 @@ export function createModelConnectionTestActions({
         [result.modelId]: status,
       },
     }));
-    if (!result.success) {
+    if (!result.success && !isBuiltinModelsProvider(provider)) {
       setProviders(current => ({
         ...current,
         [provider]: {
@@ -191,21 +170,24 @@ export function createModelConnectionTestActions({
   const handleTestConnection = async (modelId?: string) => {
     cancelConnectionTest();
     const testingProvider = activeProvider;
+    const builtinProvider = isBuiltinModelsProvider(testingProvider);
     const providerConfig = providers[testingProvider];
     const testGeneration = connectionTestRef.current.generation;
     const isCurrentTest = () => connectionTestRef.current.generation === testGeneration;
     setIsTesting(true);
     setTestResult(null);
-    setModelConnectionTestStatuses(current => ({
-      ...current,
-      [testingProvider]: modelId
-        ? Object.fromEntries(
-            Object.entries(current[testingProvider] ?? {}).filter(
-              ([testedModelId]) => testedModelId !== modelId,
-            ),
-          )
-        : {},
-    }));
+    if (!builtinProvider) {
+      setModelConnectionTestStatuses(current => ({
+        ...current,
+        [testingProvider]: modelId
+          ? Object.fromEntries(
+              Object.entries(current[testingProvider] ?? {}).filter(
+                ([testedModelId]) => testedModelId !== modelId,
+              ),
+            )
+          : {},
+      }));
+    }
 
     // Check if provider has valid authentication
     if (
@@ -221,7 +203,7 @@ export function createModelConnectionTestActions({
     const originalModels = providerConfig.models ?? [];
     if (originalModels.length === 0) {
       showTestResultModal(
-        { success: false, message: i18nService.t('noModelsConfigured') },
+        { status: 'failed', message: i18nService.t('noModelsConfigured') },
         testingProvider,
       );
       setIsTesting(false);
@@ -238,17 +220,17 @@ export function createModelConnectionTestActions({
       return;
     }
 
+    const baseUrl = builtinProvider
+      ? undefined
+      : resolveBaseUrl(testingProvider, providerConfig.baseUrl).replace(/\/+$/, '');
+    const openaiUrl = baseUrl === undefined ? undefined : `${baseUrl}/chat/completions`;
+    const requestLog = openaiUrl === undefined ? [] : [`${i18nService.t('testRequestUrl')}: ${openaiUrl}`];
     try {
-      const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl);
-      const normalizedBaseUrl = effectiveBaseUrl.replace(/\/+$/, '');
-      const effectiveApiKey = providerConfig.apiKey;
-      const openaiUrl = `${normalizedBaseUrl}/chat/completions`;
       showTestResultModal(
         {
-          success: false,
-          isRunning: true,
+          status: 'testing',
           message: i18nService.t('testing'),
-          baseUrl: normalizedBaseUrl,
+          baseUrl,
           modelResults: modelsToTest.map(model => ({
             success: false,
             status: 'pending',
@@ -278,30 +260,27 @@ export function createModelConnectionTestActions({
           return;
         }
 
-        const requestBody = buildModelConnectionTestRequestBody(
-          model.id,
-          CONNECTIVITY_TEST_TOKEN_BUDGET,
-          isBuiltinModelsProvider(testingProvider),
-        );
-        const headers = mergeModelProviderHeaders(
-          buildOpenAIJsonRequestHeaders(requestBody, effectiveApiKey, {
-            includeContentLength: false,
-          }),
-          isBuiltinModelsProvider(testingProvider) ? undefined : providerConfig.headers,
-        );
         const requestId = `model-connection-test-${crypto.randomUUID()}`;
         connectionTestRef.current.requestId = requestId;
 
         try {
-          const response = await withModelConnectionTestTimeout(
-            window.electron.api.fetch({
-              url: openaiUrl,
-              method: 'POST',
-              headers,
-              body: requestBody,
-              requestId,
+          let request: Promise<BuiltinModelProbeResult>;
+          if (openaiUrl === undefined) {
+            request = window.electron.api.testBuiltinModel({ modelId: model.id, requestId })
+              .catch(() => ({ outcome: BuiltinModelProbeOutcome.Interrupted }));
+          } else {
+            const body = buildModelConnectionTestRequestBody(model.id, MODEL_CONNECTION_TEST_MAX_TOKENS);
+            const headers = mergeModelProviderHeaders(
+              buildOpenAIJsonRequestHeaders(body, providerConfig.apiKey, { includeContentLength: false }),
+              providerConfig.headers,
+            );
+            request = window.electron.api.fetch({
+              url: openaiUrl, method: 'POST', headers, body, requestId,
               purpose: NetworkFetchPurpose.ModelConnectionTest,
-            }),
+            }).then(response => ({ outcome: BuiltinModelProbeOutcome.Completed, response }));
+          }
+          const outcome = await withModelConnectionTestTimeout(
+            request,
             () => window.electron.api.cancelFetch(requestId),
             i18nService
               .t('connectionTestTimeout')
@@ -313,6 +292,13 @@ export function createModelConnectionTestActions({
           if (connectionTestRef.current.requestId === requestId) {
             connectionTestRef.current.requestId = null;
           }
+          if (outcome.outcome !== BuiltinModelProbeOutcome.Completed) {
+            if (outcome.outcome === BuiltinModelProbeOutcome.AuthenticationRejected) {
+              onAuthenticationRejected(outcome.issue);
+            }
+            break;
+          }
+          const { response } = outcome;
           const data = response.data || {};
           if (response.ok && isValidConnectivityResponse(data)) {
             const nextResult: ModelConnectionTestResult = {
@@ -332,7 +318,9 @@ export function createModelConnectionTestActions({
             getConnectivityErrorMessage(data) ||
             (response.ok
               ? i18nService.t('connectionInvalidResponse')
-              : `${i18nService.t('connectionFailed')}: ${response.status}`);
+              : response.status > 0
+                ? `${i18nService.t('connectionFailed')}: ${response.status}`
+                : response.error || i18nService.t('connectionFailed'));
           const recovered =
             !response.ok &&
             typeof errorMessage === 'string' &&
@@ -345,9 +333,9 @@ export function createModelConnectionTestActions({
             modelId: model.id,
             detail: recovered ? i18nService.t('connectionSuccess') : errorMessage,
             log: [
-              `${i18nService.t('testRequestUrl')}: ${openaiUrl}`,
+              ...requestLog,
               `${i18nService.t('testModel')}: ${modelLabel} (${model.id})`,
-              `${i18nService.t('testStatus')}: ${response.status}`,
+              ...(response.status > 0 ? [`${i18nService.t('testStatus')}: ${response.status}`] : []),
               `${i18nService.t('testResponse')}: ${stringifyConnectivityLogValue(data)}`,
             ].join('\n'),
           };
@@ -368,7 +356,7 @@ export function createModelConnectionTestActions({
             modelId: model.id,
             detail: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
             log: [
-              `${i18nService.t('testRequestUrl')}: ${openaiUrl}`,
+              ...requestLog,
               `${i18nService.t('testModel')}: ${modelLabel} (${model.id})`,
               `${i18nService.t('testError')}: ${
                 err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)
@@ -384,25 +372,30 @@ export function createModelConnectionTestActions({
       if (!isCurrentTest()) {
         return;
       }
+      if (results.length === 0) {
+        setIsTestResultModalOpen(false);
+        setTestResult(null);
+        return;
+      }
 
       const passedCount = results.filter(result => result.success).length;
-      const allPassed = passedCount === results.length;
+      const allPassed = passedCount === modelsToTest.length;
+      const hasFailure = passedCount !== results.length;
       if (allPassed) {
         enableProvider(testingProvider);
       }
 
       showTestResultModal(
         {
-          success: allPassed,
+          status: allPassed ? 'success' : hasFailure ? 'failed' : undefined,
           message: `${i18nService
             .t('connectionTestSummary')
-            .replace('{passed}', String(passedCount))
+            .replace('{tested}', String(results.length))
             .replace(
               '{total}',
-              String(results.length),
+              String(modelsToTest.length),
             )}${allPassed ? `\n${i18nService.t('connectionSuccess')}` : ''}`,
-          baseUrl: normalizedBaseUrl,
-          isRunning: false,
+          baseUrl,
           modelResults: results,
           log: results
             .map(result =>
@@ -422,19 +415,15 @@ export function createModelConnectionTestActions({
       if (!isCurrentTest()) {
         return;
       }
-      const effectiveBaseUrl = resolveBaseUrl(testingProvider, providerConfig.baseUrl).replace(
-        /\/+$/,
-        '',
-      );
       showTestResultModal(
         {
-          success: false,
+          status: 'failed',
           message: err instanceof Error ? err.message : i18nService.t('connectionFailed'),
-          baseUrl: effectiveBaseUrl,
+          baseUrl,
           modelLabel: modelsToTest[0]?.name?.trim() || modelsToTest[0]?.id,
           modelId: modelsToTest[0]?.id,
           log: [
-            `${i18nService.t('testRequestUrl')}: ${effectiveBaseUrl}/chat/completions`,
+            ...requestLog,
             `${i18nService.t('testModel')}: ${modelsToTest[0]?.name?.trim() || modelsToTest[0]?.id} (${modelsToTest[0]?.id})`,
             `${i18nService.t('testError')}: ${
               err instanceof Error ? err.stack || err.message : stringifyConnectivityLogValue(err)

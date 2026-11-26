@@ -4,7 +4,7 @@ import { BuiltinModelAuthCoordinator } from './builtinModelAuthCoordinator';
 import type { BuiltinModelCredential } from './builtinModelCredential';
 import { BuiltinModelCredentialMonitor } from './builtinModelCredentialMonitor';
 
-const credential: BuiltinModelCredential = { accessToken: 'fixture', userAccount: 'user', expiresAt: 2_000_000_000 };
+const credential: BuiltinModelCredential = { authType: 'jwt', accessToken: 'fixture', userAccount: 'user', issuedAt: 1_999_999_880, expiresAt: 2_000_000_000 };
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;
@@ -29,6 +29,21 @@ const setup = () => {
   return { dependencies, coordinator: new BuiltinModelAuthCoordinator(dependencies) };
 };
 
+test('concurrent waiters see the same exchange failure while only the latest reconciles it', async () => {
+  const { coordinator, dependencies } = setup();
+  const exchange = deferred<BuiltinModelCredential>();
+  dependencies.exchange.mockReturnValue(exchange.promise);
+  dependencies.getActive.mockReturnValue(null);
+  const error = new Error('sign-in rejected');
+
+  const probe = expect(coordinator.refreshInBackground()).rejects.toBe(error);
+  const monitor = expect(coordinator.refreshInBackground()).rejects.toBe(error);
+  exchange.reject(error);
+
+  await Promise.all([probe, monitor]);
+  expect(dependencies.logout).toHaveBeenCalledOnce();
+});
+
 test('background renewal publishes across multiple token lifetimes while configuration confirmation is pending', async () => {
   vi.useFakeTimers();
   try {
@@ -38,7 +53,7 @@ test('background renewal publishes across multiple token lifetimes while configu
       const now = Math.floor(Date.now() / 1000);
       return {
         accessToken: `${Buffer.from('{}').toString('base64url')}.${Buffer.from(JSON.stringify({ iat: now, exp: now + 120, sequence: sequence++ })).toString('base64url')}.fixture`,
-        userAccount: 'user', expiresAt: now + 120,
+        authType: 'jwt', userAccount: 'user', issuedAt: now, expiresAt: now + 120,
       };
     };
     let active = issue();
@@ -53,7 +68,7 @@ test('background renewal publishes across multiple token lifetimes while configu
     };
     dependencies.rotate.mockImplementationOnce(() => confirmation.promise);
     const coordinator = new BuiltinModelAuthCoordinator(dependencies);
-    coordinator.initialize(active);
+    coordinator.recordStartupProjection('session-1');
     const monitor = new BuiltinModelCredentialMonitor({
       userInfoPath: 'fixture', refresh: () => coordinator.refreshInBackground(),
       watchFile: vi.fn(), unwatchFile: vi.fn(),
@@ -82,7 +97,7 @@ test('a late background confirmation cannot confirm a newer token or restore a l
   const { dependencies } = setup();
   const publishCredential = vi.fn();
   const coordinator = new BuiltinModelAuthCoordinator({ ...dependencies, publishCredential });
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const first = { ...credential, accessToken: 'first-renewal' };
   const latest = { ...credential, accessToken: 'latest-renewal' };
   const confirmation = deferred<boolean>();
@@ -120,7 +135,7 @@ test('background application failures request a retry and never confirm the publ
   const publishCredential = vi.fn();
   const onBackgroundError = vi.fn();
   const coordinator = new BuiltinModelAuthCoordinator({ ...dependencies, publishCredential, onBackgroundError });
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const renewed = { ...credential, accessToken: 'renewed' };
   dependencies.exchange.mockResolvedValue(renewed);
   dependencies.getActive.mockReturnValue(renewed);
@@ -140,7 +155,7 @@ test('a failed synchronous publication starts no configuration work and remains 
   const failure = new Error('snapshot publication failed');
   const publishCredential = vi.fn().mockImplementationOnce(() => { throw failure; });
   const coordinator = new BuiltinModelAuthCoordinator({ ...dependencies, publishCredential });
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const renewed = { ...credential, accessToken: 'renewed' };
   dependencies.getActive.mockReturnValue(renewed);
   dependencies.exchange.mockResolvedValue(renewed);
@@ -156,7 +171,7 @@ test('a failed synchronous publication starts no configuration work and remains 
 test('expired exchange failures do not hold subsequent background exchanges behind cleanup confirmation', async () => {
   const { dependencies } = setup();
   const coordinator = new BuiltinModelAuthCoordinator(dependencies);
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const cleanup = deferred<undefined>();
   dependencies.logout.mockImplementationOnce(() => cleanup.promise);
   dependencies.getActive.mockReturnValue(null);
@@ -178,7 +193,6 @@ test('background renewal preserves foreground login and coalesces its latest pen
   const { dependencies } = setup();
   const publishCredential = vi.fn();
   const coordinator = new BuiltinModelAuthCoordinator({ ...dependencies, publishCredential });
-  coordinator.initialize(null);
   const confirmation = deferred<boolean>();
   dependencies.login.mockImplementationOnce(() => confirmation.promise);
   const foreground = coordinator.refresh(true);
@@ -210,7 +224,7 @@ test('background renewal preserves foreground login and coalesces its latest pen
 test('background renewal does not cancel foreground catalog refresh during exchange', async () => {
   const { dependencies } = setup();
   const coordinator = new BuiltinModelAuthCoordinator(dependencies);
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const pending = deferred<BuiltinModelCredential | null>();
   dependencies.exchange.mockImplementationOnce(() => pending.promise);
   const foreground = coordinator.refresh(true);
@@ -246,7 +260,7 @@ test.each(['foreground', 'logout'] as const)('late background exchange cannot pu
   const { dependencies } = setup();
   const publishCredential = vi.fn();
   const coordinator = new BuiltinModelAuthCoordinator({ ...dependencies, publishCredential });
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const pending = deferred<BuiltinModelCredential | null>();
   dependencies.exchange.mockImplementationOnce(() => pending.promise);
   const background = coordinator.refreshInBackground();
@@ -311,7 +325,7 @@ test('obsolete failure cannot clear a newer authentication decision', async () =
 
 test('cached token skips catalog refresh unless explicitly requested', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   await coordinator.refresh();
   expect(dependencies.login).not.toHaveBeenCalled();
   await coordinator.refresh(true);
@@ -320,7 +334,7 @@ test('cached token skips catalog refresh unless explicitly requested', async () 
 
 test('renews an established login without waiting for model discovery', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const renewed = { ...credential, accessToken: 'renewed-fixture' };
   dependencies.exchange.mockResolvedValue(renewed);
   dependencies.getActive.mockReturnValue(renewed);
@@ -334,7 +348,6 @@ test('renews an established login without waiting for model discovery', async ()
 
 test('first login and explicit catalog refresh still discover models', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(null);
   await coordinator.refresh();
   const renewed = { ...credential, accessToken: 'renewed-fixture' };
   dependencies.getActive.mockReturnValue(renewed);
@@ -347,7 +360,7 @@ test('first login and explicit catalog refresh still discover models', async () 
 
 test('retries an unconfirmed rotation without rediscovering models or treating the token as applied', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const renewed = { ...credential, accessToken: 'renewed-fixture' };
   dependencies.exchange.mockResolvedValue(renewed);
   dependencies.getActive.mockReturnValue(renewed);
@@ -374,7 +387,7 @@ test('failed initial login retries model discovery before establishing the rotat
 
 test('same token from a new auth session cannot reuse the previous confirmation', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   dependencies.getAuthSessionId.mockReturnValue('session-2');
 
   await coordinator.refresh();
@@ -390,7 +403,7 @@ test.each([null, true])('withdraws access when the binding expires during snapsh
     return published;
   });
   const coordinator = new BuiltinModelAuthCoordinator({ ...dependencies, publishCredential });
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
 
   await expect(coordinator.refresh()).resolves.toBeNull();
 
@@ -429,7 +442,7 @@ test('an obsolete exchange cannot publish its token under the active replacement
   const { dependencies } = setup();
   const publishCredential = vi.fn();
   const coordinator = new BuiltinModelAuthCoordinator({ ...dependencies, publishCredential });
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const replacement = { ...credential, accessToken: 'replacement' };
   dependencies.getActive.mockReturnValue(replacement);
   dependencies.getAuthSessionId.mockReturnValue('session-2');
@@ -456,7 +469,7 @@ test('withdraws built-in access when a pending Gateway application fails after e
 
 test('late rotation acknowledgement cannot confirm a replacement login session', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const renewed = { ...credential, accessToken: 'renewed-fixture' };
   dependencies.exchange.mockResolvedValue(renewed);
   dependencies.getActive.mockReturnValue(renewed);
@@ -476,7 +489,7 @@ test('late rotation acknowledgement cannot confirm a replacement login session',
 
 test('logout revokes a pending rotation before a same-account login is confirmed', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const renewed = { ...credential, accessToken: 'renewed-fixture' };
   dependencies.exchange.mockResolvedValue(renewed);
   dependencies.getActive.mockReturnValue(renewed);
@@ -499,7 +512,7 @@ test('logout revokes a pending rotation before a same-account login is confirmed
 
 test('provider removal after temporary expiry requires a full login even when the auth session resumes', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   dependencies.getActive.mockReturnValue(null);
   dependencies.exchange.mockRejectedValueOnce(new Error('exchange unavailable'));
 
@@ -514,7 +527,7 @@ test('provider removal after temporary expiry requires a full login even when th
 
 test('shares in-flight explicit cleanup when the login file watcher observes its deletion', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   dependencies.exchange.mockResolvedValue(null);
   dependencies.getActive.mockReturnValue(null);
   const cleanup = deferred<undefined>();
@@ -533,7 +546,7 @@ test('shares in-flight explicit cleanup when the login file watcher observes its
 
 test('retries credential removal after a failed logout synchronization', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   dependencies.exchange.mockResolvedValue(null);
   dependencies.getActive.mockReturnValue(null);
   dependencies.logout.mockRejectedValueOnce(new Error('disk unavailable'));
@@ -576,7 +589,6 @@ test('retains the native cleanup failure when snapshot revocation also fails', a
 
 test('null refresh cancels a pending login even when initially logged out', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(null);
   const pending = deferred<boolean>();
   dependencies.login.mockImplementationOnce(() => pending.promise);
   const login = coordinator.refresh();
@@ -591,7 +603,7 @@ test('null refresh cancels a pending login even when initially logged out', asyn
 
 test('previous token is reapplied when a different token synchronization is pending', async () => {
   const { dependencies, coordinator } = setup();
-  coordinator.initialize(credential);
+  coordinator.recordStartupProjection('session-1');
   const pending = deferred<boolean>();
   dependencies.rotate.mockImplementationOnce(() => pending.promise);
   dependencies.exchange.mockImplementationOnce(async () => {

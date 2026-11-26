@@ -55,7 +55,7 @@ import {
   listRetiredOpenClawProviderIds,
   ProviderName,
 } from '../shared/providers';
-import { BuiltinModelIpc, BuiltinModelSyncReason } from '../shared/providers/builtinModels';
+import { BuiltinModelIpc } from '../shared/providers/builtinModels';
 import { LocalSpeechModelIpc } from '../shared/speech/localSpeechModels';
 import { normalizeLocalSpeechSettings } from '../shared/speech/localSpeechSettings';
 import { stopBrowserAuthenticationTransport } from './browser/authentication/browserAuthenticationTransport';
@@ -340,7 +340,6 @@ import {
   writeBuiltinModelAuthDiagnostic,
 } from './providers/builtinModelAuthDiagnostics';
 import {
-  type BuiltinModelCredential,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
   getActiveBuiltinModelCredentialBinding,
@@ -590,12 +589,14 @@ let mcpServices: McpServices | null = null;
 let openClawHookServices: OpenClawHookServices | null = null;
 let openClawConfigSyncService: OpenClawConfigSyncService | null = null;
 let localSpeechModelService: LocalSpeechModelService | null = null;
-let builtinModelLifecycle: BuiltinModelLifecycle | null = null;
 let userActivityService: UserActivityService | null = null;
 let loginService: LoginService | null = null;
-let builtinModelCredentialMonitor: BuiltinModelCredentialMonitor | null = null;
-let builtinModelTokenExchange: BuiltinModelTokenExchange | null = null;
-let builtinModelAuthCoordinator: BuiltinModelAuthCoordinator | null = null;
+let builtinModelAuth: {
+  lifecycle: BuiltinModelLifecycle;
+  exchange: BuiltinModelTokenExchange;
+  coordinator: BuiltinModelAuthCoordinator;
+  monitor: BuiltinModelCredentialMonitor;
+} | null = null;
 let windowsSandboxService: WindowsSandboxService | null = null;
 let chromeExtensionChatServer: ChromeExtensionChatServer | null = null;
 let storeInitPromise: Promise<SqliteStore> | null = null;
@@ -1065,69 +1066,69 @@ const notifyModelChange = (
 
 const notifyRuntimeModelsChanged = (): void => notifyModelChange(OpenClawModelsIpc.Changed);
 
-const getBuiltinModelLifecycle = (): BuiltinModelLifecycle => {
-  if (!builtinModelLifecycle) {
-    builtinModelLifecycle = new BuiltinModelLifecycle({
-      getStore,
-      syncOpenClawConfig,
-      notifyCatalogChanged: () => notifyModelChange(BuiltinModelIpc.Changed),
-      notifyRuntimeModelsChanged,
-      scheduleCatalogRetry: () => builtinModelCredentialMonitor?.scheduleCatalogRetry(),
-    });
-  }
-  return builtinModelLifecycle;
-};
-
-const getBuiltinModelTokenExchange = (): BuiltinModelTokenExchange => {
-  builtinModelTokenExchange ??= new BuiltinModelTokenExchange({
-    userInfoPath: resolveOutboundHeaderUserInfoPath(),
+const getBuiltinModelAuth = () => {
+  if (builtinModelAuth) return builtinModelAuth;
+  const userInfoPath = resolveOutboundHeaderUserInfoPath();
+  const lifecycle = new BuiltinModelLifecycle({
+    getStore,
+    syncOpenClawConfig,
+    reloadBuiltinModelCredential: () => getOpenClawConfigSyncService().reloadBuiltinModelCredential(),
+    notifyCatalogChanged: () => notifyModelChange(BuiltinModelIpc.Changed),
+    notifyRuntimeModelsChanged,
+    scheduleCatalogRetry: () => monitor.scheduleCatalogRetry(),
+  });
+  const exchange = new BuiltinModelTokenExchange({
+    userInfoPath,
     getConfig: getBuiltinModelAuthConfig,
     getDevelopmentApiKey: () =>
       resolveBuiltinModelDevelopmentApiKey(getBuiltinModelAuthConfig(), app.isPackaged),
     fetch: (url, init) => mainProcessFetch(url, init, { maxResponseBytes: 32_768 }),
     onInvalidated: () => revokeBuiltinCredentialFile(getOpenClawEngineManager().getStateDir()),
   });
-  return builtinModelTokenExchange;
-};
-
-const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
-  builtinModelAuthCoordinator ??= new BuiltinModelAuthCoordinator({
-    exchange: () => getBuiltinModelTokenExchange().refresh(),
+  const coordinator = new BuiltinModelAuthCoordinator({
+    exchange: () => exchange.refresh(),
     getActiveBinding: getActiveBuiltinModelCredentialBinding,
     publishCredential: binding => publishBuiltinCredentialFile(getOpenClawEngineManager().getStateDir(), binding),
-    onBackgroundError: error => builtinModelCredentialMonitor?.retryAfterError(error),
+    onBackgroundError: error => monitor.retryAfterError(error),
     onApplicationUnconfirmed: () => {
       if (getOpenClawEngineManager().getStatus().phase === EnginePhase.Running) {
-        builtinModelCredentialMonitor?.retryAfterError(undefined);
+        monitor.retryAfterError(undefined);
       }
     },
-    needsCatalogRetry: () => getBuiltinModelLifecycle().needsCatalogRetry(),
-    login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
-    rotate: () => getBuiltinModelLifecycle().refreshAfterCredentialRotation(),
+    needsCatalogRetry: () => lifecycle.needsCatalogRetry(),
+    login: () => lifecycle.refreshAfterLogin(),
+    rotate: () => lifecycle.refreshAfterCredentialRotation(),
     invalidate: () => {
       try {
-        builtinModelTokenExchange?.suspend();
+        exchange.suspend();
       } finally {
         clearActiveBuiltinModelCredential();
       }
     },
-    logout: () => getBuiltinModelLifecycle().refreshAfterLogout(),
+    logout: () => lifecycle.refreshAfterLogout(),
   });
-  return builtinModelAuthCoordinator;
+  const monitor = new BuiltinModelCredentialMonitor({
+    userInfoPath,
+    refresh: () => coordinator.refreshInBackground(),
+    needsCatalogRetry: () => lifecycle.needsCatalogRetry(),
+  });
+  builtinModelAuth = { lifecycle, exchange, coordinator, monitor };
+  return builtinModelAuth;
 };
 
 const refreshBuiltinModelCredentialFromLoginFile = async (refreshCatalog = false) => {
+  const { coordinator, monitor } = getBuiltinModelAuth();
   try {
-    return await getBuiltinModelAuthCoordinator().refresh(refreshCatalog);
+    return await coordinator.refresh(refreshCatalog);
   } catch (error) {
     if (requiresBuiltinModelUserAction(error)) throw error;
-    builtinModelCredentialMonitor?.retryAfterError(error);
+    monitor.retryAfterError(error);
     return null;
   }
 };
 
 const finishLoginSync = async (): Promise<boolean> => {
-  getBuiltinModelTokenExchange().resume();
+  getBuiltinModelAuth().exchange.resume();
   const credential = await refreshBuiltinModelCredentialFromLoginFile(true);
   userActivityService?.start();
   void userActivityService?.sync();
@@ -1144,7 +1145,7 @@ export const refreshAfterLogin = async (): Promise<void> => {
 export const refreshAfterLogout = (): Promise<void> => {
   userActivityService?.stop();
   updateOutboundHeaderUserInfoCache();
-  return getBuiltinModelAuthCoordinator().logout();
+  return getBuiltinModelAuth().coordinator.logout();
 };
 
 const getLoginService = (): LoginService => {
@@ -1153,7 +1154,7 @@ const getLoginService = (): LoginService => {
     adapter: createLoginSdkAdapter({ getParentWindow: () => mainWindow }),
     onLoginCommitted: finishLoginSync,
     onLogoutCommitted: refreshAfterLogout,
-    waitForLogoutCatalog: () => getBuiltinModelLifecycle().waitForLogoutCatalog(),
+    waitForLogoutCatalog: () => getBuiltinModelAuth().lifecycle.waitForLogoutCatalog(),
     publishCommittedHeaders: publishOutboundHeaderUserInfoCache,
     onStateChanged: state => {
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
@@ -1717,7 +1718,23 @@ if (agentBridgeArgv) {
     },
   });
 
-  registerNetworkHandlers({ getMainWindow: () => mainWindow });
+  registerNetworkHandlers({
+    getMainWindow: () => mainWindow,
+    renewBuiltinModelCredential: async () => {
+      const { coordinator, monitor } = getBuiltinModelAuth();
+      try {
+        await coordinator.refreshInBackground();
+      } catch (error) {
+        monitor.retryAfterError(error);
+        throw error;
+      }
+    },
+    hasBuiltinModel: modelId => {
+      const config = getStore().get<{ providers?: Record<string, { models?: { id: string }[] }> }>('app_config');
+      const models = config?.providers?.[ProviderName.BuiltinModels]?.models;
+      return Array.isArray(models) && models.some(model => model?.id === modelId);
+    },
+  });
   registerLogHandlers();
   const isStorageMaintenanceReady = () => {
     if (!startupHistoryAdmissionReady || appShutdown.isQuitting() || isStorageExecutionFrozen())
@@ -2452,11 +2469,11 @@ if (agentBridgeArgv) {
           () => detachDevelopmentParent?.(),
           () => appPlugins?.dispose(),
           () => stopAppDevelopmentAssets?.(),
-          () => builtinModelCredentialMonitor?.stop(),
+          () => builtinModelAuth?.monitor.stop(),
           () => loginService?.dispose(),
           () => userActivityService?.stop(),
-          () => builtinModelTokenExchange?.invalidate(),
-          () => builtinModelAuthCoordinator?.initialize(null),
+          () => builtinModelAuth?.exchange.invalidate(),
+          () => builtinModelAuth?.coordinator.stop(),
           () => clearActiveBuiltinModelCredential(),
           () => clearChromeExtensionAppServer(app.getPath('userData')),
           async () => {
@@ -3004,20 +3021,13 @@ if (agentBridgeArgv) {
     if (appShutdown.isQuitting()) return;
 
     initialization.reportActivity(AppInitializationActivity.ModelAccess);
-    let builtinModelCredential: BuiltinModelCredential | null = null;
-    try {
-      builtinModelCredential = await getBuiltinModelTokenExchange().refresh();
-    } catch (error) {
-      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.StartupFailed, {
-        errorCode: getBuiltinModelAuthErrorCode(error),
-        willRetry: true,
-      });
-    }
-    if (appShutdown.isQuitting()) return;
-
-    await getBuiltinModelLifecycle().loadStartupCatalog(
-      builtinModelCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
-    );
+    const builtinModels = getBuiltinModelAuth();
+    await builtinModels.coordinator.prepareStartup(async hasCredential => {
+      if (appShutdown.isQuitting()) return;
+      await builtinModels.lifecycle.loadStartupCatalog(
+        hasCredential ? BuiltinModelAccess.Enabled : BuiltinModelAccess.Disabled,
+      );
+    });
     if (appShutdown.isQuitting()) return;
 
     const coworkEngineRouter = getCoworkEngineRouter();
@@ -3074,14 +3084,12 @@ if (agentBridgeArgv) {
         };
         return;
       }
-      const result = await syncOpenClawConfig({
+      startupSync = await syncOpenClawConfig({
         reason: 'startup',
       });
-      // Publish success only after the final credential projection completes.
-      startupSync =
-        result.success && !getActiveBuiltinModelCredentialBinding()
-          ? await syncOpenClawConfig({ reason: BuiltinModelSyncReason.AuthLogout })
-          : result;
+      if (startupSync.success) {
+        builtinModels.coordinator.recordStartupProjection(startupSync.builtinCredentialSessionId ?? null);
+      }
     });
     if (startupSync && !startupSync.success) {
       console.error('[OpenClaw] Startup config sync failed:', startupSync.error);
@@ -3215,15 +3223,7 @@ if (agentBridgeArgv) {
     if (appShutdown.isQuitting()) return;
 
     initialization.reportActivity(AppInitializationActivity.Finalize);
-    builtinModelCredentialMonitor = new BuiltinModelCredentialMonitor({
-      userInfoPath: resolveOutboundHeaderUserInfoPath(),
-      refresh: () => getBuiltinModelAuthCoordinator().refreshInBackground(),
-      needsCatalogRetry: () => getBuiltinModelLifecycle().needsCatalogRetry(),
-    });
-    getBuiltinModelAuthCoordinator().initialize(
-      startupSync?.success ? builtinModelCredential : null,
-    );
-    builtinModelCredentialMonitor.start(builtinModelCredential);
+    builtinModels.monitor.start(getActiveBuiltinModelCredential());
     // The local account is available on the first query. SDK verification can follow model startup.
     void getLoginService().restoreSdkSession();
     if (BUILTIN_MODEL_PROVIDER_CONFIG.enabled && ACTIVITY_REPORTING_CONFIG.enabled) {

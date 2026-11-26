@@ -122,7 +122,7 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
       logout: async () => undefined,
       onBackgroundError: backgroundError,
     });
-    coordinator.initialize(initial);
+    coordinator.recordStartupProjection(sessionId);
     monitor = new BuiltinModelCredentialMonitor({
       userInfoPath: loginFile,
       refresh: () => coordinator.refreshInBackground(),

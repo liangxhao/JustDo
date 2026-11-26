@@ -5,7 +5,6 @@ import path from 'node:path';
 
 export const MANAGED_PROVIDER_SECRET_SOURCE = 'justdo-model-providers';
 const SECRET_FILE_NAME = 'model-provider-secrets.json';
-const BUILTIN_KEY = 'BUILTIN_MODELS';
 let windowsUserSid: string | undefined;
 export function restrictCredentialFile(filePath: string): void {
   restrictCredentialPath(filePath, false);
@@ -109,7 +108,7 @@ export function syncProviderSecretFile(
     const identity = providerSecretIdentity(provider.apiKey);
     const filePrefix = `${MANAGED_PROVIDER_SECRET_SOURCE}:/`;
     const id = identity.startsWith(filePrefix) ? identity.slice(filePrefix.length) : undefined;
-    if (!id || id === BUILTIN_KEY) continue;
+    if (!id) continue;
     const providerSecrets = secretValues[id];
     if (!providerSecrets?.apiKey) {
       throw new Error('A managed model provider credential is unavailable.');

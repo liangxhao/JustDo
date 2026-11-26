@@ -180,7 +180,13 @@ import {
   type ExternalAgentSettings,
   type ExternalAgentTestResult,
 } from '../../shared/integrations/externalAgents';
-import { type ApiFetchOptions, NetworkIpc, type OutboundHeaderPolicyView } from '../../shared/network/network';
+import {
+  type ApiFetchOptions,
+  type BuiltinModelProbeRequest,
+  type BuiltinModelProbeResult,
+  NetworkIpc,
+  type OutboundHeaderPolicyView,
+} from '../../shared/network/network';
 import {
   type OpenClawAssistantDeliverySaveRequest,
   OpenClawAssistantMediaIpc,
@@ -626,6 +632,8 @@ contextBridge.exposeInMainWorld('electron', {
   api: {
     // 普通 API 请求（非流式）
     fetch: (options: ApiFetchOptions) => ipcRenderer.invoke(NetworkIpc.Fetch, options),
+    testBuiltinModel: (request: BuiltinModelProbeRequest): Promise<BuiltinModelProbeResult> =>
+      ipcRenderer.invoke(NetworkIpc.TestBuiltinModel, request),
     cancelFetch: (requestId: string): Promise<void> =>
       ipcRenderer.invoke(NetworkIpc.CancelFetch, requestId),
     getOutboundHeaderPolicy: (): Promise<OutboundHeaderPolicyView> =>

@@ -18,11 +18,13 @@ import {
   BUILTIN_TOKEN_MIN_REMAINING_SECONDS,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
+  inspectBuiltinModelCredential,
   setActiveBuiltinModelCredential,
 } from '../../providers/builtinModelCredential';
 import { setStoreGetter } from '../../providers/providerApiConfig';
 import * as credentialRuntime from '../runtime/launch/electronNodeRuntime';
 import { type OpenClawConfigSyncResult } from './configVerification';
+import { buildBuiltinModelSecretRef } from './models/builtinSecretProjection';
 import * as providerSecretFile from './models/providerSecretFile';
 import { OpenClawConfigSync } from './openclawConfigSync';
 import { listAvailableOpenClawExtensionIds } from './plugins/extensionInventory';
@@ -628,11 +630,7 @@ const setActiveJwt = (): string => {
     }),
     'test-signature',
   ].join('.');
-  setActiveBuiltinModelCredential({
-    accessToken,
-    userAccount: 'user@example.com',
-    expiresAt: nowSeconds + 300,
-  });
+  setActiveBuiltinModelCredential(inspectBuiltinModelCredential(accessToken, 'user@example.com').credential!);
   return accessToken;
 };
 test('keeps both browser providers under browser-mode ownership', () => {
@@ -973,9 +971,8 @@ const writeExistingBuiltinConfig = (): string => {
       secrets: {
         providers: {
           justdo_login: {
-            source: 'file',
-            path: path.join(directory, 'user_info.json'),
-            mode: 'json',
+            source: 'exec',
+            command: 'credential-reader',
           },
           operator_secrets: {
             source: 'file',
@@ -987,7 +984,7 @@ const writeExistingBuiltinConfig = (): string => {
       models: {
         providers: {
           builtin_models: {
-            apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+            apiKey: buildBuiltinModelSecretRef('X-ACCESS-JWT'),
             baseUrl: 'http://127.0.0.1:4000/v1',
           },
         },
@@ -1046,9 +1043,8 @@ const writeExistingMixedProviderConfig = (): string => {
       secrets: {
         providers: {
           justdo_login: {
-            source: 'file',
-            path: path.join(directory, 'user_info.json'),
-            mode: 'json',
+            source: 'exec',
+            command: 'credential-reader',
           },
           operator_secrets: {
             source: 'file',
@@ -1061,11 +1057,11 @@ const writeExistingMixedProviderConfig = (): string => {
         mode: 'replace',
         providers: {
           builtin_models: {
-            apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+            apiKey: buildBuiltinModelSecretRef('X-ACCESS-JWT'),
             models: [{ id: 'builtin-model' }],
           },
           'custom-provider': {
-            apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+            apiKey: providerSecretFile.managedProviderSecretRef('custom-provider'),
             models: [{ id: 'custom-model' }],
           },
         },
@@ -2661,11 +2657,10 @@ describe('OpenClaw auth logout config sync', () => {
     existing.memory = {
       citations: 'off',
       search: {
-        enabled: true, provider: 'openai',
-        remote: { apiKey: { source: 'exec', provider: 'justdo-builtin', id: 'model-api-key' } },
+        enabled: true, provider: 'runtime-services',
+        remote: { apiKey: buildBuiltinModelSecretRef('X-ACCESS-JWT') },
       },
     };
-    existing.secrets.providers['justdo-builtin'] = { source: 'exec', command: 'credential-reader' };
     existing.mcp = { servers: { custom: { command: 'node', args: ['server.cjs'] } } };
     existing.tools = { exec: { mode: 'ask', host: 'gateway' } };
     existing.session = { maintenance: { maxEntries: 20 } };
@@ -2688,7 +2683,6 @@ describe('OpenClaw auth logout config sync', () => {
     delete expected.agents.defaults.models['builtin_models/chat-model'];
     delete expected.agents.defaults.subagents.model;
     delete expected.secrets.providers.justdo_login;
-    delete expected.secrets.providers['justdo-builtin'];
     expected.memory.search = { enabled: false };
     expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual(expected);
     expect(writeMinimalConfig(configPath, BuiltinModelSyncReason.AuthLogout)).toMatchObject({
@@ -2758,6 +2752,34 @@ describe('OpenClaw auth logout config sync', () => {
     });
     expect(config.agents.entries.main).toEqual(existing.agents.entries.main);
     expect(config.agents.entries.worker.model).toBeUndefined();
+  });
+
+  test.each([null, 'b'.repeat(32)])('checks the latest cold-start route with active binding %s', activeSession => {
+    const configPath = writeExistingMixedProviderConfig();
+    const stateDir = path.dirname(configPath);
+    const previousSession = 'a'.repeat(32);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    config.models.providers.builtin_models.apiKey = { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' };
+    config.secrets.providers.justdo_login = {
+      source: 'exec', command: 'credential-reader', env: { MODEL_AUTH_SESSION_ID: previousSession },
+    };
+    config.mcp = { servers: { custom: { command: 'node' } } };
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    fs.mkdirSync(path.join(stateDir, 'credentials'), { recursive: true });
+    const snapshot = path.join(stateDir, 'credentials', 'credentials.json');
+    fs.writeFileSync(snapshot, 'synthetic snapshot');
+    const sync = new OpenClawConfigSync({
+      engineManager: { getConfigPath: () => configPath, getStateDir: () => stateDir },
+      getCoworkConfig: () => ({}),
+    } as ConstructorParameters<typeof OpenClawConfigSync>[0]);
+
+    expect(sync.withdrawStaleBuiltinBeforeLaunch(previousSession)).toBeUndefined();
+    expect(sync.withdrawStaleBuiltinBeforeLaunch(activeSession)).toMatchObject({ ok: true, configChanged: true });
+    const published = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(published.models.providers).toEqual({ 'custom-provider': config.models.providers['custom-provider'] });
+    expect(published.secrets.providers).not.toHaveProperty('justdo_login');
+    expect(published.mcp).toEqual(config.mcp);
+    expect(fs.existsSync(snapshot)).toBe(activeSession !== null);
   });
 
   test('minimal login without fetched models removes obsolete provider refs', () => {
@@ -2866,11 +2888,11 @@ describe('OpenClaw auth logout config sync', () => {
           mode: 'replace',
           providers: {
             builtin_models: {
-              apiKey: '${JUSTDO_APIKEY_BUILTIN_MODELS}',
+              apiKey: buildBuiltinModelSecretRef('X-ACCESS-JWT'),
               models: [{ id: 'chat-model' }],
             },
             [providerId]: {
-              apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+              apiKey: providerSecretFile.managedProviderSecretRef(providerId),
               models: [{ id: 'custom-model' }],
             },
           },
@@ -2989,8 +3011,6 @@ describe('OpenClaw auth logout config sync', () => {
 
     const environment = sync.collectGatewayLaunchEnvVars();
 
-    expect(environment).not.toHaveProperty('JUSTDO_APIKEY_BUILTIN_MODELS');
-    expect(environment).not.toHaveProperty('JUSTDO_APIKEY_CUSTOM_1');
     expect(JSON.stringify(environment)).not.toContain(accessToken);
   });
 
@@ -3008,14 +3028,11 @@ describe('OpenClaw auth logout config sync', () => {
           mode: 'replace',
           providers: {
             builtin_models: {
-              apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
-              headers: {
-                'X-User-Account': { source: 'exec', provider: 'justdo_login', id: 'X-User-Account' },
-              },
+              apiKey: buildBuiltinModelSecretRef('X-ACCESS-JWT'),
               models: [{ id: 'builtin-model' }],
             },
             'custom-provider': {
-              apiKey: '${JUSTDO_APIKEY_CUSTOM_1}',
+              apiKey: providerSecretFile.managedProviderSecretRef('custom-provider'),
               models: [{ id: 'custom-model' }],
             },
           },
@@ -3116,7 +3133,6 @@ describe('OpenClaw auth logout config sync', () => {
     // supplier must change only the native config/secret file, not launch env.
     expect(sync.sync('settings').ok).toBe(true);
     const launchEnvironment = sync.collectGatewayLaunchEnvVars();
-    expect(launchEnvironment).not.toHaveProperty('JUSTDO_APIKEY_CUSTOM_1');
     const providersWithSecond = {
       ...appConfig.providers,
       'second-provider': {

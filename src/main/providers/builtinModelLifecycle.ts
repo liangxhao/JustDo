@@ -22,6 +22,7 @@ type OpenClawConfigSyncResult = {
 type BuiltinModelLifecycleDependencies = {
   getStore: () => SqliteStore;
   syncOpenClawConfig: (options: { reason: string }) => Promise<OpenClawConfigSyncResult>;
+  reloadBuiltinModelCredential: () => Promise<OpenClawConfigSyncResult>;
   notifyCatalogChanged: () => void;
   notifyRuntimeModelsChanged: () => void;
   scheduleCatalogRetry?: () => void;
@@ -30,7 +31,6 @@ type BuiltinModelLifecycleDependencies = {
 export class BuiltinModelLifecycle {
   private generation = 0;
   private catalogRetryNeeded = false;
-  private configSyncQueue: Promise<void> = Promise.resolve();
   private logoutCatalog: Promise<void> | null = null;
 
   constructor(private readonly dependencies: BuiltinModelLifecycleDependencies) {}
@@ -91,7 +91,9 @@ export class BuiltinModelLifecycle {
   ): Promise<boolean> {
     let syncResult: OpenClawConfigSyncResult;
     try {
-      syncResult = await this.enqueueOpenClawConfigSync(reason);
+      syncResult = await (requireApplication
+        ? this.dependencies.reloadBuiltinModelCredential()
+        : this.dependencies.syncOpenClawConfig({ reason }));
     } catch (error) {
       writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ConfigSyncFailed, {
         generation, requireApplication,
@@ -124,12 +126,4 @@ export class BuiltinModelLifecycle {
     return confirmed;
   }
 
-  private enqueueOpenClawConfigSync(reason: string): Promise<OpenClawConfigSyncResult> {
-    const sync = this.configSyncQueue.then(() => this.dependencies.syncOpenClawConfig({ reason }));
-    this.configSyncQueue = sync.then(
-      (): void => undefined,
-      (): void => undefined,
-    );
-    return sync;
-  }
 }

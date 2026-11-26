@@ -103,8 +103,9 @@ test('the real login callback finishes while optional activity reporting remains
   const calls: string[] = [];
   const sync = vi.fn(() => new Promise<void>(() => {}));
   const dependencies = {
-    getBuiltinModelTokenExchange: () => ({ resume: () => { calls.push('credentials'); } }),
+    getBuiltinModelAuth: () => ({ exchange: { resume: () => { calls.push('credentials'); } } }),
     refreshBuiltinModelCredentialFromLoginFile: async () => { calls.push('models'); },
+    BUILTIN_MODEL_PROVIDER_CONFIG: { enabled: true },
     userActivityService: { start: () => { calls.push('activity'); }, sync },
   };
   const login = new Function(...Object.keys(dependencies), `${javascript}; return login;`)(

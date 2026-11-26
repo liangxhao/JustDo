@@ -214,7 +214,7 @@ describe('OpenClaw provider config', () => {
       {
         providerName: ProviderName.BuiltinModels,
         baseURL: 'http://127.0.0.1:4000/v1',
-        apiKey: 'justdo-builtin-credential',
+        apiKey: 'access-jwt-auth',
         apiType: 'openai',
         models: [{ id: 'chat-model' }],
         embeddingModels: [{ id: 'embedding-z' }, { id: 'embedding-a' }],

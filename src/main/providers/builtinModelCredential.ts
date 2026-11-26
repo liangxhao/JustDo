@@ -1,7 +1,5 @@
 import { randomBytes } from 'node:crypto';
 
-import fs from 'fs';
-
 export const BUILTIN_MODEL_JWT_FIELD = 'X-ACCESS-JWT';
 export const BUILTIN_MODEL_USER_ACCOUNT_FIELD = 'X-User-Account';
 export const BUILTIN_MODEL_AUTHORIZATION_PLACEHOLDER = 'access-jwt-auth';
@@ -12,7 +10,7 @@ const MAX_USER_ACCOUNT_LENGTH = 512;
 const DEFAULT_MAX_JWT_LIFETIME_SECONDS = 5 * 60;
 export const BUILTIN_TOKEN_CLOCK_SKEW_SECONDS = 30;
 export const BUILTIN_TOKEN_MIN_REMAINING_SECONDS = 15;
-export const BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS = 60;
+const BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS = 60;
 const SHORT_TOKEN_RENEWAL_HEADROOM_SECONDS = 5;
 const HTTP_HEADER_VALUE_PATTERN = /^[\u0020-\u007e\u0080-\u00ff]+$/;
 const BASE64URL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -33,8 +31,12 @@ export type BuiltinModelCredential = Readonly<{
   accessToken: string;
   userAccount: string;
   expiresAt: number;
-  authType?: 'jwt' | 'api-key';
-}>;
+}> & (Readonly<{ authType: 'jwt'; issuedAt: number }> | Readonly<{ authType: 'api-key' }>);
+
+declare const validatedJwt: unique symbol;
+type ValidatedBuiltinModelJwt = Extract<BuiltinModelCredential, { authType: 'jwt' }> & {
+  readonly [validatedJwt]: true;
+};
 
 export type BuiltinModelCredentialBinding = Readonly<{
   credential: BuiltinModelCredential;
@@ -65,7 +67,7 @@ export type BuiltinModelCredentialFailureCode =
   (typeof BuiltinModelCredentialFailureCode)[keyof typeof BuiltinModelCredentialFailureCode];
 
 type CredentialValidationResult =
-  | { credential: BuiltinModelCredential; failureCode: null }
+  | { credential: ValidatedBuiltinModelJwt; failureCode: null }
   | { credential: null; failureCode: BuiltinModelCredentialFailureCode };
 
 const rejectCredential = (failureCode: BuiltinModelCredentialFailureCode): CredentialValidationResult =>
@@ -86,14 +88,14 @@ type JwtPayload = {
 };
 
 let activeBinding: BuiltinModelCredentialBinding | null = null;
-let credentialSession: { id: string; account: string; authType: string } | null = null;
+let credentialSession: { id: string; account: string; authType: BuiltinModelCredential['authType'] } | null = null;
 
 const applyActiveCredential = (credential: BuiltinModelCredential | null): void => {
   if (!credential) {
     clearActiveBuiltinModelCredential();
     return;
   }
-  const authType = credential.authType ?? 'jwt';
+  const { authType } = credential;
   if (!credentialSession || credentialSession.account !== credential.userAccount ||
     credentialSession.authType !== authType ||
     (authType === 'api-key' && activeBinding?.credential.accessToken !== credential.accessToken)) {
@@ -187,42 +189,16 @@ export const inspectBuiltinModelCredential = (
   if (expiresAt > nowSeconds + maxLifetime + BUILTIN_TOKEN_CLOCK_SKEW_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.ExpiryTooFar);
   if (expiresAt <= nowSeconds + BUILTIN_TOKEN_MIN_REMAINING_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.Expired);
 
-  return { credential: Object.freeze({ accessToken, userAccount, expiresAt }), failureCode: null };
-};
-
-export const validateBuiltinModelCredential = (
-  accessTokenValue: unknown,
-  userAccountValue: unknown,
-  nowSeconds = Math.floor(Date.now() / 1000),
-  maxLifetime = DEFAULT_MAX_JWT_LIFETIME_SECONDS,
-): BuiltinModelCredential | null =>
-  inspectBuiltinModelCredential(accessTokenValue, userAccountValue, nowSeconds, maxLifetime).credential;
-
-export const readBuiltinModelCredential = (userInfoPath: string): BuiltinModelCredential | null => {
-  let userInfo: Record<string, unknown>;
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(userInfoPath, 'utf8'));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return null;
-    }
-    userInfo = parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-
-  return validateBuiltinModelCredential(
-    userInfo[BUILTIN_MODEL_JWT_FIELD],
-    userInfo[BUILTIN_MODEL_USER_ACCOUNT_FIELD],
-  );
+  const credential = Object.freeze({ authType: 'jwt', accessToken, userAccount, issuedAt, expiresAt }) as ValidatedBuiltinModelJwt;
+  return { credential, failureCode: null };
 };
 
 export const setActiveBuiltinModelCredential = (
-  credential: BuiltinModelCredential | null,
-  maxLifetime = DEFAULT_MAX_JWT_LIFETIME_SECONDS,
-): void => {
-  applyActiveCredential(credential
-    ? validateBuiltinModelCredential(credential.accessToken, credential.userAccount, undefined, maxLifetime)
-    : null);
+  credential: ValidatedBuiltinModelJwt,
+): ValidatedBuiltinModelJwt | null => {
+  const installed = isBuiltinModelCredentialUsable(credential) ? credential : null;
+  applyActiveCredential(installed);
+  return installed;
 };
 
 export const setActiveBuiltinModelDevelopmentApiKey = (
@@ -240,14 +216,6 @@ export const setActiveBuiltinModelDevelopmentApiKey = (
   return getActiveBuiltinModelCredential();
 };
 
-export const refreshActiveBuiltinModelCredential = (
-  userInfoPath: string,
-): BuiltinModelCredential | null => {
-  const credential = readBuiltinModelCredential(userInfoPath);
-  setActiveBuiltinModelCredential(credential);
-  return credential;
-};
-
 export const isBuiltinModelCredentialUsable = (credential: BuiltinModelCredential): boolean =>
   credential.expiresAt > Date.now() / 1000 + BUILTIN_TOKEN_MIN_REMAINING_SECONDS;
 
@@ -261,10 +229,7 @@ export const getActiveBuiltinModelCredential = (): BuiltinModelCredential | null
 
 export const getBuiltinModelCredentialRefreshAtSeconds = (credential: BuiltinModelCredential): number => {
   if (credential.authType === 'api-key') return Number.MAX_SAFE_INTEGER;
-  const payload = decodeJwtObject<JwtPayload>(credential.accessToken.split('.')[1] ?? '');
-  const lifetime = typeof payload?.iat === 'number' && Number.isInteger(payload.iat)
-    ? credential.expiresAt - payload.iat : NaN;
-  if (!Number.isFinite(lifetime) || lifetime <= 0) return credential.expiresAt - BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS;
+  const lifetime = credential.expiresAt - credential.issuedAt;
   // Leave time for exchange before the request cutoff while preserving usable time for very short JWTs.
   const usableLifetime = Math.max(0, lifetime - BUILTIN_TOKEN_MIN_REMAINING_SECONDS);
   const shortTokenMargin = BUILTIN_TOKEN_MIN_REMAINING_SECONDS +

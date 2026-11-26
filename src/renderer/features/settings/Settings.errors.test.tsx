@@ -10,9 +10,10 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { LanguageModelSettingsProps } from './models/LanguageModelSettings';
 import Settings from './Settings';
 
-const { fetchModels, refreshBuiltinModels, locale } = vi.hoisted(() => ({
+const { fetchModels, refreshBuiltinModels, testBuiltinModel, locale } = vi.hoisted(() => ({
   fetchModels: vi.fn(),
   refreshBuiltinModels: vi.fn(),
+  testBuiltinModel: vi.fn(),
   locale: { language: 'zh' as 'zh' | 'en' },
 }));
 
@@ -24,7 +25,15 @@ vi.mock('@/services/config', async () => {
       getConfig: () => ({
         ...structuredClone(defaultConfig),
         providers: {
-          builtin_models: { ...defaultConfig.providers?.builtin_models, enabled: false },
+          builtin_models: {
+            ...defaultConfig.providers?.builtin_models,
+            enabled: false,
+            models: [
+              { id: 'team-model', name: 'Team Model', enabled: true },
+              { id: 'second-model', name: 'Second Model', enabled: true },
+              { id: 'third-model', name: 'Third Model', enabled: true },
+            ],
+          },
           office: {
             enabled: true,
             apiKey: 'fixture-key',
@@ -48,7 +57,7 @@ vi.mock('@/services/i18n', async () => {
   const dictionary: Record<'zh' | 'en', Record<string, string>> = settingsTranslations;
   return {
     i18nService: {
-      t: (key: string) => key.startsWith('builtinModelRefresh')
+      t: (key: string) => key.startsWith('builtinModelRefresh') || key === 'connectionTestSummary'
         ? dictionary[locale.language][key] ?? key : key,
       getLanguage: () => locale.language,
       setLanguage: vi.fn(),
@@ -74,7 +83,15 @@ vi.mock('./models/ModelSettingsTab', () => ({
       <button type="button" onClick={() => languageSettings.handleProviderChange('builtin_models')}>
         switch-provider
       </button>
+      <button type="button" onClick={() => languageSettings.handleTestConnection('team-model')}>
+        test built-in model
+      </button>
+      <button type="button" onClick={() => languageSettings.handleTestConnection()}>
+        test all models
+      </button>
       <output>{languageSettings.providers.office?.models?.map(model => model.id).join(',')}</output>
+      <output>{String(languageSettings.providers.builtin_models?.models?.[0]?.enabled)}</output>
+      <output aria-label="Team Model status">{languageSettings.modelConnectionTestStatuses['team-model']}</output>
     </>
   ),
 }));
@@ -82,9 +99,10 @@ vi.mock('./models/ModelSettingsTab', () => ({
 beforeEach(() => {
   fetchModels.mockReset();
   refreshBuiltinModels.mockReset();
+  testBuiltinModel.mockReset();
   locale.language = 'zh';
   vi.stubGlobal('electron', {
-    api: { fetch: fetchModels },
+    api: { fetch: fetchModels, testBuiltinModel, cancelFetch: vi.fn().mockResolvedValue(undefined) },
     builtinModels: { refresh: refreshBuiltinModels },
     cowork: {
       getAgentRuntimeSettings: vi
@@ -242,4 +260,97 @@ test('ignores a failed discovery response after switching providers', async () =
   });
   expect(fetchModels).toHaveBeenCalledTimes(1);
   expect(screen.queryByRole('alertdialog')).toBeNull();
+});
+
+const successfulBuiltinProbe = {
+  outcome: 'completed',
+  response: {
+    ok: true, status: 200, statusText: 'OK', data: { choices: [{ message: { content: 'Hi' } }] },
+  },
+};
+
+test('waits for the same built-in probe and presents its completed result', async () => {
+  const pending = Promise.withResolvers<typeof successfulBuiltinProbe>();
+  testBuiltinModel.mockReturnValue(pending.promise);
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'switch-provider' }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'test built-in model' }));
+
+  await vi.waitFor(() => expect(testBuiltinModel).toHaveBeenCalledWith({
+    modelId: 'team-model', requestId: expect.any(String),
+  }));
+  expect(screen.getByText('connectionTestRunning')).toBeTruthy();
+  await act(async () => { pending.resolve(successfulBuiltinProbe); });
+
+  expect(screen.getAllByText('connectionSuccess').length).toBeGreaterThan(0);
+  expect(testBuiltinModel).toHaveBeenCalledOnce();
+  expect(fetchModels).not.toHaveBeenCalled();
+  expect(screen.queryByText('connectionFailed')).toBeNull();
+  expect(screen.getByText('true', { selector: 'output' })).toBeTruthy();
+});
+
+test('closes an interrupted probe silently and preserves the previous model status', async () => {
+  testBuiltinModel.mockResolvedValueOnce(successfulBuiltinProbe).mockResolvedValueOnce({ outcome: 'interrupted' });
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'switch-provider' }));
+  const probe = screen.getByRole('button', { name: 'test built-in model' });
+  fireEvent.click(probe);
+  await screen.findAllByText('connectionSuccess');
+  fireEvent.click(within(screen.getByRole('dialog', { name: 'connectionTestResult' })).getByRole('button', { name: 'close' }));
+
+  fireEvent.click(probe);
+  await vi.waitFor(() => expect(testBuiltinModel).toHaveBeenCalledTimes(2));
+  expect(screen.queryByRole('dialog', { name: 'connectionTestResult' })).toBeNull();
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.getByLabelText('Team Model status').textContent).toBe('success');
+  expect(screen.getByText('true', { selector: 'output' })).toBeTruthy();
+});
+
+test('stops an interrupted provider-wide probe and shows only the completed rows', async () => {
+  locale.language = 'en';
+  testBuiltinModel.mockResolvedValueOnce(successfulBuiltinProbe).mockResolvedValueOnce({ outcome: 'interrupted' });
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'switch-provider' }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'test all models' }));
+
+  await screen.findByText('Tested 1/3 models');
+  const dialog = within(screen.getByRole('dialog', { name: 'connectionTestResult' }));
+  expect(dialog.getByText('Team Model')).toBeTruthy();
+  expect(dialog.queryByText('Second Model')).toBeNull();
+  expect(dialog.queryByText('Third Model')).toBeNull();
+  expect(dialog.getAllByText('connectionSuccess')).toHaveLength(1);
+  expect(dialog.queryByText('connectionFailed')).toBeNull();
+  expect(testBuiltinModel).toHaveBeenCalledTimes(2);
+});
+
+test('reports an actionable probe authentication rejection in English without failing the model', async () => {
+  testBuiltinModel.mockResolvedValue({
+    outcome: 'authentication-rejected',
+    issue: { errorCode: BuiltinModelRefreshErrorCode.ExchangeHttpError, httpStatus: 403 },
+  });
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'switch-provider' }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'test built-in model' }));
+
+  const dialog = await screen.findByRole('alertdialog', { name: 'settingsOperationFailed' });
+  expect(dialog.textContent).toContain('The model authentication service returned HTTP 403.');
+  expect(screen.queryByRole('dialog', { name: 'connectionTestResult' })).toBeNull();
+  expect(screen.getByLabelText('Team Model status').textContent).toBe('');
+  expect(screen.getByText('true', { selector: 'output' })).toBeTruthy();
+});
+
+test('shows the built-in server response without disabling the model', async () => {
+  testBuiltinModel.mockResolvedValue({
+    outcome: 'completed',
+    response: { ok: false, status: 503, statusText: 'Service Unavailable', data: { error: 'Model service is busy' } },
+  });
+  renderSettings();
+  fireEvent.click(screen.getByRole('button', { name: 'switch-provider' }));
+  fireEvent.click(screen.getByRole('button', { name: 'test built-in model' }));
+
+  await screen.findAllByText('Model service is busy');
+  expect(screen.getByText('true', { selector: 'output' })).toBeTruthy();
 });

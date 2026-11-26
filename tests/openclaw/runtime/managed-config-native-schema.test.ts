@@ -9,7 +9,11 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { OpenClawConfigSync } from '../../../src/main/openclaw/config/openclawConfigSync';
 import { OPENCLAW_MANAGED_TOOL_DENY } from '../../../src/main/openclaw/config/policies/executionPolicyProjection';
 import type { ManagedSpeechModelSettings } from '../../../src/main/openclaw/config/speech/speechModelConfig';
-import { clearActiveBuiltinModelCredential, setActiveBuiltinModelCredential } from '../../../src/main/providers/builtinModelCredential';
+import {
+  clearActiveBuiltinModelCredential,
+  inspectBuiltinModelCredential,
+  setActiveBuiltinModelCredential,
+} from '../../../src/main/providers/builtinModelCredential';
 import { setStoreGetter } from '../../../src/main/providers/providerApiConfig';
 import { AgentRuntimeThinkingLevel, createDefaultAgentRuntimeSettings } from '../../../src/shared/agents/agentRuntimeSettings';
 import { BrowserMode } from '../../../src/shared/browser/browser';
@@ -182,10 +186,11 @@ nativeTest.each([false, true])('built-in login and logout stay hot-reloadable wi
     if (signedIn) {
       const now = Math.floor(Date.now() / 1000);
       const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-      setActiveBuiltinModelCredential({ accessToken: [encode({ alg: 'RS256' }), encode({
+      const accessToken = [encode({ alg: 'RS256' }), encode({
         iss: 'https://login.example.test', aud: 'justdo-litellm', sub: 'reload@example.test',
         iat: now, exp: now + 300, jti: 'reload-fixture',
-      }), 'fixture-signature'].join('.'), userAccount: 'reload@example.test', expiresAt: now + 300 });
+      }), 'fixture-signature'].join('.');
+      setActiveBuiltinModelCredential(inspectBuiltinModelCredential(accessToken, 'reload@example.test').credential!);
     } else clearActiveBuiltinModelCredential();
     expect(sync.sync(reason)).toMatchObject({ ok: true, configChanged: true });
     const config = read();
@@ -284,13 +289,11 @@ nativeTest('full and minimal model projections preserve valid native settings wi
       if (mode === 'full-login') {
         const now = Math.floor(Date.now() / 1000);
         const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-        setActiveBuiltinModelCredential({
-          accessToken: [encode({ alg: 'RS256', kid: 'fixture' }), encode({
-            iss: 'https://login.example.test', aud: 'justdo-litellm', sub: 'schema@example.test',
-            iat: now, exp: now + 300, jti: 'schema-fixture',
-          }), 'fixture-signature'].join('.'),
-          userAccount: 'schema@example.test', expiresAt: now + 300,
-        });
+        const accessToken = [encode({ alg: 'RS256', kid: 'fixture' }), encode({
+          iss: 'https://login.example.test', aud: 'justdo-litellm', sub: 'schema@example.test',
+          iat: now, exp: now + 300, jti: 'schema-fixture',
+        }), 'fixture-signature'].join('.');
+        setActiveBuiltinModelCredential(inspectBuiltinModelCredential(accessToken, 'schema@example.test').credential!);
       }
       const providerId = mode === 'full-login' ? 'builtin_models' : 'custom-provider';
       const appConfig = mode.startsWith('full') ? {
@@ -377,13 +380,11 @@ nativeTest('full and minimal speech projections keep preferences outside valid n
     if (mode === 'full-login') {
       const now = Math.floor(Date.now() / 1000);
       const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
-      setActiveBuiltinModelCredential({
-        accessToken: [encode({ alg: 'RS256', kid: 'fixture' }), encode({
-          iss: 'https://login.example.test', aud: 'justdo-litellm', sub: 'schema@example.test',
-          iat: now, exp: now + 300, jti: 'speech-schema-fixture',
-        }), 'fixture-signature'].join('.'),
-        userAccount: 'schema@example.test', expiresAt: now + 300,
-      });
+      const accessToken = [encode({ alg: 'RS256', kid: 'fixture' }), encode({
+        iss: 'https://login.example.test', aud: 'justdo-litellm', sub: 'schema@example.test',
+        iat: now, exp: now + 300, jti: 'speech-schema-fixture',
+      }), 'fixture-signature'].join('.');
+      setActiveBuiltinModelCredential(inspectBuiltinModelCredential(accessToken, 'schema@example.test').credential!);
     }
     const providerId = mode === 'full-login' ? 'builtin_models' : 'custom-provider';
     const appConfig = mode.startsWith('full') ? {

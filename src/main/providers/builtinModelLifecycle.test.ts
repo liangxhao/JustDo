@@ -18,15 +18,17 @@ afterEach(() => vi.restoreAllMocks());
 const createHarness = () => {
   const store = {} as SqliteStore;
   const syncOpenClawConfig = vi.fn().mockResolvedValue({ success: true, configSynced: true, hostPolicyVerified: true });
+  const reloadBuiltinModelCredential = vi.fn().mockResolvedValue({ success: true, configSynced: true, hostPolicyVerified: true });
   const notifyCatalogChanged = vi.fn();
   const notifyRuntimeModelsChanged = vi.fn();
   const lifecycle = new BuiltinModelLifecycle({
     getStore: () => store,
     syncOpenClawConfig,
+    reloadBuiltinModelCredential,
     notifyCatalogChanged,
     notifyRuntimeModelsChanged,
   });
-  return { lifecycle, store, syncOpenClawConfig, notifyCatalogChanged, notifyRuntimeModelsChanged };
+  return { lifecycle, store, syncOpenClawConfig, reloadBuiltinModelCredential, notifyCatalogChanged, notifyRuntimeModelsChanged };
 };
 
 describe('BuiltinModelLifecycle', () => {
@@ -69,7 +71,8 @@ describe('BuiltinModelLifecycle', () => {
     await harness.lifecycle.refreshAfterCredentialRotation();
 
     expect(syncBuiltinModelProviderMock).not.toHaveBeenCalled();
-    expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-login' });
+    expect(harness.syncOpenClawConfig).not.toHaveBeenCalled();
+    expect(harness.reloadBuiltinModelCredential).toHaveBeenCalledOnce();
     expect(harness.notifyCatalogChanged).not.toHaveBeenCalled();
     expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
   });
@@ -85,10 +88,12 @@ describe('BuiltinModelLifecycle', () => {
     });
     const harness = createHarness();
     const projectedCatalogs: string[] = [];
-    harness.syncOpenClawConfig.mockImplementation(async () => {
+    const observeCatalog = async () => {
       projectedCatalogs.push(catalog);
       return { success: true, hostPolicyVerified: true };
-    });
+    };
+    harness.syncOpenClawConfig.mockImplementation(observeCatalog);
+    harness.reloadBuiltinModelCredential.mockImplementation(observeCatalog);
 
     const catalogRefresh = harness.lifecycle.refreshAfterLogin();
     await harness.lifecycle.refreshAfterCredentialRotation();
@@ -104,7 +109,7 @@ describe('BuiltinModelLifecycle', () => {
 
   test.each([true, false])('rejects an unconfirmed rotation even if configSynced is %s', async configSynced => {
     const harness = createHarness();
-    harness.syncOpenClawConfig.mockResolvedValue({
+    harness.reloadBuiltinModelCredential.mockResolvedValue({
       success: false,
       configSynced,
       error: 'credential reload pending',
@@ -115,23 +120,20 @@ describe('BuiltinModelLifecycle', () => {
     expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
   });
 
-  test('serializes logout after an in-flight rotation and discards its obsolete notification', async () => {
+  test('discards the obsolete rotation notification after logout', async () => {
     const harness = createHarness();
     let releaseRotation!: () => void;
-    harness.syncOpenClawConfig.mockImplementationOnce(() => new Promise(resolve => {
+    harness.reloadBuiltinModelCredential.mockImplementationOnce(() => new Promise(resolve => {
       releaseRotation = () => resolve({ success: true, hostPolicyVerified: true });
     }));
     const rotation = harness.lifecycle.refreshAfterCredentialRotation();
-    await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(harness.reloadBuiltinModelCredential).toHaveBeenCalledOnce());
     const logout = harness.lifecycle.refreshAfterLogout();
     releaseRotation();
 
     await Promise.all([rotation, logout]);
 
-    expect(harness.syncOpenClawConfig.mock.calls).toEqual([
-      [{ reason: 'auth-login' }],
-      [{ reason: 'auth-logout' }],
-    ]);
+    expect(harness.syncOpenClawConfig).toHaveBeenCalledExactlyOnceWith({ reason: 'auth-logout' });
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
     expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
   });
@@ -158,35 +160,6 @@ describe('BuiltinModelLifecycle', () => {
     expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
     expect(harness.syncOpenClawConfig).toHaveBeenCalledWith({ reason: 'auth-logout' });
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
-    expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
-  });
-
-  test('serializes OpenClaw config writes so logout is the final write', async () => {
-    let releaseLoginSync: (() => void) | undefined;
-    const harness = createHarness();
-    harness.syncOpenClawConfig
-      .mockImplementationOnce(
-        () =>
-          new Promise(resolve => {
-            releaseLoginSync = () => resolve({ success: true, hostPolicyVerified: true });
-          }),
-      )
-      .mockResolvedValueOnce({ success: true, configSynced: true, hostPolicyVerified: true });
-
-    const login = harness.lifecycle.refreshAfterLogin();
-    await vi.waitFor(() => expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1));
-    const logout = harness.lifecycle.refreshAfterLogout();
-
-    expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
-    releaseLoginSync?.();
-
-    await expect(login).resolves.toBe(false);
-    await expect(logout).resolves.toBeUndefined();
-    expect(harness.syncOpenClawConfig.mock.calls).toEqual([
-      [{ reason: 'auth-login' }],
-      [{ reason: 'auth-logout' }],
-    ]);
-    expect(harness.notifyCatalogChanged).toHaveBeenCalledTimes(2);
     expect(harness.notifyRuntimeModelsChanged).toHaveBeenCalledOnce();
   });
 
