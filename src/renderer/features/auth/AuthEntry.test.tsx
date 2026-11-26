@@ -161,6 +161,21 @@ test('a signed-out click shows both login phases before displaying the username 
   expect(screen.getByRole('region', { name: 'authAccountMenu' })).toBeTruthy();
 });
 
+test('a committed login reports the specific model authentication rejection', async () => {
+  const { api } = setup();
+  const dispatch = vi.spyOn(window, 'dispatchEvent');
+  vi.mocked(api.login).mockResolvedValueOnce({
+    success: true,
+    state: { ...imported, status: AuthStatus.SignedIn, syncStatus: AuthSyncStatus.Failed, errorCode: AuthErrorCode.ModelAuthRejected },
+  });
+  render(<AuthEntry />);
+  fireEvent.click(await screen.findByRole('button', { name: 'authLogin' }));
+
+  await waitFor(() => expect(dispatch).toHaveBeenCalledWith(toastFor('builtinModelRefreshExchangeHttpError')));
+  fireEvent.click(screen.getByRole('button', { name: 'authAccountMenu' }));
+  expect(screen.getByRole('alert').textContent).toBe('builtinModelRefreshExchangeHttpError');
+});
+
 test('canceling the SDK popup leaves the product account panel closed', async () => {
   const initial = { ...INITIAL_AUTH_STATE, sdkAvailable: true };
   const context = setup(initial);

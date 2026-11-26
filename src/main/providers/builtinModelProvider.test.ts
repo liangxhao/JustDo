@@ -41,16 +41,25 @@ const createCredential = () => {
 };
 
 describe('syncBuiltinModelProvider', () => {
-  test('does not fetch or expose a provider when the built-in URL is unconfigured', async () => {
-    testProviderConfig.baseUrl = '';
-    const set = vi.fn();
-    const store = { get: () => ({ providers: {} }), set } as unknown as SqliteStore;
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(set.mock.calls[0][1].providers).not.toHaveProperty('builtin_models');
-  });
+  test.each(['', 'https://models.example.test/v1#', 'https://models.example.test/v1?tenant=example'])(
+    'does not fetch or expose cached models for an unusable URL %j',
+    async baseUrl => {
+      testProviderConfig.baseUrl = baseUrl;
+      const config = { providers: { builtin_models: {
+        enabled: true, apiKey: '', baseUrl: 'https://models.example.test/v1',
+        models: [{ id: 'cached-chat', name: 'Cached chat' }],
+      } } };
+      const set = vi.fn();
+      const store = { get: () => config, set } as unknown as SqliteStore;
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      await syncBuiltinModelProvider(store, { access: BuiltinModelAccess.Enabled });
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(set.mock.calls[0][1].providers).not.toHaveProperty('builtin_models');
+    },
+  );
 
   test('discovers models from a real loopback fake provider without persisting credentials', async () => {
     const local = await startLocalModelServer();
@@ -225,8 +234,7 @@ describe('syncBuiltinModelProvider', () => {
     });
     const coordinator = new BuiltinModelAuthCoordinator({
       exchange: async () => credential,
-      getActive: () => credential,
-      getAuthSessionId: () => 'session',
+      getActiveBinding: () => ({ credential, authSessionId: 'session' }),
       needsCatalogRetry: () => lifecycle.needsCatalogRetry(),
       login: () => lifecycle.refreshAfterLogin(),
       rotate: () => lifecycle.refreshAfterCredentialRotation(),

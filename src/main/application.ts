@@ -343,12 +343,14 @@ import {
   type BuiltinModelCredential,
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredentialBinding,
   getActiveBuiltinModelCredentialSessionId,
+  getBuiltinModelCredentialSessionOwnerId,
 } from './providers/builtinModelCredential';
 import { BuiltinModelCredentialMonitor } from './providers/builtinModelCredentialMonitor';
 import { BuiltinModelLifecycle } from './providers/builtinModelLifecycle';
 import { BuiltinModelAccess } from './providers/builtinModelProvider';
-import { BuiltinModelTokenExchange } from './providers/builtinModelTokenExchange';
+import { BuiltinModelTokenExchange, requiresBuiltinModelUserAction } from './providers/builtinModelTokenExchange';
 import {
   resolveRawApiConfig,
   setStoreGetter,
@@ -965,6 +967,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
         getCoworkEngineService().requestGateway(method, params, options),
       getGatewayClient: () => getOpenClawRuntimeAdapter()?.getGatewayClient() ?? null,
       getModelAuthSessionId: getActiveBuiltinModelCredentialSessionId,
+      getModelAuthSessionOwnerId: getBuiltinModelCredentialSessionOwnerId,
       getBrowserMode: () =>
         normalizeBrowserMode(getStore().get<{ browserMode?: unknown }>('app_config')?.browserMode),
       getControlUiEnabled: () => {
@@ -1090,16 +1093,14 @@ const getBuiltinModelTokenExchange = (): BuiltinModelTokenExchange => {
 const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
   builtinModelAuthCoordinator ??= new BuiltinModelAuthCoordinator({
     exchange: () => getBuiltinModelTokenExchange().refresh(),
-    getActive: getActiveBuiltinModelCredential,
-    getAuthSessionId: getActiveBuiltinModelCredentialSessionId,
-    publishCredential: (credential, authSessionId) => {
-      publishBuiltinCredentialFile(
-        getOpenClawEngineManager().getStateDir(),
-        credential,
-        authSessionId,
-      );
-    },
+    getActiveBinding: getActiveBuiltinModelCredentialBinding,
+    publishCredential: binding => publishBuiltinCredentialFile(getOpenClawEngineManager().getStateDir(), binding),
     onBackgroundError: error => builtinModelCredentialMonitor?.retryAfterError(error),
+    onApplicationUnconfirmed: () => {
+      if (getOpenClawEngineManager().getStatus().phase === EnginePhase.Running) {
+        builtinModelCredentialMonitor?.retryAfterError(undefined);
+      }
+    },
     needsCatalogRetry: () => getBuiltinModelLifecycle().needsCatalogRetry(),
     login: () => getBuiltinModelLifecycle().refreshAfterLogin(),
     rotate: () => getBuiltinModelLifecycle().refreshAfterCredentialRotation(),
@@ -1116,14 +1117,21 @@ const getBuiltinModelAuthCoordinator = (): BuiltinModelAuthCoordinator => {
 };
 
 const refreshBuiltinModelCredentialFromLoginFile = async (refreshCatalog = false) => {
-  return getBuiltinModelAuthCoordinator().refresh(refreshCatalog);
+  try {
+    return await getBuiltinModelAuthCoordinator().refresh(refreshCatalog);
+  } catch (error) {
+    if (requiresBuiltinModelUserAction(error)) throw error;
+    builtinModelCredentialMonitor?.retryAfterError(error);
+    return null;
+  }
 };
 
-const finishLoginSync = async (): Promise<void> => {
+const finishLoginSync = async (): Promise<boolean> => {
   getBuiltinModelTokenExchange().resume();
-  await refreshBuiltinModelCredentialFromLoginFile(true);
+  const credential = await refreshBuiltinModelCredentialFromLoginFile(true);
   userActivityService?.start();
   void userActivityService?.sync();
+  return !BUILTIN_MODEL_PROVIDER_CONFIG.enabled || credential !== null;
 };
 
 // Authentication handlers should call these only after the Main process has
@@ -1703,9 +1711,9 @@ if (agentBridgeArgv) {
         console.warn(
           '[BuiltinModelLifecycle] Ignoring manual refresh because built-in model access is disabled.',
         );
-        return;
+        return false;
       }
-      await refreshBuiltinModelCredentialFromLoginFile(true);
+      return (await refreshBuiltinModelCredentialFromLoginFile(true)) !== null;
     },
   });
 
@@ -3071,7 +3079,7 @@ if (agentBridgeArgv) {
       });
       // Publish success only after the final credential projection completes.
       startupSync =
-        result.success && !builtinModelCredential
+        result.success && !getActiveBuiltinModelCredentialBinding()
           ? await syncOpenClawConfig({ reason: BuiltinModelSyncReason.AuthLogout })
           : result;
     });

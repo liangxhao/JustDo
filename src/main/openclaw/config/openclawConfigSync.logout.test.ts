@@ -15,10 +15,13 @@ import { BuiltinModelSyncReason } from '../../../shared/providers/builtinModels'
 import { type NativeMcpDataBinding,nativeMcpDataDirectory, prepareNativeMcpData } from '../../plugins/data/nativeMcpData';
 import { inspectBundledOpenClawExtensions, inspectLocalOpenClawExtensions } from '../../plugins/extensions/openclawLocalExtensions';
 import {
+  BUILTIN_TOKEN_MIN_REMAINING_SECONDS,
   clearActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredential,
   setActiveBuiltinModelCredential,
 } from '../../providers/builtinModelCredential';
 import { setStoreGetter } from '../../providers/providerApiConfig';
+import * as credentialRuntime from '../runtime/launch/electronNodeRuntime';
 import { type OpenClawConfigSyncResult } from './configVerification';
 import * as providerSecretFile from './models/providerSecretFile';
 import { OpenClawConfigSync } from './openclawConfigSync';
@@ -1181,6 +1184,57 @@ test.each(
     }
   },
 );
+
+test('withdraws expired built-in access without failing sync for the custom provider', () => {
+  setActiveJwt();
+  const expiresAt = getActiveBuiltinModelCredential()!.expiresAt;
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'credential-expiry-sync-'));
+  temporaryDirectories.push(stateDir);
+  const configPath = path.join(stateDir, 'openclaw.json');
+  const snapshotPath = path.join(stateDir, 'credentials', 'credentials.json');
+  const appConfig = {
+    model: { defaultModel: 'builtin-model', defaultModelProvider: 'builtin_models' },
+    providers: {
+      builtin_models: {
+        enabled: true, apiKey: '', baseUrl: 'http://127.0.0.1:4000/v1', apiFormat: 'openai',
+        models: [{ id: 'builtin-model', name: 'Built-in Model' }],
+      },
+      'custom-provider': {
+        enabled: true, apiKey: 'custom-secret', baseUrl: 'https://custom.example/v1', apiFormat: 'openai',
+        displayName: 'Custom-Provider', identity: 'custom-provider-identity',
+        models: [{ id: 'custom-model', name: 'Custom Model' }],
+      },
+    },
+  };
+  setStoreGetter(() => ({ get: () => appConfig }) as never);
+  const sync = new OpenClawConfigSync({
+    engineManager: {
+      getConfigPath: () => configPath,
+      getStateDir: () => stateDir,
+      getDesiredVersion: () => '2026.6.11',
+    },
+    getCoworkConfig: () => ({ workingDirectory: '', executionMode: 'local', agentEngine: 'openclaw' }),
+    getAgents: () => [],
+  } as never);
+  expect(sync.sync('settings').ok).toBe(true);
+  const before = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(before.agents.defaults.model.primary).toBe('builtin_models/builtin-model');
+  expect(fs.existsSync(snapshotPath)).toBe(true);
+  const resolveRuntime = credentialRuntime.getBuiltinCredentialNodeRuntimeSource;
+  const runtime = vi.spyOn(credentialRuntime, 'getBuiltinCredentialNodeRuntimeSource').mockImplementationOnce(() => {
+    vi.spyOn(Date, 'now').mockReturnValue((expiresAt - BUILTIN_TOKEN_MIN_REMAINING_SECONDS) * 1000);
+    return resolveRuntime();
+  });
+
+  expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: true, secretsChanged: true });
+
+  expect(runtime).toHaveBeenCalledOnce();
+  const after = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(after.models.providers).toEqual({ 'custom-provider': before.models.providers['custom-provider'] });
+  expect(after.agents.defaults.model.primary).toBe('custom-provider/custom-model');
+  expect(after.secrets.providers).not.toHaveProperty('justdo_login');
+  expect(fs.existsSync(snapshotPath)).toBe(false);
+});
 
 test.each([true, false])(
   'preserves cold storage through minimal startup and subsequent runtime saves (enabled=%s)',
@@ -2662,18 +2716,23 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.secrets.providers).not.toHaveProperty('justdo_login');
   });
 
-  test('keeps the existing preservation behavior for non-logout minimal syncs', () => {
+  test('withdraws expired access on a built-in-only minimal sync and preserves unrelated configuration', () => {
+    setActiveJwt();
+    const { expiresAt } = getActiveBuiltinModelCredential()!;
     const configPath = writeExistingBuiltinConfig();
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    existing.models.providers.builtin_models.apiKey = { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' };
     existing.models.catalogRefresh = { enabled: true };
     fs.writeFileSync(configPath, JSON.stringify(existing), 'utf8');
+    vi.spyOn(Date, 'now').mockReturnValue((expiresAt - BUILTIN_TOKEN_MIN_REMAINING_SECONDS) * 1000);
 
     const result = writeMinimalConfig(configPath, BuiltinModelSyncReason.ManualRefresh);
 
     expect(result.ok).toBe(true);
-    const content = fs.readFileSync(configPath, 'utf8');
-    expect(content).toContain('JUSTDO_APIKEY_BUILTIN_MODELS');
-    const config = JSON.parse(content);
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    expect(config.models.providers).toBeUndefined();
+    expect(config.secrets.providers).not.toHaveProperty('justdo_login');
+    expect(config.customFeature).toEqual(existing.customFeature);
     expect(config.models.catalogRefresh).toEqual({ enabled: false });
     expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.defaults.modelSelectionScope).toBe('session');

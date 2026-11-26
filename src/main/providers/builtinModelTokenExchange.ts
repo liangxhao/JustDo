@@ -12,6 +12,7 @@ import {
 } from './builtinModelAuthDiagnostics';
 import {
   BUILTIN_TOKEN_CLOCK_SKEW_SECONDS,
+  BUILTIN_TOKEN_MIN_REMAINING_SECONDS,
   type BuiltinModelCredential,
   BuiltinModelCredentialFailureCode,
   clearActiveBuiltinModelCredential,
@@ -83,6 +84,14 @@ export class BuiltinModelTokenExchangeError extends Error {
     super('Model authentication token exchange failed.');
     this.name = 'BuiltinModelTokenExchangeError';
   }
+}
+
+export function requiresBuiltinModelUserAction(error: unknown): error is BuiltinModelTokenExchangeError {
+  return error instanceof BuiltinModelTokenExchangeError && (
+    error.reason === BuiltinModelAuthDiagnosticReason.DeviceUnavailable ||
+    (error.reason === BuiltinModelAuthDiagnosticReason.HttpRejected &&
+      (error.httpStatus === 401 || error.httpStatus === 403))
+  );
 }
 
 type Login = { mtoken: string; account: string; identity: string };
@@ -263,14 +272,18 @@ export class BuiltinModelTokenExchange {
         await response.body?.cancel().catch((): void => undefined);
         if ([400, 401, 403].includes(response.status) && generation === this.generation) {
           clearActiveBuiltinModelCredential();
-          this.dependencies.onInvalidated?.();
+          try { this.dependencies.onInvalidated?.(); } catch {
+            // Snapshot revocation logs its own failure. Preserve the HTTP result
+            // so the coordinator still reconciles the inactive login.
+          }
         }
         throw new TokenExchangeError(`Token exchange HTTP ${response.status}`, BuiltinModelAuthDiagnosticReason.HttpRejected);
       }
       stage = 'response';
       const value = await readResponse(response) as Record<string, unknown> | null;
       if (!value || typeof value.token_type !== 'string' || value.token_type.toLowerCase() !== 'bearer' ||
-        typeof value.expires_in !== 'number' || !Number.isInteger(value.expires_in) || value.expires_in <= 15 ||
+        typeof value.expires_in !== 'number' || !Number.isInteger(value.expires_in) ||
+        value.expires_in <= BUILTIN_TOKEN_MIN_REMAINING_SECONDS ||
         (value.uid !== undefined && value.uid !== login.account)) {
         throw new TokenExchangeError('Invalid token exchange response shape', BuiltinModelAuthDiagnosticReason.ResponseInvalidShape);
       }

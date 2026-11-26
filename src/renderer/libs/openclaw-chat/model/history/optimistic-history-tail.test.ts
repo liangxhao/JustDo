@@ -36,8 +36,8 @@ describe('optimistic history tail ownership', () => {
     });
     const failure = {
       role: 'system',
-      content: 'Managed model credentials are unavailable.',
-      errorMessage: 'Managed model credentials are unavailable.',
+      content: 'The provider returned an incomplete response.',
+      errorMessage: 'The provider returned an incomplete response.',
       stopReason: 'error',
       [FAILED_RUN_MESSAGE_FLAG]: true,
       __openclaw: { id: 'failure', runId: turn.runId },

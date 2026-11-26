@@ -30,7 +30,7 @@ import {
 } from '../../plugins/data/nativeMcpData';
 import type { OpenClawHookRecord } from '../../plugins/hooks';
 import type { McpServerRecord } from '../../plugins/mcp';
-import { getActiveBuiltinModelCredential } from '../../providers/builtinModelCredential';
+import { getActiveBuiltinModelCredentialBinding } from '../../providers/builtinModelCredential';
 import {
   resolveAllEnabledProviderConfigs,
   resolveAllProviderSecrets,
@@ -280,9 +280,13 @@ export class OpenClawConfigSync {
     reason: string,
     extensionMcpNames: ReadonlySet<string> = new Set(),
     retiredMcpNames: ReadonlySet<string> = new Set(),
-    context?: { restoreDecisionModelSnapshot?: boolean; workspaceInventory?: WorkspaceExtensionInventory },
+    context?: {
+      restoreDecisionModelSnapshot?: boolean;
+      workspaceInventory?: WorkspaceExtensionInventory;
+      allowExpiredBuiltinSnapshot?: true;
+    },
   ): OpenClawConfigSyncResult {
-    if (reason === BuiltinModelSyncReason.AuthLogout) return this.syncLoggedOutConfig();
+    if (reason === BuiltinModelSyncReason.AuthLogout) return this.syncLoggedOutConfig(context?.allowExpiredBuiltinSnapshot);
     this.decisionSecretsChanged = false;
     this.videoSecretsChanged = false;
     this.speechSecretsChanged = false;
@@ -346,14 +350,15 @@ export class OpenClawConfigSync {
     }
   }
 
-  private syncLoggedOutConfig(): OpenClawConfigSyncResult {
+  private syncLoggedOutConfig(allowExpiredBuiltinSnapshot?: true): OpenClawConfigSyncResult {
     const configPath = this.engineManager.getConfigPath();
     try {
       // Even a locked snapshot must not keep its provider configured in Gateway.
       let secretsChanged = false;
       let revokeFailed = false;
       try {
-        secretsChanged = revokeBuiltinCredentialFile(this.engineManager.getStateDir());
+        secretsChanged = revokeBuiltinCredentialFile(this.engineManager.getStateDir(),
+          allowExpiredBuiltinSnapshot ? { allowExpiredSnapshot: true } : undefined);
       } catch {
         revokeFailed = true;
       }
@@ -372,20 +377,7 @@ export class OpenClawConfigSync {
         throw new Error('The existing native configuration is invalid.');
       }
       if (!isRecord(existing)) throw new Error('The existing native configuration is unavailable.');
-      const next = projectLoggedOutOpenClawConfig(existing, () => {
-        const { config, providerMetadata } = resolveRawApiConfig();
-        if (!config) return undefined;
-        const { providerId, sessionModelId, primaryModel } = buildProviderSelection({
-          apiKey: config.apiKey, apiType: config.apiType, baseURL: config.baseURL,
-          modelId: config.model, providerName: providerMetadata?.providerName ?? '',
-          displayName: providerMetadata?.displayName,
-        });
-        const providers = configRecord(configRecord(existing.models).providers);
-        const models = configRecord(providers[providerId]).models;
-        if (providerId !== OpenClawProviderId.BuiltinModels && Array.isArray(models) &&
-            models.some(model => isRecord(model) && model.id === sessionModelId)) return primaryModel;
-        return undefined;
-      });
+      const next = projectLoggedOutOpenClawConfig(existing, () => this.resolveNonBuiltinDefault(existing));
       if (containsBuiltinCredentialRef(next)) {
         throw new Error('The native configuration still references the built-in model credential.');
       }
@@ -409,6 +401,32 @@ export class OpenClawConfigSync {
         error: error instanceof Error ? error.message : String(error),
       };
     }
+  }
+
+  private resolveNonBuiltinDefault(existing: Record<string, unknown>): string | undefined {
+    const { config, providerMetadata } = resolveRawApiConfig();
+    if (!config) return undefined;
+    const { providerId, sessionModelId, primaryModel } = buildProviderSelection({
+      apiKey: config.apiKey, apiType: config.apiType, baseURL: config.baseURL,
+      modelId: config.model, providerName: providerMetadata?.providerName ?? '',
+      displayName: providerMetadata?.displayName,
+    });
+    const providers = configRecord(configRecord(existing.models).providers);
+    const models = configRecord(providers[providerId]).models;
+    if (providerId !== OpenClawProviderId.BuiltinModels && Array.isArray(models) &&
+        models.some(model => isRecord(model) && model.id === sessionModelId)) return primaryModel;
+    return undefined;
+  }
+
+  private withdrawUnusableBuiltinCredential(config: Record<string, unknown>): ReturnType<typeof syncProviderSecretFile> {
+    const next = projectLoggedOutOpenClawConfig(config, () => this.resolveNonBuiltinDefault(config));
+    if (containsBuiltinCredentialRef(next)) {
+      throw new Error('The native configuration still references the built-in model credential.');
+    }
+    return {
+      config: next,
+      secretsChanged: revokeBuiltinCredentialFile(this.engineManager.getStateDir(), { allowExpiredSnapshot: true }),
+    };
   }
 
   syncModelDefaults(): ModelDefaultsConfigPublication {
@@ -972,21 +990,26 @@ export class OpenClawConfigSync {
         ? buildLoginScopedOpenClawConfig(existingConfig, managedConfig)
         : managedConfig;
     let preparedSecrets: ReturnType<typeof syncProviderSecretFile>;
+    let builtinCredentialSessionId: string | undefined;
     try {
+      const stateDir = this.engineManager.getStateDir();
       preparedSecrets = syncProviderSecretFile(
         scopedConfig,
-        this.engineManager.getStateDir(),
+        stateDir,
         resolveAllProviderSecrets(),
       );
-      const builtinSecrets = syncBuiltinCredentialFile(
+      const binding = getActiveBuiltinModelCredentialBinding();
+      const builtinSecrets = binding ? syncBuiltinCredentialFile(
         preparedSecrets.config,
-        this.engineManager.getStateDir(),
-        getActiveBuiltinModelCredential(),
-        getBuiltinCredentialNodeRuntimeSource(),
-      );
+        stateDir,
+        binding,
+        getBuiltinCredentialNodeRuntimeSource,
+      ) : null;
+      builtinCredentialSessionId = builtinSecrets?.builtinCredentialSessionId;
+      const projection = builtinSecrets ?? this.withdrawUnusableBuiltinCredential(preparedSecrets.config);
       preparedSecrets = {
-        config: builtinSecrets.config,
-        secretsChanged: preparedSecrets.secretsChanged || builtinSecrets.secretsChanged,
+        config: projection.config,
+        secretsChanged: preparedSecrets.secretsChanged || projection.secretsChanged,
       };
     } catch {
       return {
@@ -1011,13 +1034,15 @@ export class OpenClawConfigSync {
       };
     }
     this.applyManagedRuntimeConfiguration(configToPersist, configPath, workspaceInventory, extensionSources, existingConfig);
-    const verified = this.publishProjectedConfig(configPath, currentContent, existingConfig, configToPersist);
+    const verified = this.publishProjectedConfig(configPath, currentContent, existingConfig, configToPersist,
+      undefined, builtinCredentialSessionId !== undefined);
     if (!verified.ok) return verified;
 
     return {
       ...verified,
       changed: verified.changed || preparedSecrets.secretsChanged,
       secretsChanged: preparedSecrets.secretsChanged,
+      ...(builtinCredentialSessionId && { builtinCredentialSessionId }),
     };
   }
 
@@ -1132,6 +1157,7 @@ export class OpenClawConfigSync {
     previousConfig: unknown,
     expectedConfig: Record<string, unknown>,
     changed = hasOpenClawConfigChanged(currentContent, expectedConfig),
+    trackPublication = false,
   ): OpenClawConfigSyncResult {
     try {
       if (changed) {
@@ -1150,7 +1176,7 @@ export class OpenClawConfigSync {
     }
     return buildVerifiedConfigSyncResult(
       configPath, expectedConfig, changed,
-      changed && hasSpeechToolConfigChanged(previousConfig, expectedConfig),
+      trackPublication || (changed && hasSpeechToolConfigChanged(previousConfig, expectedConfig)),
     );
   }
 
@@ -1357,8 +1383,13 @@ export class OpenClawConfigSync {
     minimalConfig = projectManagedOpenClawExecNotifications(
       projectManagedOpenClawBrowserConfig(withComputerControlPolicy(minimalConfig)),
     );
+    const publish = (config: Record<string, unknown>, changed?: boolean): OpenClawConfigSyncResult => {
+      const withdrawal = this.withdrawUnusableBuiltinCredential(config);
+      const result = this.publishProjectedConfig(configPath, currentContent, previousConfig, withdrawal.config, changed);
+      return result.ok && withdrawal.secretsChanged ? { ...result, changed: true, secretsChanged: true } : result;
+    };
     if (!hasOpenClawConfigChanged(currentContent, minimalConfig)) {
-      return this.publishProjectedConfig(configPath, currentContent, previousConfig, minimalConfig, false);
+      return publish(minimalConfig, false);
     }
 
     const isAuthLogin = reason === BuiltinModelSyncReason.AuthLogin;
@@ -1368,7 +1399,7 @@ export class OpenClawConfigSync {
           buildLoginScopedOpenClawConfig(previousConfig, minimalConfig),
         );
         this.applyManagedRuntimeConfiguration(sanitizedConfig, configPath, workspaceInventory, extensionSources);
-        return this.publishProjectedConfig(configPath, currentContent, previousConfig, sanitizedConfig);
+        return publish(sanitizedConfig);
       } catch (error) {
         return {
           ok: false,
@@ -1548,7 +1579,7 @@ export class OpenClawConfigSync {
           const mergedConfig = projectManagedOpenClawExecNotifications(mergedBrowserConfig);
           this.applyManagedRuntimeConfiguration(mergedConfig, configPath, workspaceInventory, extensionSources);
           const configToWrite = withComputerControlPolicy(mergedConfig);
-          return this.publishProjectedConfig(configPath, currentContent, previousConfig, configToWrite);
+          return publish(configToWrite);
         }
       } catch (error) {
         return {
@@ -1561,6 +1592,6 @@ export class OpenClawConfigSync {
       }
     }
 
-    return this.publishProjectedConfig(configPath, currentContent, previousConfig, minimalConfig, true);
+    return publish(minimalConfig, true);
   }
 }

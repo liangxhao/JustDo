@@ -4,17 +4,17 @@ import {
   getBuiltinModelAuthErrorCode,
   writeBuiltinModelAuthDiagnostic,
 } from './builtinModelAuthDiagnostics';
-import type { BuiltinModelCredential } from './builtinModelCredential';
+import type { BuiltinModelCredential, BuiltinModelCredentialBinding } from './builtinModelCredential';
 
 type Dependencies = {
   exchange: () => Promise<BuiltinModelCredential | null>;
-  getActive: () => BuiltinModelCredential | null;
-  getAuthSessionId: () => string | null;
-  publishCredential?: (credential: BuiltinModelCredential, authSessionId: string) => void;
+  getActiveBinding: () => BuiltinModelCredentialBinding | null;
+  publishCredential?: (binding: BuiltinModelCredentialBinding) => boolean | null;
   onBackgroundError?: (error: unknown) => void;
+  onApplicationUnconfirmed?: () => void;
   needsCatalogRetry?: () => boolean;
-  login: () => Promise<void>;
-  rotate: () => Promise<void>;
+  login: () => Promise<boolean>;
+  rotate: () => Promise<boolean>;
   invalidate?: () => void;
   logout: () => Promise<void>;
 };
@@ -22,10 +22,8 @@ type Dependencies = {
 type RefreshDecision = {
   generation: number;
   backgroundRevision?: number;
-  credential: BuiltinModelCredential | null;
-  authSessionId: string | null;
   refreshCatalog: boolean;
-};
+} & (BuiltinModelCredentialBinding | { credential: null; authSessionId: null });
 
 const decisionDiagnostics = (decision: RefreshDecision): BuiltinModelAuthDiagnosticFields => ({
   generation: decision.generation,
@@ -51,17 +49,21 @@ export class BuiltinModelAuthCoordinator {
   initialize(credential: BuiltinModelCredential | null): void {
     this.generation += 1;
     this.pendingBackground = null;
-    this.applied = credential;
-    this.appliedAuthSessionId = credential ? this.dependencies.getAuthSessionId() : null;
+    const binding = this.dependencies.getActiveBinding();
+    this.applied = credential === (binding?.credential ?? null) ? credential : undefined;
+    this.appliedAuthSessionId = this.applied ? binding?.authSessionId ?? null : null;
   }
 
   async refresh(refreshCatalog = false): Promise<BuiltinModelCredential | null> {
     this.foregroundRefreshes += 1;
     try {
       const decision = await this.prepareRefresh(refreshCatalog, false);
-      if (!decision) return this.dependencies.getActive();
+      if (!decision) return null;
       await this.applyDecision(decision);
-      return this.isCurrent(decision) ? decision.credential : this.dependencies.getActive();
+      if (!this.isCurrent(decision)) return null;
+      const binding = this.dependencies.getActiveBinding();
+      return binding && binding.authSessionId === this.appliedAuthSessionId &&
+        binding.credential.accessToken === this.applied?.accessToken ? binding.credential : null;
     } finally {
       this.foregroundRefreshes -= 1;
       this.startBackgroundIfReady();
@@ -71,9 +73,9 @@ export class BuiltinModelAuthCoordinator {
   /** Renewal deadlines must not wait for configuration or native reload acknowledgements. */
   async refreshInBackground(): Promise<BuiltinModelCredential | null> {
     const decision = await this.prepareRefresh(false, true);
-    if (!decision) return this.dependencies.getActive();
+    if (!decision) return this.dependencies.getActiveBinding()?.credential ?? null;
     this.enqueueBackground(decision);
-    return this.isCurrent(decision) ? decision.credential : this.dependencies.getActive();
+    return this.isCurrent(decision) ? decision.credential : this.dependencies.getActiveBinding()?.credential ?? null;
   }
 
   private async prepareRefresh(
@@ -90,44 +92,48 @@ export class BuiltinModelAuthCoordinator {
       credential = await this.dependencies.exchange();
     } catch (error) {
       if (!ownsExchange()) return null;
-      if (!this.dependencies.getActive()) {
+      if (!this.dependencies.getActiveBinding()) {
         this.applied = undefined;
         this.appliedAuthSessionId = null;
         const cleanup: RefreshDecision = {
-          generation, backgroundRevision, credential: null, authSessionId: this.dependencies.getAuthSessionId(),
+          generation, backgroundRevision, credential: null, authSessionId: null,
           refreshCatalog: false,
         };
-        if (background) this.enqueueBackground(cleanup);
-        else await this.applyDecision(cleanup);
+        this.enqueueBackground(cleanup);
       }
       throw error;
     }
     if (!ownsExchange()) return null;
-    const authSessionId = this.dependencies.getAuthSessionId();
-    const decision = { generation, backgroundRevision, credential, authSessionId, refreshCatalog };
-    if (!this.isCurrent(decision)) return null;
+    const binding = this.dependencies.getActiveBinding();
+    if (binding && binding.credential !== credential) return null;
     // Publication is synchronous and remains distinct from native application evidence.
-    if (credential && authSessionId !== null) {
-      this.dependencies.publishCredential?.(credential, authSessionId);
+    if (binding && this.dependencies.publishCredential?.(binding) !== null) {
+      return { generation, backgroundRevision, ...binding, refreshCatalog };
     }
-    return decision;
+    // A token can reach the request cutoff while entering publication. Reconcile
+    // only an inactive binding, never apply this result to a replacement login.
+    if (binding && this.dependencies.getActiveBinding()) return null;
+    return { generation, backgroundRevision, credential: null, authSessionId: null, refreshCatalog };
   }
 
   private isCurrent(decision: RefreshDecision): boolean {
     return decision.generation === this.generation &&
       (decision.backgroundRevision === undefined || decision.backgroundRevision === this.backgroundRevision) &&
-      decision.authSessionId === this.dependencies.getAuthSessionId();
+      decision.authSessionId === (this.dependencies.getActiveBinding()?.authSessionId ?? null);
   }
 
   private async applyDecision(decision: RefreshDecision): Promise<void> {
-    if (!this.isCurrent(decision)) return;
+    if (!this.isCurrent(decision)) {
+      await this.withdrawExpiredDecision(decision);
+      return;
+    }
     const { credential, authSessionId } = decision;
     if (!credential && decision.generation === this.explicitLogout?.generation) return;
     const refreshCatalog = decision.refreshCatalog ||
       (credential !== null && this.dependencies.needsCatalogRetry?.() === true);
     if (!refreshCatalog && this.applied !== undefined &&
       credential?.accessToken === this.applied?.accessToken &&
-      (!credential || (authSessionId !== null && authSessionId === this.appliedAuthSessionId))) return;
+      (!credential || authSessionId === this.appliedAuthSessionId)) return;
     try {
       let applicationCurrent: boolean;
       if (!credential) {
@@ -140,20 +146,38 @@ export class BuiltinModelAuthCoordinator {
         this.applied = undefined;
         // Keep the confirmed session across a failed rotation, so retrying the
         // same login does not put model discovery back in front of its credential.
-        const rotate = !refreshCatalog && authSessionId !== null && authSessionId === this.appliedAuthSessionId;
-        await (rotate ? this.dependencies.rotate() : this.dependencies.login());
+        const rotate = !refreshCatalog && authSessionId === this.appliedAuthSessionId;
+        const confirmed = await (rotate ? this.dependencies.rotate() : this.dependencies.login());
         applicationCurrent = this.isCurrent(decision);
-        if (applicationCurrent && authSessionId !== null) {
+        if (applicationCurrent && confirmed === false) {
+          this.dependencies.onApplicationUnconfirmed?.();
+        } else if (applicationCurrent) {
           this.applied = credential;
           this.appliedAuthSessionId = authSessionId;
         }
       }
     } catch (error) {
-      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ApplicationFailed, {
-        ...decisionDiagnostics({ ...decision, refreshCatalog }),
-        errorCode: getBuiltinModelAuthErrorCode(error),
-      });
-      throw error;
+      if (this.isCurrent(decision)) {
+        writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ApplicationFailed, {
+          ...decisionDiagnostics({ ...decision, refreshCatalog }),
+          errorCode: getBuiltinModelAuthErrorCode(error),
+        });
+        throw error;
+      }
+    }
+    await this.withdrawExpiredDecision(decision);
+  }
+
+  private async withdrawExpiredDecision(decision: RefreshDecision): Promise<void> {
+    if (!decision.credential) return;
+    // Withdraw the expired publication only while it still owns the decision.
+    const cleanup: RefreshDecision = { ...decision, credential: null, authSessionId: null, refreshCatalog: false };
+    if (!this.isCurrent(cleanup)) return;
+    try {
+      await this.applyDecision(cleanup);
+    } catch (error) {
+      if (decision.backgroundRevision === undefined) throw error;
+      if (this.isCurrent(cleanup)) this.dependencies.onBackgroundError?.(error);
     }
   }
 

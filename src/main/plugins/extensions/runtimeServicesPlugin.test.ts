@@ -341,7 +341,9 @@ describe('runtime services embeddings', () => {
       .mockRejectedValueOnce(new Error('revoked'));
 
     await expect(provider.embedBatch(['before logout'])).resolves.toEqual([[1]]);
-    await expect(provider.embedBatch(['after logout'])).rejects.toThrow('Managed model credentials are unavailable.');
+    await expect(provider.embedBatch(['after logout'])).rejects.toThrow(
+      new Error('Could not read the built-in model sign-in data.'),
+    );
     expect(sdk.fetchWithSsrFGuard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
       init: expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer current-key' }) }),
     }));

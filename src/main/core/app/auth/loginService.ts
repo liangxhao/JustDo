@@ -9,6 +9,8 @@ import {
   AuthSyncStatus,
   INITIAL_AUTH_STATE,
 } from '../../../../shared/app/auth';
+import { BuiltinModelAuthDiagnosticReason } from '../../../providers/builtinModelAuthDiagnostics';
+import { requiresBuiltinModelUserAction } from '../../../providers/builtinModelTokenExchange';
 import {
   type CredentialUpdate,
   type LoginSdkAdapter,
@@ -27,7 +29,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 type Dependencies = {
   store: LoginUserInfoStore;
   adapter: LoginSdkAdapter;
-  onLoginCommitted: () => Promise<void>;
+  onLoginCommitted: () => Promise<boolean | void>;
   onLogoutCommitted: () => Promise<void>;
   waitForLogoutCatalog?: () => Promise<void>;
   onStateChanged: (state: AuthState) => void;
@@ -259,7 +261,7 @@ export class LoginService {
       this.setState({ operation: AuthOperation.Sync, errorCode: null });
       const synced = await this.sync(this.state.status === AuthStatus.SignedOut ? null : login);
       this.setState({ operation: AuthOperation.Idle });
-      return synced ? this.success() : this.failure(AuthErrorCode.SyncFailed);
+      return synced ? this.success() : this.failure(this.state.errorCode ?? AuthErrorCode.SyncFailed);
     });
   }
 
@@ -332,7 +334,7 @@ export class LoginService {
         const synced = await this.sync(next);
         this.setState({ operation: AuthOperation.Idle });
         return report(
-          synced ? this.success() : this.failure(AuthErrorCode.SyncFailed),
+          synced ? this.success() : this.failure(this.state.errorCode ?? AuthErrorCode.SyncFailed),
           cookieChanged,
         );
       }
@@ -545,17 +547,26 @@ export class LoginService {
     const attempt = ++this.syncAttempt;
     this.setState({ syncStatus: AuthSyncStatus.Pending });
     try {
+      let confirmed = true;
       if (login) {
         this.dependencies.publishCommittedHeaders?.(login.values);
-        await this.dependencies.onLoginCommitted();
+        confirmed = (await this.dependencies.onLoginCommitted()) !== false;
       } else {
         await this.dependencies.onLogoutCommitted();
       }
       // A late cleanup must leave the new login and any SDK logout error alone.
-      if (attempt === this.syncAttempt) this.setState({ syncStatus: AuthSyncStatus.Completed });
+      if (attempt === this.syncAttempt) {
+        this.setState({ syncStatus: confirmed ? AuthSyncStatus.Completed : AuthSyncStatus.Idle });
+      }
       return true;
-    } catch {
-      if (attempt === this.syncAttempt) this.setState({ syncStatus: AuthSyncStatus.Failed });
+    } catch (error) {
+      if (attempt === this.syncAttempt) {
+        const modelErrorCode = login && requiresBuiltinModelUserAction(error)
+          ? error.reason === BuiltinModelAuthDiagnosticReason.DeviceUnavailable
+            ? AuthErrorCode.ModelAuthDeviceUnavailable : AuthErrorCode.ModelAuthRejected
+          : undefined;
+        this.setState({ syncStatus: AuthSyncStatus.Failed, ...(modelErrorCode && { errorCode: modelErrorCode }) });
+      }
       return false;
     }
   }

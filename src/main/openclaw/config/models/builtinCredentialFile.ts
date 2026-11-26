@@ -17,8 +17,9 @@ import {
   writeBuiltinModelAuthDiagnostic,
 } from '../../../providers/builtinModelAuthDiagnostics';
 import {
-  type BuiltinModelCredential,
-  getActiveBuiltinModelCredentialSessionId,
+  BUILTIN_TOKEN_MIN_REMAINING_SECONDS,
+  type BuiltinModelCredentialBinding,
+  isBuiltinModelCredentialUsable,
 } from '../../../providers/builtinModelCredential';
 import {
   type CredentialNodeRuntimeSource,
@@ -146,7 +147,7 @@ process.stdin.on('end', () => {
         credential.authSessionId !== sessionId) reject(exitCodes.session_mismatch);
     if (!['jwt', 'api-key'].includes(authType) || (credential.authType || 'jwt') !== authType)
       reject(exitCodes.auth_type_mismatch);
-    if (credential.expiresAt <= Date.now() / 1000 + 15) reject(exitCodes.credential_expired);
+    if (credential.expiresAt <= Date.now() / 1000 + ${BUILTIN_TOKEN_MIN_REMAINING_SECONDS}) reject(exitCodes.credential_expired);
     const available = {
       [${JSON.stringify(BUILTIN_SECRET_ID)}]: credential.accessToken,
     };
@@ -182,16 +183,24 @@ function publishPrivateFile(file: string, data: Buffer | string, executable = fa
   }
 }
 
-/** Publish a validated login snapshot without waiting for configuration application. */
+function canPublishBuiltinCredential(binding: BuiltinModelCredentialBinding | null): binding is BuiltinModelCredentialBinding {
+  if (!binding || !isBuiltinModelCredentialUsable(binding.credential)) return false;
+  if (MODEL_AUTH_SESSION_PATTERN.test(binding.authSessionId)) return true;
+  writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotPublicationFailed, {
+    reason: BuiltinModelAuthDiagnosticReason.SnapshotInvalid, fileKind: 'snapshot', snapshotState: 'invalid-session',
+  });
+  return false;
+}
+
+/** Return null when the binding cannot be published. Otherwise report whether snapshot bytes changed. */
 export function publishBuiltinCredentialFile(
   stateDir: string,
-  credential: BuiltinModelCredential,
-  authSessionId: string,
-): boolean {
+  binding: BuiltinModelCredentialBinding,
+): boolean | null {
+  if (!canPublishBuiltinCredential(binding)) return null;
   const startedAt = Date.now();
+  const { credential, authSessionId } = binding;
   try {
-    if (credential.expiresAt <= Date.now() / 1000 + 15) throw new Error('Builtin credential is unavailable.');
-    if (!MODEL_AUTH_SESSION_PATTERN.test(authSessionId)) throw new Error('Builtin credential session is unavailable.');
     const directory = path.join(stateDir, 'credentials');
     const file = path.join(directory, CREDENTIAL_FILE_NAME);
     const serialized = JSON.stringify({ ...credential, authSessionId });
@@ -213,8 +222,7 @@ export function publishBuiltinCredentialFile(
     return true;
   } catch (error) {
     writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotPublicationFailed, {
-      reason: credential.expiresAt <= Date.now() / 1000 + 15 || !MODEL_AUTH_SESSION_PATTERN.test(authSessionId)
-        ? BuiltinModelAuthDiagnosticReason.SnapshotInvalid : BuiltinModelAuthDiagnosticReason.SnapshotWriteFailed,
+      reason: BuiltinModelAuthDiagnosticReason.SnapshotWriteFailed,
       fileKind: 'snapshot', errorCode: getBuiltinModelAuthErrorCode(error), elapsedMs: Date.now() - startedAt,
     });
     throw error;
@@ -229,14 +237,13 @@ function retireLegacyCredentialFile(stateDir: string): boolean {
   }
 }
 
-/** Keep only JWT SecretRefs in config; publish an opaque JSON snapshot first. */
+/** Keep only JWT SecretRefs in config. Null tells the caller to withdraw built-in references. */
 export function syncBuiltinCredentialFile(
   config: Record<string, unknown>,
   stateDir: string,
-  credential: BuiltinModelCredential | null,
-  runtimeSource: CredentialNodeRuntimeSource,
-  authSessionId = getActiveBuiltinModelCredentialSessionId(),
-): { config: Record<string, unknown>; secretsChanged: boolean } {
+  binding: BuiltinModelCredentialBinding | null,
+  resolveRuntimeSource: () => CredentialNodeRuntimeSource,
+): { config: Record<string, unknown>; secretsChanged: boolean; builtinCredentialSessionId?: string } | null {
   const next = structuredClone(config);
   let referenced = false;
   const visit = (value: unknown): void => {
@@ -255,19 +262,8 @@ export function syncBuiltinCredentialFile(
     if (providers) delete providers[BUILTIN_SECRET_SOURCE];
     return { config: next, secretsChanged: revoked };
   }
-  if (!credential || credential.expiresAt <= Date.now() / 1000 + 15) {
-    writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotPublicationFailed, {
-      reason: BuiltinModelAuthDiagnosticReason.SnapshotInvalid, fileKind: 'snapshot',
-      credentialPresent: credential !== null, snapshotState: credential ? 'expired' : 'missing',
-    });
-    throw new Error('Builtin credential is unavailable.');
-  }
-  if (!authSessionId || !MODEL_AUTH_SESSION_PATTERN.test(authSessionId)) {
-    writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotPublicationFailed, {
-      reason: BuiltinModelAuthDiagnosticReason.SnapshotInvalid, fileKind: 'snapshot', snapshotState: 'invalid-session',
-    });
-    throw new Error('Builtin credential session is unavailable.');
-  }
+  if (!canPublishBuiltinCredential(binding)) return null;
+  const runtimeSource = resolveRuntimeSource();
   let runtimePath = runtimeSource.executable;
   if (process.platform === 'win32') {
     try { runtimePath = prepareCredentialNodeRuntime(stateDir, runtimeSource); }
@@ -278,8 +274,9 @@ export function syncBuiltinCredentialFile(
       });
       throw error;
     }
+  } else {
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   }
-  const secretsChanged = publishBuiltinCredentialFile(stateDir, credential, authSessionId);
   const resolver = path.join(directory, 'read-builtin.cjs');
   publishPrivateFile(resolver, builtinCredentialResolverSource(), false, 'resolver');
   let command = runtimePath;
@@ -299,8 +296,8 @@ export function syncBuiltinCredentialFile(
       ...(secrets?.providers as Record<string, unknown> | undefined),
       [BUILTIN_SECRET_SOURCE]: {
         source: 'exec', command, args, env: {
-          [MODEL_AUTH_SESSION_ENV]: authSessionId,
-          [MODEL_AUTH_TYPE_ENV]: credential.authType ?? 'jwt',
+          [MODEL_AUTH_SESSION_ENV]: binding.authSessionId,
+          [MODEL_AUTH_TYPE_ENV]: binding.credential.authType ?? 'jwt',
           ...(process.platform === 'win32' ? {
             // Native config requires uppercase names; supply explicitly because
             // inherited environment snapshots may contain mixed-case SystemRoot.
@@ -312,21 +309,35 @@ export function syncBuiltinCredentialFile(
       },
     },
   };
-  return { config: next, secretsChanged };
+  const secretsChanged = publishBuiltinCredentialFile(stateDir, binding);
+  return secretsChanged === null ? null : { config: next, secretsChanged, builtinCredentialSessionId: binding.authSessionId };
+}
+
+function snapshotHasExpired(file: string): boolean {
+  try {
+    const snapshot = JSON.parse(openBuiltinCredential(readPrivateFile(file))) as { expiresAt?: unknown } | null;
+    const expiresAt = snapshot?.expiresAt;
+    return typeof expiresAt === 'number' && Number.isSafeInteger(expiresAt) && expiresAt <= Date.now() / 1000;
+  } catch {
+    return false;
+  }
 }
 
 /** Revoke captured exec providers before awaiting catalog/config cleanup. */
-export function revokeBuiltinCredentialFile(stateDir: string): boolean {
+export function revokeBuiltinCredentialFile(stateDir: string, options?: { allowExpiredSnapshot: true }): boolean {
   let firstError: unknown;
   let changed = false;
   for (const name of [CREDENTIAL_FILE_NAME, LEGACY_CREDENTIAL_FILE_NAME]) {
-    try { fs.unlinkSync(path.join(stateDir, 'credentials', name)); changed = true; }
+    const file = path.join(stateDir, 'credentials', name);
+    try { fs.unlinkSync(file); changed = true; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      firstError ??= error;
       writeBuiltinModelAuthDiagnostic('error', BuiltinModelAuthDiagnosticEvent.SnapshotRevocationFailed, {
         reason: BuiltinModelAuthDiagnosticReason.SnapshotRevokeFailed, errorCode: getBuiltinModelAuthErrorCode(error),
       });
+      // Never take the in-memory token's expiry as evidence about a file we could not remove.
+      if (options?.allowExpiredSnapshot && name === CREDENTIAL_FILE_NAME && snapshotHasExpired(file)) continue;
+      firstError ??= error;
     }
   }
   if (changed) writeBuiltinModelAuthDiagnostic('info', BuiltinModelAuthDiagnosticEvent.SnapshotRevoked, { changed: true });

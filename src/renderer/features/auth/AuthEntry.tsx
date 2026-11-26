@@ -18,6 +18,8 @@ const ERROR_KEYS: Record<AuthErrorCode, string> = {
   [AuthErrorCode.LoginFailed]: 'authLoginFailed',
   [AuthErrorCode.StorageFailed]: 'authStorageFailed',
   [AuthErrorCode.SyncFailed]: 'authSyncFailed',
+  [AuthErrorCode.ModelAuthDeviceUnavailable]: 'builtinModelRefreshDeviceUnavailable',
+  [AuthErrorCode.ModelAuthRejected]: 'builtinModelRefreshExchangeHttpError',
   [AuthErrorCode.LogoutFailed]: 'authLogoutFailed',
   [AuthErrorCode.SessionChanged]: 'authSessionChanged',
   [AuthErrorCode.Unavailable]: 'authUnavailable',

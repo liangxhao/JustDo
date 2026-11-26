@@ -39,15 +39,35 @@ const credential = { accessToken: secret, userAccount: 'test-user', expiresAt: M
 const sessionId = 'a'.repeat(32);
 const runtimeSource = { executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex') };
 const syncBuiltinCredentialFile = (config: Record<string, unknown>, state: string, value: typeof credential | null, session = sessionId) =>
-  syncCredentialFile(config, state, value, runtimeSource, session);
+  syncCredentialFile(config, state, value ? { credential: value, authSessionId: session } : null, () => runtimeSource)!;
 
 describe('opaque JSON builtin credentials', () => {
+  it.each([true, false])('only tolerates a locked snapshot during withdrawal if it has expired (%s)', expired => {
+    const state = directory();
+    const file = path.join(state, 'credentials', 'credentials.json');
+    fs.mkdirSync(path.dirname(file));
+    fs.writeFileSync(file, sealBuiltinCredential(JSON.stringify({
+      ...credential, authSessionId: sessionId, expiresAt: expired ? 0 : credential.expiresAt,
+    })));
+    const failure = Object.assign(new Error('fixture lock'), { code: 'EPERM' });
+    const unlink = fs.unlinkSync;
+    vi.spyOn(fs, 'unlinkSync').mockImplementation(target => {
+      if (target === file) throw failure;
+      unlink(target);
+    });
+    const withdraw = () => revokeBuiltinCredentialFile(state, { allowExpiredSnapshot: true });
+
+    if (expired) expect(withdraw()).toBe(false);
+    else expect(withdraw).toThrow(failure);
+    expect(() => revokeBuiltinCredentialFile(state)).toThrow(failure);
+  });
+
   it('preserves publication failure while recording only a single-line filesystem code', () => {
     const state = directory();
     const failure = Object.assign(new Error(`${secret}\nprivate-account private-path`), { code: 'EACCES' });
     vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => { throw failure; });
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(() => publishBuiltinCredentialFile(state, credential, sessionId)).toThrow(failure);
+    expect(() => publishBuiltinCredentialFile(state, { credential, authSessionId: sessionId })).toThrow(failure);
     expect(errorLog).toHaveBeenCalledOnce();
     expect(errorLog.mock.calls[0]).toHaveLength(1);
     const line = String(errorLog.mock.calls[0][0]);
@@ -110,17 +130,27 @@ describe('opaque JSON builtin credentials', () => {
     const state = directory();
     const first = syncBuiltinCredentialFile(source(), state, credential);
     const renewed = { ...credential, accessToken: `${secret}-renewed` };
-    expect(publishBuiltinCredentialFile(state, renewed, sessionId)).toBe(true);
+    const binding = { credential: renewed, authSessionId: sessionId };
+    expect(publishBuiltinCredentialFile(state, binding)).toBe(true);
     const file = path.join(state, 'credentials', 'credentials.json');
     const published = fs.readFileSync(file);
     expect(JSON.parse(openBuiltinCredential(published)))
       .toMatchObject({ ...renewed, authSessionId: sessionId });
-    expect(publishBuiltinCredentialFile(state, renewed, sessionId)).toBe(false);
+    expect(publishBuiltinCredentialFile(state, binding)).toBe(false);
     expect(syncBuiltinCredentialFile(first.config, state, renewed).secretsChanged).toBe(false);
     expect(fs.readFileSync(file)).toEqual(published);
-    expect(() => publishBuiltinCredentialFile(state, { ...renewed, expiresAt: 0 }, sessionId)).toThrow();
-    expect(() => publishBuiltinCredentialFile(state, renewed, 'invalid')).toThrow();
+    const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const invalidBinding = { ...binding, authSessionId: 'invalid' };
+    const resolveRuntimeSource = vi.fn(() => runtimeSource);
+    expect(publishBuiltinCredentialFile(state, { ...binding, credential: { ...renewed, expiresAt: 0 } })).toBeNull();
+    expect(publishBuiltinCredentialFile(state, invalidBinding)).toBeNull();
+    expect(syncCredentialFile(first.config, state, invalidBinding, resolveRuntimeSource)).toBeNull();
+    expect(resolveRuntimeSource).not.toHaveBeenCalled();
     expect(fs.readFileSync(file)).toEqual(published);
+    const diagnosticLines = errorLog.mock.calls.map(([message]) => String(message));
+    expect(diagnosticLines).toHaveLength(2);
+    expect(diagnosticLines[0]).toContain('"snapshotState":"invalid-session"');
+    expect(diagnosticLines[1]).toBe(diagnosticLines[0]);
   });
 
   it('rotates account snapshots without publishing the account through native secret configuration', () => {

@@ -152,7 +152,7 @@ describe('BuiltinModelLifecycle', () => {
     const logout = harness.lifecycle.refreshAfterLogout();
     releaseLogin?.(true);
 
-    await expect(login).resolves.toBeUndefined();
+    await expect(login).resolves.toBe(false);
     await expect(logout).resolves.toBeUndefined();
     expect(harness.lifecycle.needsCatalogRetry()).toBe(false);
     expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
@@ -180,7 +180,7 @@ describe('BuiltinModelLifecycle', () => {
     expect(harness.syncOpenClawConfig).toHaveBeenCalledTimes(1);
     releaseLoginSync?.();
 
-    await expect(login).resolves.toBeUndefined();
+    await expect(login).resolves.toBe(false);
     await expect(logout).resolves.toBeUndefined();
     expect(harness.syncOpenClawConfig.mock.calls).toEqual([
       [{ reason: 'auth-login' }],
@@ -197,7 +197,7 @@ describe('BuiltinModelLifecycle', () => {
     const harness = createHarness();
     harness.syncOpenClawConfig.mockResolvedValue(result);
 
-    await harness.lifecycle.refreshAfterLogin();
+    await expect(harness.lifecycle.refreshAfterLogin()).resolves.toBe(false);
 
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
     expect(harness.notifyRuntimeModelsChanged).not.toHaveBeenCalled();
@@ -237,7 +237,7 @@ describe('BuiltinModelLifecycle', () => {
       error: 'OpenClaw gateway failed to become healthy in time.',
     });
 
-    await expect(harness.lifecycle.refreshAfterLogin()).resolves.toBeUndefined();
+    await expect(harness.lifecycle.refreshAfterLogin()).resolves.toBe(false);
 
     expect(harness.notifyCatalogChanged).toHaveBeenCalledOnce();
   });

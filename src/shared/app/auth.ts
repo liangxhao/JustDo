@@ -36,6 +36,8 @@ export const AuthErrorCode = {
   LoginFailed: 'login-failed',
   StorageFailed: 'storage-failed',
   SyncFailed: 'sync-failed',
+  ModelAuthDeviceUnavailable: 'model-auth-device-unavailable',
+  ModelAuthRejected: 'model-auth-rejected',
   LogoutFailed: 'logout-failed',
   SessionChanged: 'session-changed',
   Unavailable: 'unavailable',

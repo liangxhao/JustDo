@@ -19,7 +19,7 @@ describe('OpenClaw chat history protocol', () => {
     'The agent run failed before producing a reply.',
     "OpenClaw couldn't save this conversation because the disk is full.",
   ])('preserves the actual Gateway summary separately from its cause: %s', async summary => {
-    const cause = 'Managed model credentials are unavailable.';
+    const cause = 'The provider returned an incomplete response.';
     const original = [{
       role: 'assistant', content: [{ type: 'text', text: summary }], stopReason: 'error',
       __openclaw: { id: 'failure', runId: 'run-1' },

@@ -19,6 +19,7 @@ import { BuiltinModelAuthCoordinator } from '../../../src/main/providers/builtin
 import {
   clearActiveBuiltinModelCredential,
   getActiveBuiltinModelCredential,
+  getActiveBuiltinModelCredentialBinding,
   getActiveBuiltinModelCredentialSessionId,
 } from '../../../src/main/providers/builtinModelCredential';
 import { BuiltinModelCredentialMonitor } from '../../../src/main/providers/builtinModelCredentialMonitor';
@@ -30,6 +31,7 @@ const runtime = path.resolve(
 const sdk = path.join(runtime, 'dist/plugin-sdk');
 const available = fs.existsSync(path.join(sdk, 'secret-ref-runtime.js'));
 const nowSeconds = 2_000_000_000;
+const credentialLifetimeSeconds = 30;
 
 test.skipIf(!available)('model requests keep renewing through a delayed config ACK and reject a late ACK after logout', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'model-auth-lifecycle 测试 '));
@@ -62,18 +64,22 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     const exchange = new BuiltinModelTokenExchange({
       userInfoPath: loginFile,
       getConfig: () => ({
-        tokenExchangeUrl: 'https://issuer.invalid/exchange', maxJwtLifetimeSeconds: 60,
+        tokenExchangeUrl: 'https://issuer.invalid/exchange', maxJwtLifetimeSeconds: credentialLifetimeSeconds,
         developmentAuthMode: 'jwt', developmentApiKey: '',
       }),
       onInvalidated: () => revokeBuiltinCredentialFile(directory),
       fetch: async () => {
+        const exchangeNumber = ++exchanges;
+        if (exchangeNumber > 1) await new Promise(resolve => setTimeout(resolve, 2_000));
         const issuedAt = Math.floor(Date.now() / 1_000);
         const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url');
         const accessToken = [encode({ alg: 'RS256' }), encode({
           sub: 'fixture-account', iss: 'https://issuer.invalid', aud: 'justdo-litellm',
-          iat: issuedAt, exp: issuedAt + 60, jti: `fixture-${++exchanges}`,
+          iat: issuedAt, exp: issuedAt + credentialLifetimeSeconds, jti: `fixture-${exchangeNumber}`,
         }), 'fixture-signature'].join('.');
-        return new Response(JSON.stringify({ access_token: accessToken, token_type: 'Bearer', expires_in: 60 }));
+        return new Response(JSON.stringify({
+          access_token: accessToken, token_type: 'Bearer', expires_in: credentialLifetimeSeconds,
+        }));
       },
     });
     const initial = await exchange.refresh();
@@ -84,9 +90,9 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     const { config } = syncBuiltinCredentialFile({ models: { providers: { builtin_models: {
       baseUrl, api: 'openai-completions',
       apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
-    } } } }, directory, initial, {
+    } } } }, directory, getActiveBuiltinModelCredentialBinding(), () => ({
       executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
-    }, sessionId);
+    }))!;
     const execProvider = (config.secrets as {
       providers: { justdo_login: { env: Record<string, string> } };
     }).providers.justdo_login;
@@ -98,21 +104,19 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     const rotate = vi.fn(async () => {
       // Ordinary config preparation also publishes the current credential before
       // awaiting Gateway acknowledgement. Hold that acknowledgement indefinitely.
-      syncBuiltinCredentialFile(config, directory, getActiveBuiltinModelCredential(), {
+      syncBuiltinCredentialFile(config, directory, getActiveBuiltinModelCredentialBinding(), () => ({
         executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
-      });
+      }));
       await delayedAck;
+      return true;
     });
-    const login = vi.fn(async () => undefined);
+    const login = vi.fn(async () => true);
     const backgroundError = vi.fn();
     const monitorError = vi.fn();
     const coordinator = new BuiltinModelAuthCoordinator({
       exchange: () => exchange.refresh(),
-      getActive: getActiveBuiltinModelCredential,
-      getAuthSessionId: getActiveBuiltinModelCredentialSessionId,
-      publishCredential: (credential, authSessionId) => {
-        publishBuiltinCredentialFile(directory, credential, authSessionId);
-      },
+      getActiveBinding: getActiveBuiltinModelCredentialBinding,
+      publishCredential: binding => publishBuiltinCredentialFile(directory, binding),
       login, rotate,
       invalidate: () => exchange.suspend(),
       logout: async () => undefined,
@@ -190,7 +194,8 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
           });
           process.send({ ok: true, requests });
         } catch (error) {
-          process.send({ ok: false, requests, unavailable: error.message === 'Managed model credentials are unavailable.' });
+          const missingCredential = error.message === 'The saved built-in model sign-in data is missing.';
+          process.send({ ok: false, requests, missingCredential });
         }
       });
       process.send({ ready: true });
@@ -206,7 +211,7 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     const request = async (tokenId: string) => {
       const response = once(child!, 'message');
       child!.send({ tokenId });
-      return (await response)[0] as { ok: boolean; requests: number; unavailable?: boolean };
+      return (await response)[0] as { ok: boolean; requests: number; missingCredential?: boolean };
     };
     const advance = async (milliseconds: number) => {
       await vi.advanceTimersByTimeAsync(milliseconds);
@@ -214,15 +219,20 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
     };
 
     expect(await request('fixture-1')).toEqual({ ok: true, requests: 1 });
-    await advance(30_000);
+    await advance(10_000);
     expect(exchanges).toBe(2);
+    expect(rotate).not.toHaveBeenCalled();
+    expect(await request('fixture-1')).toEqual({ ok: true, requests: 2 });
+
+    // The original token stopped admitting requests at 15s; the renewal is already published.
+    await advance(6_000);
     expect(rotate).toHaveBeenCalledTimes(1);
-    expect(await request('fixture-2')).toEqual({ ok: true, requests: 2 });
+    expect(await request('fixture-2')).toEqual({ ok: true, requests: 3 });
     const firstRenewal = getActiveBuiltinModelCredential();
-    await advance(75_000);
+    await advance(27_000);
     expect(initial!.expiresAt).toBeLessThan(Date.now() / 1_000);
     expect(firstRenewal!.expiresAt).toBeLessThan(Date.now() / 1_000);
-    expect(await request('fixture-4')).toEqual({ ok: true, requests: 3 });
+    expect(await request('fixture-4')).toEqual({ ok: true, requests: 4 });
     expect(exchanges).toBe(4);
     expect(rotate).toHaveBeenCalledTimes(1);
     expect(login).not.toHaveBeenCalled();
@@ -230,11 +240,11 @@ test.skipIf(!available)('model requests keep renewing through a delayed config A
 
     monitor.stop();
     await coordinator.logout();
-    expect(await request('fixture-4')).toEqual({ ok: false, requests: 3, unavailable: true });
+    expect(await request('fixture-4')).toEqual({ ok: false, requests: 4, missingCredential: true });
     acknowledgeRotation!();
     await vi.advanceTimersByTimeAsync(0);
     expect(fs.existsSync(path.join(directory, 'credentials/credentials.json'))).toBe(false);
-    expect(await request('fixture-4')).toEqual({ ok: false, requests: 3, unavailable: true });
+    expect(await request('fixture-4')).toEqual({ ok: false, requests: 4, missingCredential: true });
     expect(backgroundError).not.toHaveBeenCalled();
     expect(monitorError).not.toHaveBeenCalled();
   } finally {

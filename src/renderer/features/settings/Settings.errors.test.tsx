@@ -119,11 +119,6 @@ const renderSettings = (props: { notice?: string } = {}) =>
 
 test.each([
   {
-    language: 'zh',
-    result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeTimeout },
-    message: '模型换证请求超时，请重试。',
-  },
-  {
     language: 'en',
     result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeHttpError, httpStatus: 403 },
     message: 'The model authentication service returned HTTP 403.',
@@ -131,31 +126,30 @@ test.each([
   {
     language: 'zh',
     result: { errorCode: BuiltinModelRefreshErrorCode.DeviceUnavailable },
-    message: '无法获取用于模型换证的设备网卡地址。',
+    message: 'Could not obtain a device MAC address for model authentication.',
   },
-] as const)('localizes the $result.errorCode built-in refresh failure in $language', async ({
+] as const)('shows the $result.errorCode built-in refresh failure in English in $language', async ({
   language, result, message,
 }) => {
   locale.language = language;
-  refreshBuiltinModels.mockResolvedValue({ success: false, error: 'opaque-fixture', ...result });
+  refreshBuiltinModels.mockResolvedValue({ success: false, ...result });
 
   renderSettings();
   fireEvent.click(screen.getByRole('button', { name: 'refresh built-in models' }));
 
   const dialog = await screen.findByRole('alertdialog', { name: 'settingsOperationFailed' });
   expect(dialog.textContent).toContain(message);
-  expect(dialog.textContent).not.toContain('opaque-fixture');
 });
 
-test('shows a localized fallback when the built-in refresh bridge rejects', async () => {
-  refreshBuiltinModels.mockRejectedValue(new Error('private failure detail'));
+test.each(['skipped', 'rejected'])('does not open an error dialog when built-in refresh is %s internally', async outcome => {
+  if (outcome === 'skipped') refreshBuiltinModels.mockResolvedValue({ success: false, skipped: true });
+  else refreshBuiltinModels.mockRejectedValue(new Error('private failure detail'));
 
   renderSettings();
   fireEvent.click(screen.getByRole('button', { name: 'refresh built-in models' }));
 
-  const dialog = await screen.findByRole('alertdialog', { name: 'settingsOperationFailed' });
-  expect(dialog.textContent).toContain('无法刷新内置模型，请重试。');
-  expect(dialog.textContent).not.toContain('private failure detail');
+  await vi.waitFor(() => expect(screen.getByRole('button', { name: 'refresh built-in models' })).toHaveProperty('disabled', false));
+  expect(screen.queryByRole('alertdialog', { name: 'settingsOperationFailed' })).toBeNull();
 });
 
 test('shows the real HTTP status and server reason in a dialog and preserves the model draft', async () => {

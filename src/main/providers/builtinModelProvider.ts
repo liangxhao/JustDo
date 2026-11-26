@@ -1,3 +1,4 @@
+import { builtinModelRouteKey } from '../../../plugins/extensions/runtime-services/contracts/model-auth';
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../config/builtinModels';
 import { ProviderName } from '../../shared/providers';
 import {
@@ -199,12 +200,12 @@ export async function syncBuiltinModelProvider(
   options: SyncBuiltinModelProviderOptions,
 ): Promise<boolean> {
   const baseUrl = normalizeModelProviderBaseUrl(BUILTIN_MODEL_PROVIDER_CONFIG.baseUrl);
+  const route = builtinModelRouteKey(baseUrl);
   const credential = getActiveBuiltinModelCredential();
-  const discovery =
-    options?.access === BuiltinModelAccess.Enabled &&
-    BUILTIN_MODEL_PROVIDER_CONFIG.enabled && baseUrl && credential
-      ? { credential, controller: new AbortController() }
-      : null;
+  const accessEnabled = options?.access === BuiltinModelAccess.Enabled && BUILTIN_MODEL_PROVIDER_CONFIG.enabled;
+  const discovery = accessEnabled && route && credential
+    ? { credential, controller: new AbortController() }
+    : null;
   const syncState = beginBuiltinModelSync(store, discovery?.controller ?? null);
   const persist = async (
     models: ProviderModel[],
@@ -295,6 +296,11 @@ export async function syncBuiltinModelProvider(
     });
 
   if (!discovery) {
+    if (accessEnabled && credential && baseUrl && !route) {
+      writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.DiscoveryFailed, {
+        generation: syncState.generation, discoveryStage: 'models', reason: BuiltinModelAuthDiagnosticReason.UrlInvalid,
+      });
+    }
     return persist([], []);
   }
 

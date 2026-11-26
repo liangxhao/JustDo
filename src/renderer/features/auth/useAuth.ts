@@ -61,8 +61,9 @@ export function useAuth() {
           result.state.revision >= revision.current &&
           result.errorCode !== AuthErrorCode.SessionChanged
         ) {
-          setErrorCode(result.errorCode ?? null);
-          return result.errorCode ?? (!result.canceled && result.state.syncStatus === AuthSyncStatus.Failed
+          const actionError = result.errorCode ?? result.state.errorCode;
+          setErrorCode(actionError);
+          return actionError ?? (!result.canceled && result.state.syncStatus === AuthSyncStatus.Failed
             ? AuthErrorCode.SyncFailed : null);
         }
         return null;

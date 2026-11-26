@@ -7,6 +7,8 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { LOGIN_STORAGE_CONFIG } from '../../../../config/loginStorage';
 import type { AuthState } from '../../../../shared/app/auth';
 import { AuthErrorCode, AuthLoginPhase, AuthOperation, AuthStatus, AuthSyncStatus } from '../../../../shared/app/auth';
+import { BuiltinModelAuthDiagnosticReason } from '../../../providers/builtinModelAuthDiagnostics';
+import { BuiltinModelTokenExchangeError } from '../../../providers/builtinModelTokenExchange';
 import {
   getOutboundHeaderUserInfo,
   publishOutboundHeaderUserInfoCache,
@@ -59,7 +61,7 @@ function setup(
     login: vi.fn(async (): Promise<LoginSdkResult> => ({ status: 'authenticated', session })),
     ...adapterOverrides,
   };
-  const onLoginCommitted = vi.fn(async () => undefined);
+  const onLoginCommitted = vi.fn(async (): Promise<boolean | void> => undefined);
   const onLogoutCommitted = vi.fn(async () => undefined);
   const onHeadersCommitted = vi.fn<() => void>();
   const changes: AuthState[] = [];
@@ -159,6 +161,28 @@ test('a submitted dialog enters completion while the SDK still has to verify the
 
   authenticate({ status: 'authenticated', session });
   expect((await login).success).toBe(true);
+});
+
+test('unconfirmed built-in access does not report a login or synchronization failure', async () => {
+  const context = setup();
+  context.onLoginCommitted.mockResolvedValueOnce(false);
+
+  expect(await context.service.login()).toEqual({
+    success: true,
+    state: expect.objectContaining({ status: AuthStatus.SignedIn, syncStatus: AuthSyncStatus.Idle, errorCode: null }),
+  });
+});
+
+test('preserves the actionable model exchange rejection after committing the account', async () => {
+  const context = setup();
+  const rejection = new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.HttpRejected, 401);
+  context.onLoginCommitted.mockRejectedValue(rejection);
+
+  expect(await context.service.login()).toMatchObject({
+    success: true,
+    state: { status: AuthStatus.SignedIn, errorCode: AuthErrorCode.ModelAuthRejected },
+  });
+  expect(await context.service.retrySync()).toMatchObject({ success: false, errorCode: AuthErrorCode.ModelAuthRejected });
 });
 
 test('failed model synchronization keeps the committed login and can be retried', async () => {

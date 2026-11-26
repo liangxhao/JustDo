@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BUILTIN_SECRET_ID,
   BUILTIN_SECRET_SOURCE,
+  CredentialReaderExitCode,
   MODEL_AUTH_SESSION_ENV,
   MODEL_AUTH_TYPE_ENV,
 } from '../contracts/model-auth';
@@ -95,7 +96,7 @@ describe('managed model request authentication', () => {
     await request(wrap);
     sdk.resolve.mockRejectedValueOnce(new Error('private credential/path'));
     await expect(request(wrap, { apiKey: 'old' })).rejects.toThrow(
-      'Managed model credentials are unavailable.',
+      'Could not read the built-in model sign-in data.',
     );
     expect(inner).toHaveBeenCalledTimes(1);
   });
@@ -107,7 +108,9 @@ describe('managed model request authentication', () => {
       { code: 'SECRET_PROVIDER_PATH_SECURITY_UNVERIFIABLE', token: 'private-token' },
     ));
 
-    await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
+    await expect(request(wrap)).rejects.toThrow(new Error(
+      'Could not read the built-in model sign-in data.',
+    ));
 
     expect(inner).not.toHaveBeenCalled();
     expect(authLog).toHaveBeenCalledExactlyOnceWith(
@@ -123,10 +126,27 @@ describe('managed model request authentication', () => {
     expect(authLog).not.toHaveBeenCalled();
     sdk.resolve.mockRejectedValueOnce({ code: 'private-token\nprivate-account' });
 
-    await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
+    await expect(request(wrap)).rejects.toThrow('Could not read the built-in model sign-in data.');
 
     expect(authLog.mock.calls[0][0]).toContain('"resolverCode":"unknown"');
     expect(authLog.mock.calls[0][0]).not.toMatch(/private|[\r\n]/);
+  });
+
+  it.each([
+    ['credential_expired', 'The built-in model sign-in is at or near the end of its validity period.'],
+    ['session_mismatch', 'This task belongs to a different built-in model sign-in session.'],
+    ['snapshot_read_failed', 'Could not read the built-in model sign-in data.'],
+    ['auth_type_mismatch', 'Could not prepare the built-in model request.'],
+  ] as const)('reports the reader rejection for %s', async (reason, hint) => {
+    const { wrap, inner } = fixture();
+    sdk.resolve.mockRejectedValueOnce(Object.assign(
+      new Error(`Exec provider "${BUILTIN_SECRET_SOURCE}" exited with code ${CredentialReaderExitCode[reason]}.`),
+      { code: 'SECRET_PROVIDER_UNAVAILABLE', scope: 'provider', source: 'exec', provider: BUILTIN_SECRET_SOURCE },
+    ));
+
+    await expect(request(wrap)).rejects.toThrow(new Error(hint));
+    expect(inner).not.toHaveBeenCalled();
+    expect(authLog.mock.calls[0][0]).toContain(`"resolverReason":"${reason}"`);
   });
 
   it('pins the original session even if a caller replaces the config object', async () => {
@@ -158,7 +178,7 @@ describe('managed model request authentication', () => {
     async token => {
       sdk.resolve.mockResolvedValue(new Map([[key, token]]));
       const { wrap, inner } = fixture();
-      await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
+      await expect(request(wrap)).rejects.toThrow('Could not read the built-in model sign-in data.');
       expect(inner).not.toHaveBeenCalled();
       expect(authLog.mock.calls[0][0]).toContain('"reason":"invalid_resolved_credential"');
       expect(authLog.mock.calls[0][0]).not.toMatch(/[\r\n]/);
@@ -167,9 +187,10 @@ describe('managed model request authentication', () => {
 
   it('does not send credentials to a changed route or foreign provider', async () => {
     const { wrap, inner } = fixture();
-    for (const change of [{ provider: 'custom' }, { baseUrl: 'https://other.test/v1' }]) {
-      await expect(wrap({ ...model, ...change } as never, { messages: [] }, {})).rejects.toThrow();
-    }
+    await expect(wrap({ ...model, provider: 'custom' } as never, { messages: [] }, {}))
+      .rejects.toThrow(new Error('Could not prepare the built-in model request.'));
+    await expect(wrap({ ...model, baseUrl: 'https://models.example.test/other/v1' } as never, { messages: [] }, {}))
+      .rejects.toThrow(new Error('Could not prepare the built-in model request.'));
     expect(sdk.resolve).not.toHaveBeenCalled();
     expect(inner).not.toHaveBeenCalled();
     expect(authLog.mock.calls.map(([line]) => JSON.parse(line.slice(line.indexOf('{'))).reason))
@@ -188,7 +209,7 @@ describe('managed model request authentication', () => {
     const cfg = config();
     cfg.secrets.providers[BUILTIN_SECRET_SOURCE].env[MODEL_AUTH_SESSION_ENV] = '';
     const { wrap, inner } = fixture(cfg);
-    await expect(request(wrap)).rejects.toThrow();
+    await expect(request(wrap)).rejects.toThrow(new Error('Could not prepare the built-in model request.'));
     expect(inner).not.toHaveBeenCalled();
     expect(authLog.mock.calls[0][0]).toContain('"reason":"missing_auth_session"');
   });
@@ -228,7 +249,7 @@ describe('managed model request authentication', () => {
     authLog.mockImplementationOnce(() => { throw new Error('logger unavailable'); });
     sdk.resolve.mockRejectedValueOnce(new Error('private resolver failure'));
 
-    await expect(request(wrap)).rejects.toThrow('Managed model credentials are unavailable.');
+    await expect(request(wrap)).rejects.toThrow('Could not read the built-in model sign-in data.');
   });
 
   it('registers the same policy for embedded tasks and direct completions only on builtin_models', () => {

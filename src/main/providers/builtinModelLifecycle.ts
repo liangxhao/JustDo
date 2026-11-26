@@ -43,19 +43,19 @@ export class BuiltinModelLifecycle {
     return this.catalogRetryNeeded;
   }
 
-  refreshAfterLogin(): Promise<void> {
+  refreshAfterLogin(): Promise<boolean> {
     return this.refresh(BuiltinModelAccess.Enabled, BuiltinModelSyncReason.AuthLogin);
   }
 
-  refreshAfterLogout(): Promise<void> {
-    return this.refresh(BuiltinModelAccess.Disabled, BuiltinModelSyncReason.AuthLogout);
+  async refreshAfterLogout(): Promise<void> {
+    await this.refresh(BuiltinModelAccess.Disabled, BuiltinModelSyncReason.AuthLogout);
   }
 
   async waitForLogoutCatalog(): Promise<void> {
     await this.logoutCatalog;
   }
 
-  refreshAfterCredentialRotation(): Promise<void> {
+  refreshAfterCredentialRotation(): Promise<boolean> {
     // Credential publication must not supersede a catalog refresh that still
     // owes its final provider projection after model discovery completes.
     return this.applyConfig(this.generation, BuiltinModelSyncReason.AuthLogin, true);
@@ -64,17 +64,17 @@ export class BuiltinModelLifecycle {
   private async refresh(
     access: BuiltinModelAccess,
     reason: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const generation = ++this.generation;
     const catalog = this.syncCatalog(access, generation);
     if (access === BuiltinModelAccess.Disabled) this.logoutCatalog = catalog;
     await catalog;
     if (this.logoutCatalog === catalog) this.logoutCatalog = null;
     if (generation !== this.generation) {
-      return;
+      return false;
     }
     this.dependencies.notifyCatalogChanged();
-    await this.applyConfig(generation, reason);
+    return this.applyConfig(generation, reason);
   }
 
   private async syncCatalog(access: BuiltinModelAccess, generation: number): Promise<void> {
@@ -88,7 +88,7 @@ export class BuiltinModelLifecycle {
     generation: number,
     reason: string,
     requireApplication = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     let syncResult: OpenClawConfigSyncResult;
     try {
       syncResult = await this.enqueueOpenClawConfigSync(reason);
@@ -100,12 +100,13 @@ export class BuiltinModelLifecycle {
       });
       throw error;
     }
-    if (generation !== this.generation) return;
+    if (generation !== this.generation) return false;
 
     const projectionConfirmed = reason === BuiltinModelSyncReason.AuthLogout
       ? syncResult.configSynced
       : syncResult.hostPolicyVerified;
-    if (syncResult.success && projectionConfirmed && !syncResult.gatewayRestartDeferred) {
+    const confirmed = syncResult.success && projectionConfirmed === true && !syncResult.gatewayRestartDeferred;
+    if (confirmed) {
       this.dependencies.notifyRuntimeModelsChanged();
     }
     if (!syncResult.success) writeBuiltinModelAuthDiagnostic('warn', BuiltinModelAuthDiagnosticEvent.ConfigSyncFailed, {
@@ -114,12 +115,13 @@ export class BuiltinModelLifecycle {
     });
     if (!syncResult.success) {
       if (syncResult.configSynced && !requireApplication) {
-        return;
+        return false;
       }
       throw new Error(
         syncResult.error || `Failed to sync OpenClaw config after ${reason}`,
       );
     }
+    return confirmed;
   }
 
   private enqueueOpenClawConfigSync(reason: string): Promise<OpenClawConfigSyncResult> {

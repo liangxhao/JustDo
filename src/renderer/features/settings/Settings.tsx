@@ -173,9 +173,7 @@ const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
 const SAVE_SUCCESS_FEEDBACK_DURATION_MS = 1_800;
 const builtinModelRefreshMessages: Record<BuiltinModelRefreshErrorCode, string> = {
   [BuiltinModelRefreshErrorCode.DeviceUnavailable]: 'builtinModelRefreshDeviceUnavailable',
-  [BuiltinModelRefreshErrorCode.ExchangeTimeout]: 'builtinModelRefreshExchangeTimeout',
   [BuiltinModelRefreshErrorCode.ExchangeHttpError]: 'builtinModelRefreshExchangeHttpError',
-  [BuiltinModelRefreshErrorCode.Failed]: 'builtinModelRefreshFailed',
 };
 const buildModelDiscoveryHeaders = (
   apiKey: string,
@@ -920,11 +918,11 @@ const Settings: React.FC<SettingsProps> = ({
     setIsRefreshingBuiltinModels(true);
     try {
       const result = await window.electron.builtinModels.refresh();
-      if (!result.success) {
+      if ('errorCode' in result) {
         const message = result.errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError &&
           result.httpStatus !== undefined
           ? i18nService.t('builtinModelRefreshExchangeHttpStatus').replace('{status}', String(result.httpStatus))
-          : i18nService.t(builtinModelRefreshMessages[result.errorCode] ?? 'builtinModelRefreshFailed');
+          : i18nService.t(builtinModelRefreshMessages[result.errorCode]);
         setError(message);
       } else {
         const refreshedConfig = await configService.reloadFromStore();
@@ -941,7 +939,7 @@ const Settings: React.FC<SettingsProps> = ({
         }
       }
     } catch {
-      setError(i18nService.t('builtinModelRefreshFailed'));
+      // Only a classified refresh result opens the error dialog.
     } finally {
       setIsRefreshingBuiltinModels(false);
     }

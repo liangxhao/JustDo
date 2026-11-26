@@ -63,9 +63,12 @@ test.skipIf(!available)('model requests reuse their SDK binding but read each fr
         baseUrl, api: 'openai-completions',
         apiKey: { source: 'exec', provider: 'justdo_login', id: 'X-ACCESS-JWT' },
       } } },
-    }, directory, { accessToken: firstToken, userAccount: 'fixture-account', expiresAt: now + 1800 }, {
+    }, directory, {
+      credential: { accessToken: firstToken, userAccount: 'fixture-account', expiresAt: now + 1800 },
+      authSessionId: session,
+    }, () => ({
       executable: process.execPath, sha256: createHash('sha256').update(fs.readFileSync(process.execPath)).digest('hex'),
-    }, session);
+    }))!;
     const snapshot = (token: string, authSessionId: string) => sealBuiltinCredential(JSON.stringify({
       accessToken: token, userAccount: 'fixture-account', expiresAt: now + 3600, authSessionId,
     })).toString('base64');
@@ -166,9 +169,9 @@ test.skipIf(!available)('model requests reuse their SDK binding but read each fr
         await request(sameTask);
         assert.equal(requests, 2, 'same admitted task sends exactly one request per invocation');
         fs.unlinkSync(${JSON.stringify(credentialFile)});
-        await assert.rejects(request(sameTask), /Managed model credentials are unavailable/);
+        await assert.rejects(request(sameTask), { message: 'The saved built-in model sign-in data is missing.' });
         publish(${JSON.stringify(snapshot(secondToken, 'b'.repeat(32)))});
-        await assert.rejects(request(sameTask), /Managed model credentials are unavailable/);
+        await assert.rejects(request(sameTask), { message: 'This task belongs to a different built-in model sign-in session.' });
         assert.equal(requests, 2, 'revoked task cannot send under the replacement login');
         const replacement = structuredClone(capturedConfig);
         replacement.secrets.providers.justdo_login.env[${JSON.stringify(MODEL_AUTH_SESSION_ENV)}] = 'b'.repeat(32);
@@ -178,7 +181,7 @@ test.skipIf(!available)('model requests reuse their SDK binding but read each fr
         // An unavailable preload must not prevent the wrapper from registering.
         const recoveryModule = await import(recoveryUrl);
         const recovered = wrap(replacement, recoveryModule.buildBuiltinModelAuthProvider());
-        await assert.rejects(request(recovered), /Managed model credentials are unavailable/);
+        await assert.rejects(request(recovered), { message: 'Could not prepare the built-in model request.' });
         assert.equal(requests, 3, 'an unavailable SDK must not send a model request');
         recoveryAliasAvailable = true;
         await request(recovered);

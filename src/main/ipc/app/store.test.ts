@@ -40,11 +40,13 @@ describe('store IPC', () => {
     });
   });
 
+  it('does not report credential cleanup as a successful manual refresh or an error', async () => {
+    refreshBuiltinModels.mockResolvedValueOnce(false);
+
+    await expect(handlers.get(BuiltinModelIpc.Refresh)!({})).resolves.toEqual({ success: false, skipped: true });
+  });
+
   it.each([
-    {
-      error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.RequestTimeout),
-      result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeTimeout },
-    },
     {
       error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.DeviceUnavailable),
       result: { errorCode: BuiltinModelRefreshErrorCode.DeviceUnavailable },
@@ -53,13 +55,6 @@ describe('store IPC', () => {
       error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.HttpRejected, 403),
       result: { errorCode: BuiltinModelRefreshErrorCode.ExchangeHttpError, httpStatus: 403 },
     },
-    {
-      error: Object.assign(new Error('private-refresh-fixture\nprivate-cause'), {
-        reason: BuiltinModelAuthDiagnosticReason.HttpRejected,
-        httpStatus: 403,
-      }),
-      result: { errorCode: BuiltinModelRefreshErrorCode.Failed },
-    },
   ])('returns only safe manual refresh details for $result.errorCode', async ({ error, result }) => {
     const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -67,10 +62,31 @@ describe('store IPC', () => {
 
       await expect(handlers.get(BuiltinModelIpc.Refresh)!({})).resolves.toEqual({
         success: false,
-        error: 'Failed to refresh builtin models',
         ...result,
       });
       expect(logError.mock.calls).toEqual([[expect.any(String)]]);
+      expect(logError.mock.calls[0][0]).not.toMatch(/private-refresh-fixture|private-cause|[\r\n]/);
+    } finally {
+      logError.mockRestore();
+    }
+  });
+
+  it.each([
+    { error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.RequestTimeout), diagnosticCode: 'unknown' },
+    { error: new BuiltinModelTokenExchangeError(BuiltinModelAuthDiagnosticReason.HttpRejected, 503), diagnosticCode: 'unknown' },
+    {
+      error: Object.assign(new Error('private-refresh-fixture\nprivate-cause'), {
+        code: 'EPERM', reason: BuiltinModelAuthDiagnosticReason.HttpRejected, httpStatus: 403,
+      }),
+      diagnosticCode: 'EPERM',
+    },
+  ])('keeps internal refresh failures in diagnostics ($diagnosticCode)', async ({ error, diagnosticCode }) => {
+    const logError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      refreshBuiltinModels.mockRejectedValueOnce(error);
+
+      await expect(handlers.get(BuiltinModelIpc.Refresh)!({})).resolves.toEqual({ success: false, skipped: true });
+      expect(logError.mock.calls).toEqual([[expect.stringContaining(`"diagnosticCode":"${diagnosticCode}"`)]]);
       expect(logError.mock.calls[0][0]).not.toMatch(/private-refresh-fixture|private-cause|[\r\n]/);
     } finally {
       logError.mockRestore();

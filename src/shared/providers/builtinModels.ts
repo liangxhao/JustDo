@@ -5,9 +5,7 @@ export const BuiltinModelIpc = {
 
 export const BuiltinModelRefreshErrorCode = {
   DeviceUnavailable: 'device-unavailable',
-  ExchangeTimeout: 'exchange-timeout',
   ExchangeHttpError: 'exchange-http-error',
-  Failed: 'refresh-failed',
 } as const;
 
 export type BuiltinModelRefreshErrorCode =
@@ -15,9 +13,9 @@ export type BuiltinModelRefreshErrorCode =
 
 export type BuiltinModelRefreshResult =
   | { success: true }
+  | { success: false; skipped: true }
   | {
       success: false;
-      error: string;
       errorCode: BuiltinModelRefreshErrorCode;
       httpStatus?: number;
     };

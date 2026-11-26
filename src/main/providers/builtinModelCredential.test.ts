@@ -226,7 +226,9 @@ describe('built-in model credential', () => {
       expiresAt: NOW_SECONDS + 300,
     });
 
-    vi.setSystemTime((NOW_SECONDS + 286) * 1_000);
+    vi.setSystemTime((NOW_SECONDS + 285) * 1_000 - 1);
+    expect(getActiveBuiltinModelCredential()).not.toBeNull();
+    vi.setSystemTime((NOW_SECONDS + 285) * 1_000);
     expect(getActiveBuiltinModelCredential()).toBeNull();
   });
 

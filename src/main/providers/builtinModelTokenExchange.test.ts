@@ -128,7 +128,7 @@ test('revokes the published snapshot synchronously before a replacement login ex
   expect(getActiveBuiltinModelCredential()).toBeNull();
 });
 
-test('revokes the published snapshot immediately when the exchange rejects authentication', async () => {
+test.each([false, true])('attempts immediate snapshot revocation and preserves HTTP rejection (locked=%s)', async locked => {
   login();
   const onInvalidated = vi.fn();
   const fetch = vi.fn(async () => success());
@@ -137,9 +137,10 @@ test('revokes the published snapshot immediately when the exchange rejects authe
   });
   await service.refresh();
   onInvalidated.mockClear();
+  if (locked) onInvalidated.mockImplementationOnce(() => { throw new Error('fixture snapshot locked'); });
   vi.setSystemTime((NOW + 240) * 1000);
   fetch.mockResolvedValueOnce(new Response('', { status: 401 }));
-  await expect(service.refresh()).rejects.toThrow('Model authentication token exchange failed.');
+  await expect(service.refresh()).rejects.toMatchObject({ reason: BuiltinModelAuthDiagnosticReason.HttpRejected, httpStatus: 401 });
   expect(onInvalidated).toHaveBeenCalledOnce();
   expect(getActiveBuiltinModelCredential()).toBeNull();
 });
@@ -425,23 +426,26 @@ test('coalesces concurrent exchanges and renews before expiration', async () => 
   expect(fetch).toHaveBeenCalledTimes(2);
 });
 
-test.each([30, 60, 90, 300, 900, 10_800])('uses the same bounded refresh deadline for %i-second JWTs', async seconds => {
-  login();
-  config.maxJwtLifetimeSeconds = seconds;
-  const { service, fetch } = setup(vi.fn(async () => success({
-    access_token: jwt('user-1', seconds), expires_in: seconds,
-  })));
-  const active = await service.refresh();
-  expect(active).not.toBeNull();
-  const delay = (seconds - Math.min(60, seconds / 2)) * 1000;
-  expect(resolveBuiltinModelCredentialExpiryDelayMs(active!)).toBe(delay);
-  vi.setSystemTime(NOW * 1000 + delay - 1000);
-  await service.refresh();
-  expect(fetch).toHaveBeenCalledTimes(1);
-  vi.setSystemTime(NOW * 1000 + delay);
-  await service.refresh();
-  expect(fetch).toHaveBeenCalledTimes(2);
-});
+test.each([[30, 10], [60, 30], [90, 45], [300, 240], [900, 840], [10_800, 10_740]])(
+  'starts renewal for a %i-second JWT after %i seconds',
+  async (seconds, refreshAfterSeconds) => {
+    login();
+    config.maxJwtLifetimeSeconds = seconds;
+    const { service, fetch } = setup(vi.fn(async () => success({
+      access_token: jwt('user-1', seconds), expires_in: seconds,
+    })));
+    const active = await service.refresh();
+    expect(active).not.toBeNull();
+    const delay = refreshAfterSeconds * 1_000;
+    expect(resolveBuiltinModelCredentialExpiryDelayMs(active!)).toBe(delay);
+    vi.setSystemTime(NOW * 1000 + delay - 1000);
+    await service.refresh();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(NOW * 1000 + delay);
+    await service.refresh();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  },
+);
 
 test.each([
   { uid: 'other-user' }, { access_token: 'pqAk' }, { token_type: 'Basic' },

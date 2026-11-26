@@ -300,6 +300,7 @@ describe('OpenClawConfigSyncService', () => {
     sandboxReady?: boolean;
     getGatewayClient?: () => GatewayClientLike | null;
     getModelAuthSessionId?: () => string | null;
+    getModelAuthSessionOwnerId?: () => string | null;
     computerEnabled?: boolean;
     computerStatus?: () => Promise<{ available: boolean }>;
   } = {}) => {
@@ -465,6 +466,7 @@ describe('OpenClawConfigSyncService', () => {
       requestGateway,
       getGatewayClient: options.getGatewayClient ?? (() => connectedClient),
       getModelAuthSessionId: options.getModelAuthSessionId,
+      getModelAuthSessionOwnerId: options.getModelAuthSessionOwnerId,
       getWindowsSandboxStatus: vi.fn(async () => ({
         code: options.sandboxReady === false ? 'check_failed' : 'ready',
         supported: true,
@@ -2070,6 +2072,41 @@ describe('OpenClawConfigSyncService', () => {
 
     expect(harness.configSync.sync).not.toHaveBeenCalled();
     expect(harness.engineManager.waitForGatewayConfigReload).not.toHaveBeenCalled();
+    expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it.each(['preflight', 'publication', 'acknowledgement'] as const)('continues settings sync when the same login token expires during %s', async phase => {
+    let sessionId: string | null = 'original-session';
+    const harness = createHarness({
+      getModelAuthSessionId: () => sessionId,
+      getModelAuthSessionOwnerId: () => 'original-session',
+    });
+    if (phase === 'preflight') {
+      harness.configSync.prepareWorkspaceExtensionInventory.mockImplementationOnce(async () => {
+        sessionId = null;
+        return { workspace: new Map(), configured: new Map() };
+      });
+    } else {
+      const sync = harness.configSync.sync.getMockImplementation()!;
+      harness.configSync.sync.mockImplementationOnce(() => {
+        if (phase === 'publication') sessionId = null;
+        return { ...sync(), builtinCredentialSessionId: 'original-session' };
+      });
+      if (phase === 'acknowledgement') {
+        harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce(async () => {
+          sessionId = null;
+          return true;
+        });
+      }
+    }
+
+    await expect(harness.service.syncConfig({ reason: 'cowork-config-change' }))
+      .resolves.toMatchObject({ success: true, changed: true, configSynced: true });
+
+    expect(harness.configSync.sync).toHaveBeenCalledTimes(phase === 'preflight' ? 1 : 2);
+    if (phase !== 'preflight') expect(harness.configSync.sync).toHaveBeenLastCalledWith(
+      BuiltinModelSyncReason.AuthLogout, undefined, undefined, { allowExpiredBuiltinSnapshot: true },
+    );
     expect(harness.stopGateway).not.toHaveBeenCalled();
   });
 

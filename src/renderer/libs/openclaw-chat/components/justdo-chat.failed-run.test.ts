@@ -96,7 +96,7 @@ describe('justdo-chat failed runs', () => {
     });
     const summary =
       "⚠️ OpenClaw couldn't finish this reply. For details, open Settings → Logs in the Control UI or run `openclaw logs --follow` in your terminal.";
-    const detail = 'Managed model credentials are unavailable.';
+    const detail = 'The provider returned an incomplete response.';
     turn.status = 'error';
     const terminal = {
       id: 'terminal',
@@ -169,7 +169,7 @@ describe('justdo-chat failed runs', () => {
   });
 
   test('does not invent a summary when the native failure has only a cause', async () => {
-    const detail = 'Managed model credentials are unavailable.';
+    const detail = 'The provider returned an incomplete response.';
     const chat = document.createElement('justdo-chat') as JustDoChatElement;
     chat.messages = [{
       role: 'assistant', content: [], errorMessage: detail, stopReason: 'error',

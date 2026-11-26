@@ -18,7 +18,7 @@ import {
   BuiltinModelAuthDiagnosticReason,
   getBuiltinModelAuthErrorCode,
 } from '../../providers/builtinModelAuthDiagnostics';
-import { BuiltinModelTokenExchangeError } from '../../providers/builtinModelTokenExchange';
+import { requiresBuiltinModelUserAction } from '../../providers/builtinModelTokenExchange';
 
 interface StoreHandlerDependencies {
   getStore: () => SqliteStore;
@@ -27,16 +27,8 @@ interface StoreHandlerDependencies {
     previousConfig: unknown,
     context?: { rollback?: boolean },
   ) => Promise<void>;
-  refreshBuiltinModels: () => Promise<void>;
+  refreshBuiltinModels: () => Promise<boolean>;
 }
-
-const builtinModelRefreshErrorCodes: Partial<
-  Record<BuiltinModelAuthDiagnosticReason, BuiltinModelRefreshErrorCode>
-> = {
-  [BuiltinModelAuthDiagnosticReason.DeviceUnavailable]: BuiltinModelRefreshErrorCode.DeviceUnavailable,
-  [BuiltinModelAuthDiagnosticReason.RequestTimeout]: BuiltinModelRefreshErrorCode.ExchangeTimeout,
-  [BuiltinModelAuthDiagnosticReason.HttpRejected]: BuiltinModelRefreshErrorCode.ExchangeHttpError,
-};
 
 const asRecord = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value)
@@ -172,23 +164,22 @@ export const registerStoreHandlers = ({
 
   ipcMain.handle(BuiltinModelIpc.Refresh, async (): Promise<BuiltinModelRefreshResult> => {
     try {
-      await refreshBuiltinModels();
-      return { success: true };
+      return await refreshBuiltinModels() ? { success: true } : { success: false, skipped: true };
     } catch (error) {
-      const exchangeError = error instanceof BuiltinModelTokenExchangeError ? error : undefined;
-      const errorCode = exchangeError
-        ? builtinModelRefreshErrorCodes[exchangeError.reason] ?? BuiltinModelRefreshErrorCode.Failed
-        : BuiltinModelRefreshErrorCode.Failed;
-      const status = exchangeError?.httpStatus;
-      const httpStatus = errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError &&
-        status !== undefined && Number.isInteger(status) && status >= 300 && status <= 599
-        ? status : undefined;
+      if (!requiresBuiltinModelUserAction(error)) {
+        console.error(`[BuiltinModelProvider] Manual refresh failed ${JSON.stringify({
+          diagnosticCode: getBuiltinModelAuthErrorCode(error),
+        })}`);
+        return { success: false, skipped: true };
+      }
+      const errorCode = error.reason === BuiltinModelAuthDiagnosticReason.DeviceUnavailable
+        ? BuiltinModelRefreshErrorCode.DeviceUnavailable : BuiltinModelRefreshErrorCode.ExchangeHttpError;
+      const httpStatus = errorCode === BuiltinModelRefreshErrorCode.ExchangeHttpError ? error.httpStatus : undefined;
       console.error(`[BuiltinModelProvider] Manual refresh failed ${JSON.stringify({
         errorCode, httpStatus, diagnosticCode: getBuiltinModelAuthErrorCode(error),
       })}`);
       return {
         success: false,
-        error: 'Failed to refresh builtin models',
         errorCode,
         ...(httpStatus === undefined ? {} : { httpStatus }),
       };

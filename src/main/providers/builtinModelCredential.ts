@@ -11,8 +11,9 @@ const MAX_JWT_LENGTH = 8_192;
 const MAX_USER_ACCOUNT_LENGTH = 512;
 const DEFAULT_MAX_JWT_LIFETIME_SECONDS = 5 * 60;
 export const BUILTIN_TOKEN_CLOCK_SKEW_SECONDS = 30;
-const MIN_REMAINING_LIFETIME_SECONDS = 15;
+export const BUILTIN_TOKEN_MIN_REMAINING_SECONDS = 15;
 export const BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS = 60;
+const SHORT_TOKEN_RENEWAL_HEADROOM_SECONDS = 5;
 const HTTP_HEADER_VALUE_PATTERN = /^[\u0020-\u007e\u0080-\u00ff]+$/;
 const BASE64URL_SEGMENT_PATTERN = /^[A-Za-z0-9_-]+$/;
 const ALLOWED_JWT_ALGORITHMS = new Set([
@@ -33,6 +34,11 @@ export type BuiltinModelCredential = Readonly<{
   userAccount: string;
   expiresAt: number;
   authType?: 'jwt' | 'api-key';
+}>;
+
+export type BuiltinModelCredentialBinding = Readonly<{
+  credential: BuiltinModelCredential;
+  authSessionId: string;
 }>;
 
 export const BuiltinModelCredentialFailureCode = {
@@ -79,7 +85,7 @@ type JwtPayload = {
   sub?: unknown;
 };
 
-let activeCredential: BuiltinModelCredential | null = null;
+let activeBinding: BuiltinModelCredentialBinding | null = null;
 let credentialSession: { id: string; account: string; authType: string } | null = null;
 
 const applyActiveCredential = (credential: BuiltinModelCredential | null): void => {
@@ -90,15 +96,18 @@ const applyActiveCredential = (credential: BuiltinModelCredential | null): void 
   const authType = credential.authType ?? 'jwt';
   if (!credentialSession || credentialSession.account !== credential.userAccount ||
     credentialSession.authType !== authType ||
-    (authType === 'api-key' && activeCredential?.accessToken !== credential.accessToken)) {
+    (authType === 'api-key' && activeBinding?.credential.accessToken !== credential.accessToken)) {
     credentialSession = { id: randomBytes(16).toString('hex'), account: credential.userAccount, authType };
   }
-  activeCredential = credential;
+  activeBinding = Object.freeze({ credential, authSessionId: credentialSession.id });
 };
 
 /** Stable across JWT rotation, revoked by logout, login replacement or auth rejection. */
 export const getActiveBuiltinModelCredentialSessionId = (): string | null =>
-  getActiveBuiltinModelCredential() ? credentialSession?.id ?? null : null;
+  getActiveBuiltinModelCredentialBinding()?.authSessionId ?? null;
+
+/** The login still owns preflight work while its credential is being renewed. */
+export const getBuiltinModelCredentialSessionOwnerId = (): string | null => credentialSession?.id ?? null;
 
 const normalizeCredentialValue = (value: unknown, maxLength: number): string => {
   if (typeof value !== 'string') {
@@ -176,7 +185,7 @@ export const inspectBuiltinModelCredential = (
   if (expiresAt - issuedAt <= 0) return rejectCredential(BuiltinModelCredentialFailureCode.Lifetime);
   // Apply the same clock tolerance to both future bounds; the signed lifetime remains capped above.
   if (expiresAt > nowSeconds + maxLifetime + BUILTIN_TOKEN_CLOCK_SKEW_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.ExpiryTooFar);
-  if (expiresAt < nowSeconds + MIN_REMAINING_LIFETIME_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.Expired);
+  if (expiresAt <= nowSeconds + BUILTIN_TOKEN_MIN_REMAINING_SECONDS) return rejectCredential(BuiltinModelCredentialFailureCode.Expired);
 
   return { credential: Object.freeze({ accessToken, userAccount, expiresAt }), failureCode: null };
 };
@@ -228,7 +237,7 @@ export const setActiveBuiltinModelDevelopmentApiKey = (
         authType: 'api-key' as const,
       })
     : null);
-  return activeCredential;
+  return getActiveBuiltinModelCredential();
 };
 
 export const refreshActiveBuiltinModelCredential = (
@@ -239,25 +248,28 @@ export const refreshActiveBuiltinModelCredential = (
   return credential;
 };
 
-export const getActiveBuiltinModelCredential = (): BuiltinModelCredential | null => {
-  if (
-    activeCredential &&
-    activeCredential.expiresAt < Math.floor(Date.now() / 1000) + MIN_REMAINING_LIFETIME_SECONDS
-  ) {
-    activeCredential = null;
-  }
-  return activeCredential;
+export const isBuiltinModelCredentialUsable = (credential: BuiltinModelCredential): boolean =>
+  credential.expiresAt > Date.now() / 1000 + BUILTIN_TOKEN_MIN_REMAINING_SECONDS;
+
+export const getActiveBuiltinModelCredentialBinding = (): BuiltinModelCredentialBinding | null => {
+  if (activeBinding && !isBuiltinModelCredentialUsable(activeBinding.credential)) activeBinding = null;
+  return activeBinding;
 };
 
-/** Short-lived tokens renew halfway through their signed lifetime, not every second. */
+export const getActiveBuiltinModelCredential = (): BuiltinModelCredential | null =>
+  getActiveBuiltinModelCredentialBinding()?.credential ?? null;
+
 export const getBuiltinModelCredentialRefreshAtSeconds = (credential: BuiltinModelCredential): number => {
   if (credential.authType === 'api-key') return Number.MAX_SAFE_INTEGER;
   const payload = decodeJwtObject<JwtPayload>(credential.accessToken.split('.')[1] ?? '');
   const lifetime = typeof payload?.iat === 'number' && Number.isInteger(payload.iat)
     ? credential.expiresAt - payload.iat : NaN;
-  const margin = Number.isFinite(lifetime) && lifetime > 0
-    ? Math.min(BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS, Math.max(MIN_REMAINING_LIFETIME_SECONDS, lifetime / 2))
-    : BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS;
+  if (!Number.isFinite(lifetime) || lifetime <= 0) return credential.expiresAt - BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS;
+  // Leave time for exchange before the request cutoff while preserving usable time for very short JWTs.
+  const usableLifetime = Math.max(0, lifetime - BUILTIN_TOKEN_MIN_REMAINING_SECONDS);
+  const shortTokenMargin = BUILTIN_TOKEN_MIN_REMAINING_SECONDS +
+    Math.min(SHORT_TOKEN_RENEWAL_HEADROOM_SECONDS, usableLifetime / 2);
+  const margin = Math.min(BUILTIN_TOKEN_REFRESH_MARGIN_SECONDS, Math.max(shortTokenMargin, lifetime / 2));
   return credential.expiresAt - margin;
 };
 
@@ -272,7 +284,7 @@ export const buildBuiltinModelRequestHeaders = (
     };
 
 export const isActiveBuiltinModelDevelopmentApiKey = (): boolean =>
-  activeCredential?.authType === 'api-key';
+  activeBinding?.credential.authType === 'api-key';
 
 export const getBuiltinModelRequestHeaders = (): Record<string, string> | null => {
   const credential = getActiveBuiltinModelCredential();
@@ -283,6 +295,6 @@ export const getBuiltinModelRequestHeaders = (): Record<string, string> | null =
 };
 
 export const clearActiveBuiltinModelCredential = (): void => {
-  activeCredential = null;
+  activeBinding = null;
   credentialSession = null;
 };
