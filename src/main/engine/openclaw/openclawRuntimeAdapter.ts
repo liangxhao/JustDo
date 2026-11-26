@@ -71,6 +71,7 @@ import {
   type GoalExecutionSnapshot,
   type GoalFeedbackPreparationResult,
   normalizeSessionGoal,
+  type SessionGoal,
   SessionGoalIpc,
   type SessionGoalMutationOutcome,
   type SessionGoalMutationRequest,
@@ -1289,6 +1290,33 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       sessionId,
       request,
     );
+  }
+
+  synchronizeExternalGoal(sessionId: string, goal: SessionGoal | null, activated: boolean): void {
+    if (!goal) {
+      this.stoppedSessions.delete(sessionId);
+      this.manuallyStoppedSessions.delete(sessionId);
+      this.goalContinuationCoordinator.clearSession(sessionId);
+      this.store.clearGoalExecutionSnapshot?.(sessionId);
+    } else if (activated || goal.status !== SessionGoalStatus.Active) {
+      if (activated) {
+        this.stoppedSessions.delete(sessionId);
+        this.manuallyStoppedSessions.delete(sessionId);
+        this.goalIdsActivatedThisApp.add(`${sessionId}:${goal.id}`);
+      }
+      this.goalContinuationCoordinator.synchronizeGoal(sessionId, goal);
+    }
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(SessionGoalIpc.Changed, { sessionId });
+    }
+  }
+
+  /** The external executor has verified current native head and exact whole-run Stop. */
+  reconcileExternalGoalStop(sessionId: string, sessionKey: string, runId: string, goal: SessionGoal): void {
+    const active = this.activeTurns.get(sessionId);
+    if ((active && active.runId !== runId) || this.resolveSessionIdBySessionKey(sessionKey) !== sessionId)
+      return;
+    this.goalContinuationCoordinator.reconcileConfirmedGoalStop(sessionId, sessionKey, runId, goal);
   }
 
   private executeSessionGoalMutation(
@@ -3705,7 +3733,7 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
         !(result.status === 'timeout' && typeof result.endedAt === 'number')
       )
         return;
-      const aborted = result.stopReason === 'aborted' || result.stopReason === 'rpc';
+      const aborted = result.stopReason === 'aborted' || result.stopReason === 'rpc' || result.stopReason === 'stop';
       const stopReason = result.status === 'timeout' && !aborted ? 'timeout' : result.stopReason;
       this.confirmUnknownSessionRunAdmission(sessionId, turn);
       if (this.unknownSessionRuns.get(sessionId)?.runId === turn.runId) {

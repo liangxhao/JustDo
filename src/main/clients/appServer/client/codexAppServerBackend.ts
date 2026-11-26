@@ -20,6 +20,7 @@ export function createCodexAppServerBackend(
     ...(backend.list ? { list: () => backend.list!() } : {}),
     ...(backend.setName ? { setName: (id: string, name: string) => backend.setName!(id, name) } : {}),
     ...(backend.history ? { history: (id: string) => backend.history!(id) } : {}),
+    ...(backend.goals ? { goals: backend.goals } : {}),
     start: async params => {
       const onCreated = marker();
       return backend.start({

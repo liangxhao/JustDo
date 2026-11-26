@@ -290,7 +290,7 @@ export class AppServerConnection {
   }
 
   private operation(method: string): AppServerOperation | undefined {
-    const { threads, turns, models, extensions } = this.binding;
+    const { threads, turns, goals, models, extensions } = this.binding;
     switch (method) {
       case AppServerMethod.ModelList: return models?.list;
       case AppServerMethod.ThreadList: return threads.list;
@@ -302,6 +302,9 @@ export class AppServerConnection {
       case AppServerMethod.ThreadResume: return threads.resume;
       case AppServerMethod.ThreadNameSet: return threads.setName;
       case AppServerMethod.ThreadUnsubscribe: return threads.unsubscribe;
+      case AppServerMethod.ThreadGoalGet: return goals?.get;
+      case AppServerMethod.ThreadGoalSet: return goals?.set;
+      case AppServerMethod.ThreadGoalClear: return goals?.clear;
       case AppServerMethod.TurnStart: return turns.start;
       case AppServerMethod.TurnInterrupt: return turns.interrupt;
       default: {

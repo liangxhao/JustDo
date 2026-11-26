@@ -11,6 +11,7 @@ import { matchesTranslation, t } from '../../core/i18n';
 import type { CoworkSession, CoworkStore } from '../../data/coworkStore';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import { projectPersistedAppServerRetryTurns } from '../appServer/protocol/appServerHistory';
+import type { createExternalAgentGoalOperations, ExternalAgentGoalMutation, ExternalAgentGoalTarget } from './externalAgentGoals';
 import {
   type ExternalAgentBackend,
   ExternalAgentBusyError,
@@ -21,6 +22,7 @@ import {
   type ExternalAgentHistorySnapshot,
   type ExternalAgentModel,
   ExternalAgentOutcomeUnknownError,
+  type ExternalAgentSessionIdentity,
   ExternalAgentStreamError,
   type ExternalAgentThread,
   type ExternalAgentThreadMetadata,
@@ -40,6 +42,7 @@ export interface ExternalAgentBackendOptions {
   getModels: () => ExternalAgentModel[];
   onSessionsChanged: () => void;
   execute: ExternalAgentExecution;
+  goalOperations?: ReturnType<typeof createExternalAgentGoalOperations>;
   readHistory?: (input: ExternalAgentHistoryInput) => Promise<ExternalAgentHistorySnapshot>;
 }
 
@@ -61,6 +64,7 @@ const sameDirectory = (left: string, right: string): boolean =>
 /** Current OS user/profile access comes from the authenticated local bridge. */
 export class ExternalAgentBackendFactory {
   private readonly active = new Set<string>();
+  private readonly admittingGoals = new Set<string>();
 
   constructor(private readonly options: ExternalAgentBackendOptions) {}
 
@@ -131,8 +135,78 @@ export class ExternalAgentBackendFactory {
       status: external.status,
       ...(external.executionState ? { executionState: external.executionState } : {}),
     });
+    const goalTarget = (id: string): ExternalAgentGoalTarget => {
+      const external = get(id);
+      const session = store().getSession(external.coworkSessionId)!;
+      const sessionKey = buildManagedSessionKey(session.id, session.agentId);
+      const bindingOf = (entry: ExternalSession) => [
+        entry.coworkSessionId, entry.agentId, entry.cwd, entry.openclawSessionKey,
+        entry.nativeSessionId, entry.lifecycleRevision,
+      ];
+      const identityOf = (entry: CoworkSession) => JSON.stringify([
+        entry.nativeSessionKey, entry.historyBinding, entry.nativeParentSessionId, entry.external?.origin,
+      ]);
+      let externalBinding = JSON.stringify(bindingOf(external));
+      const productIdentity = identityOf(session);
+      const identity = external.nativeSessionId && external.lifecycleRevision && external.openclawSessionKey === sessionKey
+        ? { sessionKey, sessionId: external.nativeSessionId, lifecycleRevision: external.lifecycleRevision }
+        : undefined;
+      if (((external.openclawSessionKey || external.nativeSessionId || external.lifecycleRevision) && !identity) ||
+          (session.nativeSessionKey && session.nativeSessionKey !== sessionKey) || session.nativeParentSessionId ||
+          (session.historyBinding && (session.historyBinding.sessionKey !== sessionKey ||
+            session.historyBinding.nativeSessionId !== identity?.sessionId)))
+        throw new Error('The native Goal does not match the external conversation binding.');
+      const assertCurrent = () => {
+        const current = get(id);
+        if (JSON.stringify(bindingOf(current)) !== externalBinding ||
+            identityOf(store().getSession(current.coworkSessionId)!) !== productIdentity)
+          throw new Error('The external conversation changed during the Goal operation.');
+      };
+      return {
+        session, sessionKey, identity, assertCurrent, hasExternalRun: external.status === ExternalSessionStatus.Running,
+        pinIdentity: (prepared: ExternalAgentSessionIdentity) => {
+          assertCurrent();
+          externalStore().pinNativeIdentity(id, prepared);
+          externalBinding = JSON.stringify(bindingOf(get(id)));
+        },
+      };
+    };
+    const goalOperations = this.options.goalOperations;
+    const mutateGoal = async (id: string, request: ExternalAgentGoalMutation, signal: AbortSignal) => {
+      if (!goalOperations) throw new Error('External Goal operations are unavailable.');
+      const external = get(id);
+      const target = goalTarget(id);
+      if (this.admittingGoals.has(external.coworkSessionId) ||
+          external.executionState === ExternalExecutionState.Preparing ||
+          external.executionState === ExternalExecutionState.Unknown ||
+          (external.status === ExternalSessionStatus.Running && !target.identity))
+        throw new ExternalAgentBusyError('This conversation has an unconfirmed execution.');
+      const release = external.status === ExternalSessionStatus.Running
+        ? undefined : reserveExternalSession(external.coworkSessionId);
+      try {
+        return await goalOperations.mutate(target, request, signal);
+      } finally {
+        release?.();
+      }
+    };
     return {
       models: () => this.models(),
+      ...(goalOperations ? {
+        goals: {
+          get: (id, signal) => goalOperations.read(goalTarget(id), signal),
+          set: async (id, request, signal) => {
+            const result = await mutateGoal(id, { ...request, action: 'set' }, signal);
+            if (!result.goal) throw new Error('Gateway did not return the committed Goal.');
+            return { goal: result.goal, ...(result.start ? { start: result.start } : {}) };
+          },
+          clear: async (id, signal) => (await mutateGoal(id, { action: 'clear' }, signal)).cleared,
+          watch: (id, onChange) => goalOperations.watch(() => goalTarget(id), onChange),
+          refresh: (id, published) => {
+            const external = externalStore().get(id);
+            if (external) goalOperations.refresh(buildManagedSessionKey(external.coworkSessionId, external.agentId), published);
+          },
+        },
+      } : {}),
       describe: id => {
         const external = get(id);
         return metadata(external, store().getSession(external.coworkSessionId)!);
@@ -278,6 +352,10 @@ export class ExternalAgentBackendFactory {
         const external = get(current.id);
         if (current.agentId !== external.agentId || !sameDirectory(current.cwd, external.cwd))
           throw new Error('The external conversation binding changed.');
+        const expectedGoal = hooks?.expectedGoal;
+        if (expectedGoal && (external.openclawSessionKey !== expectedGoal.sessionKey ||
+            external.nativeSessionId !== expectedGoal.sessionId || external.lifecycleRevision !== expectedGoal.lifecycleRevision))
+          throw new Error('The external conversation changed before starting the Goal.');
         if (
           external.status === ExternalSessionStatus.Running ||
           external.executionState === ExternalExecutionState.Unknown
@@ -309,16 +387,18 @@ export class ExternalAgentBackendFactory {
               ? ExternalSessionStatus.Cancelled
               : ExternalSessionStatus.Error;
         this.active.add(external.coworkSessionId);
+        if (expectedGoal) this.admittingGoals.add(external.coworkSessionId);
         try {
           const session = store().getSession(external.coworkSessionId)!;
-          const initialSession = !external.executionRunId && !external.openclawSessionKey &&
+          const firstExecution = !external.executionRunId && !store().getLatestSessionRun(session.id);
+          const initialSession = firstExecution && !external.openclawSessionKey &&
             !external.nativeSessionId && !external.lifecycleRevision &&
-            !session.nativeSessionKey && !session.historyBinding &&
-            !store().getLatestSessionRun(session.id);
+            !session.nativeSessionKey && !session.historyBinding;
           receipts.beginExecution(current.id, runId);
           started = true;
-          if (initialSession && matchesTranslation('externalAgentNewSession', session.title)) {
-            const firstLine = message.trim().split(/\r\n?|\n/u)[0].replace(/\s+/gu, ' ').trim();
+          if (firstExecution && !session.nativeSessionKey && !session.historyBinding &&
+              matchesTranslation('externalAgentNewSession', session.title)) {
+            const firstLine = (expectedGoal?.objective ?? message).trim().split(/\r\n?|\n/u)[0].replace(/\s+/gu, ' ').trim();
             const title = Array.from(firstLine).slice(0, MAX_AUTOMATIC_THREAD_NAME_LENGTH).join('') ||
               t('externalAgentImageSession');
             store().updateSession(session.id, { title });
@@ -346,6 +426,10 @@ export class ExternalAgentBackendFactory {
               : {}),
             hooks: {
               ...(hooks?.interactiveApprovals === true ? { interactiveApprovals: true } : {}),
+              ...(expectedGoal ? {
+                expectedGoal,
+                onGoalAdmitted: () => { this.admittingGoals.delete(external.coworkSessionId); },
+              } : {}),
               onPrepared: async binding => {
                 if (binding.runId === runId) receipts.bindExecution(current.id, runId, binding);
                 return hooks?.onPrepared?.(binding);
@@ -390,6 +474,7 @@ export class ExternalAgentBackendFactory {
             );
           throw error;
         } finally {
+          if (expectedGoal) this.admittingGoals.delete(external.coworkSessionId);
           this.active.delete(external.coworkSessionId);
           if (!unconfirmed) release();
           this.options.onSessionsChanged();

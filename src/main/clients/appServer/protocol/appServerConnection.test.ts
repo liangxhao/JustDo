@@ -71,7 +71,8 @@ describe.each([true, false])('shared app-server connection (strict handshake: %s
       clientInfo: { name: 'caller', title: 'privileged client' },
       capabilities: { experimentalApi: true, extraRoutes: true, threadList: true },
     });
-    for (const method of ['thread/list', 'thread/read', 'extension/read', 'thread/resume', 'model/list', 'thread/unsubscribe', 'thread/name/set']) {
+    for (const method of ['thread/list', 'thread/read', 'extension/read', 'thread/resume', 'model/list', 'thread/unsubscribe', 'thread/name/set',
+      AppServerMethod.ThreadGoalGet, AppServerMethod.ThreadGoalSet, AppServerMethod.ThreadGoalClear]) {
       await h.request(method);
       expect(h.output.pop()).toMatchObject({ error: { code: strict ? -32601 : -32000 } });
     }

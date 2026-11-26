@@ -99,6 +99,7 @@ import {
 import { AgentBridgeServer } from './clients/cli/transport/agentBridgeServer';
 import { ExternalAgentBackendFactory } from './clients/shared/externalAgentBackend';
 import { createExternalAgentExecution } from './clients/shared/externalAgentExecution';
+import { createExternalAgentGoalOperations } from './clients/shared/externalAgentGoals';
 import { createExternalAgentHistoryReader } from './clients/shared/externalAgentHistoryReader';
 import { getExternalAgentModelCatalog } from './clients/shared/externalAgentModelCatalog';
 import { ExternalAgentResources } from './clients/shared/externalAgentResources';
@@ -1353,6 +1354,13 @@ const getExternalClientBackend = (): ExternalAgentBackendFactory => {
     getModels: () => getExternalAgentModelCatalog(resolveDefaultAgentModelRef()),
     onSessionsChanged: notifyCoworkSessionsChanged,
     readHistory: createExternalAgentHistoryReader(getOpenClawRuntimeAdapter),
+    goalOperations: createExternalAgentGoalOperations({
+      getRouter: getCoworkEngineRouter,
+      getRuntime: getOpenClawRuntimeAdapter,
+      ensureReady: ensureOpenClawRunningForCowork,
+      onGoalChanged: (sessionId, goal, activated) =>
+        getOpenClawRuntimeAdapter()?.synchronizeExternalGoal(sessionId, goal, activated),
+    }),
     execute: createExternalAgentExecution({
       getStore: getCoworkStore,
       getRouter: getCoworkEngineRouter,

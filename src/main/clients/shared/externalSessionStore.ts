@@ -138,6 +138,22 @@ export class ExternalSessionStore {
       .run(sessionKey, Date.now(), this.source, externalSessionKey);
   }
 
+  pinNativeIdentity(
+    externalSessionKey: string,
+    binding: { sessionKey: string; sessionId: string; lifecycleRevision: string },
+  ): void {
+    const changed = this.db.prepare(
+      `UPDATE cowork_external_sessions
+       SET openclaw_session_key = ?, native_session_id = ?, lifecycle_revision = ?, updated_at = ?
+       WHERE source = ? AND external_session_key = ? AND status != 'running'
+         AND coalesce(openclaw_session_key, '') = '' AND native_session_id IS NULL
+         AND lifecycle_revision IS NULL AND (execution_state IS NULL OR execution_state = 'settled')`,
+    ).run(
+      binding.sessionKey, binding.sessionId, binding.lifecycleRevision, Date.now(), this.source, externalSessionKey,
+    ).changes;
+    if (changed !== 1) throw new Error('External conversation identity changed during preparation.');
+  }
+
   beginExecution(externalSessionKey: string, runId: string): void {
     const changed = this.db
       .prepare(

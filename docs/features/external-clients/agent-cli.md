@@ -119,6 +119,8 @@ ACP 客户端使用复制出的 command 和 `args: ["acp"]`。app-server 是另�
 支持 `initialize`／`initialized`、`model/list`、`thread/start`、`thread/resume`、`thread/name/set`、
 `thread/list`／`thread/read`、`thread/loaded/list`、`thread/turns/list`／`thread/items/list`、`thread/unsubscribe`、
 `turn/start`、`turn/interrupt`，以及 reasoning、正文、用户准入和工具 item 通知。
+通用 app-server 还支持 `thread/goal/get`、`thread/goal/set` 和 `thread/goal/clear`，见
+[Goal 接口](../../app-server-api/external-clients.md#threadgoalget--threadgoalset--threadgoalclear)。
 恢复默认回放原生历史，`excludeTurns: true` 可跳过；`thread/read(includeTurns: true)` 可显式读取。
 历史要求已有认证 Gateway，读取前后核对身份和回执，不启动运行时或存储正文副本。
 改名会真实保存到产品元数据，元数据读取不启动 Gateway。

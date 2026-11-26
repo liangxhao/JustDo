@@ -537,6 +537,10 @@ Goal 内容、预算、六种状态和已接纳的自动续跑累计次数由原
 
 `cowork_config` 的 `goalExecution:<sessionId>` 只保存 Main 阶段及原生次数投影等产品快照。读取校验 sessionId 和 phase，坏值不能触发自动运行；不从产品快照恢复一套计数或交接权威。usage_limited/budget_limited 保留原生语义，不归一化为 blocked。
 
+app-server 的 Goal 仍保存在原生会话行。Goal 先于首轮创建时，产品库沿用 `cowork_external_sessions`
+中的原生 key、SID 和 lifecycle revision 字段固定映射，首次写入通过现有来源和空身份条件约束。
+Goal 的变更回执不占用执行 run 字段。
+
 ## 6. 配置与凭据
 
 ### 语音配置与原生偏好

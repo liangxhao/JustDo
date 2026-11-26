@@ -1,4 +1,5 @@
 import type { CoworkAttachmentPayload } from '../../../shared/cowork/attachments';
+import type { SessionGoal, SessionGoalStatus } from '../../../shared/cowork/sessionGoal';
 import type { SessionRunTiming } from '../../../shared/cowork/sessionRun';
 import type { ExternalSessionStatus } from '../../../shared/integrations/externalSession';
 import type { NormalizedAgentEvent } from '../../../shared/openclaw/agentEvent';
@@ -65,11 +66,36 @@ export interface ExternalAgentNativeBinding {
   runIdReady?: Promise<string | undefined>;
 }
 
+export type ExternalAgentSessionIdentity = Pick<ExternalAgentNativeBinding,
+  'sessionKey' | 'sessionId' | 'lifecycleRevision'>;
+
+export interface ExternalAgentGoalSetRequest {
+  objective?: string;
+  status?: SessionGoalStatus;
+  tokenBudget?: number | null;
+}
+
+export interface ExternalAgentGoalChange {
+  goal: SessionGoal;
+  start?: ExternalAgentSessionIdentity;
+}
+
+export interface ExternalAgentGoals {
+  get: (threadId: string, signal: AbortSignal) => Promise<SessionGoal | null>;
+  set: (threadId: string, request: ExternalAgentGoalSetRequest, signal: AbortSignal) => Promise<ExternalAgentGoalChange>;
+  clear: (threadId: string, signal: AbortSignal) => Promise<boolean>;
+  watch?: (threadId: string, onChange: (goal: SessionGoal | null) => void) => () => void;
+  refresh?: (threadId: string, published: SessionGoal | null) => void;
+}
+
 export interface ExternalAgentRunHooks {
   /** Validated host media; text-only transports leave this absent. */
   attachments?: readonly CoworkAttachmentPayload[];
   /** Main-only declaration of an interactive approval presenter installed by onPrepared. */
   interactiveApprovals?: true;
+  /** A Goal-created turn is only admitted for this committed native Goal. */
+  expectedGoal?: ExternalAgentSessionIdentity & Pick<SessionGoal, 'id' | 'objective'>;
+  onGoalAdmitted?: () => void;
   /** Installs session-scoped tools and approval ownership before native admission. */
   onPrepared?: (
     binding: ExternalAgentNativeBinding,
@@ -89,6 +115,7 @@ export type ExternalAgentExecutionOutcome =
 
 export interface ExternalAgentBackend {
   models: () => ExternalAgentModel[];
+  goals?: ExternalAgentGoals;
   describe?: (id: string) => ExternalAgentThreadMetadata;
   list?: () => ExternalAgentThreadMetadata[];
   setName?: (id: string, name: string) => void;
@@ -130,11 +157,7 @@ export type ExternalAgentExecution = (input: {
   onRetryPrepared?: (predecessorRunId: string, runId: string) => void;
   /** Roll back a replacement that was definitively never submitted. */
   onRetryNotSent?: (predecessorRunId: string, runId: string) => void;
-  expectedBinding?: {
-    sessionKey: string;
-    sessionId: string;
-    lifecycleRevision: string;
-  };
+  expectedBinding?: ExternalAgentSessionIdentity;
 }) => Promise<string>;
 
 /** An output transport failure must not be classified as a human cancellation. */

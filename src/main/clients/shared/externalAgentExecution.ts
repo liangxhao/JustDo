@@ -6,6 +6,7 @@ import {
   AutomaticErrorRetryPhase as Phase,
   type AutomaticErrorRetryPresentation,
 } from '../../../shared/cowork/automaticErrorRetry';
+import { normalizeSessionGoal, type SessionGoal, SessionGoalStatus } from '../../../shared/cowork/sessionGoal';
 import { normalizeAgentEvent, readTerminalGuardObservation } from '../../../shared/openclaw/agentEvent';
 import { isKnownAutomaticRetryFailureCopy } from '../../../shared/openclaw/automaticErrorRetryDisplay';
 import { toOpenClawSessionPermissionMode } from '../../../shared/security/approvals';
@@ -53,6 +54,7 @@ interface NativeSessionIdentity {
   lifecycleRevision: string;
   activeRunIds?: string[];
   lastRunId?: string;
+  goal?: SessionGoal;
 }
 
 interface NativeResult {
@@ -122,7 +124,15 @@ class NativeIdentityChangedError extends Error {}
 const TERMINAL_REPLY_MAX_CHARS = 4096;
 const MAX_OUTPUT_CHARS = 2 * 1024 * 1024;
 const UNSTAMPED_PROGRESS_STREAMS = new Set(['assistant', 'thinking', 'tool']);
-const NON_RETRY_STOP_REASONS = new Set(['aborted', 'rpc', 'restart', 'superseded', 'timeout', 'hard_timeout']);
+const NON_RETRY_STOP_REASONS = new Set(['aborted', 'rpc', 'stop', 'restart', 'superseded', 'timeout', 'hard_timeout']);
+const UNSUCCESSFUL_LIFECYCLE_STATUSES = new Set([
+  'aborted', 'canceled', 'cancelled', 'error', 'failed', 'timed_out', 'timeout',
+]);
+// OpenClaw also reports `stop` when the model finishes normally.
+const isOperatorStop = (reason: unknown, unsuccessful: boolean): boolean =>
+  reason === 'rpc' || (reason === 'stop' && unsuccessful);
+const isReceiptOperatorStop = (receipt: NativeReceipt): boolean =>
+  isOperatorStop(receipt.stopReason, receipt.status !== 'ok');
 
 /** Native final-RPC payloads are display projections; do not recreate private metadata stripping. */
 const projectTerminalReplyText = (value: string): string => {
@@ -213,6 +223,7 @@ export function createExternalAgentExecution(
     if (retry && (retry.client !== initialClient || retry.binding.clientGeneration !== initialGeneration))
       throw new Error('The native retry connection changed.');
     let client: GatewayClientLike = initialClient;
+    const expectedGoal = hooks?.expectedGoal;
     const mediaOnly = !message.trim() && Boolean(attachments?.length);
     // The media-only native RPC has no lifecycle-revision CAS. Pin its complete
     // transport generation and verify the session incarnation on both sides.
@@ -222,7 +233,7 @@ export function createExternalAgentExecution(
       throw new Error('The native media connection could not be pinned.');
     let resolveMediaRun: ((value: string | undefined) => void) | undefined;
     const mediaRunReady = mediaOnly ? new Promise<string | undefined>(resolve => { resolveMediaRun = resolve; }) : undefined;
-    const describe = async (current: GatewayClientLike): Promise<NativeSessionIdentity> => {
+    const describe = async (current: GatewayClientLike, goalCheck = false): Promise<NativeSessionIdentity> => {
       const result = await current.request<{
         session?: {
           key?: string;
@@ -230,6 +241,7 @@ export function createExternalAgentExecution(
           lifecycleRevision?: string;
           activeRunIds?: unknown;
           lastRunId?: unknown;
+          goal?: unknown;
           spawnedBy?: unknown;
           subagentRole?: unknown;
           acp?: unknown;
@@ -252,9 +264,19 @@ export function createExternalAgentExecution(
         throw new NativeIdentityChangedError(
           'The native conversation identity changed or could not be verified.',
         );
+      const goal = expectedGoal ? normalizeSessionGoal(described.goal) : undefined;
+      if (goalCheck && expectedGoal) {
+        if (described.key !== expectedGoal.sessionKey || described.sessionId !== expectedGoal.sessionId ||
+            described.lifecycleRevision !== expectedGoal.lifecycleRevision || goal?.id !== expectedGoal.id ||
+            goal.objective !== expectedGoal.objective || goal.status !== SessionGoalStatus.Active ||
+            !Array.isArray(described.activeRunIds) || described.activeRunIds.length !== 0 ||
+            deps.getRuntime() !== runtime || runtime.getGatewayClientGeneration() !== initialGeneration)
+          throw new Error('The native Goal changed or the conversation is busy.');
+      }
       return {
         sessionId: described.sessionId,
         lifecycleRevision: described.lifecycleRevision,
+        ...(goal ? { goal } : {}),
         ...(typeof described.lastRunId === 'string' ? { lastRunId: described.lastRunId } : {}),
         ...(Array.isArray(described.activeRunIds) &&
         described.activeRunIds.every(value => typeof value === 'string')
@@ -429,7 +451,11 @@ export function createExternalAgentExecution(
           { disposition?: string; text?: string } | undefined;
         const stopReason = event.data.stopReason;
         const error = typeof event.data.error === 'string' ? event.data.error : undefined;
-        const interrupted = event.data.aborted === true || stopReason === 'aborted' || stopReason === 'rpc';
+        const status = event.data.status;
+        const unsuccessful = event.data.phase === 'error' ||
+          (typeof status === 'string' && UNSUCCESSFUL_LIFECYCLE_STATUSES.has(status));
+        const interrupted = event.data.aborted === true || stopReason === 'aborted' ||
+          isOperatorStop(stopReason, unsuccessful);
         const retryReceipt = onAttemptSettled && event.data.phase === 'error' && !interrupted &&
           !event.data.yielded && !event.data.timeoutPhase &&
           event.data.status !== 'timed_out' && event.data.status !== 'timeout' &&
@@ -499,7 +525,7 @@ export function createExternalAgentExecution(
     };
     const receiptResult = (receipt: NativeReceipt): SettledResult => ({
       status:
-        receipt.stopReason === 'aborted' || receipt.stopReason === 'rpc'
+        receipt.stopReason === 'aborted' || isReceiptOperatorStop(receipt)
           ? 'cancelled'
           : receipt.status === 'ok'
             ? 'ok'
@@ -604,6 +630,7 @@ export function createExternalAgentExecution(
             if (subscribed === terminalWake) continue;
             if (signal.aborted || outputError)
               void current.request('sessions.abort', { key, runId }).catch(() => {});
+            const waitGeneration = runtime.getGatewayClientGeneration();
             const receipt = await withinWindow(
               Promise.race([
                 current.request<NativeReceipt>('agent.wait', {
@@ -636,10 +663,25 @@ export function createExternalAgentExecution(
                 receipt.status === 'timeout')
             ) {
               settled = true;
+              // The live terminal may have been lost. Use the exact native receipt
+              // and the current Goal/run head before suppressing a successor.
+              const currentGoal = observation.goal;
+              if (expectedGoal && isReceiptOperatorStop(receipt) &&
+                  currentGoal?.id === expectedGoal.id && currentGoal.objective === expectedGoal.objective &&
+                  currentGoal.status === SessionGoalStatus.Active && currentGoal.updatedAt <= receipt.endedAt &&
+                  observation.lastRunId === runId && observation.activeRunIds?.length === 0 &&
+                  deps.getRuntime() === runtime && runtime.getGatewayClient() === current &&
+                  runtime.getGatewayClientGeneration() === waitGeneration) {
+                try {
+                  runtime.reconcileExternalGoalStop(sessionId, key, runId, currentGoal);
+                } catch {
+                  // Local stop projection cannot undo the verified native terminal.
+                }
+              }
               onAttemptAdmitted?.();
               return receipt.terminalReply ||
                 receipt.stopReason === 'aborted' ||
-                receipt.stopReason === 'rpc'
+                isReceiptOperatorStop(receipt)
                 ? receiptResult(receipt)
                 : initial && receipt.status === 'ok'
                   ? {
@@ -764,6 +806,8 @@ export function createExternalAgentExecution(
         checkCancelled();
       }
       if (retry) await assertRetryHead(retry.predecessorRunId);
+      if (expectedGoal) await describe(client, true);
+      checkCancelled();
       timingId = store.beginSessionRun({
         sessionId,
         clientTurnId: runId,
@@ -799,6 +843,7 @@ export function createExternalAgentExecution(
               expectedExistingSessionId: identity.sessionId,
               expectedExistingSessionLifecycleRevision: identity.lifecycleRevision,
               ...(attachments?.length ? { attachments: attachments.map(toGatewayAttachment) } : {}),
+              ...(expectedGoal ? { suppressPromptPersistence: true } : {}),
               ...(retry ? {
                 inputProvenance: { kind: 'internal_system', sourceTool: 'execution-error-retry' },
                 deliver: false, suppressPromptPersistence: true,
@@ -811,12 +856,14 @@ export function createExternalAgentExecution(
             // requests exact native cancellation; settlement still needs evidence.
             {
               expectFinal: true, signal: AbortSignal.any([signal, finalWaitController.signal]),
-              ...(onAttemptAdmitted && !mediaOnly ? {
+              ...((onAttemptAdmitted || hooks?.onGoalAdmitted) && !mediaOnly ? {
                 onAccepted: value => {
                   const accepted = value as { runId?: string; sessionKey?: string } | undefined;
                   if (accepted?.runId === runId && accepted.sessionKey === key &&
-                    client === initialClient && runtime.getGatewayClientGeneration?.() === initialGeneration)
-                    onAttemptAdmitted();
+                    client === initialClient && runtime.getGatewayClientGeneration?.() === initialGeneration) {
+                    onAttemptAdmitted?.();
+                    hooks?.onGoalAdmitted?.();
+                  }
                 },
               } : {}),
             },
@@ -963,7 +1010,7 @@ export function createExternalAgentExecution(
     const store = deps.getStore();
     const maximum = store.getAgentRuntimeSettings?.().automaticErrorRetry.maxContinuations ?? 0;
     const isRetryCurrent = input.isRetryCurrent;
-    if (!maximum || !isRetryCurrent) return executeAttempt(input);
+    if (!maximum || !isRetryCurrent || input.hooks?.expectedGoal) return executeAttempt(input);
 
     const controller = new AbortController();
     const signal = AbortSignal.any([input.signal, controller.signal]);

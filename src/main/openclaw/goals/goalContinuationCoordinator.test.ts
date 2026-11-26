@@ -882,6 +882,27 @@ describe('Goal continuation ownership and native waiting', () => {
     harness.coordinator.clear();
   });
 
+  it('does not revive a cancelled Goal when reconnection precedes terminal delivery', async () => {
+    const harness = createHarness();
+    const observedGoal = goal();
+    await harness.coordinator.reconcileNativeObservation(sessionId, sessionKey, observedGoal, {
+      ...nativeObservation({ phase: 'error' }),
+      status: 'killed',
+      abortedLastRun: true,
+      lastRunId: 'parent-run',
+      activeRunIds: [],
+      endedAt: observedGoal.updatedAt + 1,
+    });
+
+    await harness.coordinator.recheck(sessionId);
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      goalId: observedGoal.id, phase: GoalExecutionPhase.Stopped, identityPending: false,
+    });
+    expect(harness.request).not.toHaveBeenCalled();
+    harness.coordinator.clear();
+  });
+
   it('preserves sent admission uncertainty while a native observation arrives', async () => {
     const harness = createHarness();
     const normalRequest = harness.request.getMockImplementation()!;
@@ -1684,6 +1705,40 @@ describe('GoalContinuationCoordinator', () => {
       phase: GoalExecutionPhase.Retrying,
       retryAttempt: 2,
     });
+  });
+
+  it.each(['rpc', 'stop'])('stops the active Goal after a settled %s interruption', async stopReason => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    const identity = { runId: 'external-run', sessionKey, sessionId: nativeIdentity.sessionId };
+    await harness.coordinator.handleLifecycle({ ...identity, phase: 'start' });
+
+    await harness.coordinator.handleLifecycle({
+      ...identity, phase: 'error', executionSettled: true, aborted: true, stopReason,
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(harness.coordinator.getSnapshot(sessionId)).toMatchObject({
+      phase: GoalExecutionPhase.Stopped,
+      goalId: 'goal-1',
+    });
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
+  });
+
+  it('leaves a replacement Goal untouched by an older external Stop', async () => {
+    vi.useFakeTimers();
+    const harness = createHarness();
+    harness.coordinator.restoreRunning(sessionId, 'goal-1', 'external-run');
+    harness.setGoal({ ...goal(), id: 'goal-2' });
+
+    await harness.coordinator.handleLifecycle({
+      runId: 'external-run', sessionKey, sessionId: nativeIdentity.sessionId,
+      phase: 'error', executionSettled: true, aborted: true, stopReason: 'rpc',
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(harness.coordinator.getSnapshot(sessionId)?.phase).not.toBe(GoalExecutionPhase.Stopped);
+    expect(harness.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(0);
   });
 
   it('keeps retrying when a retry timer fires while another dispatch is settling', async () => {

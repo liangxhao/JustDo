@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { type SessionGoal, SessionGoalStatus } from '../../../../shared/cowork/sessionGoal';
 import { ExternalSessionStatus } from '../../../../shared/integrations/externalSession';
 import type { NormalizedAgentEvent } from '../../../../shared/openclaw/agentEvent';
 import { ApprovalKind } from '../../../../shared/security/approvals';
@@ -75,7 +76,282 @@ function fixture(options: ExternalAppServerOptions = {}) {
   return { session, backend, output, request };
 }
 
+const fixtureGoal: SessionGoal = {
+  schemaVersion: 1,
+  id: 'native-goal',
+  objective: 'Finish the report',
+  status: SessionGoalStatus.Active,
+  createdAt: 10_500,
+  updatedAt: 11_900,
+  tokenStart: 12,
+  tokensUsed: 4,
+  continuationTurns: 0,
+};
+
 describe('Codex app-server session', () => {
+  it('returns canonical Goal state and broadcasts mutations after each response', async () => {
+    const hub = new CodexAppServerEventHub();
+    const owner = fixture({ hub });
+    const observer = fixture({ hub });
+    const unrelated = fixture({ hub });
+    const goal = { ...fixtureGoal, status: SessionGoalStatus.BudgetLimited };
+    const projected = {
+      threadId: 'thread', objective: goal.objective, status: 'budgetLimited', tokenBudget: null,
+      tokensUsed: 4, timeUsedSeconds: 0, createdAt: 10, updatedAt: 11,
+    };
+    const get = vi.fn().mockResolvedValueOnce(null).mockResolvedValue(goal);
+    let observeOwner!: (goal: SessionGoal | null) => void;
+    const set = vi.fn(async () => {
+      observeOwner(goal);
+      return { goal };
+    });
+    const clear = vi.fn().mockResolvedValueOnce(true).mockResolvedValue(false);
+    owner.backend.goals = {
+      get, set, clear,
+      watch: (_threadId, observe) => {
+        observeOwner = observe;
+        return () => {};
+      },
+    };
+    let observeGoal!: (goal: SessionGoal | null) => void;
+    const stopObserving = vi.fn();
+    observer.backend.goals = {
+      get, set, clear,
+      watch: (_threadId, observe) => {
+        observeGoal = observe;
+        return stopObserving;
+      },
+    };
+    await Promise.all([owner, observer, unrelated].map(peer => peer.request('initialize')));
+    await owner.request('thread/goal/get', { threadId: 'thread' });
+    expect(owner.output.at(-1)).toMatchObject({ result: { goal: null } });
+    await owner.request('thread/start');
+    await observer.request('thread/resume', { threadId: 'thread' });
+    await owner.request('thread/goal/set', { threadId: 'thread', status: 'budget_limited' });
+    expect(owner.output.at(-1)).toMatchObject({ error: { code: -32602 } });
+    expect(set).not.toHaveBeenCalled();
+
+    await owner.request('thread/goal/set', {
+      threadId: 'thread', objective: '  Finish the report  ', status: 'budgetLimited', tokenBudget: null, origin: 'user',
+    });
+    expect(owner.output.at(-1)).toMatchObject({ result: { goal: projected } });
+    expect(set).toHaveBeenCalledExactlyOnceWith('thread', {
+      objective: 'Finish the report', status: SessionGoalStatus.BudgetLimited, tokenBudget: null,
+    }, expect.any(AbortSignal));
+    expect(owner.output.some(frame => frame.method === 'thread/goal/updated')).toBe(false);
+    expect(observer.output.some(frame => frame.method === 'thread/goal/updated')).toBe(false);
+    await tick();
+    const updated = { method: 'thread/goal/updated', params: { threadId: 'thread', turnId: null, goal: projected } };
+    expect(owner.output.at(-1)).toEqual(updated);
+    expect(observer.output.at(-1)).toEqual(updated);
+    expect(unrelated.output).not.toContainEqual(updated);
+    observeGoal(goal);
+    expect(observer.output.filter(frame => frame.method === 'thread/goal/updated')).toHaveLength(1);
+    await owner.request('thread/goal/set', { threadId: 'thread', status: 'budgetLimited' });
+    expect(owner.output.at(-1)).toMatchObject({ result: { goal: projected } });
+    expect(observer.output.filter(frame => frame.method === 'thread/goal/updated')).toHaveLength(1);
+    await tick();
+    expect(observer.output.filter(frame => frame.method === 'thread/goal/updated')).toEqual([updated, updated]);
+    observeGoal({ ...goal, tokensUsed: 7 });
+    expect(observer.output.at(-1)).toMatchObject({ method: 'thread/goal/updated', params: { goal: { tokensUsed: 7 } } });
+    await owner.request('thread/goal/get', { threadId: 'thread' });
+    expect(owner.output.at(-1)).toMatchObject({ result: { goal: projected } });
+
+    await owner.request('thread/goal/clear', { threadId: 'thread', origin: null });
+    expect(owner.output.at(-1)).toMatchObject({ result: { cleared: true } });
+    await tick();
+    const cleared = { method: 'thread/goal/cleared', params: { threadId: 'thread' } };
+    expect(owner.output.at(-1)).toEqual(cleared);
+    expect(observer.output.at(-1)).toEqual(cleared);
+    await owner.request('thread/goal/clear', { threadId: 'thread' });
+    expect(owner.output.at(-1)).toMatchObject({ result: { cleared: false } });
+    await tick();
+    expect(observer.output.filter(frame => frame.method === 'thread/goal/cleared')).toHaveLength(1);
+    await observer.request('thread/unsubscribe', { threadId: 'thread' });
+    expect(stopObserving).toHaveBeenCalledOnce();
+    observeGoal({ ...goal, tokensUsed: 8 });
+    expect(observer.output.filter(frame => frame.method === 'thread/goal/updated')).toHaveLength(3);
+    expect(owner.backend.run).not.toHaveBeenCalled();
+    await Promise.all([owner, observer, unrelated].map(peer => peer.session.close()));
+  });
+
+  it('queues the exact Goal turn after the response and prevents launch after disconnect', async () => {
+    const start = { sessionKey: 'native-key', sessionId: 'native-session', lifecycleRevision: 'native-revision' };
+    const goal = { ...fixtureGoal, objective: '/reset' };
+    const goalBackend = () => ({
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue({ goal, start }),
+      clear: vi.fn().mockResolvedValue(false),
+    });
+    const owner = fixture();
+    owner.backend.goals = goalBackend();
+    owner.backend.run = vi.fn(async (_thread, _runId, _message, emit) => {
+      emit(event({ phase: 'start' }, 'lifecycle'));
+      return 'done';
+    });
+    await owner.request('initialize');
+    await owner.request('thread/start');
+    await owner.request('thread/goal/set', { threadId: 'thread', objective: goal.objective });
+    const responsePosition = owner.output.length - 1;
+    expect(owner.output.at(-1)).toMatchObject({ result: { goal: { objective: goal.objective } } });
+    expect(owner.backend.run).not.toHaveBeenCalled();
+    await tick();
+    const updates = owner.output.slice(responsePosition + 1).map(frame => frame.method);
+    expect(updates.indexOf('thread/goal/updated')).toBeGreaterThanOrEqual(0);
+    expect(updates.indexOf('turn/started')).toBeGreaterThan(updates.indexOf('thread/goal/updated'));
+    expect(owner.backend.run).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'thread' }), expect.any(String), expect.stringMatching(/^Pursue[\s\S]+\/reset$/),
+      expect.any(Function), expect.any(AbortSignal), expect.objectContaining({
+        expectedGoal: { ...start, id: goal.id, objective: goal.objective },
+      }),
+    );
+    expect(owner.output).not.toContainEqual(expect.objectContaining({
+      params: expect.objectContaining({ item: expect.objectContaining({ type: 'userMessage' }) }),
+    }));
+    await owner.session.close();
+
+    const closing = fixture();
+    closing.backend.goals = goalBackend();
+    await closing.request('initialize');
+    await closing.request('thread/start');
+    await closing.request('thread/goal/set', { threadId: 'thread', objective: goal.objective });
+    await closing.session.close();
+    expect(closing.backend.run).not.toHaveBeenCalled();
+    expect(closing.output.some(frame => frame.method === 'turn/started')).toBe(false);
+  });
+
+  it('keeps a pending Goal activation when the owner only unsubscribes from observation', async () => {
+    const hub = new CodexAppServerEventHub();
+    const owner = fixture({ hub });
+    const observer = fixture({ hub });
+    const start = { sessionKey: 'native-key', sessionId: 'native-session', lifecycleRevision: 'native-revision' };
+    const write = deferred<{ goal: SessionGoal; start: typeof start }>();
+    const set = vi.fn(() => write.promise);
+    owner.backend.goals = { get: vi.fn(), set, clear: vi.fn() };
+    await Promise.all([owner.request('initialize'), observer.request('initialize')]);
+    await owner.request('thread/start');
+    await observer.request('thread/resume', { threadId: 'thread' });
+
+    const activation = owner.request('thread/goal/set', {
+      threadId: 'thread', objective: fixtureGoal.objective,
+    });
+    await vi.waitFor(() => expect(set).toHaveBeenCalledOnce());
+    await owner.request('thread/unsubscribe', { threadId: 'thread' });
+    expect(owner.output.at(-1)).toMatchObject({ result: { status: 'unsubscribed' } });
+    write.resolve({ goal: fixtureGoal, start });
+    await activation;
+    expect(owner.output.at(-1)).toMatchObject({ result: { goal: { status: 'active' } } });
+    await tick();
+
+    expect(owner.backend.run).toHaveBeenCalledOnce();
+    expect(owner.output.some(frame => frame.method === 'turn/started')).toBe(false);
+    expect(observer.output).toContainEqual(expect.objectContaining({
+      method: 'turn/started', params: expect.objectContaining({ threadId: 'thread' }),
+    }));
+    await Promise.all([owner.session.close(), observer.session.close()]);
+  });
+
+  it('converges Goal observations after the write receipt and preserves observations during a no-op clear', async () => {
+    const hub = new CodexAppServerEventHub();
+    const owner = fixture({ hub });
+    const observer = fixture({ hub });
+    const paused = { ...fixtureGoal, status: SessionGoalStatus.Paused };
+    const blocked = { ...fixtureGoal, status: SessionGoalStatus.Blocked };
+    const write = deferred<{ goal: SessionGoal }>();
+    const clear = deferred<boolean>();
+    let observeOwner!: (goal: SessionGoal | null) => void;
+    let observePeer!: (goal: SessionGoal | null) => void;
+    const refresh = vi.fn(() => {
+      observeOwner(paused);
+      observePeer(paused);
+    });
+    owner.backend.goals = {
+      get: vi.fn(), set: vi.fn(() => write.promise), clear: vi.fn(() => clear.promise), refresh,
+      watch: (_threadId, observe) => { observeOwner = observe; return () => {}; },
+    };
+    observer.backend.goals = {
+      get: vi.fn(), set: vi.fn(), clear: vi.fn(),
+      watch: (_threadId, observe) => { observePeer = observe; return () => {}; },
+    };
+    await Promise.all([owner.request('initialize'), observer.request('initialize')]);
+    await owner.request('thread/start');
+    await observer.request('thread/resume', { threadId: 'thread' });
+    const statuses = (peer: typeof owner) => peer.output
+      .filter(frame => frame.method === 'thread/goal/updated')
+      .map(frame => (frame.params as { goal: { status: string } }).goal.status);
+
+    const setting = owner.request('thread/goal/set', { threadId: 'thread', status: 'active' });
+    observeOwner(paused);
+    observePeer(paused);
+    write.resolve({ goal: fixtureGoal });
+    await setting;
+    expect(owner.output.at(-1)).toMatchObject({ result: { goal: { status: 'active' } } });
+    expect(statuses(owner)).toEqual([]);
+    await tick();
+
+    expect(refresh).toHaveBeenCalledExactlyOnceWith('thread', fixtureGoal);
+    expect(statuses(owner)).toEqual(['active', 'paused']);
+    expect(statuses(observer)).toEqual(['paused', 'active', 'paused']);
+
+    const clearing = owner.request('thread/goal/clear', { threadId: 'thread' });
+    observeOwner(blocked);
+    clear.resolve(false);
+    await clearing;
+    expect(owner.output.at(-1)).toMatchObject({ result: { cleared: false } });
+    await tick();
+
+    expect(statuses(owner)).toEqual(['active', 'paused', 'blocked']);
+    expect(owner.output.some(frame => frame.method === 'thread/goal/cleared')).toBe(false);
+    await Promise.all([owner.session.close(), observer.session.close()]);
+  });
+
+  it.each([
+    { method: 'thread/goal/set', params: { objective: fixtureGoal.objective }, notification: 'thread/goal/updated' },
+    { method: 'thread/goal/clear', params: {}, notification: 'thread/goal/cleared' },
+  ])('delivers the confirmed $method change to observers after the requester closes', async ({ method, params, notification }) => {
+    const hub = new CodexAppServerEventHub();
+    const owner = fixture({ hub });
+    const observer = fixture({ hub });
+    owner.backend.goals = {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue({ goal: fixtureGoal }),
+      clear: vi.fn().mockResolvedValue(true),
+    };
+    await Promise.all([owner.request('initialize'), observer.request('initialize')]);
+    await owner.request('thread/start');
+    await observer.request('thread/resume', { threadId: 'thread' });
+
+    await owner.request(method, { threadId: 'thread', ...params });
+    expect(owner.output.at(-1)).toHaveProperty('result');
+    await owner.session.close();
+    await tick();
+
+    expect(owner.output.some(frame => frame.method === notification)).toBe(false);
+    expect(observer.output.filter(frame => frame.method === notification)).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ threadId: 'thread' }) }),
+    ]);
+    await observer.session.close();
+  });
+
+  it('resumes and runs an existing thread even when its optional Goal watcher cannot attach', async () => {
+    const h = fixture();
+    const watch = vi.fn(() => { throw new Error('The existing thread has no eligible Goal binding.'); });
+    h.backend.goals = {
+      get: vi.fn().mockResolvedValue(null),
+      set: vi.fn(),
+      clear: vi.fn(),
+      watch,
+    };
+    await h.request('initialize');
+    await h.request('thread/resume', { threadId: 'thread' });
+    expect(h.output.at(-1)).toMatchObject({ result: { thread: { id: 'thread' } } });
+    expect(watch).toHaveBeenCalledOnce();
+    await h.request('turn/start', { threadId: 'thread', input: [{ type: 'text', text: 'Continue this thread' }] });
+    await tick();
+    expect(h.backend.run).toHaveBeenCalledOnce();
+    await h.session.close();
+  });
+
   it('sends actual image-only input and canonical content while denying images for a text-only selected model', async () => {
     const h = fixture();
     await h.request('initialize');

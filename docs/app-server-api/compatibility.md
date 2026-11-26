@@ -33,6 +33,7 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
 | 历史分页        | `thread/turns/list`／`thread/items/list`，升降序、nextCursor 前进分页、内容视图与 Item 锚点，游标绑定身份及快照 |
 | 加载列表        | `thread/loaded/list` 查询宿主实际管理的 app-server 连接所绑定的线程                                             |
 | 改名            | `thread/name/set` 校验、真实持久化标题，响应后发 `thread/name/updated`                                          |
+| Goal            | `thread/goal/set`／`get`／`clear` 管理原生 Goal；已订阅连接接收 `thread/goal/updated`／`cleared`                    |
 | 线程事件        | 新建后 `thread/started`；执行状态通过 `thread/status/changed` 投影                                              |
 | 多线程与订阅    | 每连接最多绑定 32 个线程，可并发不同线程；`thread/unsubscribe` 独立退订，跨客户端共享实时通知                   |
 | Turn            | `turn/start`、`turn/interrupt`；所有 Turn 载体含 `items`，未加载内容显式 `itemsView: notLoaded`                 |
@@ -42,7 +43,7 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
 | 标准图片输入    | image／localImage、真实字节校验和原生附件，允许纯图片；模型模态来自真实目录                                     |
 | 双向 RPC 与审批 | 命令允许／拒绝／取消、明确提供的精确会话授权；实验插件确认及原生明确提供的 App 持久选择                         |
 
-`thread/started` 和改名通知在对应响应后发布。通知输出失败会同时退役共享协议连接与
+`thread/started`、改名与 Goal 写入通知在对应响应后发布。通知输出失败会同时退役共享协议连接与
 所属能力 binding，撤销后续任务和元数据修改准入；不会继续执行而静默丢弃结果。
 
 列表、默认读取和改名只使用元数据，不启动 Gateway、不写客户端标记文件，也不取得被查询
@@ -50,6 +51,10 @@ codex app-server generate-json-schema --out build/test-dependencies/app-server-o
 执行预约与 unknown 规则校验。
 
 ## 有意保留的宿主边界
+
+Goal 的累计执行秒数缺少原生投影，`timeUsedSeconds` 使用 `0`。外部 Goal 的写入回执只证明原生
+会话状态已提交。空闲线程的首轮由发起连接接管，自动续跑沿用当前原生生命周期，订阅可观察 Goal 状态。
+具体字段和活跃线程规则见 [Goal 方法](external-clients.md#threadgoalget--threadgoalset--threadgoalclear)。
 
 - **历史保持原生权威。** 读取要求已有认证 Gateway；前后核对精确原生身份、连接代次、
   产品绑定及运行回执。正文仅按请求投影，不读取 transcript 文件或建立正文缓存。

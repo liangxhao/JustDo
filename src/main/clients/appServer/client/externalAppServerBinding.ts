@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import type { SessionGoal } from '../../../../shared/cowork/sessionGoal';
 import { ExternalSessionStatus } from '../../../../shared/integrations/externalSession';
 import { fetchInputImage } from '../../../core/network/fetchInputImage';
 import { ExternalApprovalSessionScope } from '../../../openclaw/permissions/externalApprovalSessionScope';
@@ -20,6 +21,7 @@ import {
   type AppServerConnectionContext,
   AppServerErrorCode,
   AppServerErrorStyle,
+  AppServerMethod,
   AppServerNotificationMethod,
   type AppServerNotify,
   type AppServerParams,
@@ -29,6 +31,7 @@ import {
 } from '../protocol/appServerProtocol';
 import { createCodexApprovalPresenter } from './codexAppServerApprovals';
 import type { CodexAppServerBackend } from './codexAppServerBackend';
+import { codexThreadGoal, parseCodexGoalSet, validateCodexGoalOrigin } from './codexAppServerGoal';
 import { assertCodexHistoryFullSize, paginateCodexHistoryItems, paginateCodexHistoryTurns, projectCodexHistory } from './codexAppServerHistory';
 import { invalidParams, optionalBoolean, optionalString, paginateIds, paginateThreads } from './codexAppServerPagination';
 import { CodexAppServerProgress } from './codexAppServerProgress';
@@ -37,6 +40,10 @@ import { codexInitializeResult, codexModel, codexThread, codexThreadOpen, codexT
 
 const MAX_LOADED_THREADS = 32;
 const MAX_RESOURCE_THREADS = 10_000;
+
+const isGoalNotification = (method: string): boolean =>
+  method === AppServerNotificationMethod.ThreadGoalUpdated ||
+  method === AppServerNotificationMethod.ThreadGoalCleared;
 
 interface OwnedTurn {
   id: string;
@@ -53,6 +60,9 @@ interface ThreadState {
   subscribed: boolean;
   subscriptionGeneration: number;
   unsubscribe?: () => void;
+  unwatchGoal?: () => void;
+  goalSnapshot?: string;
+  goalMutation?: { observed?: SessionGoal | null; published?: true };
 }
 
 const rejectOverrides = (params: AppServerParams, keys: readonly string[]): void => {
@@ -142,6 +152,65 @@ export class ExternalAppServerBinding implements AppServerBinding {
       if (!owned || params.turnId !== owned.id) throw new Error('Turn is not active.');
       owned.controller.abort();
       return {};
+    },
+  };
+
+  readonly goals = {
+    get: async (params: AppServerParams): Promise<AppServerResult> => {
+      this.assertOpen();
+      if (!this.backend.goals) return this.unsupported(AppServerMethod.ThreadGoalGet);
+      const threadId = this.threadId(params);
+      const goal = await this.backend.goals.get(threadId, this.peerController.signal);
+      this.assertOpen();
+      return { goal: goal && codexThreadGoal(threadId, goal) };
+    },
+    set: async (params: AppServerParams): Promise<AppServerResult> => {
+      this.assertOpen();
+      const goals = this.backend.goals;
+      if (!goals) return this.unsupported(AppServerMethod.ThreadGoalSet);
+      const threadId = this.threadId(params);
+      const request = parseCodexGoalSet(params);
+      const state = this.requireThread(threadId);
+      if (!state.subscribed || state.changing || state.unknown) {
+        throw new Error('The thread must be loaded and available to set its Goal.');
+      }
+      state.changing = true;
+      try {
+        return await this.withGoalMutation(threadId, async () => {
+          const { goal, start } = await goals.set(threadId, request, this.peerController.signal);
+          const projected = codexThreadGoal(threadId, goal);
+          this.publishGoalMutation(threadId, goal, AppServerNotificationMethod.ThreadGoalUpdated, {
+            threadId, turnId: null, goal: projected,
+          });
+          this.assertOpen();
+          if (start && !state.active && this.states.get(threadId) === state) {
+            // A literal objective can itself begin with a Gateway session command.
+            const message = `Pursue the active session goal.\n\nObjective:\n${goal.objective}`;
+            this.enqueueTurn(state, { content: [], message, attachments: [] }, {
+              expectedGoal: { ...start, id: goal.id, objective: goal.objective },
+            });
+          }
+          return { goal: projected };
+        });
+      } finally {
+        state.changing = false;
+        this.unloadIdle(state);
+      }
+    },
+    clear: async (params: AppServerParams): Promise<AppServerResult> => {
+      this.assertOpen();
+      const goals = this.backend.goals;
+      if (!goals) return this.unsupported(AppServerMethod.ThreadGoalClear);
+      const threadId = this.threadId(params);
+      validateCodexGoalOrigin(params);
+      return await this.withGoalMutation(threadId, async () => {
+        const cleared = await goals.clear(threadId, this.peerController.signal);
+        if (cleared) {
+          this.publishGoalMutation(threadId, null, AppServerNotificationMethod.ThreadGoalCleared, { threadId });
+        }
+        this.assertOpen();
+        return { cleared };
+      });
     },
   };
 
@@ -238,15 +307,79 @@ export class ExternalAppServerBinding implements AppServerBinding {
     }
   }
 
+  private deliverThreadEvent(state: ThreadState, method: string, params: AppServerParams, observed = false): void {
+    if (isGoalNotification(method)) {
+      const snapshot = JSON.stringify(method === AppServerNotificationMethod.ThreadGoalUpdated ? params.goal : null);
+      if (observed && state.goalSnapshot === snapshot) return;
+      state.goalSnapshot = snapshot;
+    }
+    this.deliver(method, params);
+  }
+
+  private deliverGoalObservation(state: ThreadState, goal: SessionGoal | null): void {
+    const threadId = state.thread.id;
+    if (goal) {
+      this.deliverThreadEvent(state, AppServerNotificationMethod.ThreadGoalUpdated, {
+        threadId, turnId: null, goal: codexThreadGoal(threadId, goal),
+      }, true);
+    } else {
+      this.deliverThreadEvent(state, AppServerNotificationMethod.ThreadGoalCleared, { threadId }, true);
+    }
+  }
+
+  private async withGoalMutation<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
+    const state = this.states.get(threadId);
+    if (state?.goalMutation) throw new Error('A thread Goal change is already in progress.');
+    const mutation: NonNullable<ThreadState['goalMutation']> = {};
+    const generation = state?.subscriptionGeneration;
+    if (state) state.goalMutation = mutation;
+    try {
+      return await operation();
+    } finally {
+      if (state) state.goalMutation = undefined;
+      const observed = mutation.observed;
+      const snapshot = state?.goalSnapshot;
+      if (state && !mutation.published && observed !== undefined) setImmediate(() => {
+        if (state.subscribed && state.subscriptionGeneration === generation &&
+            state.goalSnapshot === snapshot && this.states.get(threadId) === state)
+          this.deliverGoalObservation(state, observed);
+      });
+    }
+  }
+
+  private publishGoalMutation(threadId: string, goal: SessionGoal | null,
+    method: AppServerNotificationMethod, params: AppServerParams): void {
+    const mutation = this.states.get(threadId)?.goalMutation;
+    if (mutation) mutation.published = true;
+    this.notifyAfterResponse(method, params, undefined, true);
+    const refresh = this.backend.goals?.refresh;
+    if (refresh) setImmediate(() => {
+      // Rebase after the receipt is delivered so an earlier, newer observation
+      // can be published again if the native read still confirms it.
+      try { refresh(threadId, goal); } catch { /* Native observation is best effort. */ }
+    });
+  }
+
   private subscribe(state: ThreadState): void {
     this.unloaded.delete(state.thread.id);
     if (state.subscribed) return;
     state.subscribed = true;
     const generation = ++state.subscriptionGeneration;
-    if (this.options.hub) state.unsubscribe = this.options.hub.subscribe(state.thread.id, (method, params) => {
-      if (state.subscribed && state.subscriptionGeneration === generation && this.states.get(state.thread.id) === state)
-        this.deliver(method, params);
+    const threadId = state.thread.id;
+    const isCurrent = () => !this.closed && !this.context.isClosed() && state.subscribed &&
+      state.subscriptionGeneration === generation && this.states.get(threadId) === state;
+    state.unsubscribe = this.options.hub?.subscribe(threadId, (method, params) => {
+      if (isCurrent()) this.deliverThreadEvent(state, method, params);
     });
+    try {
+      state.unwatchGoal = this.backend.goals?.watch?.(threadId, goal => {
+        if (!isCurrent()) return;
+        if (state.goalMutation) state.goalMutation.observed = goal;
+        else this.deliverGoalObservation(state, goal);
+      });
+    } catch {
+      // A valid external thread may have no eligible native Goal binding.
+    }
   }
 
   private detach(state: ThreadState): void {
@@ -254,6 +387,9 @@ export class ExternalAppServerBinding implements AppServerBinding {
     state.subscriptionGeneration++;
     state.unsubscribe?.();
     state.unsubscribe = undefined;
+    state.unwatchGoal?.();
+    state.unwatchGoal = undefined;
+    state.goalSnapshot = undefined;
   }
 
   private unloadIdle(state: ThreadState): void {
@@ -276,19 +412,22 @@ export class ExternalAppServerBinding implements AppServerBinding {
   private notifyAfterResponse(method: AppServerNotificationMethod, params: AppServerParams, state?: ThreadState, broadcast = false): void {
     const generation = state?.subscriptionGeneration;
     setImmediate(() => {
-      if (this.closed || this.context.isClosed()) return;
+      const closed = this.closed || this.context.isClosed();
+      // The confirmed Goal belongs to the thread after its requesting peer closes.
+      if (closed && !(broadcast && this.options.hub && isGoalNotification(method))) return;
       if (state && (!state.subscribed || state.subscriptionGeneration !== generation || this.states.get(state.thread.id) !== state)) return;
+      const recipient = typeof params.threadId === 'string' ? this.states.get(params.threadId) : undefined;
       if (broadcast && this.options.hub) {
-        const subscribed = typeof params.threadId === 'string' && this.states.get(params.threadId)?.subscribed;
         try {
           this.options.hub.publish(method, params);
         } catch {
           this.retireOutput(new ExternalAgentStreamError('Protocol output failed.'));
           return;
         }
-        if (subscribed) return;
+        if (closed || recipient?.subscribed) return;
       }
-      this.deliver(method, params);
+      if (recipient?.subscribed) this.deliverThreadEvent(recipient, method, params);
+      else this.deliver(method, params);
     });
   }
 
@@ -467,12 +606,22 @@ export class ExternalAppServerBinding implements AppServerBinding {
     } finally {
       state.changing = false;
     }
-    const text = prepared.message;
-    if (this.interactiveApprovals && !this.resourceThreadIds.has(state.thread.id)) {
-      if (this.resourceThreadIds.size >= MAX_RESOURCE_THREADS)
-        invalidParams('This connection prepared too many threads; reconnect before starting another thread.');
-      this.resourceThreadIds.add(state.thread.id);
-    }
+    this.prepareTurnResources(state.thread.id);
+    return { turn: this.enqueueTurn(state, prepared, { model }) };
+  }
+
+  private prepareTurnResources(threadId: string): void {
+    if (!this.interactiveApprovals || this.resourceThreadIds.has(threadId)) return;
+    if (this.resourceThreadIds.size >= MAX_RESOURCE_THREADS)
+      invalidParams('This connection prepared too many threads; reconnect before starting another thread.');
+    this.resourceThreadIds.add(threadId);
+  }
+
+  private enqueueTurn(
+    state: ThreadState,
+    prepared: Awaited<ReturnType<typeof prepareAppServerInput>>,
+    { model, expectedGoal }: { model?: string; expectedGoal?: ExternalAgentRunHooks['expectedGoal'] },
+  ): AppServerResult {
     const thread: ExternalAgentThread = { ...state.thread, ...(model !== undefined ? { modelRef: model } : {}) };
     state.thread = thread;
     const id = randomUUID();
@@ -503,7 +652,7 @@ export class ExternalAppServerBinding implements AppServerBinding {
       };
       const notify: AppServerNotify = (method, params) => publish(method, params);
       const terminal: AppServerNotify = (method, params) => publish(method, params, true);
-      const progress = new CodexAppServerProgress(prepared.content, notify, failStream);
+      const progress = new CodexAppServerProgress(expectedGoal ? undefined : prepared.content, notify, failStream);
       const tools = new CodexAppServerToolProgress(notify, failStream, () => progress.beforeTool());
       try {
         if (this.closed || this.context.isClosed()) return;
@@ -512,8 +661,10 @@ export class ExternalAppServerBinding implements AppServerBinding {
         if (streamError) throw streamError;
         if (this.closed || this.context.isClosed())
           throw active.failure ?? new ExternalAgentCancelledError('The connection closed before native admission.');
+        if (expectedGoal) this.prepareTurnResources(thread.id);
         const hooks: ExternalAgentRunHooks = {
           ...(prepared.attachments.length ? { attachments: prepared.attachments } : {}),
+          ...(expectedGoal ? { expectedGoal } : {}),
           onRetry: () => progress.finish(),
           ...(this.interactiveApprovals ? {
           interactiveApprovals: true,
@@ -537,7 +688,7 @@ export class ExternalAppServerBinding implements AppServerBinding {
         const finalText = await this.backend.run(
           thread,
           id,
-          text,
+          prepared.message,
           event => {
             if (controller.signal.aborted) return;
             progress.accept(event);
@@ -584,6 +735,6 @@ export class ExternalAppServerBinding implements AppServerBinding {
         this.unloadIdle(state);
       }
     });
-    return { turn: codexTurn(id, CodexTurnStatus.InProgress, { startedAt }) };
+    return codexTurn(id, CodexTurnStatus.InProgress, { startedAt });
   }
 }

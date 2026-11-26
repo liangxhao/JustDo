@@ -38,7 +38,7 @@ function fixture(
     updateSession: vi.fn(),
     getAgentRuntimeSettings: () => ({ automaticErrorRetry: { maxContinuations } }),
   };
-  const identity: { sessionId: string; lifecycleRevision: string; activeRunIds?: string[]; lastRunId?: string } = {
+  const identity: { sessionId: string; lifecycleRevision: string; activeRunIds?: string[]; lastRunId?: string; goal?: unknown } = {
     sessionId: 'native-id',
     lifecycleRevision: 'revision-1',
   };
@@ -70,6 +70,7 @@ function fixture(
     return { ok: true, modelRef: model };
   });
   const registerUnknownSessionRun = vi.fn();
+  const reconcileExternalGoalStop = vi.fn();
   const fetchSessionHistoryByKey = vi.fn(async () => ({ sessionKey: 'native-key', messages: [] as unknown[] }));
   const publishAutomaticErrorRetry = vi.fn();
   Object.assign(runtime, {
@@ -82,6 +83,7 @@ function fixture(
     },
     patchSessionModel,
     registerUnknownSessionRun,
+    reconcileExternalGoalStop,
     fetchSessionHistoryByKey,
     publishAutomaticErrorRetry,
   });
@@ -134,6 +136,7 @@ function fixture(
     cleanup,
     onPrepared,
     registerUnknownSessionRun,
+    reconcileExternalGoalStop,
     fetchSessionHistoryByKey,
     publishAutomaticErrorRetry,
     finishAgent: (value: unknown) => finishAgent(value),
@@ -185,6 +188,97 @@ const emitTerminal = (f: ReturnType<typeof fixture>, text = cappedReply, seq = 1
   });
 
 describe('external execution ownership', () => {
+  it.each([
+    { stopReason: 'rpc', sameGoal: true },
+    { stopReason: 'stop', sameGoal: true },
+    { stopReason: 'rpc', sameGoal: false },
+  ])(
+    'reconciles lost Goal cancellation with reason $stopReason only for the original Goal (current: $sameGoal)',
+    async ({ stopReason, sameGoal }) => {
+      const f = fixture();
+      const expectedGoal = {
+        sessionKey: 'native-key', sessionId: 'native-id', lifecycleRevision: 'revision-1',
+        id: 'goal-id', objective: 'Review results',
+      };
+      f.identity.activeRunIds = [];
+      const goal = { schemaVersion: 1, id: expectedGoal.id, objective: expectedGoal.objective, status: 'active', updatedAt: 50 };
+      f.identity.goal = goal;
+      const running = f.execute({ ...f.input, expectedBinding: expectedGoal, hooks: { ...f.input.hooks, expectedGoal } });
+      const assertion = expect(running).rejects.toBeInstanceOf(ExternalAgentCancelledError);
+      await vi.waitFor(() => expect(f.request.mock.calls.some(([method]) => method === 'agent')).toBe(true));
+      f.finishAgent(final);
+      await vi.waitFor(() => expect(f.request.mock.calls.some(([method]) => method === 'agent.wait')).toBe(true));
+      f.controller.abort();
+      expect(f.reconcileExternalGoalStop).not.toHaveBeenCalled();
+      f.identity.lastRunId = 'run';
+      if (!sameGoal) f.identity.goal = { ...goal, id: 'new-goal' };
+      f.finishReceipt({ runId: 'run', status: 'error', endedAt: 100, stopReason });
+
+      await assertion;
+      if (sameGoal) {
+        expect(f.reconcileExternalGoalStop).toHaveBeenCalledExactlyOnceWith('local', 'native-key', 'run', expect.objectContaining(goal));
+      } else {
+        expect(f.reconcileExternalGoalStop).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it.each(['lifecycle', 'wait'])(
+    'completes a Goal turn with the model stop reason from %s',
+    async source => {
+      const f = fixture();
+      const expectedGoal = {
+        sessionKey: 'native-key', sessionId: 'native-id', lifecycleRevision: 'revision-1',
+        id: 'goal-id', objective: 'Review results',
+      };
+      f.identity.goal = { schemaVersion: 1, ...expectedGoal, status: 'active', updatedAt: 50 };
+      f.identity.activeRunIds = [];
+      const running = f.execute({ ...f.input, expectedBinding: expectedGoal, hooks: { ...f.input.hooks, expectedGoal } });
+      const assertion = expect(running).resolves.toBe(receipt.terminalReply.text);
+      await vi.waitFor(() => expect(f.request.mock.calls.some(([method]) => method === 'agent')).toBe(true));
+      f.identity.lastRunId = 'run';
+      if (source === 'lifecycle') {
+        f.runtime.emit('gatewayEvent', {
+          event: 'agent',
+          payload: {
+            seq: 1, sessionKey: 'native-key', sessionId: 'native-id', runId: 'run',
+            lifecycleGeneration: 'generation-1', stream: 'lifecycle',
+            data: { phase: 'end', executionSettled: true, aborted: false, stopReason: 'stop',
+              terminalReply: receipt.terminalReply },
+          },
+        });
+      } else {
+        f.finishAgent(final);
+        await vi.waitFor(() => expect(f.request.mock.calls.some(([method]) => method === 'agent.wait')).toBe(true));
+        f.finishReceipt({ ...receipt, stopReason: 'stop' });
+      }
+
+      await assertion;
+      expect(f.onSettled).toHaveBeenCalledWith('completed');
+      expect(f.reconcileExternalGoalStop).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a Goal turn when the verified native Goal changes during preparation', async () => {
+    const f = fixture();
+    const expectedGoal = {
+      sessionKey: 'native-key', sessionId: 'native-id', lifecycleRevision: 'revision-1',
+      id: 'goal-id', objective: 'Review results',
+    };
+    f.identity.activeRunIds = [];
+    f.identity.goal = { schemaVersion: 1, ...expectedGoal, status: 'active' };
+    f.onPrepared.mockImplementationOnce(async () => {
+      f.identity.goal = { schemaVersion: 1, ...expectedGoal, status: 'paused' };
+      return f.cleanup;
+    });
+
+    await expect(f.execute({ ...f.input, expectedBinding: expectedGoal, hooks: { ...f.input.hooks, expectedGoal } }))
+      .rejects.toThrow('The native Goal changed');
+
+    expect(f.request.mock.calls.some(([method]) => method === 'agent')).toBe(false);
+    expect(f.store.beginSessionRun).not.toHaveBeenCalled();
+    expect(f.cleanup).toHaveBeenCalledOnce();
+  });
   it.each([
     { ruleId: 'repeated-tool-error', copy: repeatedToolFailureCopy, transcriptErrorCode: REPEATED_TOOL_ERROR_CODE, evidence: {} },
     { ruleId: 'reply-generation-exhausted', copy: missingReplyCopy, transcriptErrorCode: null,

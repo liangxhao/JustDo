@@ -8,6 +8,18 @@
 `confirmOnly` 只核对原生存储中的字段及身份，用于写入回执丢失时确认结果。
 展示名称可以重名，修改保留原生 `label`、会话活动时间和历史。
 
+## 会话 Goal 更新
+
+`runtimeServices.sessionGoal` 接受当前获准的 `operator.admin` backend 请求，目标限于应用受管会话键。
+调用方提交精确的 `sessionKey`、`sessionId`、`lifecycleRevision`、`operationId`、读取到的
+`expectedGoalId`（没有 Goal 时为 null）和 `set` 或 `clear` 操作。
+`set` 可在同一次更新中设置目标、状态及 token 预算，预算为 null 时清除预算。Main 根据会话的
+执行观察传入 `allowReplacement`，原生事务只在允许替换时创建新 Goal ID，也复核并发完成后
+同一目标是否已变为替换请求。
+新目标使用操作 ID 作为 Goal ID，从原生当前 token 基线重新计量，状态或预算更新保留已有用量。
+公开会话 SDK 在原生事务中复核授权及会话行，然后返回已提交的 Goal、是否清除及是否请求开始执行。
+执行由宿主通过既有会话准入发起。回执不证明已开始或完成执行，未知写入结果也不能据此重发。
+
 ## 精确执行失败代码
 
 `runtimeServices.executionFailure` 是 `operator.read` 的窄只读接口。调用方提供精确的

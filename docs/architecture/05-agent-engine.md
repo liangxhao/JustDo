@@ -788,7 +788,7 @@ CLI `exec`、入站 ACP 和已实现的 app-server 子集共用 Main 原生准�
 
 未盖章的非 lifecycle 进度通过有界 FIFO 等待，同连接的精确 session/incarnation 与 active-run 或 owning lifecycle-start 证明后才采用。匹配的整轮终态可界定更早进度，但执行结算不等待进度读取。
 
-结果未知时持久预约继续保留。可见 final、Stop ACK 和连接替换均不证明执行结束；缺少可信 continuation 或带 scope 资源的替换连接不触发重放。只有经过身份复核的原生整轮中断终态才能返回 interrupted 协议结果，取消请求被接收本身不够。完整客户端流程见[CLI / ACP](../features/external-clients/agent-cli.md)，通用协议见[app-server](../features/external-clients/app-server.md)。
+结果未知时持久预约继续保留。可见 final、Stop ACK 和连接替换均不证明执行结束；缺少可信 continuation 或带 scope 资源的替换连接不触发重放。只有经过身份复核的原生整轮中断终态才能返回 interrupted 协议结果，取消请求被接收本身不够。模型正常结束时原生终态也可携带 `stopReason: 'stop'`，此时仍按成功结算。完整客户端流程见[CLI / ACP](../features/external-clients/agent-cli.md)，通用协议见[app-server](../features/external-clients/app-server.md)。
 
 ### 已结算执行的长回复恢复
 

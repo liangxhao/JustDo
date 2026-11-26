@@ -85,6 +85,7 @@
 | 会话范围           | 每连接绑定多个 CLI 来源会话，按线程订阅              |
 | 模型发现           | `model/list`                                         |
 | 会话与历史         | 创建、恢复、列表/读取/改名、Turn/Item 历史分页、退订 |
+| Goal               | `thread/goal/set`、`thread/goal/get`、`thread/goal/clear` |
 | 输入               | 标准文本、image、localImage；支持纯图片              |
 | 实时输出           | 标准 `item/*` 通知                                   |
 | 客户端审批         | 命令允许／拒绝／取消；实验性会话授权及插件确认       |

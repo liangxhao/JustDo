@@ -377,6 +377,16 @@ export class GoalContinuationCoordinator {
       this.publishGoalState(sessionId, goal, goal.continuationTurns);
       return;
     }
+    const endedAt = describedSession?.endedAt;
+    if (hasExactSettlement && describedSession?.status === 'killed' &&
+        describedSession.abortedLastRun === true && describedSession.lastRunId === predecessorRunId &&
+        Array.isArray(describedSession.activeRunIds) && describedSession.activeRunIds.length === 0 &&
+        typeof endedAt === 'number' && Number.isFinite(endedAt) && goal.updatedAt <= endedAt) {
+      // Native restart and resumable tool timeout use `interrupted`. A killed
+      // exact predecessor cannot authorize a successor after reconnection.
+      this.reconcileConfirmedGoalStop(sessionId, sessionKey, predecessorRunId as string, goal);
+      return;
+    }
     this.publish({
       sessionId, goalId: goal.id, phase: GoalExecutionPhase.Waiting,
       ...(hasExactSettlement ? { runId: predecessorRunId as string } : {}),
@@ -598,14 +608,16 @@ export class GoalContinuationCoordinator {
     this.cancelRetry(sessionId, true);
   }
 
-  confirmStop(sessionId: string): void {
+  confirmStop(sessionId: string, goal?: SessionGoal): void {
     if (!this.stoppedSessionIds.has(sessionId)) return;
     const current = this.snapshots.get(sessionId);
+    const goalId = goal?.id ?? current?.goalId;
     this.publish({
       sessionId,
-      ...(current?.goalId ? { goalId: current.goalId } : {}),
+      ...(goalId ? { goalId } : {}),
       phase: GoalExecutionPhase.Stopped,
-      continuationCount: current?.continuationCount ?? 0,
+      continuationCount: goal?.continuationTurns ?? current?.continuationCount ?? 0,
+      ...(goal ? { identityPending: false } : {}),
       updatedAt: this.now(),
     });
     this.snapshotsBeforeStop.delete(sessionId);
@@ -711,6 +723,20 @@ export class GoalContinuationCoordinator {
     await this.processLifecycle(event);
   }
 
+  /** Exact native evidence can prove a Stop missed by the live event path. */
+  reconcileConfirmedGoalStop(sessionId: string, sessionKey: string, runId: string, goal: SessionGoal): void {
+    if (!isManagedGoalSessionKey(sessionKey) || this.dependencies.resolveSessionId(sessionKey) !== sessionId)
+      return;
+    const current = this.snapshots.get(sessionId);
+    if (current?.phase === GoalExecutionPhase.Stopped && current.goalId === goal.id) return;
+    this.latestRunIds.set(sessionId, runId);
+    this.sessionKeys.set(sessionId, sessionKey);
+    this.rememberProcessedTerminalRun(runId);
+    this.continuationTargets.delete(sessionId);
+    this.stop(sessionId);
+    this.confirmStop(sessionId, goal);
+  }
+
   private async processLifecycle(event: GoalLifecycleEvent): Promise<void> {
     if (!isManagedGoalSessionKey(event.sessionKey) || event.spawnedBy) return;
     // Attempt terminals can precede provider retries and the final run outcome.
@@ -758,7 +784,8 @@ export class GoalContinuationCoordinator {
     const latestRunId = this.latestRunIds.get(sessionId);
     if (latestRunId && latestRunId !== event.runId) return;
     if (!latestRunId) this.latestRunIds.set(sessionId, event.runId);
-    if (event.aborted || event.phase === 'error') this.failedPredecessorRuns.add(event.runId);
+    const operatorStopped = event.aborted === true && (event.stopReason === 'rpc' || event.stopReason === 'stop');
+    if (!operatorStopped && (event.aborted || event.phase === 'error')) this.failedPredecessorRuns.add(event.runId);
     let terminalTarget = event.sessionId
       ? knownTarget?.sessionId === event.sessionId ? knownTarget : { sessionId: event.sessionId }
       : knownTarget ?? this.sessionTargets.get(event.sessionKey);
@@ -801,6 +828,35 @@ export class GoalContinuationCoordinator {
         continuationCount: current?.continuationCount ?? 0,
         updatedAt: this.now(),
       });
+      return;
+    }
+    if (operatorStopped) {
+      // A native whole-run Stop can come from an external owner without a local
+      // Stop latch. Retire the candidate before any retry can use this terminal.
+      const trackedTarget = this.sessionTargets.get(event.sessionKey);
+      const stoppedTarget = terminalTarget?.lifecycleRevision === undefined &&
+        trackedTarget?.sessionId === terminalTarget?.sessionId
+        ? trackedTarget : terminalTarget;
+      this.invalidateDecision(sessionId);
+      this.cancelRetry(sessionId, true);
+      this.continuationTargets.delete(sessionId);
+      const decision = this.beginDecision(sessionId)!;
+      try {
+        const goal = await this.readGoal(event.sessionKey, decision);
+        if (!this.isCurrentDecision(sessionId, decision) || !stoppedTarget ||
+            !this.matchesTarget(this.sessionTargets.get(event.sessionKey), stoppedTarget)) return;
+        if (!goal || goal.status !== SessionGoalStatus.Active) {
+          this.publishGoalState(sessionId, goal, current?.continuationCount ?? 0);
+          return;
+        }
+        if (current?.goalId && goal.id !== current.goalId) return;
+        this.stop(sessionId);
+        this.confirmStop(sessionId, goal);
+      } catch {
+        // An unverified Goal identity cannot be stopped or used to start a successor.
+      } finally {
+        this.finishDecision(sessionId, decision);
+      }
       return;
     }
     if (terminalTarget) {

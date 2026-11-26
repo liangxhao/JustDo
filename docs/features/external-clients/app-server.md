@@ -84,6 +84,12 @@ Chrome 在实际调用发送前的拒绝明确为 false。连接关闭后不再�
 初始化校验失败不会锁死握手。
 创建／改名通知在对应响应后发送，通知输出失败会同步撤销共享连接与 binding，阻止新任务准入。
 
+通用绑定通过 `thread/goal/get`、`thread/goal/set`、`thread/goal/clear` 访问原生 Goal。写入前
+确认外部映射、原生 SID、revision 及当前 Goal ID，再由 Runtime Services 在原生会话事务提交。
+首次 Goal 准备的 SID 和 revision 通过既有外部映射保存。写入回执之后可以排入该连接所拥有的首轮，
+派发前复核目标与原生身份，`agent` 准入原子比较 SID 和 revision。Goal 更新／清除通知使用线程订阅，
+其他原生变更从认证连接的事件触发定点读取。见 [Goal 接口](../../app-server-api/external-clients.md#threadgoalget--threadgoalset--threadgoalclear)。
+
 共享连接支持双向 RPC：服务端请求使用连接内唯一字符串 ID，最多 64 个待回复项。
 客户端 response 与普通 request 分向匹配，迟到、重复、其他连接的回复不能解决原请求。
 close 在等待执行清理前同步撤销所有 pending request，避免审批与断连互相等待。

@@ -248,6 +248,42 @@ Turn 状态仅采用精确运行回执；无法归属的旧消息保留在只读
 成功持久保存产品标题、通知桌面列表，并返回 `{}`；响应之后发送
 `thread/name/updated { threadId, threadName }`。只改元数据，不接触原生正文或客户端标记文件。
 
+### `thread/goal/get` / `thread/goal/set` / `thread/goal/clear`
+
+| 方法 | 参数 | 返回 |
+| --- | --- | --- |
+| `thread/goal/get` | `{ threadId }` | `{ goal: ThreadGoal \| null }` |
+| `thread/goal/set` | `{ threadId, objective?, status?, tokenBudget?, origin? }` | `{ goal: ThreadGoal }` |
+| `thread/goal/clear` | `{ threadId, origin? }` | `{ cleared: boolean }` |
+
+目标属于外部线程映射的 OpenClaw 原生会话。`set` 要求当前连接已通过 `thread/start` 或
+`thread/resume` 加载该线程，`get` 和 `clear` 也可直接使用当前 profile 下已保存的外部线程 ID。
+线程没有 Goal 时，`get` 返回 `null`，`clear` 返回 `false`。未准备过原生会话的线程可直接创建 Goal。
+对已有原生会话的读取复用认证 Gateway，不启动运行时。
+
+```json
+{"id": 5, "method": "thread/goal/set", "params": {"threadId": "thread-id", "objective": "整理测试报告", "status": "active"}}
+```
+
+`objective` 去除首尾空白后须为 1 到 4,000 字符。新建需要目标文本，替换目标会重置用量。
+`status` 支持 `active`、`paused`、`blocked`、`usageLimited`、`budgetLimited`、`complete`。
+`objective` 和 `status` 传 `null` 等同省略。`tokenBudget` 传正安全整数用于设置预算，省略保留现有预算，
+传 `null` 清除预算。`origin` 接受 `user`、`automatic` 或 `null`，不改变宿主授权。
+
+`ThreadGoal` 包含 `threadId`、`objective`、`status`、`tokenBudget`、`tokensUsed`、
+`timeUsedSeconds`、`createdAt` 和 `updatedAt`。预算未设时为 `null`，时间戳使用 Unix 秒。
+当前 OpenClaw 不提供 Goal 累计执行时间，`timeUsedSeconds` 返回 `0`。
+
+对空闲线程创建或显式激活 Goal 后，服务端通过现有外部轮次链路发起执行，可用相同的审批与
+`turn/interrupt` 接口。Goal 写入响应先于 `thread/goal/updated { threadId, turnId: null, goal }`，
+随后才开始首轮。Goal 写入回执与模型执行结果独立，模型任务结果由轮次终态报告。已有运行时可以管理
+现有 Goal 的状态、预算或清除它，须等该轮结算后才可创建或替换目标。自动后继由原生 Goal 生命周期
+协调，外部订阅收到已核验的 Goal 状态变更。清除成功后发送 `thread/goal/cleared { threadId }`。
+恢复线程后可用 `thread/goal/get` 读取当前快照，再使用通知跟踪变更。
+
+`GOAL_OUTCOME_UNKNOWN` 表示写入回执未能核验，客户端可用 `thread/goal/get` 查询当前状态。
+`turn/start.input` 仍接收普通提示词，包括以 `/goal` 开头的文本。
+
 ### `turn/start`
 
 ```ts

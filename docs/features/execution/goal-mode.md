@@ -231,6 +231,10 @@ Main 拥有精确后继运行时才可替换记录；chat final 后只接受已�
 
 ## 用户操作与回执恢复
 
+通用 app-server 的 `thread/goal/*` 复用同一原生 Goal。显式外部激活的首轮沿外部执行和审批链路
+接纳。若原生精确整轮终态确认该运行被 RPC 或 Stop 中断，协调器复核当前 Goal 与会话身份后保留
+停止状态，避免把用户中断按执行故障自动重试。参数及轮次边界见 [app-server Goal 接口](../../app-server-api/external-clients.md#threadgoalget--threadgoalset--threadgoalclear)。
+
 编辑、暂停、继续和清除使用原生结构化 Goal RPC，绑定 goalId、原生 sessionId、
 operationId 和原始 issuedAtMs。不明确的响应及失配回执保留原操作身份；另一操作必须
 先核对该操作，不能跳过未知提交。

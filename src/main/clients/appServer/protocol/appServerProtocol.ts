@@ -12,6 +12,9 @@ export const AppServerMethod = {
   ThreadResume: 'thread/resume',
   ThreadNameSet: 'thread/name/set',
   ThreadUnsubscribe: 'thread/unsubscribe',
+  ThreadGoalGet: 'thread/goal/get',
+  ThreadGoalSet: 'thread/goal/set',
+  ThreadGoalClear: 'thread/goal/clear',
   TurnStart: 'turn/start',
   TurnInterrupt: 'turn/interrupt',
 } as const;
@@ -21,6 +24,8 @@ export const AppServerNotificationMethod = {
   ThreadNameUpdated: 'thread/name/updated',
   ThreadStatusChanged: 'thread/status/changed',
   ThreadClosed: 'thread/closed',
+  ThreadGoalUpdated: 'thread/goal/updated',
+  ThreadGoalCleared: 'thread/goal/cleared',
   ServerRequestResolved: 'serverRequest/resolved',
   TurnStarted: 'turn/started',
   TurnCompleted: 'turn/completed',
@@ -94,6 +99,7 @@ export interface AppServerBinding {
     unsubscribe?: AppServerOperation;
   };
   turns: { start: AppServerOperation; interrupt: AppServerOperation };
+  goals?: { get: AppServerOperation; set: AppServerOperation; clear: AppServerOperation };
   models?: { list: AppServerOperation };
   /** Exact server-owned routes; extensions require request IDs and cannot replace core methods. */
   extensions?: Readonly<Record<string, AppServerOperation>>;

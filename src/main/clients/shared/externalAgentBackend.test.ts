@@ -1,16 +1,20 @@
 import { randomUUID } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, expect, it, vi } from 'vitest';
 
+import { EXTERNAL_SESSION_GOAL_METHOD } from '../../../../plugins/extensions/runtime-services/contracts/session-goal';
 import { AutomaticErrorRetryDisposition as Disposition } from '../../../shared/cowork/automaticErrorRetry';
 import { ExternalSessionSource, ExternalSessionStatus } from '../../../shared/integrations/externalSession';
 import { OpenClawProviderId } from '../../../shared/providers/constants';
 import { getLanguage, setLanguage, t } from '../../core/i18n';
 import { CoworkStore } from '../../data/coworkStore';
 import { SqliteStore } from '../../data/sqliteStore';
+import type { CoworkEngineRouter } from '../../engine/cowork/coworkEngineRouter';
+import type { OpenClawRuntimeAdapter } from '../../engine/openclaw/openclawRuntimeAdapter';
 import { buildManagedSessionKey } from '../../openclaw/sessions/openclawSessionKeys';
 import {
   ExternalAgentBackendFactory,
@@ -19,6 +23,7 @@ import {
   ExternalAgentOutcomeUnknownError,
   ExternalAgentStreamError,
 } from './externalAgentBackend';
+import { createExternalAgentGoalOperations } from './externalAgentGoals';
 import type { ExternalAgentExecution } from './externalAgentTypes';
 import { reserveExternalSession } from './externalSessionReservations';
 import { ExternalSessionStore } from './externalSessionStore';
@@ -120,6 +125,58 @@ it('requires an external mapping even when thread and application IDs use the sa
   expect(f.external.get(thread.id)).toBeNull();
   expect(f.external.wasDeleted(thread.id)).toBe(true);
   await expect(f.factory.connect().resume(thread.id, {})).rejects.toThrow('unavailable');
+});
+
+it.each([false, true])('pins a confirmed Goal-first native identity across clients (requester closes: %s)', async closes => {
+  const f = fixture();
+  const thread = await f.backend.start({ cwd: f.cwd });
+  const sessionKey = buildManagedSessionKey(thread.id, thread.agentId);
+  const identity = { sessionKey, sessionId: 'native-goal', lifecycleRevision: 'revision-1' };
+  const goal = {
+    schemaVersion: 1, id: 'goal', objective: 'Review notes', status: 'active',
+    createdAt: 1000, updatedAt: 1000, tokenStart: 0, tokensUsed: 0, continuationTurns: 0,
+  };
+  const onGoalChanged = vi.fn();
+  const requester = new AbortController();
+  let nativeGoal: unknown;
+  const request = vi.fn(async (method: string, params: Record<string, unknown>) => {
+    if (method === 'sessions.describe') return { session: { ...identity, key: sessionKey, goal: nativeGoal, activeRunIds: [] } };
+    expect(method).toBe(EXTERNAL_SESSION_GOAL_METHOD);
+    if (closes) requester.abort();
+    nativeGoal = goal;
+    return { ...identity, operationId: params.operationId, goal, start: true, cleared: false };
+  });
+  const runtime = Object.assign(new EventEmitter(), {
+    getGatewayClient: () => client,
+    captureGatewayResponseContext: () => ({ isCurrent: () => true, isResponseError: () => false }),
+  }) as unknown as OpenClawRuntimeAdapter;
+  const client = { request };
+  const prepareSession = vi.fn(async () => ({ ...identity, gatewaySessionId: identity.sessionId }));
+  const router = { prepareSession, isSessionActive: () => false } as unknown as CoworkEngineRouter;
+  const ensureReady = vi.fn(async () => ({ phase: 'running' as const }));
+  const goalOperations = createExternalAgentGoalOperations({
+    getRouter: () => router, getRuntime: () => runtime, ensureReady, onGoalChanged,
+  });
+  const factory = new ExternalAgentBackendFactory({ ...f.options, goalOperations });
+  const goals = factory.connect().goals!;
+  const signal = new AbortController().signal;
+  await expect(goals.get(thread.id, signal)).resolves.toBeNull();
+  expect(ensureReady).not.toHaveBeenCalled();
+
+  await expect(goals.set(thread.id, { objective: goal.objective }, requester.signal)).resolves.toEqual({
+    goal, ...(!closes ? { start: identity } : {}),
+  });
+
+  expect(request).toHaveBeenCalledWith(EXTERNAL_SESSION_GOAL_METHOD, expect.objectContaining({
+    ...identity, expectedGoalId: null, action: 'set', allowReplacement: true, objective: goal.objective,
+  }));
+  expect(f.external.get(thread.id)).toMatchObject({
+    openclawSessionKey: sessionKey, nativeSessionId: identity.sessionId, lifecycleRevision: identity.lifecycleRevision,
+  });
+  expect(f.external.get(thread.id)?.executionRunId).toBeUndefined();
+  expect(f.execute).not.toHaveBeenCalled();
+  expect(onGoalChanged).toHaveBeenCalledWith(thread.id, goal, !closes);
+  await expect(factory.connect().goals!.get(thread.id, signal)).resolves.toEqual(goal);
 });
 
 it('rolls back the new shared ID when creation metadata setup fails', async () => {

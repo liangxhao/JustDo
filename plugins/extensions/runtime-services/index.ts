@@ -31,6 +31,7 @@ import { registerScheduledTaskHistory } from './scheduled-task-history';
 import { registerOwnerProvider } from './sdk/owner-provider';
 import { registerRuntimeServicesProvider } from './sdk/provider';
 import { registerSessionDisplayName } from './session-display-name';
+import { registerSessionGoal } from './session-goal';
 import { registerSessionNamespaces } from './session-namespaces';
 import { registerSpeechSynthesis } from './speech';
 
@@ -266,6 +267,7 @@ const plugin = {
     });
     registerSessionNamespaces(api);
     registerSessionDisplayName(api);
+    registerSessionGoal(api);
     registerExternalMcp(api);
     registerScheduledTaskHistory(api);
     registerSpeechSynthesis(api);
