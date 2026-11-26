@@ -378,24 +378,30 @@ describe('OpenClaw provider config', () => {
 });
 
 describe('OpenClaw managed config metadata', () => {
-  test('preserves native migration receipts while updating the managed version', () => {
+  test('skips legacy webhook checks and preserves other native migration receipts', () => {
     const existingMeta = {
       lastTouchedVersion: '2026.9.2',
-      migrations: { modelPolicyAllowlist: true, utilityModelSeparation: true },
+      migrations: {
+        modelPolicyAllowlist: true,
+        utilityModelSeparation: true,
+        webhookListeners: { telegram: [] },
+      },
     };
 
     expect(buildOpenClawConfigMeta('2026.9.6', existingMeta)).toEqual({
       lastTouchedVersion: '2026.9.6',
-      migrations: existingMeta.migrations,
+      migrations: { ...existingMeta.migrations, webhookListeners: true },
     });
     expect(existingMeta.lastTouchedVersion).toBe('2026.9.2');
+    expect(existingMeta.migrations.webhookListeners).toEqual({ telegram: [] });
   });
 
-  test('writes the managed version when no native metadata exists', () => {
+  test('skips legacy webhook checks when no native metadata exists', () => {
     const meta = buildOpenClawConfigMeta('2026.9.2');
 
     expect(meta).toEqual({
       lastTouchedVersion: '2026.9.2',
+      migrations: { webhookListeners: true },
     });
   });
 

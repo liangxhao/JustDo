@@ -1678,7 +1678,8 @@ describe('OpenClaw auth logout config sync', () => {
       expect(sync.sync('startup').ok).toBe(true);
       const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       expect(Boolean(config.models.providers?.['custom-provider'])).toBe(mode === 'full');
-      const migrations = { modelPolicyAllowlist: true, utilityModelSeparation: true };
+      expect(config.meta.migrations.webhookListeners).toBe(true);
+      const migrations = { modelPolicyAllowlist: true, utilityModelSeparation: true, webhookListeners: true };
       config.meta.migrations = migrations;
       fs.writeFileSync(configPath, JSON.stringify(config));
 

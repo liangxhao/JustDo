@@ -19,7 +19,6 @@ function createManager() {
     resolveRuntimeMetadata: () => { root: string; version: string };
     prepareNetworkGeneration: ReturnType<typeof vi.fn>;
     beginNetworkGeneration: ReturnType<typeof vi.fn>;
-    refreshSpeechPluginRegistryIfNeeded: ReturnType<typeof vi.fn>;
     resolveOpenClawGatewayEntry: () => null;
     isGatewayHealthy: () => Promise<boolean>;
     gatewayConfigReloadMonitor: {
@@ -35,7 +34,6 @@ function createManager() {
   harness.resolveRuntimeMetadata = () => ({ root: 'fixture-runtime', version: 'test' });
   harness.prepareNetworkGeneration = vi.fn(async () => {});
   harness.beginNetworkGeneration = vi.fn();
-  harness.refreshSpeechPluginRegistryIfNeeded = vi.fn(async () => {});
   harness.resolveOpenClawGatewayEntry = () => null;
   harness.isGatewayHealthy = async () => true;
   harness.gatewayPort = 12345;

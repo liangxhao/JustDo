@@ -121,7 +121,10 @@ test('resolves the OpenClaw v2026.9.2 runtime resource layout', () => {
 });
 
 test('leaves managed skill discovery out of the initial OpenClaw config', () => {
-  expect(buildInitialOpenClawConfig()).toEqual({ gateway: { mode: 'local' } });
+  expect(buildInitialOpenClawConfig()).toEqual({
+    gateway: { mode: 'local' },
+    meta: { migrations: { webhookListeners: true } },
+  });
 });
 
 test('only reuses the current live child network environment confirmed by its owner', () => {
@@ -379,59 +382,6 @@ test('builds an isolated proxy environment for an opted-in CLI command', () => {
     ),
   ).toBe(proxyEnv);
   expect(buildNetworkEnvironment).toHaveBeenCalledWith(baseEnv);
-});
-
-test('refreshes the active speech plugin registry once per bundled manifest', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-speech-registry-'));
-  try {
-    const bundledPluginsDir = path.join(directory, 'extensions');
-    const pluginDir = path.join(bundledPluginsDir, 'tts-local-cli');
-    fs.mkdirSync(pluginDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(directory, 'openclaw.json'),
-      JSON.stringify({ tts: { provider: 'tts-local-cli' } }),
-    );
-    fs.writeFileSync(
-      path.join(pluginDir, 'openclaw.plugin.json'),
-      JSON.stringify({ id: 'tts-local-cli' }),
-    );
-
-    const runCliWithEnvironment = vi.fn().mockResolvedValue({ stdout: '{}', stderr: '' });
-    const manager = Object.create(OpenClawEngineManager.prototype) as unknown as {
-      stateDir: string;
-      configPath: string;
-      runCliWithEnvironment: typeof runCliWithEnvironment;
-      refreshSpeechPluginRegistryIfNeeded: (cli: {
-        env: NodeJS.ProcessEnv;
-        runtimeRoot: string;
-        openclawEntry: string;
-        port: number;
-        token: string;
-      }) => Promise<void>;
-    };
-    manager.stateDir = directory;
-    manager.configPath = path.join(directory, 'openclaw.json');
-    manager.runCliWithEnvironment = runCliWithEnvironment;
-    const cli = {
-      env: { OPENCLAW_BUNDLED_PLUGINS_DIR: bundledPluginsDir },
-      runtimeRoot: directory,
-      openclawEntry: path.join(directory, 'openclaw.mjs'),
-      port: 14041,
-      token: 'test-token',
-    };
-
-    await manager.refreshSpeechPluginRegistryIfNeeded(cli);
-    await manager.refreshSpeechPluginRegistryIfNeeded(cli);
-
-    expect(runCliWithEnvironment).toHaveBeenCalledOnce();
-    expect(runCliWithEnvironment).toHaveBeenCalledWith(
-      cli,
-      ['plugins', 'registry', '--refresh', '--json'],
-      'plugin registry refresh',
-    );
-  } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
-  }
 });
 
 test('tracks managed environment changes until a Gateway launch applies them', () => {

@@ -47,6 +47,10 @@ Runtime Services 提供必需的执行与所有权服务。ACPX 在启动时发�
 会话目录注册，首次 ACP 操作或会话目录请求加载各自实现。Smart Canvas 的清单声明
 `activation.onStartup: false` 和 `visualize` 技能路径。紧凑卡片由原生 `show_widget` 处理。
 
+运行包同步并裁剪内置扩展后，将清单与包元数据的指纹写入 Runtime Services 的包元数据。OpenClaw 校验已索引的 Runtime Services 包时可据此发现同目录内新增的内置扩展，即使旧索引里还没有新增扩展的记录。Gateway 使用原生插件索引发现 provider。索引缺失或失效时使用本次发现结果，持久化修复由原生就绪后的维护流程负责。
+
+内嵌 Gateway 使用 WebChat。应用配置统一写入 `meta.migrations.webhookListeners: true`，让 OpenClaw 跳过旧频道 Webhook 监听器预检。
+
 `plugins/sdk/` 保存公开 App SDK 和构建工具开发包，使用 npm workspace 或打包制品接入；扩展发现仍只扫描 `plugins/extensions/`。源码位置、发布和消费契约见[应用插件宿主](../plugins/sdk/app-plugin-runtime.md)。
 
 Chrome Assistant 位于 `plugins/chrome-extensions/chrome-assistant/`，由 Chrome 安装和加载，不进入 Plugin Hub 的 OpenClaw 扩展管理。它保留上游基线及产品侧栏补充，自有组装脚本、Markdown 源码和单元测试随包维护；复用应用聊天代码的构建适配与 Native Messaging helper 留在宿主，Main 继续拥有连接、权限和会话。

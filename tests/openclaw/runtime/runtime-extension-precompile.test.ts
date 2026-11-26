@@ -173,26 +173,50 @@ describe('local extension packaging', () => {
     expect(fs.existsSync(path.join(outputDir, 'setup-api.js'))).toBe(false);
   });
 
-  test('recompiles the current bridge after packaging resynchronizes its source', async () => {
+  test('recompiles the bridge and updates the bundled inventory when packaging stages new sources', async () => {
     const { repoRoot, runtimeRoot, sourceDir, outputDir } = createFixture();
+    const packagePath = path.join(outputDir, 'package.json');
     fs.writeFileSync(path.join(sourceDir, 'setup-api.ts'), 'export const revision: number = 1;');
     syncOpenClawRuntimeResources(runtimeRoot, { repoRoot });
     await precompileOpenClawExtensions(runtimeRoot, { required: true });
     const firstBuild = fs.readFileSync(path.join(outputDir, 'index.js'), 'utf8');
+    const firstInventory = JSON.parse(fs.readFileSync(packagePath, 'utf8')).openclaw
+      .bundledInventorySha256;
     fs.appendFileSync(
       path.join(sourceDir, 'index.ts'),
       '\nexport const testBuildRevision = "second";\n',
     );
     fs.writeFileSync(path.join(sourceDir, 'setup-api.ts'), 'export const revision: number = 2;');
+    const extension = path.join(repoRoot, 'plugins', 'extensions', 'fixture-speech');
+    fs.mkdirSync(extension);
+    fs.writeFileSync(
+      path.join(extension, 'openclaw.plugin.json'),
+      JSON.stringify({
+        id: 'fixture-speech',
+        configSchema: { type: 'object' },
+        contracts: { speechProviders: ['fixture-speech'] },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(extension, 'package.json'),
+      JSON.stringify({
+        name: 'fixture-speech',
+        type: 'module',
+        openclaw: { extensions: ['./index.js'] },
+      }),
+    );
+    fs.writeFileSync(path.join(extension, 'index.js'), 'export default { register() {} };');
 
     // beforePack repeats resource sync after the runtime pipeline already compiled the plugin.
     syncOpenClawRuntimeResources(runtimeRoot, { repoRoot });
     const result = await precompileOpenClawExtensions(runtimeRoot, { required: true });
 
     expect(result).toMatchObject({ compiled: 1, errors: 0 });
-    expect(
-      JSON.parse(fs.readFileSync(path.join(outputDir, 'package.json'), 'utf8')).openclaw.extensions,
-    ).toEqual(['./index.js']);
+    const secondPackage = JSON.parse(fs.readFileSync(packagePath, 'utf8')).openclaw;
+    expect(secondPackage.extensions).toEqual(['./index.js']);
+    expect(firstInventory).toMatch(/^[a-f0-9]{64}$/);
+    expect(secondPackage.bundledInventorySha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(secondPackage.bundledInventorySha256).not.toBe(firstInventory);
     expect(fs.existsSync(path.join(outputDir, 'index.ts'))).toBe(false);
     const secondBuild = fs.readFileSync(path.join(outputDir, 'index.js'), 'utf8');
     expect(secondBuild).not.toBe(firstBuild);

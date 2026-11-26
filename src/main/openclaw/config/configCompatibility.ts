@@ -81,8 +81,14 @@ export const buildOpenClawConfigMeta = (
   version: string | null | undefined,
   existingMeta?: unknown,
 ): Record<string, unknown> => {
-  // Gateway owns migration receipts. Dropping them makes native startup and
-  // auth operations repeat completed migrations and rewrite the config.
   const meta = isRecord(existingMeta) ? { ...existingMeta } : {};
-  return { ...meta, lastTouchedVersion: version || 'unknown' };
+  return {
+    ...meta,
+    lastTouchedVersion: version || 'unknown',
+    migrations: {
+      ...(isRecord(meta.migrations) ? meta.migrations : {}),
+      // The embedded Gateway does not use external channel listeners.
+      webhookListeners: true,
+    },
+  };
 };

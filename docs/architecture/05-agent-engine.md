@@ -420,7 +420,7 @@ Runtime Services 通过公开 `before_prompt_build` 为非 ACP 助手追加稳�
 `intent` 禁用不取消已有常驻规则或关闭 memory-core 的匹配钩子；普通记忆工具保持原有策略。
 `secrets` 工具禁用不关闭底层凭据解析、刷新及模型认证所用的 exec/file SecretRef。
 
-配置同步只更新受管的 `meta.lastTouchedVersion` 并删除不再支持的 `lastTouchedAt`，保留 Gateway 写入的 `meta.migrations` 等原生元数据。完整配置、最小配置及登录同步都遵循这一规则，避免抹掉迁移回执后让 Gateway 再次写入并触发无意义重载。
+配置同步更新受管的 `meta.lastTouchedVersion`，并在 `meta.migrations.webhookListeners` 固定写入 `true`，使内嵌 Gateway 跳过旧频道 Webhook 监听器预检。完整配置、最小配置及登录同步保留 Gateway 写入的其他原生迁移回执，避免重复迁移和重载。
 
 ```mermaid
 sequenceDiagram

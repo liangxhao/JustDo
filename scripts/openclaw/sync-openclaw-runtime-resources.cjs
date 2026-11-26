@@ -600,6 +600,33 @@ function syncLocalExtensions(repoRoot, runtimeRoot, label, options = {}) {
   return { sourceDir, targetDir, copied, ...(retired.length ? { removed: retired.map(item => item.id) } : {}) };
 }
 
+function stampBundledExtensionInventory(extensionsDir) {
+  const inventory = crypto.createHash('sha256');
+  const directories = fs.readdirSync(extensionsDir, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort();
+  for (const directory of directories) {
+    const extensionDir = path.join(extensionsDir, directory);
+    const manifestPath = path.join(extensionDir, 'openclaw.plugin.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    inventory.update(directory).update('\0').update(fs.readFileSync(manifestPath)).update('\0');
+    // The Runtime Services package contains the resulting digest.
+    const packagePath = path.join(extensionDir, 'package.json');
+    if (directory !== 'runtime-services' && fs.existsSync(packagePath)) {
+      inventory.update(fs.readFileSync(packagePath));
+    }
+    inventory.update('\0');
+  }
+
+  // Native validates files of known plugins. A required, already indexed package
+  // lets that validation detect a change even when the new plugin has no row yet.
+  const packagePath = path.join(extensionsDir, 'runtime-services', 'package.json');
+  const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  pkg.openclaw.bundledInventorySha256 = inventory.digest('hex');
+  fs.writeFileSync(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
 function syncOpenClawRuntimeResources(runtimeRoot, options = {}) {
   const repoRoot = options.repoRoot || resolveRepoRoot();
   const label = options.label || 'sync-openclaw-runtime-resources';
@@ -623,6 +650,9 @@ function syncOpenClawRuntimeResources(runtimeRoot, options = {}) {
     repoRoot,
     label,
   });
+  if (extensions.copied.includes('runtime-services')) {
+    stampBundledExtensionInventory(extensions.targetDir);
+  }
 
   console.log(
     `[${label}] Runtime resources ready: ${docs.copiedFiles} doc templates, ` +
