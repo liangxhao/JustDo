@@ -2693,6 +2693,7 @@ test('reopens the matching receipt through the real targeted activity and IPC bo
     disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(), unknownSessionRuns: new Map(),
     rootRunIdBySession: new Map([['session-1', completedTiming.rootRunId]]),
     isSessionActive: () => true, compactionInFlightSessionIds: new Set(),
+    getActiveRunId: () => completedTiming.rootRunId,
     goalContinuationCoordinator: { getSnapshot: () => undefined },
   } as unknown as RuntimeSessionStatusContext;
   const getSessionRuntimeStatus = vi.fn((sessionId, options) =>
@@ -2713,6 +2714,39 @@ test('reopens the matching receipt through the real targeted activity and IPC bo
   });
   expect(store.reopenSessionRun).toHaveBeenCalledExactlyOnceWith(completedTiming.id);
   expect(store.beginSessionRun).not.toHaveBeenCalled();
+  expect(store.bindSessionRunRootRun).not.toHaveBeenCalled();
+});
+
+test('keeps the acknowledged follow-up receipt bound during runtime status refresh', async () => {
+  const timing = {
+    id: 'followup-timing', sessionId: 'session-1', clientTurnId: 'followup-run',
+    rootRunId: 'followup-run', startedAt: 2_000, acceptedAt: 2_100, state: 'running' as const,
+  };
+  const store = {
+    getSession: () => ({ id: timing.sessionId, agentId: 'main', status: 'running' }),
+    getLatestSessionRun: () => timing,
+    bindSessionRunRootRun: vi.fn(),
+  } as unknown as CoworkStore;
+  const context = {
+    store,
+    disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(), unknownSessionRuns: new Map(),
+    rootRunIdBySession: new Map([[timing.sessionId, 'previous-run']]),
+    isSessionActive: () => true, compactionInFlightSessionIds: new Set(),
+    getActiveRunId: () => timing.rootRunId,
+    goalContinuationCoordinator: { getSnapshot: () => undefined },
+  } as unknown as RuntimeSessionStatusContext;
+  registerCoworkSessionHandlers({
+    getCoworkStore: () => store,
+    getCoworkEngineRouter: () => ({
+      getSessionRuntimeStatus: readRuntimeSessionStatus.bind(context),
+    }) as unknown as CoworkEngineRouter,
+    setSessionPermissionMode: vi.fn(),
+  });
+  const read = mocks.handle.mock.calls.find(([name]) => name === 'cowork:session:runtimeStatus')![1] as IpcHandler;
+
+  await expect(read(null, timing.sessionId, { includeSubagents: true })).resolves.toMatchObject({
+    success: true, mainRunning: true, rootRunId: timing.rootRunId, timing,
+  });
   expect(store.bindSessionRunRootRun).not.toHaveBeenCalled();
 });
 
@@ -3004,6 +3038,7 @@ test.each([undefined, CoworkSessionSource.ChromeExtension])('starts a separate r
   const store = {
     getSession: () => ({ source }),
     getLatestSessionRun: vi.fn().mockReturnValue(completedTiming),
+    hasOtherSessionRunWithRoot: () => false,
     beginSessionRun,
     bindSessionRunRootRun,
     reopenSessionRun,

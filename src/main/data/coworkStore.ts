@@ -391,6 +391,15 @@ export class CoworkStore {
     return row ? mapSessionRun(row) : undefined;
   }
 
+  hasOtherSessionRunWithRoot(sessionId: string, receiptId: string, rootRunId: string): boolean {
+    return this.getOne<{ found: number }>(
+      `SELECT 1 AS found FROM cowork_session_runs
+       WHERE session_id = ? AND id <> ? AND (root_run_id = ? OR client_turn_id = ?)
+       LIMIT 1`,
+      [sessionId, receiptId, rootRunId, rootRunId],
+    ) !== undefined;
+  }
+
   copyTerminalSessionRuns(
     sourceSessionId: string,
     targetSessionId: string,

@@ -44,7 +44,8 @@ type TransportSeam = {
 };
 type NativeRow = {
   key: string; agentId: string; sessionId: string; lifecycleRevision?: string | null;
-  hasActiveRun: boolean; hasActiveSubagentRun?: boolean; permissionMode: string; sessionRoot: string;
+  hasActiveRun: boolean; activeRunIds?: string[]; hasActiveSubagentRun?: boolean;
+  permissionMode: string; sessionRoot: string;
 };
 type PointRead = (index: number, current: NativeRow) => Promise<NativeRow | null> | NativeRow | null;
 
@@ -72,6 +73,7 @@ function fixture(options: { bound?: boolean; customAgent?: boolean; checkpoint?:
     CREATE TABLE cowork_session_runs(
       id TEXT PRIMARY KEY,session_id TEXT NOT NULL,client_turn_id TEXT UNIQUE NOT NULL,root_run_id TEXT,
       model_ref TEXT,state TEXT NOT NULL,started_at INTEGER NOT NULL,accepted_at INTEGER,ended_at INTEGER,
+      execution_started_at INTEGER,execution_ended_at INTEGER,
       created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
     );
     CREATE TABLE agents(
@@ -158,6 +160,82 @@ function fixture(options: { bound?: boolean; customAgent?: boolean; checkpoint?:
 }
 
 describe('ordinary submission while a prior receipt is open', () => {
+  it.each(['previous-native-run', 'untracked-native-run'])(
+    'records follow-up elapsed time when the preceding run %s is still observed',
+    async precedingRunId => {
+      const f = fixture({ bound: true });
+      const sessionId = f.product.id;
+      f.store.recordSessionRunExecutionTiming(sessionId, 'previous-native-run', { startedAt: 1, endedAt: 2 });
+      const followUp = f.store.beginSessionRun({ sessionId, clientTurnId: 'next-input', startedAt: 10 });
+      f.store.bindSessionRunRootRun(followUp.id, 'next-input');
+      f.setRead((_index, row) => ({
+        ...row, hasActiveRun: true, activeRunIds: [precedingRunId],
+      }));
+      const readStatus = ipc.get('cowork:session:runtimeStatus')!;
+      const passiveActivity = await readStatus({}, sessionId);
+      expect(passiveActivity).toMatchObject({
+        success: true, mainRunning: true, timing: { id: followUp.id, rootRunId: 'next-input' },
+      });
+      expect(passiveActivity).not.toHaveProperty('rootRunId');
+      const precedingIdentity = { sessionKey: f.key, sessionId: f.physicalId, runId: precedingRunId };
+      f.seam.handleGatewayEvent({
+        event: 'agent',
+        payload: { ...precedingIdentity, seq: 1, stream: 'lifecycle', data: { phase: 'start' } },
+      });
+      const precedingActivity = await readStatus({}, sessionId);
+      expect(precedingActivity).toMatchObject({
+        success: true, mainRunning: true, timing: { id: followUp.id, rootRunId: 'next-input' },
+      });
+      expect(precedingActivity).not.toHaveProperty('rootRunId');
+      f.seam.handleGatewayEvent({ event: 'chat', payload: { ...precedingIdentity, state: 'final' } });
+      const lifecycle = {
+        sessionKey: f.key, sessionId: f.physicalId, runId: 'next-input', stream: 'lifecycle',
+      };
+      f.seam.handleGatewayEvent({
+        event: 'agent', payload: { ...lifecycle, seq: 1, data: { phase: 'start', startedAt: 100 } },
+      });
+      await expect(readStatus({}, sessionId)).resolves.toMatchObject({
+        success: true, rootRunId: 'next-input', timing: { id: followUp.id, rootRunId: 'next-input' },
+      });
+      f.seam.handleGatewayEvent({
+        event: 'agent',
+        payload: { ...lifecycle, seq: 2, data: {
+          phase: 'end', executionSettled: true, startedAt: 100, endedAt: 2_600,
+        } },
+      });
+      f.seam.handleGatewayEvent({
+        event: 'chat', payload: { sessionKey: f.key, sessionId: f.physicalId, runId: 'next-input', state: 'final' },
+      });
+      f.setRead((_index, row) => row);
+      await readStatus({}, sessionId);
+      await vi.advanceTimersByTimeAsync(750);
+      await readStatus({}, sessionId);
+
+      expect(ipc.get('cowork:session:run:list')!({}, sessionId)).toMatchObject({
+        success: true,
+        timings: [
+          { rootRunId: 'previous-native-run', state: 'completed', executionTiming: { startedAt: 1, endedAt: 2 } },
+          { rootRunId: 'next-input', state: 'completed', executionTiming: { startedAt: 100, endedAt: 2_600 } },
+        ],
+      });
+    },
+  );
+
+  it('reports native activity without creating a recovery receipt when the active ID is unknown', async () => {
+    const f = fixture({ bound: true });
+    f.setRead((index, row) => ({ ...row, hasActiveRun: index === 1 }));
+    const readStatus = ipc.get('cowork:session:runtimeStatus')!;
+
+    await expect(readStatus({}, f.product.id)).resolves.toMatchObject({
+      success: true, mainRunning: true, running: true,
+    });
+    await expect(readStatus({}, f.product.id)).resolves.toMatchObject({
+      success: true, mainRunning: false, running: false,
+    });
+    expect(f.store.getSessionRuns(f.product.id)).toHaveLength(1);
+    expect(f.store.getActiveSessionRun(f.product.id)).toBeUndefined();
+  });
+
   it('offers native followup only after the existing user input is admitted', async () => {
     const f = fixture({ bound: true });
     const input = { sessionId: f.product.id, clientTurnId: 'next-input', startedAt: 10,

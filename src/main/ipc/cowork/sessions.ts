@@ -402,56 +402,44 @@ export const registerCoworkSessionHandlers = ({
 
     if (raw.running) {
       idleConfirmations.delete(sessionId);
+      let rootRunId = raw.rootRunId;
+      if (timing && rootRunId && rootRunId !== (timing.rootRunId ?? timing.clientTurnId)) {
+        // Another active run can be a native follow-up or a preceding run
+        // whose events are still arriving. A status read cannot transfer an
+        // open receipt away from its own send or verified continuation.
+        if (timing.endedAt === undefined ||
+          store.hasOtherSessionRunWithRoot(sessionId, timing.id, rootRunId)) {
+          rootRunId = undefined;
+        }
+      }
       if (!timing || timing.endedAt !== undefined) {
         const sameRootRun =
-          Boolean(timing && raw.rootRunId) &&
-          (timing.rootRunId === raw.rootRunId || timing.clientTurnId === raw.rootRunId);
+          Boolean(timing && rootRunId) &&
+          (timing.rootRunId === rootRunId || timing.clientTurnId === rootRunId);
         if (timing && (sameRootRun || (!raw.rootRunId && isRestartCheckpoint(timing)))) {
           const finalized = finalizedOutcomes.get(sessionId);
           if (finalized?.id === timing.id && finalized.state !== 'completed') {
             terminalOutcomes.set(sessionId, finalized.state);
           }
           timing = store.reopenSessionRun(timing.id);
-        } else {
+        } else if (rootRunId) {
           const startedAt = Date.now();
           timing = store.beginSessionRun({
             sessionId,
             clientTurnId: `runtime-recovery-${randomUUID()}`,
             startedAt,
           });
-          if (raw.rootRunId) timing = store.bindSessionRunRootRun(timing.id, raw.rootRunId);
-        }
-      } else if (
-        timing?.state === 'running' &&
-        raw.rootRunId &&
-        timing.rootRunId !== raw.rootRunId
-      ) {
-        if (!timing.rootRunId || timing.rootRunId === timing.clientTurnId) {
-          timing = store.bindSessionRunRootRun(timing.id, raw.rootRunId);
-        } else {
-          const now = Date.now();
-          const state =
-            terminalOutcomes.get(sessionId) ??
-            (store.getSession(sessionId)?.status === 'error' ? 'failed' : 'completed');
-          const finished = store.finishSessionRun(timing.id, state, now);
-          if (finished) finalizedOutcomes.set(sessionId, { id: finished.id, state });
-          terminalOutcomes.delete(sessionId);
-          timing = store.beginSessionRun({
-            sessionId,
-            clientTurnId: `runtime-recovery-${randomUUID()}`,
-            startedAt: now,
-          });
-          timing = store.bindSessionRunRootRun(timing.id, raw.rootRunId);
+          timing = store.bindSessionRunRootRun(timing.id, rootRunId);
         }
       }
-      if (timing?.state === 'running' && timing.acceptedAt === undefined) {
-        timing = store.bindSessionRunRootRun(
-          timing.id,
-          raw.rootRunId ?? timing.rootRunId ?? timing.clientTurnId,
-        );
+      if (timing?.state === 'running' && timing.acceptedAt === undefined &&
+        rootRunId === (timing.rootRunId ?? timing.clientTurnId)) {
+        timing = store.bindSessionRunRootRun(timing.id, rootRunId);
       }
+      const { rootRunId: _observedRoot, ...activity } = raw;
       return {
-        ...raw,
+        ...activity,
+        ...(rootRunId ? { rootRunId } : {}),
         running: true,
         revision: nextRevision(sessionId),
         ...(timing ? { timing } : {}),

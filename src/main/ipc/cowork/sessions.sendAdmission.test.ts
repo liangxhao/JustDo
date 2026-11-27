@@ -63,6 +63,7 @@ function fixture(
     disconnectedSessionIds: new Set(), disconnectedRecoveryPromises: new Map(),
     reconcileDisconnectedTurn: vi.fn(async () => {}),
     compactionInFlightSessionIds: new Set(), isSessionActive: () => state.active,
+    getActiveRunId: () => undefined,
     goalContinuationCoordinator: { getSnapshot: () => undefined },
     getSessionKeysForSession: () => [key],
     runtimeRowString, isRuntimeSessionRowMainActive, isRuntimeSessionRowActive,

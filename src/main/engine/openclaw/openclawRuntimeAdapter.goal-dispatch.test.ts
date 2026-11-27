@@ -105,7 +105,9 @@ test.each(['before-record', 'after-record', 'cleanup-failure'] as const)(
       expect(h.agentCalls()[0][1]).toMatchObject({ goalContinuation: { predecessorRunId: h.identity.runId } });
       expect(h.store.getSessionRunByClientTurnId(h.identity.runId)?.state).toBe('completed');
       if (stage !== 'before-record') expect(h.store.getSessionRunByClientTurnId(rejectedId)?.state).toBe('failed');
-      expect(h.store.getActiveSessionRun(h.session.id)?.clientTurnId).toBe(acceptedId);
+      expect(h.store.getActiveSessionRun(h.session.id)).toMatchObject({
+        clientTurnId: acceptedId, rootRunId: acceptedId, acceptedAt: expect.any(Number),
+      });
       expect(h.adapter.getRunTerminalReceipt(rejectedId)).toBeNull();
       expect(h.request.mock.calls.filter(([method]) => method === 'agent.wait')).toHaveLength(0);
       await vi.advanceTimersByTimeAsync(4 * 60 * 60 * 1000);
@@ -160,7 +162,9 @@ test('preserves a sent Goal candidate and its receipt when the ACK is lost', asy
     await vi.advanceTimersByTimeAsync(1_600);
     const uncertainId = h.agentCalls()[0][1]!.idempotencyKey as string;
     expect(h.adapter.unknownSessionRuns.get(h.session.id)?.runId).toBe(uncertainId);
-    expect(h.store.getActiveSessionRun(h.session.id)?.clientTurnId).toBe(uncertainId);
+    const receipt = h.store.getActiveSessionRun(h.session.id);
+    expect(receipt?.clientTurnId).toBe(uncertainId);
+    expect(receipt?.acceptedAt).toBeUndefined();
     expect(h.adapter.goalContinuationCoordinator.getSnapshot(h.session.id)).toMatchObject({
       phase: 'running', identityPending: true, runId: uncertainId,
     });

@@ -389,6 +389,17 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       },
       onRunConfirmed: (sessionId, runId) => {
         const pending = this.unknownSessionRuns.get(sessionId);
+        if (this.activeTurns.get(sessionId)?.runId === runId && !pending?.cancelled) {
+          try {
+            const timing = this.store.getSessionRunByClientTurnId(runId);
+            if (timing?.sessionId === sessionId && timing.state === 'running' &&
+              timing.acceptedAt === undefined && (timing.rootRunId ?? timing.clientTurnId) === runId) {
+              this.store.bindSessionRunRootRun(timing.id, runId);
+            }
+          } catch {
+            coworkLog('WARN', 'OpenClawRuntime', 'Failed to record Goal run admission', { sessionId, runId });
+          }
+        }
         if (pending?.runId === runId && !pending.cancelled) {
           this.unknownSessionRuns.delete(sessionId);
           this.disconnectedSessionIds.delete(sessionId);
@@ -4237,6 +4248,10 @@ export class OpenClawRuntimeAdapter extends EventEmitter implements CoworkRuntim
       reconcileDisconnectedTurn: { get: () => this.reconcileDisconnectedTurn.bind(this) },
       goalContinuationCoordinator: { get: () => this.goalContinuationCoordinator },
       isSessionActive: { get: () => this.isSessionActive.bind(this) },
+      getActiveRunId: { get: () => (sessionId: string) => {
+        const turn = this.activeTurns.get(sessionId);
+        return turn?.gatewaySessionId && turn.lastAgentSeq >= 0 ? turn.runId : undefined;
+      } },
       compactionInFlightSessionIds: { get: () => this.compactionInFlightSessionIds },
       rootRunIdBySession: { get: () => this.rootRunIdBySession },
       getRuntimeSessionSnapshot: { get: () => this.getRuntimeSessionSnapshot.bind(this) },

@@ -23,9 +23,9 @@ function fixture() {
   } as CoworkSession;
   const native = { key, sessionId: 'native-id', lifecycleRevision: 'native-revision', hasActiveRun: false };
   const request = vi.fn().mockResolvedValue({ session: native });
-  const state = { active: false, goalPhase: undefined as string | undefined };
+  const state = { active: false, activeRunId: undefined as string | undefined, goalPhase: undefined as string | undefined };
   const context = {
-    store: { getSession: () => source, getSessionRuns: vi.fn(() => []) },
+    store: { getSession: () => source, getSessionRuns: vi.fn(() => []), getLatestSessionRun: () => undefined },
     ensureGatewayClientReady: vi.fn(async (): Promise<void> => {}),
     gatewayClient: { request }, gatewayClientGeneration: 1,
     targetedSessionStatusChecks: new Map(), unknownSessionRuns: new Map(),
@@ -33,6 +33,7 @@ function fixture() {
     reconcileDisconnectedTurn: vi.fn(async (): Promise<void> => {}),
     rootRunIdBySession: new Map(),
     compactionInFlightSessionIds: new Set(), isSessionActive: () => state.active,
+    getActiveRunId: () => state.activeRunId,
     goalContinuationCoordinator: { getSnapshot: () => ({ phase: state.goalPhase }) },
     getRuntimeSessionSnapshot: vi.fn(() => { throw new Error('Targeted reads must not scan the roster'); }),
     runtimeSessionSnapshotGeneration: 0,
@@ -304,26 +305,64 @@ describe('current conversation runtime activity', () => {
   it.each(['active', 'compaction', 'goal'])('preserves the bound root for local %s activity', async kind => {
     const f = fixture();
     f.context.rootRunIdBySession.set(productId, 'bound-root');
-    if (kind === 'active') f.state.active = true;
+    f.context.store.getLatestSessionRun = () => ({
+      id: 'current-receipt', sessionId: productId, clientTurnId: 'bound-root', rootRunId: 'bound-root',
+      startedAt: 1000, acceptedAt: 1100, state: 'running',
+    });
+    if (kind === 'active') {
+      f.state.active = true;
+      f.state.activeRunId = 'followup-root';
+    }
     if (kind === 'compaction') f.context.compactionInFlightSessionIds.add(productId);
     if (kind === 'goal') f.state.goalPhase = GoalExecutionPhase.Continuing;
 
     await expect(f.read()).resolves.toEqual({
-      known: true, mainRunning: true, subagentRunning: false, running: true, rootRunId: 'bound-root',
+      known: true, mainRunning: true, subagentRunning: false, running: true,
+      rootRunId: kind === 'active' ? 'followup-root' : 'bound-root',
     });
     expect(f.request).not.toHaveBeenCalled();
   });
 
-  it.each(['main', 'descendant'])('preserves existing root metadata after observing native %s activity', async kind => {
+  it('preserves the retained root when only native descendants are active', async () => {
     const f = fixture();
     f.context.rootRunIdBySession.set(productId, 'bound-root');
+    f.context.store.getLatestSessionRun = () => ({
+      id: 'current-receipt', sessionId: productId, clientTurnId: 'bound-root', rootRunId: 'bound-root',
+      startedAt: 1000, acceptedAt: 1100, state: 'running',
+    });
     f.request.mockResolvedValue({ session: { ...f.native,
-      hasActiveRun: kind === 'main', hasActiveSubagentRun: kind === 'descendant',
+      hasActiveRun: false, hasActiveSubagentRun: true,
     } });
 
     await expect(f.read()).resolves.toEqual({
-      known: true, mainRunning: kind === 'main', subagentRunning: kind === 'descendant',
+      known: true, mainRunning: false, subagentRunning: true,
       running: true, rootRunId: 'bound-root',
+    });
+  });
+
+  it('omits the preceding descendant root while a new receipt is open', async () => {
+    const f = fixture();
+    f.context.rootRunIdBySession.set(productId, 'first-root');
+    f.context.store.getLatestSessionRun = () => ({
+      id: 'next-receipt', sessionId: productId, clientTurnId: 'next-root',
+      rootRunId: 'next-root', startedAt: 2000, acceptedAt: 2100, state: 'running',
+    });
+    f.request.mockResolvedValue({ session: { ...f.native, hasActiveSubagentRun: true } });
+
+    await expect(f.read()).resolves.toEqual({
+      known: true, mainRunning: false, subagentRunning: true, running: true,
+    });
+  });
+
+  it('reports native main activity without using a singleton member as its root', async () => {
+    const f = fixture();
+    f.context.rootRunIdBySession.set(productId, 'first-root');
+    f.request.mockResolvedValue({
+      session: { ...f.native, hasActiveRun: true, activeRunIds: ['other-run'] },
+    });
+
+    await expect(f.read()).resolves.toEqual({
+      known: true, mainRunning: true, subagentRunning: false, running: true,
     });
   });
 

@@ -417,6 +417,10 @@ export function handleAgentEvent(
   if (!turn.lifecycleGeneration && event.lifecycleGeneration) {
     turn.lifecycleGeneration = event.lifecycleGeneration;
   }
+  if (event.deliveryEvent === 'agent' && event.sessionId &&
+    turn.gatewaySessionId === event.sessionId && this.rootRunIdBySession.get(sessionId) !== runId) {
+    this.rootRunIdBySession.set(sessionId, turn.runId);
+  }
   if (nativeAgentSeq !== undefined && stream === 'lifecycle' && data.executionSettled === true) {
     this.observeRunTerminal(event, true);
   }

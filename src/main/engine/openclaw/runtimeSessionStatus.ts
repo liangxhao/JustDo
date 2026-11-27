@@ -50,6 +50,7 @@ export interface RuntimeSessionStatusContext {
   readonly reconcileDisconnectedTurn: (sessionId: string) => Promise<void>;
   readonly goalContinuationCoordinator: GoalContinuationCoordinator;
   readonly isSessionActive: (sessionId: string) => boolean;
+  readonly getActiveRunId: (sessionId: string) => string | undefined;
   readonly compactionInFlightSessionIds: Set<string>;
   readonly rootRunIdBySession: Map<string, string>;
   readonly getRuntimeSessionSnapshot: (
@@ -219,6 +220,15 @@ function readWorktreeBinding(
   if (typeof worktreeId === 'string' && worktreeId.trim()) return { nativeSessionKey, isWorktree: true };
 }
 
+function readContinuationRoot(this: RuntimeSessionStatusContext, sessionId: string): string | undefined {
+  const rootRunId = this.rootRunIdBySession.get(sessionId);
+  if (!rootRunId) return;
+  const timing = this.store.getLatestSessionRun(sessionId);
+  if (timing?.acceptedAt !== undefined && (timing.rootRunId ?? timing.clientTurnId) === rootRunId) {
+    return rootRunId;
+  }
+}
+
 const TargetedStatusReason = {
   SourceUnavailable: 'source-unavailable',
   SourceChanged: 'source-changed',
@@ -270,13 +280,19 @@ async function getTargetedSessionRuntimeStatus(
     return this.isSessionActive(sessionId) || this.compactionInFlightSessionIds.has(sessionId) ||
       phase === GoalExecutionPhase.Continuing || phase === GoalExecutionPhase.Retrying;
   };
-  const activity = (mainRunning: boolean, subagentRunning = false): SessionRuntimeStatus => {
+  const activity = (
+    mainRunning: boolean,
+    subagentRunning = false,
+    rootRunId?: string,
+  ): SessionRuntimeStatus => {
     const running = mainRunning || subagentRunning;
-    const rootRunId = running ? this.rootRunIdBySession.get(sessionId) : undefined;
     return { known: true, mainRunning, subagentRunning, running, ...(rootRunId ? { rootRunId } : {}) };
   };
+  const localActivity = () => activity(true, false, this.isSessionActive(sessionId)
+    ? this.getActiveRunId(sessionId)
+    : readContinuationRoot.call(this, sessionId));
   if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
-  if (local()) return activity(true);
+  if (local()) return localActivity();
   try { await this.ensureGatewayClientReady(); } catch { return unknown(TargetedStatusReason.ConnectionUnavailable); }
   const client = this.gatewayClient;
   if (!client) return unknown(TargetedStatusReason.ConnectionUnavailable);
@@ -296,14 +312,14 @@ async function getTargetedSessionRuntimeStatus(
       if (!sourceCurrent()) return unknown(TargetedStatusReason.SourceChanged);
       if (!connectionCurrent()) return unknown(TargetedStatusReason.ConnectionChanged);
       if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
-      if (local()) return activity(true);
+      if (local()) return localActivity();
       const described = await client.request<{ session?: Record<string, unknown> | null }>(
         'sessions.describe', { key, agentId: source.agentId },
       );
       if (!sourceCurrent()) return unknown(TargetedStatusReason.SourceChanged);
       if (!connectionCurrent()) return unknown(TargetedStatusReason.ConnectionChanged);
       if (blocked()) return unknown(TargetedStatusReason.UnknownCustody);
-      if (local()) return activity(true);
+      if (local()) return localActivity();
       const row = described?.session;
       if (row === null) {
         if (!eventCurrent()) return unknown(TargetedStatusReason.RetryIdentityMissing);
@@ -342,9 +358,13 @@ async function getTargetedSessionRuntimeStatus(
       // Native omits hasActiveSubagentRun when its complete descendant projection is inactive.
       const mainRunning = row.hasActiveRun;
       const subagentRunning = options.includeSubagents === true && row.hasActiveSubagentRun === true;
+      // Native membership can include a directly spawned subagent or an
+      // abort controller that still matches the logical key after a reset.
+      const rootRunId = !mainRunning && subagentRunning
+        ? readContinuationRoot.call(this, sessionId) : undefined;
       const worktreeBinding = readWorktreeBinding(source, row);
       return {
-        ...activity(mainRunning, subagentRunning),
+        ...activity(mainRunning, subagentRunning, rootRunId),
         ...(worktreeBinding && { worktreeBinding }),
       };
     } catch {
@@ -391,36 +411,22 @@ export async function getSessionRuntimeStatuses(
   if (disconnected.length > 0) {
     await Promise.all(disconnected.map(sessionId => this.reconcileDisconnectedTurn(sessionId)));
   }
-  const goalScheduling = new Map(
-    uniqueSessionIds.map(sessionId => {
-      const phase = this.goalContinuationCoordinator.getSnapshot(sessionId)?.phase;
-      return [
-        sessionId,
-        phase === GoalExecutionPhase.Continuing || phase === GoalExecutionPhase.Retrying,
-      ];
-    }),
-  );
-  const localMainRunning = new Map(
-    uniqueSessionIds.map(sessionId => [
-      sessionId,
-      (!this.disconnectedSessionIds.has(sessionId) && this.isSessionActive(sessionId)) ||
-        this.compactionInFlightSessionIds.has(sessionId),
-    ]),
-  );
+  const hasLocalTurn = (sessionId: string) =>
+    !this.disconnectedSessionIds.has(sessionId) && this.isSessionActive(sessionId);
   const statuses: Record<string, SessionRuntimeStatus> = {};
   if (
     options?.includeSubagents !== true &&
-    uniqueSessionIds.every(sessionId => localMainRunning.get(sessionId) === true)
+    uniqueSessionIds.every(sessionId => hasLocalTurn(sessionId) || this.compactionInFlightSessionIds.has(sessionId))
   ) {
     for (const sessionId of uniqueSessionIds) {
+      const rootRunId = hasLocalTurn(sessionId) ? this.getActiveRunId(sessionId)
+        : readContinuationRoot.call(this, sessionId);
       statuses[sessionId] = {
         known: true,
         mainRunning: true,
         subagentRunning: false,
         running: true,
-        ...(this.rootRunIdBySession.get(sessionId)
-          ? { rootRunId: this.rootRunIdBySession.get(sessionId) }
-          : {}),
+        ...(rootRunId ? { rootRunId } : {}),
       };
     }
     return statuses;
@@ -440,8 +446,11 @@ export async function getSessionRuntimeStatuses(
   }
 
   for (const sessionId of uniqueSessionIds) {
-    const localRunning = localMainRunning.get(sessionId) === true;
-    const scheduling = goalScheduling.get(sessionId) === true;
+    const localTurnActive = hasLocalTurn(sessionId);
+    const compacting = this.compactionInFlightSessionIds.has(sessionId);
+    const localRunning = localTurnActive || compacting;
+    const phase = this.goalContinuationCoordinator.getSnapshot(sessionId)?.phase;
+    const scheduling = phase === GoalExecutionPhase.Continuing || phase === GoalExecutionPhase.Retrying;
     if (!snapshot.known && !localRunning && !scheduling) {
       statuses[sessionId] = {
         known: false,
@@ -461,12 +470,10 @@ export async function getSessionRuntimeStatuses(
     const hasMainSessionRow = snapshot.sessions.some(row =>
       sessionKeys.has(this.runtimeRowString(row.key)),
     );
-    const mainRunning =
-      localRunning ||
-      snapshot.sessions.some(row => {
-        const key = this.runtimeRowString(row.key);
-        return sessionKeys.has(key) && this.isRuntimeSessionRowMainActive(row);
-      });
+    const nativeMainRunning = snapshot.sessions.some(row =>
+      sessionKeys.has(this.runtimeRowString(row.key)) && this.isRuntimeSessionRowMainActive(row),
+    );
+    const mainRunning = localRunning || nativeMainRunning;
     let subagentRunning = false;
     if (options?.includeSubagents) {
       subagentRunning = snapshot.sessions.some(
@@ -495,18 +502,16 @@ export async function getSessionRuntimeStatuses(
       (snapshot.known &&
         requestedStateIsCovered &&
         (!this.disconnectedSessionIds.has(sessionId) || mainRunning || subagentRunning));
+    const rootRunId = localTurnActive ? this.getActiveRunId(sessionId)
+      : !nativeMainRunning && (compacting || subagentRunning || scheduling)
+        ? readContinuationRoot.call(this, sessionId) : undefined;
     statuses[sessionId] = {
       known,
       mainRunning,
       subagentRunning,
       running: mainRunning || subagentRunning || scheduling,
       ...(worktreeBinding && { worktreeBinding }),
-      ...(mainRunning || subagentRunning || scheduling
-        ? (() => {
-            const rootRunId = this.rootRunIdBySession.get(sessionId);
-            return rootRunId ? { rootRunId } : {};
-          })()
-        : {}),
+      ...(rootRunId ? { rootRunId } : {}),
     };
   }
   return statuses;
