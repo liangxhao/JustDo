@@ -1,5 +1,10 @@
 import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
 import { hasRecordingValue } from '@shared/browser/browserRecording';
+import {
+  recordingNetworkAddressText,
+  RecordingNetworkGroup,
+  RecordingNetworkOutcome,
+} from '@shared/browser/browserRecordingNetwork';
 import { html, nothing } from 'lit';
 
 import { i18nService } from '@/services/i18n';
@@ -33,6 +38,62 @@ const CHEVRON = icon('M6 9l6 6 6-6');
 const GLOBE = icon('M21 12a9 9 0 11-18 0 9 9 0 0118 0M3 12h18M12 3c4 4 4 14 0 18-4-4-4-14 0-18');
 const CODE = icon('M8 7l-5 5 5 5m8-10l5 5-5 5m-3-13l-2 16');
 const PHOTO = icon('M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6M16 8h.01');
+
+const NETWORK_GROUP_LABELS = {
+  [RecordingNetworkGroup.Load]: 'recordingNetworkLoad',
+  [RecordingNetworkGroup.Action]: 'recordingNetworkAction',
+  [RecordingNetworkGroup.Unassigned]: 'recordingNetworkUnassigned',
+} as const;
+
+const NETWORK_OUTCOME_LABELS = {
+  [RecordingNetworkOutcome.Failed]: 'recordingNetworkFailed',
+  [RecordingNetworkOutcome.Canceled]: 'recordingNetworkCanceled',
+  [RecordingNetworkOutcome.Redirected]: 'recordingNetworkRedirected',
+  [RecordingNetworkOutcome.Unfinished]: 'recordingNetworkUnfinished',
+} as const;
+
+function renderRecordingNetwork(recording: BrowserRecordingDraft) {
+  const network = recording.network;
+  if (!network?.entries.length) return nothing;
+  const t = (key: string) => i18nService.t(key);
+  const steps = new Map(recording.steps.map((step, index) => [step.id, index + 1]));
+  return html`<details class="recording-disclosure recording-message-network">
+    <summary>
+      ${GLOBE}${t('recordingNetwork')}
+      <small>${t('recordingNetworkCount').replace('{count}', String(network.entries.length))}</small>
+      <span class="recording-chevron">${CHEVRON}</span>
+    </summary>
+    <div class="recording-detail-body">
+      ${network.partial ? html`<p class="recording-muted">${t('recordingNetworkPartial')}</p>` : nothing}
+      ${Object.values(RecordingNetworkGroup).map(group => {
+        const entries = network.entries.filter(entry => entry.group === group);
+        if (!entries.length) return nothing;
+        return html`<h4>${t(NETWORK_GROUP_LABELS[group])}</h4>
+          <ul>
+            ${entries.map(entry => {
+              const step = entry.stepId ? steps.get(entry.stepId) : undefined;
+              const outcome = entry.outcome;
+              const exceptionalOutcome = outcome !== RecordingNetworkOutcome.Complete;
+              const result = [
+                entry.status !== undefined && (entry.status >= 400 || exceptionalOutcome)
+                  ? `HTTP ${entry.status}` : null,
+                outcome === RecordingNetworkOutcome.Complete ? null : t(NETWORK_OUTCOME_LABELS[outcome]),
+                step ? t('recordingNetworkStep').replace('{number}', String(step)) : null,
+                entry.loadSequence && !step
+                  ? t('recordingNetworkLoadNumber').replace('{number}', String(entry.loadSequence))
+                  : null,
+              ].filter(Boolean).join(' · ');
+              return html`<li>
+                <strong>${entry.method}</strong>
+                <code>${recordingNetworkAddressText(entry, t('recordingNetworkCredentialHidden'))}</code>
+                ${result ? html`<small>${result}</small>` : nothing}
+              </li>`;
+            })}
+          </ul>`;
+      })}
+    </div>
+  </details>`;
+}
 
 /** External page HTML is always escaped text, never executable markup. */
 export function renderBrowserRecording(recording: BrowserRecordingDraft) {
@@ -152,6 +213,7 @@ export function renderBrowserRecording(recording: BrowserRecordingDraft) {
             </li>`,
         )}
       </ol>
+      ${renderRecordingNetwork(recording)}
     </div>
   </details>`;
 }

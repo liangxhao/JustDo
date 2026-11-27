@@ -7,6 +7,7 @@ import { runInNewContext } from 'node:vm';
 import { BROWSER_AGENT_PANEL_TARGET_ID, BROWSER_GUEST_COMMAND_CHANNEL, BROWSER_GUEST_ZOOM_CHANNEL, type BrowserAgentInteractionState, type BrowserLocalHtmlPreviewResult, type BrowserPanelFaviconUpdatedEvent, type BrowserPanelOpenTabEvent, type BrowserPanelTab,BrowserTabPresentation } from '@shared/browser/browser';
 import { type BrowserAnnotationDraft } from '@shared/browser/browserAnnotation';
 import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
+import type { RecordingNetworkCommand, RecordingNetworkReply } from '@shared/browser/browserRecordingNetwork';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React, { type ComponentProps, StrictMode, useEffect, useRef, useState } from 'react';
 import ts from 'typescript';
@@ -106,6 +107,7 @@ const createLocalHtmlPreview = vi.fn();
 const openExternal = vi.fn().mockResolvedValue({ success: true });
 const openLocalHtmlExternal = vi.fn().mockResolvedValue({ success: true });
 const registerAgentTab = vi.fn();
+const recordingNetwork = vi.fn<(command: RecordingNetworkCommand) => Promise<RecordingNetworkReply>>();
 const unregisterAgentTab = vi.fn();
 const setAgentActiveTab = vi.fn();
 const setUserInteractionState = vi.fn();
@@ -469,7 +471,7 @@ describe('BrowserPanel embedded webview', () => {
       />,
     );
     expect(document.querySelectorAll('webview')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: 'Record actions' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Record actions' })).toBeTruthy();
     expect(screen.queryByLabelText('Draw annotation')).toBeNull();
     expect(screen.queryByLabelText('Switch annotation tool')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Project docs' }));
@@ -498,7 +500,7 @@ describe('BrowserPanel embedded webview', () => {
     fireEvent.click(screen.getByLabelText('New tab'));
 
     expect(screen.getByRole('button', { name: 'Project docs' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Record actions' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Record actions' })).toBeTruthy();
     expect(screen.queryByTestId('browser-annotation-tool-group')).toBeNull();
   });
 
@@ -587,6 +589,10 @@ describe('BrowserPanel embedded webview', () => {
     openExternal.mockClear();
     openLocalHtmlExternal.mockClear();
     registerAgentTab.mockClear();
+    recordingNetwork.mockReset();
+    recordingNetwork.mockImplementation(async command => ({
+      status: 'ready', recordingId: command.lease.recordingId, sequence: command.sequence, segmentId: 1,
+    }));
     unregisterAgentTab.mockClear();
     setAgentActiveTab.mockClear();
     setUserInteractionState.mockClear();
@@ -633,6 +639,7 @@ describe('BrowserPanel embedded webview', () => {
       value: {
         browser: {
           setRecordingLease: vi.fn().mockResolvedValue(true),
+          recordingNetwork,
           createLocalHtmlPreview,
           registerAgentTab,
           unregisterAgentTab,
@@ -1288,7 +1295,7 @@ describe('BrowserPanel embedded webview', () => {
     const activeTab = container.querySelector('[data-browser-tab-id]');
     expect(activeTab?.textContent).toContain('New tab');
     expect(activeTab?.textContent).not.toContain('about:blank');
-    expect(screen.queryByRole('button', { name: 'Record actions' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Record actions' })).toBeTruthy();
     expect(screen.queryByTestId('browser-annotation-tool-group')).toBeNull();
     expect(screen.getByLabelText('More browser options')).toBeTruthy();
 
@@ -2116,6 +2123,122 @@ describe('BrowserPanel embedded webview', () => {
       ),
     );
     expect(retain).toHaveBeenLastCalledWith(true);
+  });
+
+  it('starts from a blank tab and releases only the latest staged address after network preparation', async () => {
+    let panel: BrowserPanelHandle | null = null;
+    const view = render(<BrowserPanelHarness draftKey="recording-blank" panelRef={value => { panel = value; }} />);
+    const first = view.container.querySelector('webview')!;
+    defineWebviewMethod('getWebContentsId', function (this: HTMLElement) {
+      return this === first ? 7 : 8;
+    });
+    fireEvent(first, new Event('dom-ready'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record actions' }));
+    await screen.findByRole('button', { name: 'Pause recording' });
+    expect(recordingNetwork).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'start', page: expect.objectContaining({ expectedWebContentsId: 7 }),
+    }));
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+    fireEvent.change(address, { target: { value: 'https://example.com/initial' } });
+    fireEvent.submit(address.closest('form')!);
+    await waitFor(() => expect(loadUrl).toHaveBeenCalledWith('https://example.com/initial'));
+    fireEvent(first, Object.assign(new Event('did-navigate'), { url: 'https://example.com/initial' }));
+    expect(screen.getByText('1')).toBeTruthy();
+
+    let ready: () => void = () => {};
+    recordingNetwork.mockImplementation(async command => {
+      const response = {
+        status: 'ready' as const, recordingId: command.lease.recordingId,
+        sequence: command.sequence, segmentId: 2,
+      };
+      if (command.action === 'setTarget' && command.page?.expectedWebContentsId === 8)
+        return new Promise(resolve => { ready = () => resolve(response); });
+      return response;
+    });
+    act(() => { panel!.openTab('https://other.example/orders'); });
+    const second = view.container.querySelectorAll('webview')[1]!;
+    expect(second.getAttribute('src')).toBe('about:blank');
+    const replacement = screen.getByRole('textbox', { name: 'Browser address' });
+    fireEvent.change(replacement, { target: { value: 'https://other.example/updated' } });
+    fireEvent.submit(replacement.closest('form')!);
+    await act(async () => { fireEvent(second, new Event('dom-ready')); });
+    expect(loadUrl).not.toHaveBeenCalledWith('https://other.example/orders');
+    expect(loadUrl).not.toHaveBeenCalledWith('https://other.example/updated');
+    expect(screen.getByText('1')).toBeTruthy();
+
+    await act(async () => { ready(); });
+    fireEvent(second, new Event('dom-ready'));
+    expect(loadUrl).not.toHaveBeenCalledWith('https://other.example/orders');
+    expect(loadUrl.mock.calls.filter(([url]) => url === 'https://other.example/updated')).toHaveLength(1);
+    fireEvent(second, Object.assign(new Event('did-navigate'), { url: 'https://other.example/updated' }));
+    expect(screen.getByText('2')).toBeTruthy();
+  });
+
+  it('waits for the network handoff before replacing a paused guest registration', async () => {
+    let panel: BrowserPanelHandle | null = null;
+    const panelRef = (value: BrowserPanelHandle | null) => { panel = value; };
+    const view = render(<BrowserPanelHarness draftKey="__home__" initialTabs={[pageTab]} panelRef={panelRef} />);
+    fireEvent(view.container.querySelector('webview')!, new Event('dom-ready'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record actions' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Pause recording' }));
+    await screen.findByRole('button', { name: 'Resume recording' });
+    let acceptTransfer: () => void = () => {};
+    recordingNetwork.mockImplementationOnce(command => new Promise(resolve => {
+      acceptTransfer = () => resolve({
+        status: 'transferReady', recordingId: command.lease.recordingId, sequence: command.sequence,
+      });
+    }));
+    unregisterAgentTab.mockClear();
+    act(() => { panel!.promoteRecordingSession('__home__', 'temp-1'); });
+    view.rerender(<BrowserPanelHarness draftKey="temp-1" initialTabs={[pageTab]} panelRef={panelRef} />);
+    expect(recordingNetwork).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: 'transferTarget', toSessionId: 'temp-1',
+      from: { resourceSessionId: '__home__', targetId: pageTab.targetId, expectedWebContentsId: 7 },
+    }));
+    expect(unregisterAgentTab).not.toHaveBeenCalled();
+
+    await act(async () => { acceptTransfer(); });
+    expect(unregisterAgentTab).toHaveBeenCalledWith({ sessionId: '__home__', targetId: pageTab.targetId });
+    expect(registerAgentTab).toHaveBeenLastCalledWith(expect.objectContaining({ sessionId: 'temp-1' }));
+    expect(screen.getByRole('button', { name: 'Resume recording' })).toBeTruthy();
+    expect(recordingNetwork).toHaveBeenCalledTimes(3);
+  });
+
+  it('loads an accepted address in its original tab when the user switches during network preparation', async () => {
+    const secondTab = { ...pageTab, id: 'second', targetId: 'second', customTitle: 'Second' };
+    const view = render(<BrowserPanelHarness draftKey="recording-address-switch" initialTabs={[pageTab, secondTab]} />);
+    const [first, second] = [...view.container.querySelectorAll<HTMLElement>('webview')];
+    defineWebviewMethod('getWebContentsId', function (this: HTMLElement) { return this === first ? 7 : 8; });
+    recordingNetwork.mockImplementationOnce(() => new Promise(() => {}));
+    fireEvent(first!, new Event('dom-ready'));
+    fireEvent(second!, new Event('dom-ready'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record actions' }));
+    await screen.findByRole('button', { name: 'Pause recording' });
+
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+    fireEvent.change(address, { target: { value: 'https://example.com/accepted' } });
+    fireEvent.submit(address.closest('form')!);
+    expect(loadUrl).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('tab', { name: 'Second' }));
+
+    await waitFor(() => expect(loadUrl).toHaveBeenCalledOnce());
+    expect(loadUrl).toHaveBeenCalledWith('https://example.com/accepted');
+    expect(loadUrl.mock.contexts[0]).toBe(first);
+    expect((screen.getByRole('textbox', { name: 'Browser address' }) as HTMLInputElement).title).toBe('https://example.com');
+  });
+
+  it('leaves network collection untouched when a stale resource-scoped tab close is rejected', async () => {
+    let panel: BrowserPanelHandle | null = null;
+    const view = render(<BrowserPanelHarness draftKey="recording-stale-close" initialTabs={[pageTab]}
+      panelRef={value => { panel = value; }} />);
+    fireEvent(view.container.querySelector('webview')!, new Event('dom-ready'));
+    fireEvent.click(screen.getByRole('button', { name: 'Record actions' }));
+    await screen.findByRole('button', { name: 'Pause recording' });
+
+    await act(async () => { panel!.closeTab(pageTab.targetId, { resourceSessionId: 'other-resource' }); });
+
+    expect(view.container.querySelectorAll('webview')).toHaveLength(1);
+    expect(recordingNetwork.mock.calls.map(([command]) => command.action)).toEqual(['start']);
   });
 
   it('keeps the live guest mounted while the panel is hidden', () => {

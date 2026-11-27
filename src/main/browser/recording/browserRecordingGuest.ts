@@ -94,7 +94,7 @@ export function installBrowserRecordingGuest(): void {
   watchRoot(document);
   let composing = false;
   let scrollIntentAt = 0;
-  let pending: Element | null = null;
+  let pending: { element: Element; firstAt?: number; lastAt?: number } | null = null;
   let scrollTimer: ReturnType<typeof setTimeout> | undefined;
   let pendingScroll: (() => void) | undefined;
   const flushScroll = () => {
@@ -191,12 +191,14 @@ export function installBrowserRecordingGuest(): void {
     observationTimer = setTimeout(flushObservation, 450);
   };
   const flush = (): void => {
-    const element = pending;
-    if (!element || composing) return;
+    if (!pending || composing) return;
+    const { element, firstAt, lastAt } = pending;
     pending = null;
     const hidden = sensitive(element);
     emit({
       action: RecordingAction.Input,
+      firstInputAt: firstAt,
+      occurredAt: lastAt,
       target: hidden
         ? { tag: element.localName, role: '', name: '', selector: '' }
         : describe(element),
@@ -308,6 +310,11 @@ export function installBrowserRecordingGuest(): void {
       const target = event.composedPath()[0];
       return target && (target as Node).nodeType === 1 ? (target as Element) : null;
     };
+    const occurredAt = (event: Event): number | undefined => {
+      const timeOrigin = doc.defaultView?.performance?.timeOrigin;
+      const at = timeOrigin === undefined ? Number.NaN : timeOrigin + event.timeStamp;
+      return Number.isFinite(at) && at > 0 ? at : undefined;
+    };
     listen(
       'compositionstart',
       () => {
@@ -333,8 +340,13 @@ export function installBrowserRecordingGuest(): void {
           ['checkbox', 'radio', 'file'].includes((element as HTMLInputElement).type)
         )
           return;
-        if (pending && pending !== element) flush();
-        pending = element;
+        const at = occurredAt(event);
+        if (pending && pending.element !== element) flush();
+        pending = {
+          element,
+          firstAt: pending?.element === element ? pending.firstAt ?? at : at,
+          lastAt: at,
+        };
       },
       true,
     );
@@ -342,7 +354,7 @@ export function installBrowserRecordingGuest(): void {
     listen(
       'pointerdown',
       event => {
-        if (active && event.isTrusted && pending !== elementFor(event)) flush();
+        if (active && event.isTrusted && pending?.element !== elementFor(event)) flush();
       },
       true,
     );
@@ -364,6 +376,7 @@ export function installBrowserRecordingGuest(): void {
         const raw = elementFor(event);
         emit({
           action: event.detail >= 2 ? RecordingAction.DoubleClick : RecordingAction.Click,
+          occurredAt: occurredAt(event),
           target: hidden
             ? { tag: element.localName, role: '', name: '', selector: '' }
             : describe(element),
@@ -406,6 +419,7 @@ export function installBrowserRecordingGuest(): void {
         const hidden = sensitive(element);
         emit({
           action: RecordingAction.Select,
+          occurredAt: occurredAt(event),
           target: hidden
             ? { tag: element.localName, role: '', name: '', selector: '' }
             : describe(element),
@@ -474,6 +488,7 @@ export function installBrowserRecordingGuest(): void {
         ].filter(Boolean) as string[];
         emit({
           action: RecordingAction.Key,
+          occurredAt: occurredAt(event),
           ...(element ? { target: describe(element) } : {}),
           ...(hidden
             ? { sensitive: true }

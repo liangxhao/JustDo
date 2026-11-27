@@ -99,6 +99,7 @@ import {
   BrowserRecordingChannel,
   type BrowserRecordingLease,
 } from '../../shared/browser/browserRecording';
+import type { RecordingNetworkCommand, RecordingNetworkReply } from '../../shared/browser/browserRecordingNetwork';
 import { ChromeIpc } from '../../shared/chrome/chrome';
 import type { CoworkAttachmentPayload } from '../../shared/cowork/attachments';
 import {
@@ -550,6 +551,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.send(BrowserIpc.UserInteractionState, state),
     setRecordingLease: (state: BrowserRecordingLease): Promise<boolean> =>
       ipcRenderer.invoke(BrowserRecordingChannel.Lease, state),
+    recordingNetwork: (command: RecordingNetworkCommand): Promise<RecordingNetworkReply> =>
+      ipcRenderer.invoke(BrowserRecordingChannel.Network, command),
     acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) =>
       ipcRenderer.send(BrowserIpc.AgentInteractionReady, state),
     intervention: (input: BrowserInterventionRequest) =>

@@ -4,7 +4,10 @@
 import { type BrowserAnnotationDisplay } from '@shared/browser/browserAnnotation';
 import { isWebBrowserLink } from '@shared/browser/browserLinkOpening';
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
-import { parseRecordingContext, serializeRecording } from '@shared/browser/browserRecording';
+import {
+type BrowserRecordingDraft,
+  parseRecordingContext, serializeRecording, } from '@shared/browser/browserRecording';
+import { readRecordingNetworkSummary } from '@shared/browser/browserRecordingNetwork';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import {
   isLocalAssistantDeliverableSource,
@@ -879,13 +882,20 @@ export function normalizeMessage(
     content = displayItems.flatMap((item: Record<string, unknown>) => {
       if (item.type === 'browser_recording') {
         try {
+          const source = item.recording as BrowserRecordingDraft;
+          const network = readRecordingNetworkSummary(source.network, source.steps);
           const recording = parseRecordingContext(
             serializeRecording(
-              item.recording as import('@shared/browser/browserRecording').BrowserRecordingDraft,
+              { ...source, capturedNetwork: undefined, network: network.summary },
               { preserveHistoryScreenshotReferences: true },
             ),
           );
-          return recording ? [{ type: 'browser_recording' as const, recording }] : [];
+          if (!recording) return [];
+          const networkInvalid = source.networkInvalid || !network.comparable;
+          return [{
+            type: 'browser_recording' as const,
+            recording: networkInvalid ? { ...recording, networkInvalid: true as const } : recording,
+          }];
         } catch {
           return [];
         }

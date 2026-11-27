@@ -45,6 +45,7 @@ vi.mock('electron', () => ({
 }));
 
 import { BrowserIpc } from '../../shared/browser/browser';
+import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
 import { BrowserAgentBridge } from './browserAgentBridge';
 
 let bridge: BrowserAgentBridge | null = null;
@@ -149,6 +150,50 @@ test('keeps lifecycle and tab inspection actions lazy', async () => {
   ).resolves.toMatchObject({ running: true, tabs: [], tabCount: 0 });
 
   expect(sendToRenderer).not.toHaveBeenCalled();
+});
+
+test('binds network recording IPC to a trusted frame, the exact lease, and the registered guest', async () => {
+  bridge = new BrowserAgentBridge(vi.fn(), owner => owner === 10);
+  bridge.registerIpc();
+  const debuggerEvents = new EventEmitter();
+  let debuggerAttached = false;
+  const url = 'https://example.test/';
+  electron.guests.set(100, {
+    id: 100,
+    getType: () => 'webview',
+    isDestroyed: () => false,
+    getURL: () => url,
+    hostWebContents: { id: 10 },
+    debugger: Object.assign(debuggerEvents, {
+      isAttached: () => debuggerAttached,
+      attach: () => { debuggerAttached = true; },
+      detach: () => { debuggerAttached = false; },
+      sendCommand: vi.fn(async (method: string) => method === 'Page.getFrameTree'
+        ? { frameTree: { frame: { id: 'root', loaderId: 'loader', url } } }
+        : {}),
+    }),
+  });
+  registerGuest(100);
+  const event = trustedEvent();
+  const lease = { recordingId: 'recording-1', sessionId: 'session-1', profile: 'embedded' };
+  const apply = electron.handlers.get(BrowserRecordingChannel.Network)!;
+  const start = {
+    lease, sequence: 1, action: 'start',
+    page: { resourceSessionId: 'session-1', targetId: 'embedded-1', expectedWebContentsId: 100 },
+  };
+
+  expect(await apply(event, start)).toEqual({ status: 'denied' });
+  expect(await electron.handlers.get(BrowserRecordingChannel.Lease)!(event, { ...lease, acquire: true })).toBe(true);
+  expect(await apply({ ...event, senderFrame: { processId: 20, routingId: 31 } }, start)).toEqual({ status: 'denied' });
+  expect(await apply(event, { ...start, lease: { ...lease, sessionId: 'other-session' } })).toEqual({ status: 'denied' });
+  expect(await apply(event, start)).toMatchObject({ status: 'ready', segmentId: 1 });
+
+  // Closed guests may still yield the already-authorized sealed review snapshot.
+  electron.handlers.get(BrowserIpc.AgentUnregisterTab)!(event, { sessionId: 'session-1', targetId: 'embedded-1' });
+  expect(await apply(event, { lease, sequence: 2, action: 'finish', requestedAtMs: Date.now() }))
+    .toMatchObject({ status: 'finished', snapshot: { entries: [], coverage: ['detached'] } });
+  await electron.handlers.get(BrowserRecordingChannel.Lease)!(event, { ...lease, acquire: false });
+  expect(await apply(event, { lease, sequence: 3, action: 'finish', requestedAtMs: Date.now() })).toEqual({ status: 'denied' });
 });
 
 test('retains main operator ownership for its exact workspace host and revokes it on reset', async () => {

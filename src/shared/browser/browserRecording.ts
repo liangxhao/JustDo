@@ -1,9 +1,17 @@
 import type { BrowserAgentProfile } from './browser';
 import {
+  projectRecordingNetwork,
+  readRecordingNetworkSummary,
+  type RecordingNetworkCapture,
+  type RecordingNetworkSummary,
+  sanitizeRecordingLocation,
+} from './browserRecordingNetwork';
+import {
   parseElementDetails,
   parseInteraction,
   RecordingDetailLimits,
   type RecordingElementDetails,
+  recordingElementFrameUrls,
   type RecordingInteraction,
 } from './recordingDetails';
 
@@ -13,6 +21,7 @@ export const BrowserRecordingChannel = {
   Lease: 'browser:recording:lease',
   Ready: 'browser:recording:ready',
   Capture: 'browser:recording:capture',
+  Network: 'browser:recording:network',
 } as const;
 export const RecordingStatus = {
   Recording: 'recording',
@@ -101,6 +110,9 @@ export type BrowserRecordingDraft = {
   limited?: boolean;
   screenshotWarning?: boolean;
   incomplete?: boolean;
+  capturedNetwork?: RecordingNetworkCapture;
+  network?: RecordingNetworkSummary;
+  networkInvalid?: true;
 };
 export type BrowserRecordingSession = BrowserRecordingDraft & {
   status: (typeof RecordingStatus)[keyof typeof RecordingStatus];
@@ -146,6 +158,8 @@ export type BrowserRecordingEvent = {
   url?: string;
   title?: string;
   time?: number;
+  occurredAt?: number;
+  firstInputAt?: number;
   recordingId: string;
   documentId: string;
   sequence: number;
@@ -168,33 +182,7 @@ export function recordingPageTitle(value: unknown): string {
   return recordingText(text);
 }
 export function recordingUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    if (!['http:', 'https:'].includes(url.protocol)) return '';
-    url.password = '';
-    for (const key of [...url.searchParams.keys()]) {
-      if (isSensitiveRecordingField(key)) url.searchParams.set(key, '[redacted]');
-    }
-    // Preserve ordinary fragments/SPAs, redacting only named password parameters.
-    const fragment = url.hash.slice(1);
-    const queryStart = fragment.indexOf('?');
-    const fragmentParams = new URLSearchParams(
-      queryStart < 0 ? fragment : fragment.slice(queryStart + 1),
-    );
-    let changed = false;
-    for (const key of [...fragmentParams.keys()]) {
-      if (isSensitiveRecordingField(key)) {
-        fragmentParams.set(key, '[redacted]');
-        changed = true;
-      }
-    }
-    if (changed)
-      url.hash =
-        (queryStart < 0 ? '' : fragment.slice(0, queryStart + 1)) + fragmentParams.toString();
-    return url.toString().slice(0, 800);
-  } catch {
-    return '';
-  }
+  return sanitizeRecordingLocation(value, isSensitiveRecordingField);
 }
 export const isSensitiveRecordingField = (value: string): boolean =>
   /password|passwd|(?:^|[^a-z])pwd(?:$|[^a-z])|密码|口令/i.test(value);
@@ -242,6 +230,12 @@ export function parseRecordingEvent(value: unknown): BrowserRecordingEvent | nul
     ...(typeof v.url === 'string' ? { url: recordingUrl(v.url) } : {}),
     ...(typeof v.title === 'string' ? { title: recordingPageTitle(v.title) } : {}),
     ...(typeof v.time === 'number' && Number.isFinite(v.time) ? { time: v.time } : {}),
+    ...(typeof v.occurredAt === 'number' && Number.isFinite(v.occurredAt)
+      ? { occurredAt: v.occurredAt }
+      : {}),
+    ...(typeof v.firstInputAt === 'number' && Number.isFinite(v.firstInputAt)
+      ? { firstInputAt: v.firstInputAt }
+      : {}),
     ...(t
       ? {
           target: {
@@ -268,9 +262,17 @@ export function parseRecordingEvent(value: unknown): BrowserRecordingEvent | nul
     ...(v.sensitive === true ? {} : { interaction: parseInteraction(v.interaction) }),
   };
 }
-export function serializeRecording(
+// Gateway text transports may remove invisible format/control characters.
+// Escape them before computing either the length header or the network budget.
+const stringifyRecording = (value: unknown): string =>
+  JSON.stringify(value).replace(
+    /[\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g,
+    character => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
+  );
+
+function serializeRecordingBase(
   draft: BrowserRecordingDraft,
-  options: { preserveHistoryScreenshotReferences?: boolean } = {},
+  preserveHistoryScreenshotReferences: boolean,
 ): string {
   const payload = {
     kind: 'browser_operation_demonstration',
@@ -287,32 +289,27 @@ export function serializeRecording(
       target:
         step.sensitive && step.target
           ? { tag: step.target.tag, role: '', name: '', selector: '' }
-          : step.target,
-      interaction: step.sensitive ? undefined : step.interaction,
+          : step.target && {
+              ...recordingElementFrameUrls(step.target),
+              ...(step.target.frameUrl ? { frameUrl: recordingUrl(step.target.frameUrl) } : {}),
+            },
+      interaction: step.sensitive ? undefined : parseInteraction(step.interaction),
       url: recordingUrl(step.url),
       title: recordingPageTitle(step.title),
       screenshotFiles: undefined as string[] | undefined,
       value: hasRecordingValue(step) ? step.value : undefined,
       number: index + 1,
       screenshots:
-        options.preserveHistoryScreenshotReferences && Array.isArray(step.screenshotFiles)
+        preserveHistoryScreenshotReferences && Array.isArray(step.screenshotFiles)
           ? step.screenshotFiles
           : draft.images.filter(image => image.stepId === step.id).map(image => image.fileName),
       screenshotFingerprints:
-        options.preserveHistoryScreenshotReferences && Array.isArray(step.screenshotFingerprints)
+        preserveHistoryScreenshotReferences && Array.isArray(step.screenshotFingerprints)
           ? step.screenshotFingerprints
           : draft.images.filter(image => image.stepId === step.id).map(imageFingerprint),
     })),
   };
-  // Gateway text transports may remove invisible format/control characters.
-  // Escape them within JSON before computing either length header or budget;
-  // JSON.parse restores their original values without broad history recovery.
-  const stringify = (value: unknown): string =>
-    JSON.stringify(value).replace(
-      /[\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/g,
-      character => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`,
-    );
-  let text = stringify(payload);
+  let text = stringifyRecording(payload);
   if (text.length > 48_000) {
     const targets: BrowserRecordingTarget[] = [];
     const indexes = new Map<string, number>();
@@ -329,7 +326,7 @@ export function serializeRecording(
         return { ...step, target: undefined, targetRef };
       },
     );
-    text = stringify({ ...payload, steps, targets });
+    text = stringifyRecording({ ...payload, steps, targets });
     if (text.length > RECORDING_LIMITS.textLength) {
       // Keep actions, validated locators and state. Explicitly mark optional evidence omitted.
       const compactTargets = targets.map<BrowserRecordingTarget>(target => ({
@@ -339,11 +336,51 @@ export function serializeRecording(
         context: undefined,
         limitations: [...new Set([...(target.limitations ?? []), 'context-budget'])],
       }));
-      text = stringify({ ...payload, steps, targets: compactTargets, detailLimited: true });
+      text = stringifyRecording({ ...payload, steps, targets: compactTargets, detailLimited: true });
     }
   }
   if (text.length > RECORDING_LIMITS.textLength) throw new RangeError('Recording context too long');
   return text;
+}
+
+const RECORDING_NETWORK_FIELD = ',"network":';
+const NETWORK_INSTRUCTION =
+  'Requests are observations. Timing does not prove causation. HTTP status does not establish business outcome or permission to replay a request.';
+const NETWORK_INSTRUCTION_JSON = `,"networkInstruction":${JSON.stringify(NETWORK_INSTRUCTION)}`;
+
+function recordingNetworkWithinBudget(draft: BrowserRecordingDraft, baseLength: number) {
+  return projectRecordingNetwork(
+    draft.capturedNetwork,
+    draft.network,
+    draft.steps,
+    RECORDING_LIMITS.textLength - baseLength - RECORDING_NETWORK_FIELD.length - NETWORK_INSTRUCTION_JSON.length,
+    stringifyRecording,
+  );
+}
+
+export function recordingNetworkProjection(draft: BrowserRecordingDraft): {
+  summary?: RecordingNetworkSummary;
+  omittedCount: number;
+} {
+  if (!draft.network && !draft.capturedNetwork?.include) return { omittedCount: 0 };
+  try {
+    return recordingNetworkWithinBudget(draft, serializeRecordingBase(draft, false).length);
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return recordingNetworkWithinBudget(draft, RECORDING_LIMITS.textLength);
+  }
+}
+
+export function serializeRecording(
+  draft: BrowserRecordingDraft,
+  options: { preserveHistoryScreenshotReferences?: boolean } = {},
+): string {
+  const text = serializeRecordingBase(draft, options.preserveHistoryScreenshotReferences === true);
+  if (!draft.network && !draft.capturedNetwork?.include) return text;
+  const { summary } = recordingNetworkWithinBudget(draft, text.length);
+  return summary
+    ? `${text.slice(0, -1)}${NETWORK_INSTRUCTION_JSON}${RECORDING_NETWORK_FIELD}${stringifyRecording(summary)}}`
+    : text;
 }
 
 /** Presentation data is read only; it is never an execution command. */
@@ -433,6 +470,7 @@ export function parseRecordingContext(text: string): BrowserRecordingDraft | nul
         },
       ];
     });
+    const network = readRecordingNetworkSummary(value.network, steps);
     return {
       id: '',
       sessionId: '',
@@ -444,6 +482,8 @@ export function parseRecordingContext(text: string): BrowserRecordingDraft | nul
       startedAt: 0,
       steps,
       images: [],
+      ...(network.summary ? { network: network.summary } : {}),
+      ...(!network.comparable ? { networkInvalid: true } : {}),
     };
   } catch {
     return null;

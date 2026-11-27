@@ -24,6 +24,7 @@ import type { BrowserRecordingDraft, BrowserRecordingStep } from '@shared/browse
 import {
   hasRecordingValue,
   RecordingAction,
+  recordingNetworkProjection,
   serializeRecording,
 } from '@shared/browser/browserRecording';
 import { useId, useState } from 'react';
@@ -39,6 +40,12 @@ import {
   recordingTargetLabel,
 } from '@/libs/openclaw-chat/components/message/browser-recording-presentation';
 import { i18nService } from '@/services/i18n';
+
+import { BrowserRecordingNetworkReview } from './BrowserRecordingNetworkReview';
+import {
+  detachRecordingNetworkStep,
+  recordingNetworkCaptureForReview,
+} from './browserRecordingNetworkReviewState';
 
 function ActionIcon({ action }: { action: BrowserRecordingStep['action'] }) {
   const Icon =
@@ -185,11 +192,21 @@ export function BrowserRecordingReview({
     });
   let exceedsLimit = false;
   let detailLimited = false;
+  let attachedRequests = 0;
+  let omittedRequests = 0;
   try {
     detailLimited = JSON.parse(serializeRecording(edited)).detailLimited === true;
+    const { summary, omittedCount } = recordingNetworkProjection(edited);
+    attachedRequests = summary?.entries.length ?? 0;
+    omittedRequests = omittedCount;
   } catch {
     exceedsLimit = true;
   }
+  const capture = recordingNetworkCaptureForReview(edited);
+  const hasSteps = edited.steps.length > 0;
+  const hasNetworkEntries = Boolean(capture?.entries.length);
+  const stepNumbers = new Map(edited.steps.map((step, index) => [step.id, index + 1]));
+  const pageLabels = new Map(edited.steps.map(step => [step.pageId, recordingPageLabel(step)]));
   const t = (key: string) => i18nService.t(key);
   const previewImage = (src: string, index: number) => {
     window.dispatchEvent(
@@ -287,10 +304,23 @@ export function BrowserRecordingReview({
             placeholder={t('recordingNotePlaceholder')}
           />
         </div>
-        <div className="recording-section-label">
-          <span>{t('recordingSteps')}</span>
-          <span>{t('recordingEditable')}</span>
-        </div>
+        {capture && (
+          <BrowserRecordingNetworkReview
+            capture={capture}
+            attachedCount={attachedRequests}
+            omittedToSend={omittedRequests}
+            partial={edited.network?.partial === true}
+            stepNumbers={stepNumbers}
+            pageLabels={pageLabels}
+            onChange={capturedNetwork => setEdited({ ...edited, capturedNetwork })}
+          />
+        )}
+        {hasSteps && (
+          <div className="recording-section-label">
+            <span>{t('recordingSteps')}</span>
+            <span>{t('recordingEditable')}</span>
+          </div>
+        )}
         <ol className="recording-steps">
           {edited.steps.map((step, index) => (
             <li key={step.id} className="recording-step">
@@ -309,11 +339,16 @@ export function BrowserRecordingReview({
                   title={t('recordingRemove')}
                   aria-label={`${t('recordingRemove')} ${index + 1}`}
                   onClick={() =>
-                    setEdited({
-                      ...edited,
-                      steps: edited.steps.filter(item => item.id !== step.id),
-                      images: edited.images.filter(image => image.stepId !== step.id),
-                    })
+                    setEdited(
+                      detachRecordingNetworkStep(
+                        {
+                          ...edited,
+                          steps: edited.steps.filter(item => item.id !== step.id),
+                          images: edited.images.filter(image => image.stepId !== step.id),
+                        },
+                        step.id,
+                      ),
+                    )
                   }
                 >
                   <TrashIcon aria-hidden="true" />
@@ -342,28 +377,33 @@ export function BrowserRecordingReview({
                             maxLength={2000}
                             value={step.value}
                             onChange={event =>
-                              setEdited({
-                                ...edited,
-                                steps: edited.steps.map(item =>
-                                  item.id === step.id
-                                    ? {
-                                        ...item,
-                                        value: event.target.value,
-                                        interaction: undefined,
-                                        target: item.target
-                                          ? {
-                                              ...item.target,
-                                              state: {
-                                                ...item.target.state,
-                                                value: event.target.value,
-                                              },
-                                            }
-                                          : undefined,
-                                      }
-                                    : item,
+                              setEdited(
+                                detachRecordingNetworkStep(
+                                  {
+                                    ...edited,
+                                    steps: edited.steps.map(item =>
+                                      item.id === step.id
+                                        ? {
+                                            ...item,
+                                            value: event.target.value,
+                                            interaction: undefined,
+                                            target: item.target
+                                              ? {
+                                                  ...item.target,
+                                                  state: {
+                                                    ...item.target.state,
+                                                    value: event.target.value,
+                                                  },
+                                                }
+                                              : undefined,
+                                          }
+                                        : item,
+                                    ),
+                                    images: edited.images.filter(image => image.stepId !== step.id),
+                                  },
+                                  step.id,
                                 ),
-                                images: edited.images.filter(image => image.stepId !== step.id),
-                              })
+                              )
                             }
                           />
                         ) : (
@@ -440,7 +480,7 @@ export function BrowserRecordingReview({
             </li>
           ))}
         </ol>
-        {!edited.steps.length && (
+        {!hasSteps && !hasNetworkEntries && (
           <div className="recording-empty">
             <DocumentTextIcon aria-hidden="true" />
             <p>{t('recordingEmpty')}</p>
@@ -465,7 +505,7 @@ export function BrowserRecordingReview({
           )}
           <button
             type="button"
-            disabled={!edited.steps.length || exceedsLimit}
+            disabled={exceedsLimit || (!hasSteps && !hasNetworkEntries)}
             className="recording-button recording-button--primary"
             onClick={() => onSave({ ...edited, sessionId: draft.sessionId })}
           >

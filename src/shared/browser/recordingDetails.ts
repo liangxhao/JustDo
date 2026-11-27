@@ -1,3 +1,5 @@
+import { sanitizeRecordingLocation } from './browserRecordingNetwork';
+
 /** Bounded recording evidence, not executable automation instructions. */
 export const RecordingDetailLimits = {
   html: 4800,
@@ -40,6 +42,18 @@ export type RecordingInteraction = {
   scroll?: { scope: 'page' | 'element'; x: number; y: number };
   observed?: { url?: string; state?: Record<string, string | boolean>; messages?: string[] };
 };
+
+export function recordingElementFrameUrls<T extends RecordingElementDetails>(element: T): T {
+  if (!element.scopes?.some(scope => scope.kind === 'frame' && scope.url)) return element;
+  return {
+    ...element,
+    scopes: element.scopes.map(scope =>
+      scope.kind === 'frame' && scope.url
+        ? { ...scope, url: sanitizeRecordingLocation(scope.url) }
+        : scope,
+    ),
+  };
+}
 
 const text = (v: unknown, max = 240): string =>
   typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').slice(0, max) : '';
@@ -126,7 +140,7 @@ export function parseElementDetails(value: unknown): RecordingElementDetails {
             {
               kind: s.kind,
               selector: selector(s.selector),
-              ...(typeof s.url === 'string' ? { url: text(s.url, 800) } : {}),
+              ...(typeof s.url === 'string' ? { url: sanitizeRecordingLocation(s.url) } : {}),
             },
           ]
         : [];
@@ -193,7 +207,7 @@ export function parseInteraction(value: unknown): RecordingInteraction | undefin
   const observed = object(v.observed);
   if (observed)
     result.observed = {
-      ...(typeof observed.url === 'string' ? { url: text(observed.url, 800) } : {}),
+      ...(typeof observed.url === 'string' ? { url: sanitizeRecordingLocation(observed.url) } : {}),
       ...(observed.state ? { state: record(observed.state, states, true) } : {}),
       ...(Array.isArray(observed.messages)
         ? { messages: array(observed.messages, 5).map(item => text(item)) }

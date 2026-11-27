@@ -78,6 +78,28 @@ describe('side panel desktop rich content', () => {
     await vi.waitFor(() => expect(host.querySelectorAll('img[src]')).toHaveLength(6));
     expect(load.mock.calls.map(args => args[0])).toEqual(paths);
   });
+
+  it('renders a sent recording network summary in the bundled side panel', () => {
+    const { host, load } = mount({
+      role: 'user',
+      content: composeBrowserGatewayPrompt('Learn this workflow', [], {
+        ...recording,
+        network: {
+          entries: [{
+            pageId: 'tab', stepId: 'step', group: 'action', type: 'fetch',
+            method: 'GET', at: 20, outcome: 'complete', status: 200,
+            origin: 'https://api.example.com', path: '/orders/123', search: '?page=2&tag=a&tag=b',
+          }],
+        },
+      }),
+    });
+
+    const summary = host.querySelector('.recording-message-network');
+    expect(summary?.textContent).toContain('https://api.example.com/orders/123?page=2&tag=a&tag=b');
+    expect(summary?.querySelector('a')).toBeNull();
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it('retries an image whose source resolved but failed to load in the browser', async () => {
     const clock = vi.spyOn(Date, 'now').mockReturnValue(10_000);
     try {

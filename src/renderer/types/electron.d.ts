@@ -34,6 +34,8 @@ type SessionRunUnknownInput = import('../../shared/cowork/sessionRun').SessionRu
 type UnknownSessionFollowupInput = import('../../shared/cowork/sessionRun').UnknownSessionFollowupInput;
 type UnknownSessionFollowupResult = import('../../shared/cowork/sessionRun').UnknownSessionFollowupResult;
 type BrowserRecordingLease = import('../../shared/browser/browserRecording').BrowserRecordingLease;
+type RecordingNetworkCommand = import('../../shared/browser/browserRecordingNetwork').RecordingNetworkCommand;
+type RecordingNetworkReply = import('../../shared/browser/browserRecordingNetwork').RecordingNetworkReply;
 type CoworkAttachmentPayload = import('../../shared/cowork/attachments').CoworkAttachmentPayload;
 type BeginSessionRunInput = import('../../shared/cowork/sessionRun').BeginSessionRunInput;
 type SetSessionWorkspaceInput =
@@ -522,6 +524,7 @@ interface IElectronAPI {
     setAgentActiveTab: (reference: BrowserAgentTabReference) => void;
     setUserInteractionState: (state: BrowserAgentInteractionState) => void;
     setRecordingLease: (state: BrowserRecordingLease) => Promise<boolean>;
+    recordingNetwork: (command: RecordingNetworkCommand) => Promise<RecordingNetworkReply>;
     acknowledgeAgentInteraction: (state: BrowserAgentInteractionReady) => void;
     intervention: (
       input: import('../../shared/browser/browserIntervention').BrowserInterventionRequest,

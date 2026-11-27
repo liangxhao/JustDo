@@ -21,6 +21,10 @@ import {
   type BrowserInterventionResult,
 } from '../../shared/browser/browserIntervention';
 import { BrowserRecordingChannel } from '../../shared/browser/browserRecording';
+import type {
+  RecordingNetworkPageRef,
+  RecordingNetworkReply,
+} from '../../shared/browser/browserRecordingNetwork';
 import {
   DEFAULT_BROWSER_TAB_LIMIT,
   normalizeBrowserTabLimit,
@@ -79,6 +83,11 @@ import {
 } from './data/browserDataImportService';
 import { sanitizeBrowserUrl as sanitizeUrlForModel } from './data/browserDataSanitizers';
 import { cancelBrowserAgentDownloadsForWebContents } from './downloads/browserAgentDownloadCoordinator';
+import {
+  BrowserRecordingNetworkObserver,
+  parseRecordingNetworkCommand,
+  type RecordingNetworkTarget,
+} from './recording/browserRecordingNetworkObserver';
 
 const AUTOMATIC_TAB_REFERENCE = /^(?:t[1-9]\d*|embedded-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/iu;
 
@@ -133,6 +142,8 @@ export class BrowserAgentBridge {
   private readonly activeEvaluations = new Map<number, Electron.Debugger>();
   private readonly navigationGenerations = new Map<number, number>();
   private readonly userInteractionLocks = new Set<number>();
+  private readonly recordingNetwork = new BrowserRecordingNetworkObserver();
+  private readonly recordingNetworkReady = new Map<number, Promise<unknown>>();
   private readonly recordingLocks = new Map<
     string,
     {
@@ -279,6 +290,10 @@ export class BrowserAgentBridge {
         this.activeTargets.set(scopeId, { targetId: registration.targetId });
       }
       this.installGuestRuntime(tab);
+      this.recordingNetwork.completeTransfer(tab.ownerId, tab.profile, () => this.resolveRecordingNetworkTarget(
+        tab.ownerId, tab.profile,
+        { resourceSessionId: tab.sessionId, targetId: tab.targetId, expectedWebContentsId: tab.webContentsId },
+      ));
       this.startedSessions.add(scopeId);
       const handles = this.tabHandlesBySession.get(scopeId) ?? new Map();
       if (!handles.has(registration.targetId)) {
@@ -357,8 +372,10 @@ export class BrowserAgentBridge {
       )
         return false;
       const release = () => {
-        if (this.recordingLocks.get(key)?.recordingId === v.recordingId)
+        if (this.recordingLocks.get(key)?.recordingId === v.recordingId) {
           this.recordingLocks.delete(key);
+          this.recordingNetwork.release(event.sender.id, v.recordingId as string);
+        }
         event.sender.removeListener('destroyed', release);
         event.sender.removeListener('render-process-gone', release);
         event.sender.removeListener('did-start-navigation', release);
@@ -374,6 +391,29 @@ export class BrowserAgentBridge {
       event.sender.once('render-process-gone', release);
       event.sender.once('did-start-navigation', release);
       return true;
+    });
+    ipcMain.handle(BrowserRecordingChannel.Network, async (event, value: unknown): Promise<RecordingNetworkReply> => {
+      if (!this.isTrustedIpcSender(event)) return { status: 'denied' };
+      const command = parseRecordingNetworkCommand(value);
+      if (!command) return { status: 'denied' };
+      const { sender: { id: ownerId } } = event;
+      const { lease } = command;
+      const lock = this.recordingLocks.get(`${ownerId}:${lease.profile}`);
+      if (!lock || lock.recordingId !== lease.recordingId || lock.sessionId !== lease.sessionId) return { status: 'denied' };
+      const resourceSession = this.recordingNetwork.resourceSession(ownerId, lease.recordingId) ?? lease.sessionId;
+      const page = command.action === 'transferTarget' ? command.from
+        : command.action === 'start' || command.action === 'setTarget' ? command.page : null;
+      const target = page?.resourceSessionId === resourceSession
+        ? this.resolveRecordingNetworkTarget(ownerId, lease.profile, page)
+        : undefined;
+      if (command.action === 'transferTarget' &&
+          (!target || !this.canTransferRecordingNetworkScope(resourceSession, command.toSessionId))) {
+        return { status: 'denied' };
+      }
+      const result = await this.recordingNetwork.apply(ownerId, command, target);
+      return this.recordingLocks.get(`${ownerId}:${lease.profile}`) === lock
+        ? result
+        : { recordingId: lease.recordingId, sequence: command.sequence, status: 'stale' };
     });
     ipcMain.on(BrowserIpc.UserInteractionState, (event, value: unknown) => {
       if (!this.isTrustedIpcSender(event)) return;
@@ -478,7 +518,9 @@ export class BrowserAgentBridge {
     this.userInteractionLocks.clear();
     for (const lock of this.recordingLocks.values()) lock.release();
     this.recordingLocks.clear();
+    this.recordingNetworkReady.clear();
     ipcMain.removeHandler(BrowserRecordingChannel.Lease);
+    ipcMain.removeHandler(BrowserRecordingChannel.Network);
     for (const lease of this.agentInteractionLeases.values()) {
       lease.readyController.abort(stoppedError);
     }
@@ -2153,6 +2195,56 @@ export class BrowserAgentBridge {
     );
   }
 
+  private canTransferRecordingNetworkScope(fromSessionId: string, toSessionId: string): boolean {
+    const isTemporary = (id: string): boolean => /^temp-\d+$/u.test(id);
+    if (this.executionScopes.get(toSessionId)?.ownerSessionId) return false;
+    if (fromSessionId === '__home__') return isTemporary(toSessionId) || this.getSessionWorkspace(toSessionId) !== null;
+    return isTemporary(fromSessionId) &&
+      (toSessionId === '__home__' || this.getSessionWorkspace(toSessionId) !== null);
+  }
+
+  private resolveRecordingNetworkTarget(
+    ownerId: number,
+    profile: BrowserAgentProfile,
+    page: RecordingNetworkPageRef,
+  ): RecordingNetworkTarget | undefined {
+    const scope = browserScopeId(page.resourceSessionId, profile);
+    const registered = (): RegisteredTab | undefined => this.tabsBySession.get(scope)?.get(page.targetId);
+    const tab = registered();
+    if (!tab || tab.headless || tab.ownerId !== ownerId || tab.webContentsId !== page.expectedWebContentsId ||
+        !this.isRegisteredGuestAvailable(tab)) return;
+    const guest = webContents.fromId(tab.webContentsId);
+    if (!guest) return;
+    const isCurrent = (): boolean => {
+      const latest = registered();
+      return Boolean(latest && !latest.headless && latest.ownerId === ownerId && latest.webContentsId === tab.webContentsId &&
+        !guest.isDestroyed() && webContents.fromId(tab.webContentsId) === guest &&
+        this.isAllowedBrowserHost(ownerId, guest.hostWebContents?.id ?? -1));
+    };
+    return {
+      page, guest, isCurrent,
+      prepare: async () => {
+        if (!isCurrent()) return;
+        const guestDebugger = this.ensureOwnedDebugger(tab, guest);
+        let ready = this.recordingNetworkReady.get(tab.webContentsId);
+        if (!ready) {
+          ready = Promise.all([
+            guestDebugger.sendCommand('Network.enable'),
+            guestDebugger.sendCommand('Page.enable'),
+          ]).then(() => guestDebugger.sendCommand('Page.setLifecycleEventsEnabled', { enabled: true }).catch((): undefined => undefined));
+          this.recordingNetworkReady.set(tab.webContentsId, ready);
+          void ready.catch(() => {
+            if (this.recordingNetworkReady.get(tab.webContentsId) === ready) this.recordingNetworkReady.delete(tab.webContentsId);
+          });
+        }
+        await ready;
+        if (!isCurrent() || !this.ownedDebuggerGuests.has(tab.webContentsId) ||
+            this.recordingNetworkReady.get(tab.webContentsId) !== ready) return;
+        return guestDebugger.sendCommand('Page.getFrameTree');
+      },
+    };
+  }
+
   private ensureOwnedDebugger(tab: RegisteredTab, guest: Electron.WebContents): Electron.Debugger {
     const guestDebugger = guest.debugger;
     if (guestDebugger.isAttached()) {
@@ -2330,6 +2422,7 @@ export class BrowserAgentBridge {
       params: Record<string, unknown>,
       debuggerSessionId?: string,
     ) => {
+      if (!tab.headless) this.recordingNetwork.observe(guest, method, params, debuggerSessionId);
       if (method === 'Page.fileChooserOpened' && debuggerSessionId) {
         this.clearArmedUpload(
           tab.webContentsId,
@@ -2502,11 +2595,28 @@ export class BrowserAgentBridge {
     };
 
     const handleDebuggerDetach = () => {
+      this.recordingNetworkReady.delete(tab.webContentsId);
+      this.recordingNetwork.detach(guest, true);
       this.fileChoosers.retire(tab.webContentsId);
       this.ownedDebuggerGuests.delete(tab.webContentsId);
       this.pendingNetworkRequests.delete(tab.webContentsId);
       this.networkRequestsById.delete(tab.webContentsId);
     };
+    const handleRecordingGuestGone = () => {
+      this.recordingNetworkReady.delete(tab.webContentsId);
+      this.recordingNetwork.detach(guest);
+    };
+    const handleRecordingGuestProcessGone = () => {
+      this.recordingNetworkReady.delete(tab.webContentsId);
+      this.recordingNetwork.detach(guest, true);
+    };
+    const handleRecordingDebuggerAvailable = () => this.recordingNetwork.recover(guest);
+    if (canObserveConsole) {
+      guest.on('destroyed', handleRecordingGuestGone);
+      guest.on('render-process-gone', handleRecordingGuestProcessGone);
+      guest.on('devtools-closed', handleRecordingDebuggerAvailable);
+      guest.on('did-finish-load', handleRecordingDebuggerAvailable);
+    }
     const handleNavigation = (...args: unknown[]) => {
       this.fileChoosers.retire(tab.webContentsId);
       const isMainFrame = typeof args[3] === 'boolean' ? args[3] : true;
@@ -2534,9 +2644,17 @@ export class BrowserAgentBridge {
     }
 
     this.runtimeCleanup.set(tab.webContentsId, () => {
+      this.recordingNetworkReady.delete(tab.webContentsId);
+      this.recordingNetwork.detach(guest);
       this.fileChoosers.retire(tab.webContentsId);
       if (canObserveConsole) guest.off('console-message', handleConsole);
       if (canObserveConsole) guest.off('did-start-navigation', handleNavigation);
+      if (canObserveConsole) {
+        guest.off('destroyed', handleRecordingGuestGone);
+        guest.off('render-process-gone', handleRecordingGuestProcessGone);
+        guest.off('devtools-closed', handleRecordingDebuggerAvailable);
+        guest.off('did-finish-load', handleRecordingDebuggerAvailable);
+      }
       try {
         guestDebugger.off('message', handleDebuggerMessage);
         guestDebugger.off('detach', handleDebuggerDetach);

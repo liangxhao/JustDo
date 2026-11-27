@@ -1,7 +1,10 @@
 import './browserRecording.css';
 
 import { PencilSquareIcon, TrashIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
-import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
+import {
+  type BrowserRecordingDraft,
+  recordingNetworkProjection,
+} from '@shared/browser/browserRecording';
 import { useDispatch } from 'react-redux';
 
 import {
@@ -12,6 +15,7 @@ import { recordingSummary } from '@/libs/openclaw-chat/components/message/browse
 import { i18nService } from '@/services/i18n';
 import { store } from '@/store';
 
+import { recordingNetworkReviewSummary } from './browserRecordingNetworkReviewState';
 import { openDraftRecordingReviewTab } from './BrowserRecordingReviewTab';
 
 export function BrowserRecordingDraftCard({
@@ -26,6 +30,10 @@ export function BrowserRecordingDraftCard({
   onTextOnly: (value: boolean) => void;
 }) {
   const dispatch = useDispatch();
+  const networkEntries = draft.capturedNetwork?.entries ?? draft.network?.entries;
+  const networkAttachedCount =
+    recordingNetworkProjection(textOnly ? { ...draft, images: [] } : draft).summary?.entries
+      .length ?? 0;
   return (
     <div className="recording-draft">
       <div className="recording-draft-row">
@@ -50,6 +58,11 @@ export function BrowserRecordingDraftCard({
           <span>
             <strong>{draft.title || i18nService.t('recordingReview')}</strong>
             <small>{recordingSummary(draft)}</small>
+            {networkEntries && (
+              <small>
+                {recordingNetworkReviewSummary(networkEntries.length, networkAttachedCount)}
+              </small>
+            )}
           </span>
           <PencilSquareIcon aria-hidden="true" />
         </button>

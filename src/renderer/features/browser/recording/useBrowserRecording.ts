@@ -12,11 +12,26 @@ import {
   recordingUrl,
   serializeRecording,
 } from '@shared/browser/browserRecording';
-import { useEffect, useRef, useState } from 'react';
+import {
+  RECORDING_NETWORK_LIMITS,
+  type RecordingNetworkCommand,
+  RecordingNetworkCoverage,
+  type RecordingNetworkCoverageIssue,
+  type RecordingNetworkPageRef,
+  type RecordingNetworkReply,
+} from '@shared/browser/browserRecordingNetwork';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+
+import {
+  associateRecordingNetwork,
+  type RecordingNetworkAction,
+  type RecordingNetworkNavigation,
+} from './browserRecordingNetworkAssociation';
 
 type Guest = HTMLElement & {
   send: (channel: string, ...args: unknown[]) => void;
   getURL: () => string;
+  getWebContentsId?: () => number;
   capturePage: () => Promise<{ toDataURL: () => string }>;
 };
 type Options = {
@@ -25,7 +40,48 @@ type Options = {
   activeTab: BrowserPanelTab | undefined;
   tabs: BrowserPanelTab[];
   guests: React.MutableRefObject<Map<string, Guest>>;
+  isInitialNavigationPending?: (targetId: string) => boolean;
 };
+
+type NetworkOperation<T = RecordingNetworkCommand> = T extends RecordingNetworkCommand
+  ? Omit<T, 'lease' | 'sequence'>
+  : never;
+type NetworkTarget = {
+  targetId: string | undefined;
+  page: RecordingNetworkPageRef | null;
+  ready: Promise<boolean>;
+  cancel: () => void;
+  waiting?: boolean;
+  retry?: Promise<boolean>;
+  retried?: boolean;
+};
+type PauseReason = 'manual' | 'visibility';
+type RecordingStart = Pick<BrowserRecordingSession, 'sessionId' | 'profile'> & {
+  settled: Promise<void>;
+  lateStart?: true;
+};
+
+export const isRecordableBrowserTab = (tab: BrowserPanelTab): boolean =>
+  !tab.sourceFilePath && (tab.url === 'about:blank' || /^https?:/.test(tab.url));
+
+function getGuestId(guest: Guest | undefined): number | undefined {
+  try {
+    const id = guest?.getWebContentsId?.();
+    return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function withRecordingTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(undefined), timeoutMs);
+    void work.then(value => {
+      clearTimeout(timer);
+      resolve(value);
+    });
+  });
+}
 
 export function useBrowserRecording(options: Options) {
   const current = useRef(options);
@@ -34,12 +90,22 @@ export function useBrowserRecording(options: Options) {
   const ref = useRef(session);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [networkStatus, setNetworkStatus] = useState<'waiting' | 'ready' | 'unavailable'>('waiting');
   const documents = useRef(new Map<string, { id: string; sequence: number }>());
   const drains = useRef(new Map<string, { requestId: string; resolve: () => void }>());
   const pendingDrain = useRef<Promise<void> | null>(null);
-  const starting = useRef(false);
+  const starting = useRef<RecordingStart>();
   const startGeneration = useRef(0);
   const leaseOwner = useRef<{ recordingId: string; sessionId: string } | null>(null);
+  const networkSequence = useRef(0);
+  const networkTarget = useRef<NetworkTarget>();
+  const networkCoverage = useRef(new Set<RecordingNetworkCoverageIssue>());
+  const networkActions = useRef<RecordingNetworkAction[]>([]);
+  const networkNavigations = useRef<RecordingNetworkNavigation[]>([]);
+  const networkPromotions = useRef<Array<{ from: string; to: string }>>([]);
+  const domActiveTarget = useRef<string>();
+  const pauseReason = useRef<PauseReason>();
+  const stopping = useRef<Promise<void>>();
   const captures = useRef(
     new Map<
       string,
@@ -77,6 +143,133 @@ export function useBrowserRecording(options: Options) {
         acquire: false,
       })
       .catch(() => false);
+
+  const sendNetwork = async (
+    s: BrowserRecordingSession,
+    operation: NetworkOperation,
+  ): Promise<RecordingNetworkReply | undefined> => {
+    const owner = leaseOwner.current;
+    if (owner?.recordingId !== s.id) return undefined;
+    const sequence = ++networkSequence.current;
+    try {
+      const reply = await window.electron.browser.recordingNetwork?.({
+        ...operation,
+        lease: { recordingId: s.id, sessionId: owner.sessionId, profile: s.profile },
+        sequence,
+      });
+      if (
+        !reply ||
+        reply.status === 'denied' ||
+        reply.recordingId !== s.id ||
+        reply.sequence !== sequence ||
+        networkSequence.current !== sequence ||
+        ref.current?.id !== s.id
+      ) return undefined;
+      return reply;
+    } catch {
+      return undefined;
+    }
+  };
+  const getNetworkPage = (tab: BrowserPanelTab): RecordingNetworkPageRef | null => {
+    const expectedWebContentsId = getGuestId(current.current.guests.current.get(tab.targetId));
+    return expectedWebContentsId === undefined ? null : {
+      resourceSessionId: tab.resourceSessionId ?? current.current.draftKey,
+      targetId: tab.targetId,
+      expectedWebContentsId,
+    };
+  };
+  const clearNetworkTarget = (): void => {
+    networkTarget.current?.cancel();
+    networkTarget.current = undefined;
+  };
+  const prepareNetwork = (
+    s: BrowserRecordingSession,
+    tab: BrowserPanelTab,
+    start = false,
+    retried = false,
+  ): Promise<boolean> => {
+    if (networkPromotions.current.length && !tab.resourceSessionId) return Promise.resolve(false);
+    const page = getNetworkPage(tab);
+    const prior = networkTarget.current;
+    if (
+      !start && !retried && prior?.targetId === tab.targetId &&
+      prior.page?.expectedWebContentsId === page?.expectedWebContentsId &&
+      prior.page?.resourceSessionId === page?.resourceSessionId
+    ) return prior.ready;
+
+    prior?.cancel();
+    setNetworkStatus('waiting');
+    let cancel = () => {};
+    const canceled = new Promise<boolean>(resolve => { cancel = () => resolve(false); });
+    const target: NetworkTarget = {
+      targetId: tab.targetId,
+      page,
+      cancel,
+      retried,
+      ready: Promise.race([canceled, sendNetwork(s, start
+        ? { action: 'start', page }
+        : { action: 'setTarget', page, requestedAtMs: Date.now() },
+      ).then(reply => {
+        if (networkTarget.current !== target || ref.current?.id !== s.id || !mounted.current)
+          return false;
+        if (reply?.status === 'ready') {
+          setNetworkStatus('ready');
+          return true;
+        }
+        target.waiting = reply?.status === 'waiting';
+        if (reply?.status !== 'waiting' && reply?.status !== 'stale') {
+          setNetworkStatus('unavailable');
+          networkCoverage.current.add(RecordingNetworkCoverage.Unavailable);
+        }
+        return false;
+      })]),
+    };
+    networkTarget.current = target;
+    return target.ready;
+  };
+  const shouldPrepareNavigation = (tab: BrowserPanelTab): boolean => {
+    const s = ref.current;
+    const owner = s?.status === RecordingStatus.Recording ? s : starting.current;
+    return Boolean(owner && current.current.isOpen && !pauseReason.current && !stopping.current &&
+      current.current.draftKey === owner.sessionId && (tab.profile ?? 'embedded') === owner.profile &&
+      isRecordableBrowserTab(tab));
+  };
+  const waitForNetworkReady = (pageId: string, timeoutMs?: number, registered = false): Promise<boolean> => {
+    const prepare = (): Promise<boolean> => {
+      const s = ref.current;
+      const { activeTab } = current.current;
+      if (!s || activeTab?.targetId !== pageId || !shouldPrepareNavigation(activeTab))
+        return Promise.resolve(false);
+      const ready = prepareNetwork(s, activeTab);
+      const target = networkTarget.current;
+      if (!registered || !target?.page || target.retried) return ready;
+      return ready.then(result => {
+        if (target.retry) return target.retry;
+        if (result || !target.waiting || networkTarget.current !== target) return result;
+        target.retry = prepareNetwork(s, activeTab, false, true);
+        return target.retry;
+      });
+    };
+    const started = starting.current;
+    const ready = started ? started.settled.then(prepare) : prepare();
+    return timeoutMs === undefined ? ready : withRecordingTimeout(ready, timeoutMs).then(Boolean);
+  };
+  const markNetworkLateStart = (pageId: string) => {
+    const tab = current.current.activeTab;
+    if (tab?.targetId !== pageId || !shouldPrepareNavigation(tab)) return;
+    if (ref.current?.status === RecordingStatus.Recording) {
+      networkCoverage.current.add(RecordingNetworkCoverage.LateStart);
+    } else {
+      const intent = starting.current;
+      if (intent?.sessionId === current.current.draftKey) intent.lateStart = true;
+    }
+  };
+  const closeNetworkTarget = (pageId: string): void => {
+    const s = ref.current;
+    if (!s || stopping.current || networkTarget.current?.targetId !== pageId) return;
+    clearNetworkTarget();
+    void sendNetwork(s, { action: 'pause', requestedAtMs: Date.now() });
+  };
   const append = (step: BrowserRecordingStep) => {
     const s = ref.current;
     if (!s || s.status !== RecordingStatus.Recording) return;
@@ -293,6 +486,7 @@ export function useBrowserRecording(options: Options) {
       doc.id !== event.documentId ||
       event.sequence <= doc.sequence ||
       (tab.profile ?? 'embedded') !== s.profile ||
+      ((pauseReason.current || stopping.current) && !drains.current.has(pageId)) ||
       (pageId !== current.current.activeTab?.targetId && !drains.current.has(pageId))
     )
       return;
@@ -330,6 +524,19 @@ export function useBrowserRecording(options: Options) {
       sensitive: event.sensitive,
       interaction: event.interaction,
     };
+    const webContentsId = getGuestId(current.current.guests.current.get(pageId));
+    if (
+      webContentsId !== undefined && event.occurredAt !== undefined &&
+      networkActions.current.length < RECORDING_LIMITS.steps * 2
+    ) {
+      networkActions.current.push({
+        stepId: step.id,
+        webContentsId,
+        at: event.occurredAt,
+        firstInputAt: event.firstInputAt,
+        childFrame: Boolean(event.target?.frameUrl || event.target?.scopes?.some(scope => scope.kind === 'frame')),
+      });
+    }
     append(step);
     if (
       [
@@ -354,6 +561,7 @@ export function useBrowserRecording(options: Options) {
           recordingId: s.id,
           active:
             s.status === RecordingStatus.Recording &&
+            !pauseReason.current && !stopping.current && domActiveTarget.current === pageId &&
             current.current.activeTab?.targetId === pageId,
         });
       } catch {
@@ -361,15 +569,30 @@ export function useBrowserRecording(options: Options) {
       }
     }
   };
-  const onNavigation = (pageId: string, url: string) => {
+  const addNetworkNavigation = (
+    pageId: string,
+    kind: RecordingNetworkNavigation['kind'],
+    at: number,
+    stepId?: string,
+  ) => {
+    const webContentsId = getGuestId(current.current.guests.current.get(pageId));
+    if (
+      webContentsId !== undefined && ref.current?.status === RecordingStatus.Recording &&
+      !pauseReason.current && !stopping.current && current.current.activeTab?.targetId === pageId &&
+      networkNavigations.current.length < RECORDING_NETWORK_LIMITS.documents * 3
+    ) networkNavigations.current.push({ pageId, webContentsId, kind, at, stepId });
+  };
+  const onNavigation = (pageId: string, url: string, inPage = false) => {
+    const at = Date.now();
     const s = ref.current;
     const tab = current.current.tabs.find(item => item.targetId === pageId);
     if (
       !s ||
+      s.status !== RecordingStatus.Recording || pauseReason.current || stopping.current ||
       !tab ||
       (tab.profile ?? 'embedded') !== s.profile ||
-      (!s.steps.some(step => step.pageId === pageId) &&
-        current.current.activeTab?.targetId !== pageId)
+      url === 'about:blank' ||
+      current.current.activeTab?.targetId !== pageId
     )
       return;
     const last = s.steps[s.steps.length - 1];
@@ -378,21 +601,23 @@ export function useBrowserRecording(options: Options) {
       !documents.current.has(pageId) &&
       last.action === RecordingAction.OpenTab &&
       last.url === recordingUrl(url)
-    )
+    ) {
+      addNetworkNavigation(pageId, inPage ? 'in-page' : 'commit', at, last.id);
       return;
-    scheduleCapture(
-      hostStep(RecordingAction.Navigate, {
-        ...tab,
-        url,
-        title: tab.url === url ? tab.title : '',
-      }),
-    );
+    }
+    const step = hostStep(RecordingAction.Navigate, {
+      ...tab,
+      url,
+      title: tab.url === url ? tab.title : '',
+    });
+    addNetworkNavigation(pageId, inPage ? 'in-page' : 'commit', at, step.id);
+    scheduleCapture(step);
   };
+  const onNavigationStart = (pageId: string) => addNetworkNavigation(pageId, 'start', Date.now());
   const start = async () => {
     if (ref.current || starting.current) return;
     const tab = current.current.activeTab;
-    if (!tab || !/^https?:/.test(tab.url)) return;
-    starting.current = true;
+    if (!tab || !isRecordableBrowserTab(tab)) return;
     const generation = startGeneration.current;
     setBusy(true);
     setFailed(false);
@@ -407,6 +632,13 @@ export function useBrowserRecording(options: Options) {
       images: [],
       status: RecordingStatus.Recording,
     };
+    let settle = () => {};
+    const intent: RecordingStart = {
+      sessionId: s.sessionId,
+      profile: s.profile,
+      settled: new Promise(resolve => { settle = resolve; }),
+    };
+    starting.current = intent;
     try {
       const granted = await window.electron.browser.setRecordingLease({
         recordingId: s.id,
@@ -426,20 +658,32 @@ export function useBrowserRecording(options: Options) {
         current.current.draftKey !== s.sessionId ||
         !current.current.isOpen ||
         !activeTab ||
-        !/^https?:/.test(activeTab.url) ||
+        !isRecordableBrowserTab(activeTab) ||
         (activeTab.profile ?? 'embedded') !== s.profile
       ) {
         await release(s);
         return;
       }
       documents.current.clear();
+      networkSequence.current = 0;
+      clearNetworkTarget();
+      networkCoverage.current.clear();
+      if (intent.lateStart) networkCoverage.current.add(RecordingNetworkCoverage.LateStart);
+      networkActions.current = [];
+      networkNavigations.current = [];
+      networkPromotions.current = [];
+      domActiveTarget.current = activeTab.targetId;
+      pauseReason.current = undefined;
       update(s);
+      void prepareNetwork(s, activeTab, true);
       control(true);
-      scheduleCapture(hostStep(RecordingAction.OpenTab, activeTab));
+      if (activeTab.url !== 'about:blank' && !current.current.isInitialNavigationPending?.(activeTab.targetId))
+        scheduleCapture(hostStep(RecordingAction.OpenTab, activeTab));
     } catch {
       if (mounted.current) setFailed(true);
     } finally {
-      starting.current = false;
+      starting.current = undefined;
+      settle();
       if (mounted.current) setBusy(false);
     }
   };
@@ -473,11 +717,19 @@ export function useBrowserRecording(options: Options) {
     control(false, requestId);
     return promise;
   };
-  const pause = async () => {
-    if (ref.current?.status !== RecordingStatus.Recording) return;
-    const id = ref.current.id;
+  const pause = async (reason: PauseReason = 'manual') => {
+    const s = ref.current;
+    if (!s || s.status !== RecordingStatus.Recording || stopping.current) return;
+    if (pauseReason.current) {
+      if (reason === 'manual') pauseReason.current = reason;
+      return;
+    }
+    pauseReason.current = reason;
+    domActiveTarget.current = undefined;
+    clearNetworkTarget();
+    void sendNetwork(s, { action: 'pause', requestedAtMs: Date.now() });
     await drain();
-    if (ref.current?.id === id && ref.current.status === RecordingStatus.Recording) {
+    if (ref.current?.id === s.id && ref.current.status === RecordingStatus.Recording && !stopping.current) {
       control(false);
       update({ ...ref.current, status: RecordingStatus.Paused });
     }
@@ -487,30 +739,56 @@ export function useBrowserRecording(options: Options) {
     const tab = current.current.activeTab;
     if (
       !s ||
+      s.status !== RecordingStatus.Paused ||
       !tab ||
+      !isRecordableBrowserTab(tab) ||
+      !current.current.isOpen ||
+      stopping.current ||
       current.current.draftKey !== s.sessionId ||
       (tab.profile ?? 'embedded') !== s.profile
     )
       return;
+    pauseReason.current = undefined;
+    domActiveTarget.current = tab.targetId;
     update({ ...s, status: RecordingStatus.Recording });
+    void prepareNetwork(s, tab);
     hostStep(RecordingAction.Gap, tab);
     control(true);
   };
-  const stop = async () => {
-    if (!ref.current || ref.current.status === RecordingStatus.Review) return;
-    const id = ref.current.id;
-    await drain();
-    const s = ref.current;
-    if (!s || s.id !== id) return;
-    control(false);
-    update({ ...s, status: RecordingStatus.Review });
-    await release(s);
+  const stop = (): Promise<void> => {
+    if (stopping.current) return stopping.current;
+    const recording = ref.current;
+    if (!recording || recording.status === RecordingStatus.Review) return Promise.resolve();
+    clearNetworkTarget();
+    const network = withRecordingTimeout(sendNetwork(recording, {
+      action: 'finish', requestedAtMs: Date.now(),
+    }), 1_000);
+    const finish = Promise.all([network, drain()]).then(async ([reply]) => {
+      const s = ref.current;
+      if (!s || s.id !== recording.id) return;
+      if (reply?.status !== 'finished')
+        networkCoverage.current.add(RecordingNetworkCoverage.Unavailable);
+      const capturedNetwork = associateRecordingNetwork(
+        s, reply?.status === 'finished' ? reply.snapshot : undefined,
+        networkActions.current, networkNavigations.current, networkCoverage.current,
+      );
+      control(false);
+      update({ ...s, status: RecordingStatus.Review, capturedNetwork });
+      await release(s);
+    }).finally(() => {
+      if (stopping.current === finish) stopping.current = undefined;
+    });
+    stopping.current = finish;
+    return finish;
   };
   const clear = () => {
     control(false);
     for (const drain of drains.current.values()) drain.resolve();
     if (ref.current) void release(ref.current);
     for (const timer of timers.current.values()) clearTimeout(timer);
+    clearNetworkTarget();
+    pauseReason.current = undefined;
+    networkPromotions.current = [];
     update(null);
   };
   // Only explicit home -> temporary -> canonical session promotions may transfer ownership.
@@ -520,21 +798,59 @@ export function useBrowserRecording(options: Options) {
     if (starting.current && current.current.draftKey === fromSessionId)
       startGeneration.current += 1;
     const s = ref.current;
-    if (s?.sessionId === fromSessionId) update({ ...s, sessionId: toSessionId });
+    if (s?.sessionId !== fromSessionId) return;
+    const tab = current.current.activeTab;
+    if (tab && !tab.resourceSessionId && s.status !== RecordingStatus.Review && !stopping.current) {
+      networkPromotions.current.push({ from: fromSessionId, to: toSessionId });
+    }
+    update({ ...s, sessionId: toSessionId });
+  };
+  const prepareNetworkTransfer = (fromSessionId: string, toSessionId: string): Promise<void> | undefined => {
+    const s = ref.current;
+    const tab = current.current.activeTab;
+    const target = tab && !tab.resourceSessionId ? getNetworkPage(tab) : null;
+    let reachable = fromSessionId;
+    for (const promotion of networkPromotions.current) {
+      if (promotion.from === reachable) reachable = promotion.to;
+    }
+    if (
+      !s || s.sessionId !== toSessionId || s.status === RecordingStatus.Review || stopping.current ||
+      !target || fromSessionId === toSessionId || reachable !== toSessionId
+    ) return undefined;
+    clearNetworkTarget();
+    return withRecordingTimeout(sendNetwork(s, {
+      action: 'transferTarget',
+      from: { ...target, resourceSessionId: fromSessionId },
+      toSessionId,
+      requestedAtMs: Date.now(),
+    }), RECORDING_NETWORK_LIMITS.prepareMs).then(reply => {
+      if (ref.current?.id === s.id && reply?.status !== 'transferReady') {
+        networkCoverage.current.add(RecordingNetworkCoverage.Transfer);
+      }
+    });
+  };
+  const completeNetworkTransfer = (toSessionId: string): boolean => {
+    if (ref.current?.sessionId !== toSessionId || !networkPromotions.current.length) return false;
+    networkPromotions.current = [];
+    return true;
   };
   const previousTabs = useRef(options.tabs);
+  const activeTabRecordable = options.activeTab ? isRecordableBrowserTab(options.activeTab) : false;
+  const activeTabProfile = options.activeTab?.profile;
   const switchSequence = useRef(0);
   const actions = useRef({
     hostStep,
     scheduleCapture,
     stop,
     pause,
+    resume,
+    prepareNetwork,
     drain,
     control,
     release,
     update,
   });
-  actions.current = { hostStep, scheduleCapture, stop, pause, drain, control, release, update };
+  actions.current = { hostStep, scheduleCapture, stop, pause, resume, prepareNetwork, drain, control, release, update };
   useEffect(() => {
     const { hostStep, stop } = actions.current;
     for (const pageId of documents.current.keys()) {
@@ -558,46 +874,63 @@ export function useBrowserRecording(options: Options) {
           hostStep(RecordingAction.CloseTab, tab);
       }
       if (!options.tabs.length) void stop();
-      else if (!pendingDrain.current) actions.current.control(true);
+      else if (
+        !pendingDrain.current && !pauseReason.current && !stopping.current &&
+        domActiveTarget.current === current.current.activeTab?.targetId
+      ) actions.current.control(true);
     }
     previousTabs.current = options.tabs;
   }, [options.tabs]);
-  useEffect(() => {
-    const { pause, drain, hostStep, control } = actions.current;
+  useLayoutEffect(() => {
+    const { pause, resume, prepareNetwork, drain, hostStep, control } = actions.current;
     const sequence = ++switchSequence.current;
     const s = ref.current;
-    if (!s || s.status !== RecordingStatus.Recording) return;
+    if (!s || s.status === RecordingStatus.Review || stopping.current) return;
     const tab = current.current.activeTab;
     if (
       !options.isOpen ||
       options.draftKey !== s.sessionId ||
       !tab ||
+      !isRecordableBrowserTab(tab) ||
       (tab.profile ?? 'embedded') !== s.profile
     ) {
-      void pause();
+      void pause('visibility');
       return;
     }
+    if (s.status === RecordingStatus.Paused) {
+      if (pauseReason.current === 'visibility') resume();
+      return;
+    }
+    if (pauseReason.current || domActiveTarget.current === tab.targetId) return;
+    domActiveTarget.current = undefined;
+    void prepareNetwork(s, tab);
     void (async () => {
       await drain();
       if (
         sequence !== switchSequence.current ||
         ref.current?.id !== s.id ||
         ref.current.status !== RecordingStatus.Recording ||
+        pauseReason.current || stopping.current ||
         !current.current.isOpen ||
         current.current.activeTab?.targetId !== tab.targetId ||
         current.current.draftKey !== ref.current.sessionId ||
         (current.current.activeTab?.profile ?? 'embedded') !== s.profile
       )
         return;
-      hostStep(
-        s.steps.some(step => step.pageId === tab.targetId)
-          ? RecordingAction.SwitchTab
-          : RecordingAction.OpenTab,
-        tab,
-      );
+      domActiveTarget.current = tab.targetId;
+      const currentTab = current.current.activeTab;
+      if (currentTab.url !== 'about:blank' && !current.current.isInitialNavigationPending?.(currentTab.targetId)) {
+        hostStep(
+          ref.current.steps.some(step => step.pageId === currentTab.targetId)
+            ? RecordingAction.SwitchTab
+            : RecordingAction.OpenTab,
+          currentTab,
+        );
+      }
       control(true);
     })();
-  }, [options.activeTab?.targetId, options.isOpen, options.draftKey]);
+  }, [options.activeTab?.targetId, options.isOpen, options.draftKey, session?.status,
+    activeTabRecordable, activeTabProfile]);
   useEffect(() => {
     const captureTimers = timers.current;
     const timer = setInterval(() => {
@@ -624,6 +957,7 @@ export function useBrowserRecording(options: Options) {
     session,
     busy,
     failed,
+    networkStatus,
     start,
     pause,
     resume,
@@ -633,6 +967,13 @@ export function useBrowserRecording(options: Options) {
     onMessage,
     onReady,
     onNavigation,
+    onNavigationStart,
+    waitForNetworkReady,
+    shouldPrepareNavigation,
+    markNetworkLateStart,
+    closeNetworkTarget,
+    prepareNetworkTransfer,
+    completeNetworkTransfer,
     drain,
     promoteSession,
   };

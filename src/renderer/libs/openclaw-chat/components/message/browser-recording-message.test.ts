@@ -54,6 +54,23 @@ function mount(value = draft) {
   return host;
 }
 describe('recording message cards', () => {
+  it('displays attached network evidence as collapsed, inert text', () => {
+    const host = mount({
+      ...draft,
+      network: { entries: [{
+        pageId: 'p', stepId: 'click', group: 'action', type: 'fetch', origin: 'https://api.example.com',
+        method: 'POST', path: '/orders/123', search: '?page=2&access_token=%5Bredacted%5D',
+        urlRedacted: true, at: 20, status: 409, outcome: 'complete',
+      }] },
+    });
+
+    const network = host.querySelector('details.recording-message-network');
+    expect(network?.hasAttribute('open')).toBe(false);
+    expect(network?.textContent).toContain('https://api.example.com/orders/123?page=2&access_token=[hidden]');
+    expect(network?.textContent).toContain('HTTP 409');
+    expect(network?.querySelector('a')).toBeNull();
+  });
+
   it('renders expanded locator and observation evidence as inert text', () => {
     const host = mount({
       ...draft,

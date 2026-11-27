@@ -33,11 +33,12 @@ describe('guest action observation', () => {
     installBrowserRecordingGuest();
     ipc.callbacks.get(BrowserRecordingChannel.Control)!(null, { recordingId: 'r', active: true });
   });
-  const send = (name: string, element: Element, trusted = true) =>
+  const send = (name: string, element: Element, trusted = true, timeStamp?: number) =>
     listeners.get(name)!({
       isTrusted: trusted,
       composedPath: () => [element],
       detail: 1,
+      timeStamp,
     } as unknown as Event);
   it('initializes and records a fresh document identity when randomUUID is unavailable', () => {
     ipc.callbacks.get(BrowserRecordingChannel.Control)!(null, { recordingId: 'r', active: false });
@@ -240,15 +241,19 @@ describe('guest action observation', () => {
     const input = document.createElement('input');
     document.body.append(input);
     input.value = '1';
-    send('input', input);
+    send('input', input, true, 12);
     input.value = '123';
-    send('input', input);
+    send('input', input, true, 30);
     ipc.callbacks.get(BrowserRecordingChannel.Control)!(null, { recordingId: 'r', active: false });
     const events = ipc.sendToHost.mock.calls.filter(
       call => call[0] === BrowserRecordingChannel.Event,
     );
     expect(events).toHaveLength(1);
-    expect(events[0][1].value).toBe('123');
+    expect(events[0][1]).toMatchObject({
+      value: '123',
+      firstInputAt: window.performance.timeOrigin + 12,
+      occurredAt: window.performance.timeOrigin + 30,
+    });
     expect(ipc.sendToHost.mock.calls.slice(-1)[0][0]).toBe(BrowserRecordingChannel.Ready);
   });
   it('never transmits a password and ignores synthetic input', () => {

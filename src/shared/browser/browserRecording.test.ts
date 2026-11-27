@@ -8,10 +8,12 @@ import {
   isSensitiveRecordingField,
   parseRecordingContext,
   parseRecordingEvent,
+  recordingNetworkProjection,
   recordingPageTitle,
   recordingUrl,
   serializeRecording,
 } from './browserRecording';
+import type { RecordingNetworkCapture,RecordingNetworkCapturedEntry } from './browserRecordingNetwork';
 
 describe('sensitive recording field names', () => {
   it.each(['password', 'passwd', 'current-password', 'new_password', 'pwd', '密码'])(
@@ -57,7 +59,104 @@ const draft: BrowserRecordingDraft = {
     },
   ],
 };
+
+const networkEntry: RecordingNetworkCapturedEntry = {
+  id: 'local-request', pageId: 'tab', stepId: 'step', group: 'action', type: 'fetch',
+  origin: 'https://api.example.com', path: '/orders/123', search: '?page=2&access_token=secret-value',
+  method: 'POST', outcome: 'complete', status: 201,
+};
+
+const capturedNetwork: RecordingNetworkCapture = {
+  entries: [networkEntry], coverage: [], omittedCount: 0,
+};
+
 describe('browser operation demonstrations', () => {
+  it('attaches only the opted-in URL summary and round trips it through the real prompt', () => {
+    const initial = composeBrowserGatewayPrompt('Explain', [], { ...draft, capturedNetwork });
+    expect(parseBrowserAnnotationPrompt(initial)?.recording?.network).toBeUndefined();
+    expect(initial).not.toContain('api.example.com');
+
+    const recording = { ...draft, capturedNetwork: { ...capturedNetwork, include: true } };
+    const prompt = composeBrowserGatewayPrompt('Explain', [], recording);
+    const restored = parseBrowserAnnotationPrompt(prompt)?.recording;
+    expect(restored?.network?.entries[0]).toMatchObject({
+      path: '/orders/123', search: '?page=2&access_token=%5Bredacted%5D', stepId: 'step', status: 201,
+    });
+    expect(prompt).not.toMatch(/secret-value|local-request|transferredBytes/);
+    expect(parseRecordingContext(serializeRecording(restored!))?.network).toEqual(restored?.network);
+  });
+
+  it('includes all selected requests from the same step while the complete demonstration fits', () => {
+    const entries = Array.from({ length: 55 }, (_, index): RecordingNetworkCapturedEntry => ({
+      ...networkEntry, id: String(index), search: `?q=${'x'.repeat(120)}&page=${index}`,
+    }));
+    const recording = { ...draft, capturedNetwork: { ...capturedNetwork, entries, include: true } };
+
+    const preview = recordingNetworkProjection(recording);
+    const text = serializeRecording(recording);
+
+    expect(preview.omittedCount).toBe(0);
+    expect(preview.summary?.entries).toHaveLength(55);
+    expect(JSON.stringify(preview.summary).length).toBeGreaterThan(8_000);
+    expect(parseRecordingContext(text)?.network).toEqual(preview.summary);
+  });
+
+  it('trims selected requests only when the complete demonstration exceeds its budget', () => {
+    const entries = Array.from({ length: 60 }, (_, index): RecordingNetworkCapturedEntry => ({
+      ...networkEntry, id: String(index), search: `?q=${'x'.repeat(1150)}&page=${index}`,
+    }));
+    const recording = { ...draft, capturedNetwork: { ...capturedNetwork, entries, include: true } };
+
+    const preview = recordingNetworkProjection(recording);
+    const sent = parseRecordingContext(serializeRecording(recording));
+
+    expect(preview.omittedCount).toBeGreaterThan(0);
+    expect(preview.summary?.entries.length).toBeGreaterThan(8);
+    expect(sent?.network).toEqual(preview.summary);
+    expect(sent?.steps[0]).toMatchObject({ id: 'step', value: '123' });
+    expect(recording.capturedNetwork.entries).toHaveLength(60);
+  });
+
+  it('reads legacy request addresses and evidence without retaining diagnostic fields', () => {
+    const recording = { ...draft, capturedNetwork: { ...capturedNetwork, include: true } };
+    const payload = JSON.parse(serializeRecording(recording));
+    Object.assign(payload.network.entries[0], {
+      at: 2000, durationMs: 25, responseMs: 12, protocol: 'http/1.1', count: 2,
+      lastAt: 3000, redirect: { sequence: 1, hop: 2 }, transferredBytes: 123, initiator: 'script',
+    });
+
+    const restored = parseRecordingContext(JSON.stringify(payload));
+
+    expect(restored?.network).toEqual(recordingNetworkProjection(recording).summary);
+    expect(restored?.steps[0].value).toBe('123');
+  });
+
+  it('keeps timing hints out of the sent summary but reports missing capture', () => {
+    const recording: BrowserRecordingDraft = {
+      ...draft,
+      capturedNetwork: { ...capturedNetwork, include: true, coverage: ['clock'] },
+    };
+    const withMissingCapture: BrowserRecordingDraft = {
+      ...recording,
+      capturedNetwork: { ...capturedNetwork, include: true, coverage: ['unattributed'] },
+    };
+
+    expect(recordingNetworkProjection(recording).summary?.partial).toBeUndefined();
+    expect(recordingNetworkProjection(withMissingCapture).summary?.partial).toBe(true);
+  });
+
+  it('keeps old steps if a historical network block has an invalid reference', () => {
+    const text = serializeRecording({ ...draft, capturedNetwork: { ...capturedNetwork, include: true } });
+    const payload = JSON.parse(text);
+    payload.network.entries[0].stepId = 'different-step';
+
+    const restored = parseRecordingContext(JSON.stringify(payload));
+
+    expect(restored?.steps[0].id).toBe('step');
+    expect(restored?.network).toBeUndefined();
+    expect(restored?.networkInvalid).toBe(true);
+  });
+
   it('omits empty incidental values from prompts and preserves missing values in history', () => {
     for (const value of [undefined, '', '   ']) {
       const step = { ...draft.steps[0], action: 'click' as const, value };
@@ -219,7 +318,7 @@ describe('browser operation demonstrations', () => {
       parseRecordingEvent({ recordingId: 'r', documentId: 'd', sequence: 1, action: 'navigate' }),
     ).toBeNull();
   });
-  it('removes only URL passwords and preserves query values and fragments', () => {
+  it('removes URL credentials while preserving ordinary query values and fragments', () => {
     const clean = recordingUrl(
       'https://user:password@example.com/orders?secret=abc&search=123&password=hidden#token',
     );
@@ -229,6 +328,30 @@ describe('browser operation demonstrations', () => {
     expect(clean).toContain('#token');
     expect(new URL(clean).searchParams.get('password')).toBe('[redacted]');
     expect(recordingUrl('javascript:alert(1)')).toBe('');
+  });
+  it('cleans structured step URLs even when the network summary is off', () => {
+    const url = 'https://site.test/orders/123?page=2&access_token=fixture-token#/orders?status=paid';
+    const recording: BrowserRecordingDraft = {
+      ...draft,
+      capturedNetwork,
+      steps: [{
+        ...draft.steps[0], url, title: url,
+        target: { tag: 'button', role: 'button', name: 'Save', selector: '#save', frameUrl: url, scopes: [{ kind: 'frame', selector: 'iframe', url }] },
+        interaction: { observed: { url } },
+      }],
+    };
+
+    const prompt = composeBrowserGatewayPrompt('Explain', [], recording);
+    const restored = parseBrowserAnnotationPrompt(prompt)?.recording;
+    const expected = 'https://site.test/orders/123?page=2&access_token=%5Bredacted%5D#/orders?status=paid';
+
+    expect(prompt).not.toContain('fixture-token');
+    expect(restored?.network).toBeUndefined();
+    expect(restored?.steps[0]).toMatchObject({
+      url: expected, title: expected,
+      target: { frameUrl: expected, scopes: [{ kind: 'frame', selector: 'iframe', url: expected }] },
+      interaction: { observed: { url: expected } },
+    });
   });
   it('rejects oversized demonstrations instead of silently truncating steps', () => {
     expect(() =>

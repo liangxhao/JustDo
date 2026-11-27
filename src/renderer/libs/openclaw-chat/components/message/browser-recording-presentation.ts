@@ -163,6 +163,11 @@ export function recordingSummary(
   draft: BrowserRecordingDraft,
   includeHistoryReferences = false,
 ): string {
+  const network = draft.capturedNetwork ?? draft.network;
+  const pages = new Set([
+    ...draft.steps.map(step => step.pageId),
+    ...(network?.entries.map(entry => entry.pageId) ?? []),
+  ]);
   const images =
     draft.images.length ||
     (includeHistoryReferences
@@ -171,7 +176,7 @@ export function recordingSummary(
   return i18nService
     .t('recordingSummary')
     .replace('{steps}', String(draft.steps.length))
-    .replace('{pages}', String(new Set(draft.steps.map(step => step.pageId)).size))
+    .replace('{pages}', String(pages.size))
     .replace('{images}', String(images));
 }
 

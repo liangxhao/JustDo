@@ -154,6 +154,24 @@ describe('mergePendingUserMessageForDisplay', () => {
     ]);
   });
 
+  test('distinguishes the network evidence of recordings with the same steps', () => {
+    const recordingMessage = (search: string) => ({
+      role: 'user', timestamp: 100,
+      content: [{ type: 'browser_recording', recording: {
+        steps: [{ id: 'click', action: 'click', pageId: 'tab' }],
+        network: { entries: [{
+          group: 'action', type: 'fetch', outcome: 'complete', at: 4, method: 'GET',
+          origin: 'https://api.test', path: '/orders', search, pageId: 'tab', stepId: 'click',
+        }] },
+      } }],
+    }) as GatewayMessage;
+    const first = recordingMessage('?page=2');
+    const second = recordingMessage('?page=3');
+
+    expect(mergePendingUserMessageForDisplay([first], recordingMessage('?page=2'))).toEqual([first]);
+    expect(mergePendingUserMessageForDisplay([first], second)).toHaveLength(2);
+  });
+
   test('falls back to placing a first-turn prompt before an undated assistant response', () => {
     const assistant = { role: 'assistant', content: 'hi' } as GatewayMessage;
 

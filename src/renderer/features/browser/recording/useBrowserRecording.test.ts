@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { BrowserPanelTab } from '@shared/browser/browser';
 import { BrowserRecordingChannel } from '@shared/browser/browserRecording';
+import type { RecordingNetworkCommand, RecordingNetworkReply } from '@shared/browser/browserRecordingNetwork';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,9 +10,15 @@ import { useBrowserRecording } from './useBrowserRecording';
 afterEach(() => vi.restoreAllMocks());
 function setup() {
   const lease = vi.fn().mockResolvedValue(true);
+  const network = vi.fn(async (command: RecordingNetworkCommand): Promise<RecordingNetworkReply> => {
+    const identity = { recordingId: command.lease.recordingId, sequence: command.sequence };
+    return command.action === 'finish'
+      ? { ...identity, status: 'finished', snapshot: { entries: [], segments: [], coverage: [], omittedCount: 0 } }
+      : { ...identity, status: 'ready', segmentId: 1 };
+  });
   Object.defineProperty(window, 'electron', {
     configurable: true,
-    value: { browser: { setRecordingLease: lease } },
+    value: { browser: { setRecordingLease: lease, recordingNetwork: network } },
   });
   const tab = {
     targetId: 'tab-1',
@@ -21,6 +28,7 @@ function setup() {
   } as BrowserPanelTab;
   let deliver: ReturnType<typeof useBrowserRecording>['onMessage'] = () => {};
   const guest = Object.assign(document.createElement('div'), {
+    getWebContentsId: () => 7,
     getURL: () => tab.url,
     capturePage: vi.fn(),
     send: vi.fn((channel: string, ...args: unknown[]) => {
@@ -41,7 +49,7 @@ function setup() {
   };
   const hook = renderHook(props => useBrowserRecording(props), { initialProps: options });
   deliver = (...args) => hook.result.current.onMessage(...args);
-  return { ...hook, lease, tab, guest, options };
+  return { ...hook, lease, network, tab, guest, options };
 }
 describe('browser recording lifecycle', () => {
   it('removes screenshot evidence belonging to a click replaced by a double click', async () => {
@@ -252,6 +260,20 @@ describe('browser recording lifecycle', () => {
       url: nextTab.url,
     });
     view.unmount();
+  });
+  it('keeps a navigation coverage gap reported before the recording lease is granted', async () => {
+    const view = setup();
+    let grant!: (value: boolean) => void;
+    view.lease.mockReturnValueOnce(new Promise<boolean>(resolve => { grant = resolve; }));
+    let start!: Promise<void>;
+    act(() => { start = view.result.current.start(); });
+    expect(await view.result.current.waitForNetworkReady(view.tab.targetId, 0)).toBe(false);
+    act(() => { view.result.current.markNetworkLateStart(view.tab.targetId); });
+
+    await act(async () => { grant(true); await start; });
+    await act(() => view.result.current.stop());
+
+    expect(view.result.current.session?.capturedNetwork?.coverage).toContain('late-start');
   });
   it('does not wait for a closed guest or falsely mark its completed drain incomplete', async () => {
     const view = setup();
@@ -482,6 +504,138 @@ describe('browser recording lifecycle', () => {
     view.rerender({ ...view.options, draftKey: 'other-session', isOpen: false });
     await waitFor(() => expect(view.result.current.session?.status).toBe('paused'));
     expect(view.result.current.session?.sessionId).toBe('session');
+    view.unmount();
+  });
+  it('starts and seals network collection automatically while retaining matching action evidence', async () => {
+    const view = setup();
+    await act(() => view.result.current.start());
+    const { startedAt, id } = view.result.current.session!;
+    const occurredAt = startedAt + 10;
+    act(() => view.result.current.onMessage(view.tab.targetId, BrowserRecordingChannel.Event, {
+      recordingId: id, documentId: 'doc-1', sequence: 1, action: 'click', occurredAt,
+      target: { tag: 'button', role: 'button', name: 'Save', selector: '#save' },
+    }));
+    act(() => view.result.current.onMessage(view.tab.targetId, BrowserRecordingChannel.Event, {
+      recordingId: id, documentId: 'doc-1', sequence: 2, action: 'click', occurredAt: startedAt + 60,
+      target: { tag: 'button', role: 'button', name: 'Child', selector: '#child', scopes: [{ kind: 'frame', selector: '#frame' }] },
+    }));
+    view.network.mockImplementationOnce(async command => ({
+      recordingId: id, sequence: command.sequence, status: 'finished',
+      snapshot: {
+        segments: [{
+          id: 1, pageId: view.tab.targetId, webContentsId: 7,
+          startedAtMs: startedAt, endedAtMs: startedAt + 1000,
+          documents: [
+            { id: 1, startedAtMs: startedAt, committedAtMs: startedAt },
+            { id: 2, startedAtMs: startedAt + 1, loadSequence: 1 },
+          ],
+        }],
+        entries: [{
+          id: 'request', pageId: view.tab.targetId, segmentId: 1, documentId: 1,
+          startedAtMs: occurredAt + 20, origin: 'https://api.example.com', path: '/orders',
+          method: 'POST', type: 'fetch', outcome: 'complete', status: 200,
+        }, {
+          id: 'provisional', pageId: view.tab.targetId, segmentId: 1, documentId: 2,
+          startedAtMs: occurredAt + 30, origin: 'https://api.example.com', path: '/bootstrap',
+          method: 'GET', type: 'fetch', outcome: 'complete', status: 200, loadSequence: 1, withinLoad: true,
+        }, {
+          id: 'duplicate-load', pageId: view.tab.targetId, segmentId: 1, documentId: 2,
+          startedAtMs: occurredAt + 31, origin: 'https://api.example.com', path: '/bootstrap',
+          method: 'GET', type: 'fetch', outcome: 'complete', status: 200, loadSequence: 1, withinLoad: true,
+        }, {
+          id: 'distinct-query', pageId: view.tab.targetId, segmentId: 1, documentId: 2,
+          startedAtMs: occurredAt + 32, origin: 'https://api.example.com', path: '/bootstrap', search: '?page=2',
+          method: 'GET', type: 'fetch', outcome: 'complete', status: 200, loadSequence: 1, withinLoad: true,
+        }, {
+          id: 'action-load-endpoint', pageId: view.tab.targetId, segmentId: 1, documentId: 1,
+          startedAtMs: occurredAt + 33, origin: 'https://api.example.com', path: '/bootstrap',
+          method: 'GET', type: 'fetch', outcome: 'complete', status: 200,
+        }, {
+          id: 'root-after-child', pageId: view.tab.targetId, segmentId: 1, documentId: 1,
+          startedAtMs: startedAt + 80, origin: 'https://api.example.com', path: '/polling',
+          method: 'GET', type: 'fetch', outcome: 'complete', status: 200,
+        }], coverage: [], omittedCount: 0,
+      },
+    }));
+    view.guest.send.mockClear();
+    await act(async () => {
+      const stopped = view.result.current.stop();
+      view.result.current.onNavigation(view.tab.targetId, 'https://example.com/after-stop');
+      await stopped;
+    });
+    expect(view.network.mock.calls.map(([command]) => command.action)).toEqual(['start', 'finish']);
+    expect(view.network.mock.invocationCallOrder[1]).toBeLessThan(view.guest.send.mock.invocationCallOrder[0]!);
+    expect(view.result.current.session?.capturedNetwork).toMatchObject({
+      entries: [
+        { group: 'action', id: 'request', stepId: 'doc-1:1' },
+        { group: 'load', id: 'provisional' },
+        { group: 'load', id: 'distinct-query', search: '?page=2' },
+        { group: 'action', id: 'action-load-endpoint', stepId: 'doc-1:1' },
+        { group: 'unassigned', id: 'root-after-child' },
+      ],
+    });
+    expect(view.result.current.session?.capturedNetwork?.entries[0]).not.toHaveProperty('at');
+    expect(view.result.current.session?.steps.some(step => step.url.includes('/after-stop'))).toBe(false);
+    expect(view.result.current.session?.capturedNetwork?.include).toBeUndefined();
+    view.unmount();
+  });
+  it('does not mark intentional navigation outside the visible recording scope as late', async () => {
+    const view = setup();
+    await act(() => view.result.current.start());
+    act(() => { view.result.current.markNetworkLateStart('background-tab'); });
+    view.rerender({ ...view.options, isOpen: false });
+    act(() => { view.result.current.markNetworkLateStart(view.tab.targetId); });
+    await act(() => view.result.current.stop());
+
+    expect(view.result.current.session?.capturedNetwork?.coverage).not.toContain('late-start');
+  });
+  it('links a confirmed initial page load to the existing open-tab step', async () => {
+    const view = setup();
+    await act(() => view.result.current.start());
+    const { startedAt, id, steps } = view.result.current.session!;
+    const committedAtMs = Date.now();
+    view.guest.send.mockImplementation(() => {});
+    act(() => {
+      view.result.current.onReady(view.tab.targetId);
+      view.result.current.onNavigation(view.tab.targetId, view.tab.url);
+    });
+    view.network.mockImplementationOnce(async command => ({
+      recordingId: id, sequence: command.sequence, status: 'finished',
+      snapshot: {
+        segments: [{
+          id: 1, pageId: view.tab.targetId, webContentsId: 7,
+          startedAtMs: startedAt, endedAtMs: committedAtMs + 1000,
+          documents: [{ id: 1, startedAtMs: startedAt, committedAtMs, loadSequence: 1 }],
+        }],
+        entries: [{
+          id: 'startup-api', pageId: view.tab.targetId, segmentId: 1, documentId: 1, loadSequence: 1,
+          withinLoad: true, startedAtMs: committedAtMs + 20, origin: 'https://api.example.com',
+          path: '/orders', method: 'GET', type: 'fetch', outcome: 'complete', status: 200,
+        }],
+        coverage: [], omittedCount: 0,
+      },
+    }));
+    await act(() => view.result.current.stop());
+
+    expect(view.result.current.session?.steps).toHaveLength(1);
+    expect(view.result.current.session?.capturedNetwork?.entries).toMatchObject([{
+      group: 'load', loadSequence: 1, stepId: steps[0]?.id,
+    }]);
+  });
+  it('resumes on automatic return but preserves an explicit pause', async () => {
+    const view = setup();
+    await act(() => view.result.current.start());
+    view.rerender({ ...view.options, isOpen: false });
+    await waitFor(() => expect(view.result.current.session?.status).toBe('paused'));
+    view.rerender(view.options);
+    await waitFor(() => expect(view.result.current.session?.status).toBe('recording'));
+    expect(view.network.mock.calls.map(([command]) => command.action)).toEqual(['start', 'pause', 'setTarget']);
+
+    await act(() => view.result.current.pause());
+    view.rerender({ ...view.options, isOpen: false });
+    view.rerender(view.options);
+    expect(view.result.current.session?.status).toBe('paused');
+    expect(view.network.mock.calls.map(([command]) => command.action)).toEqual(['start', 'pause', 'setTarget', 'pause']);
     view.unmount();
   });
   it('does not collect anything when Main rejects protection', async () => {

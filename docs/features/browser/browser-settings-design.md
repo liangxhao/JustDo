@@ -343,7 +343,7 @@ Agent 控制同一页面期间，Renderer 使用交互遮罩；用户画笔、�
 
 profile 管理动作在修改 Renderer 前取得 scope lease。无 Tab 时可先挂载空面板完成遮罩 ACK，但不预造隐藏 guest；并发 readiness 共享，单个等待取消不能让其他调用失败。
 
-暂停/停止录制要确认 guest 最后输入已提交，再释放保护。窗口销毁、导航、取消和 Gateway 停止清理请求与 lease。操作演示内容仍在 guest/Renderer，Main 不增建正文存储，见[录制说明](browser-operation-recording.md)。
+暂停和停止录制时，先截止活动标签的网络采集，同时提交 guest 的最后输入，停止收尾后释放保护。窗口销毁、导航、取消和 Gateway 停止清理请求与 lease。操作步骤和截图由 guest/Renderer 负责，Main 只暂存有界网络明细，见[录制说明](browser-operation-recording.md)。
 
 ## 5. 导航、权限和认证
 

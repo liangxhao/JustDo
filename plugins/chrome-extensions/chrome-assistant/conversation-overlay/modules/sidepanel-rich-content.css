@@ -855,3 +855,29 @@
   font-size: 10px;
   margin: 6px 0;
 }
+.recording-message-network .recording-detail-body {
+  min-width: 0;
+}
+
+.recording-message-network h4 {
+  margin: 0.55rem 0 0.3rem;
+  font-size: inherit;
+}
+
+.recording-message-network ul {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.recording-message-network code {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.recording-message-network li > small {
+  display: block;
+  margin-top: 0.15rem;
+}

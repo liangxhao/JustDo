@@ -33,6 +33,7 @@ import type { BrowserAnnotationDraft, BrowserAnnotationPoint, BrowserAnnotationR
 import { getBrowserLocalFilePath } from '@shared/browser/browserHistory';
 import type { BrowserContinueResult } from '@shared/browser/browserIntervention';
 import { RecordingStatus } from '@shared/browser/browserRecording';
+import { RECORDING_NETWORK_LIMITS } from '@shared/browser/browserRecordingNetwork';
 import React, {
   forwardRef,
   useCallback,
@@ -87,7 +88,7 @@ import {
 } from './browserToolbarStyles';
 import { BrowserInterventionBar } from './intervention/BrowserInterventionBar';
 import { BrowserRecordingControls } from './recording/BrowserRecordingControls';
-import { useBrowserRecording } from './recording/useBrowserRecording';
+import { isRecordableBrowserTab, useBrowserRecording } from './recording/useBrowserRecording';
 import { getBrowserTabLimit, useBrowserTabLimit } from './useBrowserTabLimit';
 
 type BrowserPanelMode = 'interact' | 'inspect' | 'pen' | 'rectangle';
@@ -103,6 +104,7 @@ type GuestEvent = Event & {
   errorCode?: number;
   errorDescription?: string;
   isMainFrame?: boolean;
+  isInPlace?: boolean;
   result?: { requestId?: number; activeMatchOrdinal?: number; matches?: number };
   title?: string;
   url?: string;
@@ -140,6 +142,13 @@ type LiveWebview = HTMLElement & {
     deltaY: number;
     canScroll: boolean;
   }) => Promise<void>;
+};
+type StagedRecordingNavigation = {
+  url: string;
+  guest?: LiveWebview;
+  timer?: ReturnType<typeof setTimeout>;
+  expired?: boolean;
+  preparing?: boolean;
 };
 
 const readGuestUrl = (guest: LiveWebview | undefined, fallback: string): string => {
@@ -492,6 +501,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const readyGuestsRef = useRef(new WeakSet<LiveWebview>());
   const guestNavigationEpochsRef = useRef(new WeakMap<LiveWebview, number>());
   const initialUrlsRef = useRef(new Map(tabs.map(tab => [tab.targetId, tab.url])));
+  const stagedRecordingNavigations = useRef(new Map<string, StagedRecordingNavigation>());
   const tabsRef = useRef(tabs);
   const onTabsChangeRef = useRef(onTabsChange);
   onTabsChangeRef.current = onTabsChange;
@@ -517,7 +527,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const inspectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const addressSubmissionSequenceRef = useRef(0);
-  const addressLoadsRef = useRef(new WeakMap<LiveWebview, number>());
+  const addressLoadsRef = useRef(new WeakMap<LiveWebview, symbol>());
 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
   activeTargetRef.current = activeTab?.targetId ?? null;
@@ -601,6 +611,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     activeTab: activeTab ?? undefined,
     tabs,
     guests: webviewsRef,
+    isInitialNavigationPending: targetId =>
+      initialUrlsRef.current.get(targetId) === 'about:blank' &&
+      readGuestUrl(webviewsRef.current.get(targetId), 'about:blank') === 'about:blank',
   });
   const recorderRef = useRef(recorder);
   recorderRef.current = recorder;
@@ -968,6 +981,81 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     [commitTabs],
   );
 
+  const loadGuestAddress = useCallback(async (targetId: string, webview: LiveWebview, url: string, token = Symbol()) => {
+    const requests = addressLoadsRef.current;
+    requests.set(webview, token);
+    setLoadingTargets(current => new Set(current).add(targetId));
+    try {
+      await webview.loadURL(url);
+    } catch (loadError) {
+      if (
+        requests.get(webview) !== token ||
+        webviewsRef.current.get(targetId) !== webview || !webview.isConnected
+      ) return;
+      setLoadingTargets(current => {
+        const next = new Set(current);
+        next.delete(targetId);
+        return next;
+      });
+      const message = formatBrowserLoadError(loadError, url);
+      // A superseded or stopped load can report ERR_ABORTED, and the native
+      // did-fail-load event may already have supplied a more specific reason.
+      if (message) setLoadErrors(current => current.has(targetId)
+        ? current : new Map(current).set(targetId, message));
+    } finally {
+      if (requests.get(webview) === token) requests.delete(webview);
+    }
+  }, []);
+
+  const cancelStagedNavigation = useCallback((targetId: string) => {
+    const pending = stagedRecordingNavigations.current.get(targetId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    stagedRecordingNavigations.current.delete(targetId);
+  }, []);
+
+  const releaseStagedNavigation = useCallback((targetId: string) => {
+    const pending = stagedRecordingNavigations.current.get(targetId);
+    const guest = webviewsRef.current.get(targetId);
+    if (!pending || !guest?.isConnected || !readyGuestsRef.current.has(guest)) return;
+    if (pending.guest && pending.guest !== guest) {
+      cancelStagedNavigation(targetId);
+      return;
+    }
+    pending.guest = guest;
+    const navigate = (ready: boolean) => {
+      if (
+        stagedRecordingNavigations.current.get(targetId) !== pending ||
+        webviewsRef.current.get(targetId) !== guest || !guest.isConnected ||
+        !tabsRef.current.some(tab => tab.targetId === targetId)
+      ) return;
+      cancelStagedNavigation(targetId);
+      if (!ready && panelVisibleRef.current && activeTargetRef.current === targetId)
+        recorderRef.current.markNetworkLateStart(targetId);
+      void loadGuestAddress(targetId, guest, pending.url);
+    };
+    if (pending.expired || !panelVisibleRef.current || activeTargetRef.current !== targetId) {
+      navigate(false);
+      return;
+    }
+    if (pending.preparing) return;
+    pending.preparing = true;
+    void recorderRef.current.waitForNetworkReady(targetId, undefined, true).then(navigate);
+  }, [cancelStagedNavigation, loadGuestAddress]);
+
+  useEffect(() => {
+    const navigations = stagedRecordingNavigations.current;
+    return () => {
+      for (const pending of navigations.values()) clearTimeout(pending.timer);
+      navigations.clear();
+    };
+  }, []);
+  useLayoutEffect(() => {
+    for (const targetId of stagedRecordingNavigations.current.keys()) {
+      releaseStagedNavigation(targetId);
+    }
+  }, [activeTabTargetId, isOpen, releaseStagedNavigation]);
+
   const openTab = useCallback(
     (rawUrl = 'about:blank', options?: BrowserOpenTabOptions) => {
       if (options?.targetId) {
@@ -983,7 +1071,17 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         return false;
       }
       const tab = createBrowserPanelTab(url, options);
-      initialUrlsRef.current.set(tab.targetId, tab.url);
+      const stageNavigation = !options?.preserveSelection && panelVisibleRef.current &&
+        tab.url !== 'about:blank' && recorderRef.current.shouldPrepareNavigation(tab);
+      initialUrlsRef.current.set(tab.targetId, stageNavigation ? 'about:blank' : tab.url);
+      if (stageNavigation) {
+        const pending: StagedRecordingNavigation = { url };
+        stagedRecordingNavigations.current.set(tab.targetId, pending);
+        pending.timer = setTimeout(() => {
+          pending.expired = true;
+          releaseStagedNavigation(tab.targetId);
+        }, RECORDING_NETWORK_LIMITS.prepareMs);
+      }
       const insertionIndex = options?.insertAfterTargetId
         ? tabsRef.current.findIndex(
             candidate => candidate.targetId === options.insertAfterTargetId,
@@ -1005,7 +1103,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       return true;
     },
-    [capacityFeedbackEnabled, clearAnnotations, commitTabs, draftKey, onActiveTargetChange, queuePageFocus],
+    [capacityFeedbackEnabled, clearAnnotations, commitTabs, draftKey, onActiveTargetChange, queuePageFocus, releaseStagedNavigation],
   );
 
   useEffect(
@@ -1122,6 +1220,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     ) => {
       const closingGuest = webviewsRef.current.get(targetId);
       const closingIdentity = tabsRef.current.find(tab => tab.targetId === targetId);
+      if (!closingIdentity || (options?.resourceSessionId &&
+        closingIdentity.resourceSessionId !== options.resourceSessionId)) return;
       const performClose = () => {
         const currentTabs = tabsRef.current;
         const closingIndex = currentTabs.findIndex(tab => tab.targetId === targetId);
@@ -1181,11 +1281,13 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           queuePageFocus(nextTab.targetId, () => webviewsRef.current.get(nextTab.targetId)?.focus());
         }
       };
-      if (recorderRef.current.session?.status === RecordingStatus.Recording)
+      cancelStagedNavigation(targetId);
+      if (recorderRef.current.session?.status === RecordingStatus.Recording) {
+        recorderRef.current.closeNetworkTarget(targetId);
         void recorderRef.current.drain().then(performClose);
-      else performClose();
+      } else performClose();
     },
-    [clearAnnotations, commitTabs, queuePageFocus],
+    [cancelStagedNavigation, clearAnnotations, commitTabs, queuePageFocus],
   );
 
   const openTabContextMenu = useCallback(
@@ -1264,13 +1366,36 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       }
       const webview = sourceTargetId ? webviewsRef.current.get(sourceTargetId) : null;
       if (!webview?.isConnected || !readyGuestsRef.current.has(webview)) return;
-      try {
-        if (command === 'reload') webview.reload();
-        else if (command === 'back' && webview.canGoBack()) webview.goBack();
-        else if (command === 'forward' && webview.canGoForward()) webview.goForward();
-      } catch {
-        // The guest can detach between the toolbar render and the command.
+      const navigate = () => {
+        try {
+          if (command === 'reload') webview.reload();
+          else if (command === 'back' && webview.canGoBack()) webview.goBack();
+          else if (command === 'forward' && webview.canGoForward()) webview.goForward();
+        } catch {
+          // The guest can detach between the toolbar render and the command.
+        }
+      };
+      const tab = tabsRef.current.find(item => item.targetId === sourceTargetId);
+      if (
+        !sourceTargetId || !tab || sourceTargetId !== activeTargetRef.current ||
+        !recorderRef.current.shouldPrepareNavigation(tab)
+      ) {
+        navigate();
+        return;
       }
+      if (stagedRecordingNavigations.current.has(sourceTargetId)) return;
+      const navigationEpoch = guestNavigationEpochsRef.current.get(webview) ?? 0;
+      const addressSequence = addressSubmissionSequenceRef.current;
+      void recorderRef.current.waitForNetworkReady(sourceTargetId, RECORDING_NETWORK_LIMITS.prepareMs).then(ready => {
+        if (
+          webviewsRef.current.get(sourceTargetId) !== webview || !webview.isConnected ||
+          (guestNavigationEpochsRef.current.get(webview) ?? 0) !== navigationEpoch ||
+          addressSubmissionSequenceRef.current !== addressSequence
+        ) return;
+        if (!ready && panelVisibleRef.current && activeTargetRef.current === sourceTargetId)
+          recorderRef.current.markNetworkLateStart(sourceTargetId);
+        navigate();
+      });
     },
     [clearAnnotations, closeTab, onActiveTargetChange, openTab, queuePageFocus],
   );
@@ -1290,7 +1415,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       // as transient so hiding/reopening the panel cannot erase the real page.
       if (
         nextUrl === 'about:blank' && retainedTab?.url !== 'about:blank' &&
-        (!authoritative || !readyGuestsRef.current.has(webview))
+        (!authoritative || !readyGuestsRef.current.has(webview) ||
+          stagedRecordingNavigations.current.has(targetId))
       ) return;
       let nextTitle = title ?? retainedTab?.title ?? '';
       if (title === undefined) {
@@ -1339,6 +1465,8 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const installGuest = useCallback(
     (targetId: string, webview: LiveWebview | null) => {
       if (!webview) {
+        const staged = stagedRecordingNavigations.current.get(targetId);
+        if (staged?.guest) cancelStagedNavigation(targetId);
         const previousGuest = webviewsRef.current.get(targetId);
         if (previousGuest) focusBindingRef.current?.unregisterGuest(previousGuest);
         if (previousGuest) readyGuestsRef.current.delete(previousGuest);
@@ -1374,7 +1502,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           if (Number.isInteger(webContentsId)) {
             const sessionId =
               tabsRef.current.find(tab => tab.targetId === targetId)?.resourceSessionId ??
-              currentDraftKeyRef.current;
+              registeredDraftKeyRef.current;
             const firstRegistration = registeredResourceSessionsRef.current.get(targetId) !== sessionId;
             registeredResourceSessionsRef.current.set(targetId, sessionId);
             window.electron.browser.registerAgentTab({
@@ -1388,6 +1516,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             if (firstRegistration && panelVisibleRef.current && activeTargetRef.current === targetId) {
               window.electron.browser.setAgentActiveTab({ sessionId, targetId });
             }
+            void recorderRef.current.waitForNetworkReady(targetId, undefined, true);
           }
         } catch {
           // A newly attached webview receives its id at dom-ready.
@@ -1413,6 +1542,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         });
       });
       onGuest('did-attach', registerAgentTab);
+      onGuest('did-start-navigation', event => {
+        const details = event as GuestEvent;
+        if (details.isMainFrame !== false && !details.isInPlace && details.url !== 'about:blank')
+          recorderRef.current.onNavigationStart(targetId);
+      });
       onGuest('did-stop-loading', () => {
         registerAgentTab();
         setLoadingTargets(current => {
@@ -1426,6 +1560,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
         recorderRef.current.onReady(targetId);
         registerAgentTab();
         readyGuestsRef.current.add(webview);
+        releaseStagedNavigation(targetId);
         const retainedTab = tabsRef.current.find(tab => tab.targetId === targetId);
         const currentUrl = readGuestUrl(webview, retainedTab?.url || 'about:blank');
         if (retainedTab && isAtSourcePreview({ ...retainedTab, url: currentUrl })) {
@@ -1504,7 +1639,9 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           guestNavigationEpochsRef.current.set(
             webview, (guestNavigationEpochsRef.current.get(webview) ?? 0) + 1,
           );
-          recorderRef.current.onNavigation(targetId, details.url ?? readGuestUrl(webview, 'about:blank'));
+          recorderRef.current.onNavigation(
+            targetId, details.url ?? readGuestUrl(webview, 'about:blank'), eventName === 'did-navigate-in-page',
+          );
           guestHandlersRef.current.handleNavigation(targetId, webview, details.url, undefined, true);
           if (eventName === 'did-navigate-in-page' && activeTargetRef.current === targetId) {
             setFindDocumentVersion(value => value + 1);
@@ -1542,8 +1679,10 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
       });
     },
     [
+      cancelStagedNavigation,
       canPresentPage,
       registerGuestFocus,
+      releaseStagedNavigation,
     ],
   );
   const installGuestRef = useRef(installGuest);
@@ -1560,30 +1699,45 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
 
   useEffect(() => {
     const previousDraftKey = registeredDraftKeyRef.current;
-    if (previousDraftKey === draftKey) return;
-    registeredDraftKeyRef.current = draftKey;
-    for (const [targetId, webview] of webviewsRef.current) {
-      if (tabsRef.current.find(tab => tab.targetId === targetId)?.resourceSessionId) continue;
-      window.electron.browser.unregisterAgentTab({ sessionId: previousDraftKey, targetId });
-      try {
-        const webContentsId = webview.getWebContentsId?.();
-        if (!Number.isInteger(webContentsId)) continue;
-        window.electron.browser.registerAgentTab({
-          sessionId: draftKey,
-          targetId,
-          webContentsId: webContentsId!,
-          profile:
-            tabsRef.current.find(candidate => candidate.targetId === targetId)?.profile ??
-            'embedded',
-        });
-        registeredResourceSessionsRef.current.set(targetId, draftKey);
-        if (activeTargetRef.current === targetId) {
-          window.electron.browser.setAgentActiveTab({ sessionId: draftKey, targetId });
-        }
-      } catch {
-        // Registration retries on the next dom-ready event.
-      }
+    if (previousDraftKey === draftKey) {
+      const targetId = activeTargetRef.current;
+      if (recorderRef.current.completeNetworkTransfer(draftKey) && targetId)
+        void recorderRef.current.waitForNetworkReady(targetId, undefined, true);
+      return;
     }
+    let canceled = false;
+    const reregister = () => {
+      if (canceled || currentDraftKeyRef.current !== draftKey) return;
+      registeredDraftKeyRef.current = draftKey;
+      recorderRef.current.completeNetworkTransfer(draftKey);
+      for (const [targetId, webview] of webviewsRef.current) {
+        if (tabsRef.current.find(tab => tab.targetId === targetId)?.resourceSessionId) continue;
+        window.electron.browser.unregisterAgentTab({ sessionId: previousDraftKey, targetId });
+        try {
+          const webContentsId = webview.getWebContentsId?.();
+          if (!Number.isInteger(webContentsId)) continue;
+          window.electron.browser.registerAgentTab({
+            sessionId: draftKey,
+            targetId,
+            webContentsId: webContentsId!,
+            profile:
+              tabsRef.current.find(candidate => candidate.targetId === targetId)?.profile ??
+              'embedded',
+          });
+          registeredResourceSessionsRef.current.set(targetId, draftKey);
+          if (activeTargetRef.current === targetId) {
+            window.electron.browser.setAgentActiveTab({ sessionId: draftKey, targetId });
+            void recorderRef.current.waitForNetworkReady(targetId, undefined, true);
+          }
+        } catch {
+          // Registration retries on the next dom-ready event.
+        }
+      }
+    };
+    const transfer = recorderRef.current.prepareNetworkTransfer(previousDraftKey, draftKey);
+    if (transfer) void transfer.then(reregister);
+    else reregister();
+    return () => { canceled = true; };
   }, [draftKey]);
 
   const drawOverlay = useCallback(() => {
@@ -1887,39 +2041,55 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
     const webview = targetId ? webviewsRef.current.get(targetId) : null;
     if (!webview || !targetId) return;
-    if (activeTargetRef.current === targetId) clearAnnotations();
-    addressDirtyRef.current = false;
-    setNotice(current => (current?.tone === BrowserNoticeTone.Error ? null : current));
+    const staged = stagedRecordingNavigations.current.get(targetId);
+    if (staged && !source && /^https?:/.test(url)) {
+      // Keep the original guest's readiness barrier when changing a staged URL.
+      // It releases the latest accepted address, including before DOM-ready.
+      staged.url = url;
+      clearAnnotations();
+      addressDirtyRef.current = false;
+      setNotice(current => (current?.tone === BrowserNoticeTone.Error ? null : current));
+      updateTab(targetId, { url });
+      setUrlDraft(url);
+      releaseStagedNavigation(targetId);
+      return;
+    }
+    cancelStagedNavigation(targetId);
+    const token = Symbol();
+    if (activeTab && /^https?:/.test(url) && recorderRef.current.shouldPrepareNavigation(activeTab)) {
+      addressLoadsRef.current.set(webview, token);
+      const ready = await recorderRef.current.waitForNetworkReady(targetId, RECORDING_NETWORK_LIMITS.prepareMs);
+      const retained = tabsRef.current.find(tab => tab.targetId === targetId);
+      // This address was already accepted while the tab was active. The observer
+      // wait may outlast a tab switch, but cannot redirect or supersede its guest.
+      if (
+        addressLoadsRef.current.get(webview) !== token || browserLifetimeRef.current !== lifetime ||
+        browserViewRef.current.ownerDocument !== view.ownerDocument ||
+        currentDraftKeyRef.current !== view.draftKey ||
+        webviewsRef.current.get(targetId) !== webview || !webview.isConnected ||
+        (guestNavigationEpochsRef.current.get(webview) ?? 0) !== navigationEpoch ||
+        !retained || retained.resourceSessionId !== activeTab.resourceSessionId || retained.profile !== activeTab.profile
+      ) {
+        if (addressLoadsRef.current.get(webview) === token) addressLoadsRef.current.delete(webview);
+        return;
+      }
+      if (!ready && panelVisibleRef.current && activeTargetRef.current === targetId)
+        recorderRef.current.markNetworkLateStart(targetId);
+    }
+    if (activeTargetRef.current === targetId) {
+      clearAnnotations();
+      addressDirtyRef.current = false;
+      setNotice(current => (current?.tone === BrowserNoticeTone.Error ? null : current));
+    }
     setLoadErrors(current => {
       const next = new Map(current);
       next.delete(targetId);
       return next;
     });
-    setLoadingTargets(current => new Set(current).add(targetId));
     updateTab(targetId, { url, ...source });
     if (activeTargetRef.current === targetId)
       setUrlDraft(source?.sourceFilePath ?? getBrowserLocalFilePath(url) ?? url);
-    const addressLoads = addressLoadsRef.current;
-    addressLoads.set(webview, submissionSequence);
-    try {
-      await webview.loadURL(url);
-    } catch (loadError) {
-      if (addressLoads.get(webview) !== submissionSequence ||
-        webviewsRef.current.get(targetId) !== webview || !webview.isConnected) return;
-      setLoadingTargets(current => {
-        const next = new Set(current);
-        next.delete(targetId);
-        return next;
-      });
-      // Electron rejects a superseded or stopped load with ERR_ABORTED.
-      const message = formatBrowserLoadError(loadError, url);
-      if (!message) return;
-      // did-fail-load may already have supplied a more specific native reason.
-      setLoadErrors(current => current.has(targetId)
-        ? current : new Map(current).set(targetId, message));
-    } finally {
-      if (addressLoads.get(webview) === submissionSequence) addressLoads.delete(webview);
-    }
+    await loadGuestAddress(targetId, webview, url, token);
   };
 
   const submitAddress = (address?: string) => {
@@ -2668,21 +2838,23 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
             onSubmit={submitAddress}
             onClipboardError={() => showError(i18nService.t('browserAddressClipboardFailed'))}
           />
+          {pageToolsVisible && (recorder.session || (activeTab && isRecordableBrowserTab(activeTab))) && (
+            <BrowserRecordingControls
+              recorder={recorder}
+              disabled={
+                !activeTab ||
+                !readyTargets.has(activeTab.targetId) ||
+                !isRecordableBrowserTab(activeTab) ||
+                !!detectedPdfUrl ||
+                mode !== 'interact' ||
+                isCommentComposerOpen ||
+                isCapturing ||
+                agentInteractionLocked
+              }
+            />
+          )}
           {showPageTools && (
             <>
-              <BrowserRecordingControls
-                recorder={recorder}
-                disabled={
-                  !activeTab ||
-                  !readyTargets.has(activeTab.targetId) ||
-                  !/^https?:/.test(activeTab.url) ||
-                  !!detectedPdfUrl ||
-                  mode !== 'interact' ||
-                  isCommentComposerOpen ||
-                  isCapturing ||
-                  agentInteractionLocked
-                }
-              />
               <div
                 className={`${browserToolbarGroupClassName} ${isRecording ? 'pointer-events-none opacity-40' : ''}`}
                 data-testid="browser-annotation-tool-group"

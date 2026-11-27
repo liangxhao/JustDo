@@ -1,4 +1,10 @@
-import { PauseIcon, PlayIcon, StopIcon, VideoCameraIcon } from '@heroicons/react/24/outline';
+import {
+  GlobeAltIcon,
+  PauseIcon,
+  PlayIcon,
+  StopIcon,
+  VideoCameraIcon,
+} from '@heroicons/react/24/outline';
 import { RecordingStatus } from '@shared/browser/browserRecording';
 import { useState } from 'react';
 
@@ -49,6 +55,16 @@ export function BrowserRecordingControls({
       >
         {s.steps.length}
       </span>
+      {s.status === RecordingStatus.Recording && recorder.networkStatus === 'unavailable' && (
+        <span
+          role="img"
+          className="px-1 text-secondary"
+          aria-label={t('recordingNetworkUnavailable')}
+          title={t('recordingNetworkUnavailable')}
+        >
+          <GlobeAltIcon className="h-4 w-4" aria-hidden="true" />
+        </span>
+      )}
       {s.status !== RecordingStatus.Review ? (
         <>
           <button

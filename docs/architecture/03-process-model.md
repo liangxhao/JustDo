@@ -449,7 +449,7 @@ Tab 图标同样属于对应 guest 的网络边界。Main 从原生 favicon 事�
 
 最近访问由 Main 保存并复用历史记录对应的已加载图标图片；`browser:loadHistoryFavicon` 只允许主窗口主 frame 按已存在页面读取，缺图时通过默认浏览器 partition 补取，不开放任意 Renderer URL 读取。列表元数据与单张图片分开返回，避免历史列表批量携带图片正文。图片与历史记录一起删除，缓存清理则仅清空图片。字段与初始化规则见[数据存储](10-data-storage.md)。
 
-用户标注、操作演示与 Agent 控制存在互斥 lease。录制内容走 guest → Renderer，Main 只管理保护与归属；停止、导航、崩溃和窗口销毁释放资源。录制内容的字段及隐私限制见[操作演示](../features/browser/browser-operation-recording.md)。
+用户标注、操作演示与 Agent 控制存在互斥 lease。操作步骤、输入和截图走 guest → Renderer。Main 在录制 lease 下从已登记的活动 guest 被动观察网络事件，只在停止时向受信主 frame 返回有界明细。暂停、切页与停止按区间截止，窗口导航、崩溃和销毁释放资源。字段及覆盖范围见[操作演示](../features/browser/browser-operation-recording.md)。
 
 HTTP 登录请求、媒体权限、PDF 读取各有独立超时和销毁语义，不能共用一个页面全局授权布尔值。详细 guest 行为在[浏览器设计](../features/browser/browser-settings-design.md)，不再散放到通用 IPC 清单。
 

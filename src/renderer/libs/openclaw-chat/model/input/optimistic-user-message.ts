@@ -1,4 +1,5 @@
 import { parseBrowserAnnotationPrompt } from '@shared/browser/browserMessageContext';
+import { readRecordingNetworkSummary } from '@shared/browser/browserRecordingNetwork';
 import { parseGoalStartObjective } from '@shared/cowork/slashCommands';
 
 import { pluginMessageText } from '@/features/plugins/app/messagePresentation';
@@ -70,11 +71,12 @@ function messageTimestamp(message: GatewayMessage): number | null {
 
 function messageContentIdentity(message: GatewayMessage): {
   text: string;
-  recordings: string;
+  recordings: string | null;
   annotations: string | null;
 } {
   const record = messageRecord(message);
   const recordings: unknown[] = [];
+  let recordingsComparable = true;
   const annotationIds: Array<string | null> = [];
   const addAnnotation = (value: unknown) => {
     const id =
@@ -85,12 +87,18 @@ function messageContentIdentity(message: GatewayMessage): {
   };
   const addRecording = (value: unknown) => {
     if (!value || typeof value !== 'object') return;
-    const steps = (value as Record<string, unknown>).steps;
+    const recording = value as Record<string, unknown>;
+    const steps = recording.steps;
     if (!Array.isArray(steps)) return;
     // Step ids survive history normalization, unlike wrapper ids and page text
     // (which Gateway may sanitize). Different recording-only sends must not
     // match merely because both have an empty visible prompt.
-    recordings.push(steps.map(step => [step?.id, step?.action, step?.pageId]));
+    const refs = steps.filter(step =>
+      step && typeof step.id === 'string' && typeof step.action === 'string' && typeof step.pageId === 'string',
+    );
+    const network = readRecordingNetworkSummary(recording.network, refs);
+    recordingsComparable &&= network.comparable && recording.networkInvalid !== true;
+    recordings.push([steps.map(step => [step?.id, step?.action, step?.pageId]), network.summary]);
   };
   const textPart = (source: string) => {
     const text = pluginMessageText(stripAppInput(source));
@@ -119,7 +127,7 @@ function messageContentIdentity(message: GatewayMessage): {
           : '';
   return {
     text: text.trim(),
-    recordings: JSON.stringify(recordings),
+    recordings: recordingsComparable ? JSON.stringify(recordings) : null,
     // Unknown card identity cannot justify replacing a different history row.
     annotations: annotationIds.includes(null) ? null : JSON.stringify(annotationIds),
   };
@@ -147,6 +155,8 @@ export function isPendingUserMessageMatch(
   if (
     messageRole(message) !== 'user' ||
     comparablePersistedText !== comparablePendingText ||
+    pendingContent.recordings === null ||
+    persistedContent.recordings === null ||
     persistedContent.recordings !== pendingContent.recordings ||
     pendingContent.annotations === null ||
     persistedContent.annotations === null ||

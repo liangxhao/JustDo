@@ -1,11 +1,14 @@
-import type { BrowserRecordingDraft } from '@shared/browser/browserRecording';
+import {
+  type BrowserRecordingDraft,
+  recordingNetworkProjection,
+} from '@shared/browser/browserRecording';
 import type { CoworkAttachmentPayload } from '@shared/cowork/attachments';
 
 export function recordingSubmissionIssue(
   recording: BrowserRecordingDraft | undefined,
   attachments: CoworkAttachmentPayload[],
   supportsImages: boolean,
-): 'recordingVision' | 'recordingPayloadLimit' | null {
+): 'recordingVision' | 'recordingPayloadLimit' | 'recordingNetworkOnlySubmission' | null {
   if (!recording) return null;
   if (recording.images.length && !supportsImages) return 'recordingVision';
   if (
@@ -13,5 +16,11 @@ export function recordingSubmissionIssue(
     20 * 1024 * 1024
   )
     return 'recordingPayloadLimit';
+  if (
+    !recording.steps.length &&
+    (recording.capturedNetwork || recording.network) &&
+    !recordingNetworkProjection(recording).summary?.entries.length
+  )
+    return 'recordingNetworkOnlySubmission';
   return null;
 }
