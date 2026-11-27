@@ -241,7 +241,11 @@ describe('automatic error retry host transport', () => {
     const f = fixture(null, 1);
     await f.arm();
     const overflow = (runId?: string): NativeRunTerminalReceipt => ({
-      ...terminal(runId), observedFailureCode: CONTEXT_OVERFLOW_ERROR_CODE,
+      ...terminal(runId),
+      observedFailureCode: readNativeRetryFailureCode({
+        phase: 'error', executionSettled: true, livenessState: 'blocked',
+        errorObservation: { failoverReason: CONTEXT_OVERFLOW_ERROR_CODE },
+      }, nativeSessionId),
     });
 
     expect(f.host.coordinator.observeSettled(overflow())).toBe(true);

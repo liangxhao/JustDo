@@ -75,9 +75,10 @@
 | 当前规则 | 目标版本逐项复核 | 需确认不触发续跑的场景 |
 | --- | --- | --- |
 | 连续相同工具失败 `openclaw_repeated_tool_error` | 触发原生重复工具失败保护，检查同一 run 最后一条 assistant 的 `stopReason:error` 与该 `errorCode`，以及 `runtimeServices.executionFailure` 返回的精确身份与错误码。确认续跑沿用原会话但不原样重试失败调用。 | 原生在同一 run 通过改变方案恢复、单次工具失败、较早 attempt 的错误、旧 run，或用户和助手正文引用同一报错。 |
-| 上下文溢出 `context_overflow` | 用模型返回 HTTP 400、`context_length_exceeded` 的场景触发；原生压缩及恢复结束后仍失败时，核对 `phase:error`、`executionSettled:true`、`livenessState:blocked`、`errorObservation.failoverReason:context_overflow`，并验证同轮 `executionFailure` 身份匹配且错误码为 `null`、`context_overflow` 或 `context_length_exceeded` 时的映射。 | 只有 HTTP 状态、报错正文或 `agent.wait` 失败；普通压缩失败、原生压缩已恢复、取消、超时或压缩后会话身份变更。 |
+| 上下文溢出 `context_overflow` | 分别以模型 HTTP 400 `context_length_exceeded` 和工具结果后的[本地预算预检](#工具轮预检后压缩摘要为空)触发。原生恢复后仍失败时，核对 `phase:error`、`executionSettled:true`、`livenessState:blocked`、`errorObservation.failoverReason:context_overflow`，以及同轮 `executionFailure` 的精确身份和错误码为 `null`、`context_overflow` 或 `context_length_exceeded` 时的映射。 | 只有 HTTP 状态、报错正文或 `agent.wait` 失败；普通压缩失败、原生压缩已恢复、取消、超时或压缩后会话身份变更。 |
 | 会话读取许可失效 `session_reader_not_current` | 核对 `Session reader operation is no longer current` 及其已知前缀、包装。若只有 `chat.error`，以精确 `agent.wait` 已结束失败及 `sessions.describe` 的 SID、revision、`lastRunId` 补证；`executionFailure` 身份匹配且无结构化错误码时，核对当前分支最后的原始输入幂等键与其后同 run 的 `run-failed-before-reply` 精确回执。续跑仍关联原始输入。 | 只有错误气泡，缺原输入或原生自定义回执，历史正文伪装成回执，或较新输入、分支和 run 已接管。 |
 | 会话历史索引重建 `session_transcript_projection_rebuilding` | 核对本轮实时整轮失败的 `error` 精确为 `Session transcript projection is rebuilding: <sessionId>`，其中 SID 与本轮一致。若目标版增加原生恢复，分别验证原 run 恢复和原生仍以该错误结算。后者走共用额度，同一前驱只准入一个后继。 | 读取历史窗口变化 `Session transcript history window changed: <sessionId>`、其他 SID、普通历史查询失败、未结算、让出、超时或旧 run 被替换。 |
+| 原生补答耗尽 `reply_generation_exhausted` | 用普通桌面聊天重放连续两次 HTTP 200、可见内容为空且 `stopReason:stop` 的模型响应。核对原生一次补答耗尽后，以同一 run 的已结算失败发布 `stopReason:error` 和结构化耗尽标记。用目标安装包的 Gateway 和 Main 联合验证同一物理会话的后继派发、成功后隐藏中间错误，以及原生诊断保留。 | 泛化失败文案、未联系模型的失败、尚未耗尽的空尝试、正常静默、取消和超时。 |
 
 - [ ] 核对 `runtimeServices.executionFailure` 在目标 SDK 下仍按精确 sessionKey、SID、
       revision 和 run 读回，读取前后身份核验与 `identityMatched` 语义保持有效。读取失败或证据
@@ -92,6 +93,39 @@
 该变体。用目标 Gateway 分别确认 WS、wait 与历史回执实际输出。历史索引重建仍有同名异常，
 `attempt-session-projection-recovery.ts` 已有原生等待后再打开的路径，分别验证原生成功接管
 和失败终态仍可由应用接续。这两处的实际产物行为待验收。
+
+### 工具轮预检后压缩摘要为空
+
+2026-11-27 的脱敏现场日志记录了同一会话的三个运行，时间为 UTC+8。
+
+| 运行 | 已确认的顺序 |
+| --- | --- |
+| 原运行 | 11:20 已收到聊天模型响应。11:26 工具结果后的 `mid-turn precheck` 拦下下一次聊天请求，`trigger=budget` 进入恢复压缩。压缩期间有 HTTP 200。11:27 原生报告 `Turn prefix summarization failed: model returned no summary text`，以 `guard_blocked` 取消提交并以 `compaction_failure` 结束。日志记录了 `runtimeServices.executionFailure` 调用成功，其响应内容和 Main 的续跑判定缺失。下一次手动输入前未见后继 `agent` 派发。 |
+| 第一次「继续」 | 11:31:26、11:31:29 都收到聊天模型 HTTP 200。第一次空回复触发一次原生补答，第二次仍是 `stopReason=stop`、`payloads=0`、`tools=0`，随后耗尽并报告无回复。Main 的续跑支持已在 `59280cb3c` 合入，需验证候选安装包的编译产物实际包含该逻辑。 |
+| 第二次「继续」 | 11:31:53 收到聊天模型 HTTP 200。随后执行工具，并在 11:32 再次触发预算恢复压缩。现场日志到下一条模型 HTTP 200 为止，该轮最终结算未采集。 |
+
+锁定的 OpenClaw v2026.10.7 已用隔离 Gateway 和本地合成模型复现。先用普通聊天建立可压缩
+历史，再让短输入调用工具，把结果加入模型上下文。预算预检拦下工具后的聊天请求后，第一份
+整段对话摘要返回有效文本，独立的工具轮前缀摘要连续三次返回 HTTP 200 空正文。原生取消
+压缩，未发起下一次聊天模型请求，并以相同物理 SID/revision 发布 `context_overflow` 的
+已结算终态。精确 `executionFailure` 返回 `identityMatched:true`、`errorCode:null`，匹配现有
+JustDo 续跑规则。这组隔离证据无法定位现场在错误读回、规则匹配或派发前复核的哪一步停止。
+
+- [ ] 在候选冻结 Gateway 上重放同样的请求序列，分开计数普通聊天请求与
+      `request_purpose=context_compaction`。记录预检来源、有效预算、两种摘要结果、
+      是否提交原生压缩边界以及最终同轮结算。使用正常摘要作为成功对照。
+- [ ] 如果候选版可在同一轮恢复，验收原生提交一次通过质量及预算校验的压缩，保留本轮用户
+      请求、已结算的工具结果及调用配对，继续模型请求时不重执行已完成工具。若主摘要也为空、
+      必需上下文无法保留或发生取消，核对原历史和真实失败或取消状态。另测输出长度耗尽、
+      供应商错误及超时，避免把它们误作空摘要。
+- [ ] 如果候选版仍取消压缩，先核对上游空前缀摘要的恢复能力，以及能否用已有的专用压缩模型
+      配置和明确授权的内网模型解决。若需要调整原生恢复，评估仅在已取得有效主摘要且前缀空
+      正文重试耗尽时，复用原生有界的工具轮前缀、预算和质量审查。预算无法保留该段或审核失败
+      时保留原历史。提示文案、软阈值或错误归因的变化均需单独验证。
+- [ ] 在候选安装包的桌面发送入口验证已结算失败后的 Main 决策。对照同一 run 的终态、
+      `executionFailure` 返回值、剩余次数、会话身份和后继是否派发，区分原生已恢复、
+      应用续跑已派发和应用退回失败。确有应用映射差异时才调整 JustDo，保留 Stop、
+      新输入及原生身份围栏。
 
 ## 长参数与真实活动
 
