@@ -268,6 +268,27 @@ describe('cowork config IPC', () => {
     expect(handleEngineConfigChanged).not.toHaveBeenCalled();
   });
 
+  it.each([true, false])(
+    'restores the previous directory when synchronization throws (rollback confirmed: %s)',
+    async confirmed => {
+      const selected = createWorkspaceFixture();
+      syncOpenClawConfig.mockRejectedValueOnce(new Error('workspace sync failed'));
+      if (!confirmed) syncOpenClawConfig.mockRejectedValueOnce(new Error('workspace rollback failed'));
+
+      await expect(
+        handlers.get('cowork:config:set')?.({}, { workingDirectory: selected.directory }),
+      ).resolves.toMatchObject({
+        success: false,
+        error: expect.stringContaining(
+          confirmed ? 'workspace sync failed' : 'workspace rollback failed',
+        ),
+      });
+
+      expect(currentConfig.workingDirectory).toBe(baseConfig.workingDirectory);
+      expect(syncOpenClawConfig).toHaveBeenLastCalledWith({ reason: 'cowork-config-change-rollback' });
+    },
+  );
+
   it('cleans the effective default directory when the stored directory is reset', async () => {
     const selected = createWorkspaceFixture();
     vi.stubEnv('NODE_ENV', 'development');

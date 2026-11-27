@@ -52,6 +52,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkBranchCreationPending:
       '该副本或分支尚未完成创建。请在会话列表中检查或删除，暂时无法继续发送。',
     sessionWorkspaceChanged: '会话工作目录已发生变化，请核对后重新发送。草稿已保留。',
+    sessionWorkspacePluginConflict: '所选目录与此会话的插件绑定冲突，无法更改工作目录。',
     ...appPluginTranslations.zh,
     computerOverlayActive: '正在操作电脑',
     computerOverlayWaiting: '电脑操作待续',
@@ -288,6 +289,7 @@ const translations: Record<LanguageType, Record<string, string>> = {
     coworkBranchCreationPending:
       'This copy or branch is unfinished. Inspect or delete it in the session list before continuing.',
     sessionWorkspaceChanged: 'The session’s working directory changed. Check it before sending again. Your draft was kept.',
+    sessionWorkspacePluginConflict: 'The selected directory conflicts with this session’s plugin binding.',
     ...appPluginTranslations.en,
     computerOverlayActive: 'Operating your computer',
     computerOverlayWaiting: 'Between computer actions',

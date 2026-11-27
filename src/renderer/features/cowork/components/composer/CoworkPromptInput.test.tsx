@@ -745,8 +745,23 @@ test('keeps a startup draft editable without submitting or discovering slash com
   await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());
 });
 
-test('keeps the home draft editable and waits to send while the working directory changes', async () => {
+test.each([
+  { scenario: 'selecting another folder', saved: true, reset: false },
+  { scenario: 'a failed switch', saved: false, reset: false },
+  { scenario: 'resetting to the default', saved: true, reset: true },
+])('responds immediately and waits to send when $scenario', async ({ saved, reset }) => {
+  const oldDirectory = 'C:/old-project';
+  const nextDirectory = reset ? 'C:/default-project' : 'C:/next-project';
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
   vi.stubGlobal('electron', {
+    platform: 'win32',
+    getRecentCwds: vi.fn().mockResolvedValue(['c:\\OLD-PROJECT\\', nextDirectory]),
     extensions: {
       list: vi.fn().mockResolvedValue({ success: true, extensions: [] }),
       onChanged: () => () => {},
@@ -771,10 +786,25 @@ test('keeps the home draft editable and waits to send while the working director
       />
     </Provider>
   );
-  const view = render(composer('C:/old-project'));
+  const view = render(composer(oldDirectory));
   const folderButton = screen.getByRole('button', { name: i18nService.t('workspacePickerTitle') });
-  fireEvent.click(folderButton.querySelector('[role="button"]')!);
-  expect(onWorkingDirectoryChange).toHaveBeenCalledExactlyOnceWith('');
+  await act(async () => fireEvent.click(folderButton));
+  fireEvent.click(screen.getByRole('button', { current: true }));
+  expect(onWorkingDirectoryChange).not.toHaveBeenCalled();
+
+  if (reset) {
+    fireEvent.click(folderButton.querySelector('[role="button"]')!);
+  } else {
+    fireEvent.click(folderButton);
+    fireEvent.click(screen.getByTitle(nextDirectory));
+    expect(folderButton.textContent).toContain('next-project');
+  }
+  expect(onWorkingDirectoryChange).toHaveBeenCalledExactlyOnceWith(reset ? '' : nextDirectory);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(folderButton).toHaveProperty(
+    'title',
+    reset ? i18nService.t('workspacePickerApplying') : nextDirectory,
+  );
   expect(folderButton.getAttribute('aria-busy')).toBe('true');
 
   const input = screen.getByRole('textbox');
@@ -785,8 +815,22 @@ test('keeps the home draft editable and waits to send while the working director
   expect(onSubmit).not.toHaveBeenCalled();
   expect(input).toHaveProperty('value', 'Keep this draft');
 
-  view.rerender(composer('C:/default-project'));
-  await act(async () => applyDirectory.resolve(true));
+  if (saved) view.rerender(composer(nextDirectory));
+  const toast = vi.fn();
+  window.addEventListener('app:showToast', toast, { once: true });
+  try {
+    await act(async () => applyDirectory.resolve(saved));
+    if (saved) {
+      expect(toast).not.toHaveBeenCalled();
+    } else {
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ detail: i18nService.t('sessionWorkspaceUnavailable') }),
+      );
+    }
+  } finally {
+    window.removeEventListener('app:showToast', toast);
+  }
+  expect(folderButton).toHaveProperty('title', saved ? nextDirectory : oldDirectory);
   expect(folderButton.getAttribute('aria-busy')).toBe('false');
   fireEvent.click(send);
   await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce());

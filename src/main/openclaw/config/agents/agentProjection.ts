@@ -126,13 +126,14 @@ export const mergeAgentEntriesWithManagedMainSettings = (
     entries[agentId] = entry;
   }
   // Authentication sync preserves native settings, but managed role homes and
-  // task directories must remain consistent with normal settings sync.
+  // inheritance from agents.defaults.cwd must match normal settings sync.
   for (const [agentId, entry] of Object.entries(managedEntries)) {
     if (!isRecord(entry) || 'runtime' in entry) continue;
+    const existingEntry = entries[agentId];
+    const { cwd: _cwd, ...preservedEntry } = isRecord(existingEntry) ? existingEntry : {};
     entries[agentId] = {
-      ...(isRecord(entries[agentId]) ? entries[agentId] : {}),
+      ...preservedEntry,
       ...(typeof entry.workspace === 'string' ? { workspace: entry.workspace } : {}),
-      ...(typeof entry.cwd === 'string' ? { cwd: entry.cwd } : {}),
     };
   }
   const managedMain = isRecord(managedEntries.main) ? managedEntries.main : undefined;

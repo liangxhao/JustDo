@@ -51,6 +51,32 @@ const setup = async (register: (host: AppMainHost) => AppMainRegistration) => {
   };
 };
 
+it.each([
+  () => 'invalid',
+  async () => {
+    throw new Error('asynchronous decision');
+  },
+])('rejects an invalid plugin workspace change decision', async decide => {
+  const { registry } = await setup(() => ({
+    commands: [],
+    resources: {
+      expandResources: ids => [...ids],
+      acquireDeletion: () => () => undefined,
+      isDeleting: () => false,
+      isManaged: () => false,
+      blocksWorkspaceChange: decide as unknown as () => boolean,
+      prepareDelete: async () => undefined,
+      deleteManaged: async () => false,
+    },
+  }));
+  try {
+    const resources = registry.registrations()[0].resources!;
+    expect(() => resources.blocksWorkspaceChange!('source', 'C:/project')).toThrow();
+  } finally {
+    registry.dispose();
+  }
+});
+
 it('checks only the changing owner while preserving global unresolved-inventory protection', async () => {
   const target = vi.fn(async () => {});
   const peer = vi.fn(async () => { throw new Error('peer remains busy'); });

@@ -148,6 +148,8 @@ export interface AppResourceParticipant {
   acquireDeletion(sessionIds: string[]): () => void;
   isDeleting(sessionId: string): boolean;
   isManaged(sessionId: string): boolean;
+  /** Veto a product session moving to a canonical cwd that conflicts with a bound resource. */
+  blocksWorkspaceChange?(sessionId: string, cwd: string): boolean;
   prepareDelete(sessionIds: readonly string[]): Promise<void>;
   deleteManaged(sessionId: string): Promise<boolean>;
 }

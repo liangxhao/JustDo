@@ -59,10 +59,12 @@ export const areFolderPathsEqual = (
   secondPath: string,
   platform: string,
 ): boolean => {
-  const normalize = (path: string) => path.trim().replace(/[\\/]+$/, '');
-  const first = normalize(firstPath);
-  const second = normalize(secondPath);
-  return platform === 'win32' ? first.toLowerCase() === second.toLowerCase() : first === second;
+  if (platform === 'win32') {
+    const normalize = (path: string) => path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    return normalize(firstPath) === normalize(secondPath);
+  }
+  const normalize = (path: string) => path.replace(/\/+$/, '') || path.slice(0, 1);
+  return normalize(firstPath) === normalize(secondPath);
 };
 
 const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
@@ -73,8 +75,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
   currentFolder = '',
   description,
 }) => {
-  const [recentFolders, setRecentFolders] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [recentFolders, setRecentFolders] = useState<string[] | null>(null);
   const [position, setPosition] = useState<PopoverPosition | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const chooseFolderButtonRef = useRef<HTMLButtonElement>(null);
@@ -94,8 +95,6 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
     if (!isOpen) return;
 
     let cancelled = false;
-    setIsLoading(true);
-    setPosition(null);
     void coworkService
       .getRecentCwds(8)
       .then(folders => {
@@ -104,11 +103,9 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
         }
       })
       .catch(error => {
+        if (cancelled) return;
         console.error('Failed to load recent folders:', error);
-        if (!cancelled) setRecentFolders([]);
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
+        setRecentFolders(previous => previous ?? []);
       });
 
     return () => {
@@ -130,7 +127,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
       window.removeEventListener('resize', updatePosition);
       window.removeEventListener('scroll', updatePosition, true);
     };
-  }, [isOpen, isLoading, recentFolders.length, updatePosition]);
+  }, [isOpen, updatePosition]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -254,7 +251,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
         <div className="flex items-center gap-2 px-2 pb-2 pt-1 text-xs font-medium text-secondary">
           <ClockIcon className="h-3.5 w-3.5" />
           <span>{i18nService.t('recentFolders')}</span>
-          {!isLoading && recentFolders.length > 0 && (
+          {recentFolders !== null && recentFolders.length > 0 && (
             <span className="ml-auto tabular-nums text-[11px] text-secondary/70">
               {recentFolders.length}
             </span>
@@ -262,7 +259,7 @@ const FolderSelectorPopover: React.FC<FolderSelectorPopoverProps> = ({
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          {isLoading ? (
+          {recentFolders === null ? (
             <div className="space-y-1 px-1 py-1" aria-label={i18nService.t('loading')}>
               {[0, 1, 2].map(item => (
                 <div

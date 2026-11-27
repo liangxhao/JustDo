@@ -1392,8 +1392,9 @@ describe('OpenClaw auth logout config sync', () => {
       const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'justdo-role-homes-'));
       temporaryDirectories.push(stateDir);
       const configPath = path.join(stateDir, 'openclaw.json');
-      let projectDir = path.join(stateDir, '项目 A');
-      fs.mkdirSync(projectDir);
+      const projects = ['项目 A', '项目 B', '项目 C'].map(name => path.join(stateDir, name));
+      for (const project of projects) fs.mkdirSync(project);
+      let projectDir = projects[0];
       const projectRules = path.join(projectDir, 'AGENTS.md');
       const projectSoul = path.join(projectDir, 'SOUL.md');
       fs.writeFileSync(projectRules, 'Shared project rules');
@@ -1440,28 +1441,47 @@ describe('OpenClaw auth logout config sync', () => {
             isDefault: id === 'main',
           })),
       } as never);
-      for (const reason of [
+      const reasons = [
         'startup',
         'settings',
         BuiltinModelSyncReason.AuthLogin,
-      ]) {
+      ];
+      const managedAgentIds = ['main', 'research'];
+      const staleCwd = path.join(stateDir, 'legacy-project');
+      const nativeCwd = path.join(stateDir, 'native-project');
+      let previousEntries: unknown;
+      for (const [index, reason] of reasons.entries()) {
+        projectDir = projects[index];
         const existing = fs.existsSync(configPath)
           ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
           : { gateway: { mode: 'local' }, agents: { defaults: {} } };
         existing.agents.defaults.skipBootstrap = false;
+        if (reason !== 'settings') {
+          existing.agents.entries ??= {};
+          for (const id of managedAgentIds) {
+            existing.agents.entries[id] = { ...existing.agents.entries[id], cwd: staleCwd };
+          }
+          existing.agents.entries.native = { cwd: nativeCwd };
+        }
         fs.writeFileSync(configPath, JSON.stringify(existing));
         expect(sync.sync(reason).ok).toBe(true);
         const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
         expect(config.agents.defaults.workspace).toBe(roleRoot);
         expect(config.agents.defaults.cwd).toBe(projectDir);
         expect(config.agents.defaults.skipBootstrap).toBe(true);
-        for (const id of ['main', 'research']) {
+        for (const id of managedAgentIds) {
           expect(config.agents.entries[id]).toMatchObject({
             workspace: path.join(roleRoot, id),
-            cwd: projectDir,
           });
+          expect(config.agents.entries[id]).not.toHaveProperty('cwd');
         }
-        projectDir = path.join(stateDir, '项目 B');
+        if (mode === 'minimal' || reason === BuiltinModelSyncReason.AuthLogin) {
+          expect(config.agents.entries.native.cwd).toBe(nativeCwd);
+        }
+        if (reason === 'settings') {
+          expect(config.agents.entries).toEqual(previousEntries);
+        }
+        previousEntries = config.agents.entries;
       }
       expect(fs.readFileSync(projectRules, 'utf8')).toBe('Shared project rules');
       expect(fs.readFileSync(projectSoul, 'utf8')).toBe(
@@ -2860,7 +2880,6 @@ describe('OpenClaw auth logout config sync', () => {
     expect(result.ownership).toBe('explicit');
     expect(result.entries.main).toMatchObject({
       workspace: path.join('/state', 'agent-workspaces', 'main'),
-      cwd: 'E:/workspace/project',
       model: {
         primary: 'custom-provider/custom-model',
       },

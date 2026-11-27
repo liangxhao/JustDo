@@ -16,7 +16,7 @@ import {
   type ComposerSubmissionMetadata,
 } from './submission/composerSubmissionTiming';
 export { appendMediaDirectiveLines } from './draft/composerMedia';
-import { ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { ArrowPathIcon, ChevronDownIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { FolderIcon } from '@heroicons/react/24/solid';
 import { MAIN_USER_AGENT_ID } from '@shared/agents/agents';
 import { composeBrowserGatewayPrompt } from '@shared/browser/browserMessageContext';
@@ -48,7 +48,9 @@ import { recordingSubmissionIssue } from '@/features/browser/recording/browserRe
 import AttachmentCard from '@/features/cowork/components/composer/attachments/AttachmentCard';
 import { rejectBlockedSlashCommand } from '@/features/cowork/components/composer/blockedSlashCommand';
 import { resolveAgentModelSelection } from '@/features/cowork/components/composer/selection/agentModelSelection';
-import FolderSelectorPopover from '@/features/cowork/components/composer/selection/FolderSelectorPopover';
+import FolderSelectorPopover, {
+  areFolderPathsEqual,
+} from '@/features/cowork/components/composer/selection/FolderSelectorPopover';
 import PermissionModeSelector from '@/features/cowork/components/composer/selection/PermissionModeSelector';
 import {
   getHiddenCommandCount,
@@ -550,7 +552,12 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
       setRenderedValue(nextValue);
     }, []);
     const [showFolderMenu, setShowFolderMenu] = useState(false);
-    const [changingWorkingDirectory, setChangingWorkingDirectory] = useState(false);
+    const [pendingWorkingDirectory, setPendingWorkingDirectory] = useState<string | null>(null);
+    const changingWorkingDirectory = pendingWorkingDirectory !== null;
+    const displayedWorkingDirectory = pendingWorkingDirectory ?? workingDirectory;
+    const folderButtonTitle =
+      displayedWorkingDirectory ||
+      i18nService.t(changingWorkingDirectory ? 'workspacePickerApplying' : 'coworkSelectProject');
     const workingDirectoryChangePending = useRef(false);
     const [showFolderRequiredWarning, setShowFolderRequiredWarning] = useState(false);
     const [isDraggingFiles, setIsDraggingFiles] = useState(false);
@@ -1881,9 +1888,16 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
     };
 
     const handleFolderSelect = async (path: string) => {
-      if (!onWorkingDirectoryChange || workingDirectoryChangePending.current || sendPreparationRef.current) return;
+      if (
+        !onWorkingDirectoryChange ||
+        (path !== '' && areFolderPathsEqual(path, workingDirectory, window.electron.platform)) ||
+        workingDirectoryChangePending.current ||
+        sendPreparationRef.current
+      ) {
+        return;
+      }
       workingDirectoryChangePending.current = true;
-      setChangingWorkingDirectory(true);
+      setPendingWorkingDirectory(path);
       try {
         if (await onWorkingDirectoryChange(path).catch(() => false)) return;
         window.dispatchEvent(
@@ -1893,7 +1907,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
         );
       } finally {
         workingDirectoryChangePending.current = false;
-        setChangingWorkingDirectory(false);
+        setPendingWorkingDirectory(null);
       }
     };
 
@@ -2807,7 +2821,7 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                   aria-haspopup="dialog"
                   aria-expanded={showFolderMenu}
                   aria-busy={changingWorkingDirectory}
-                  title={workingDirectory || i18nService.t('coworkSelectProject')}
+                  title={folderButtonTitle}
                   aria-label={i18nService.t('workspacePickerTitle')}
                   className={`flex items-center gap-1.5 pl-2.5 pr-1.5 py-1.5 rounded-full bg-surface text-sm transition-colors ${
                     showFolderRequiredWarning
@@ -2817,13 +2831,18 @@ const CoworkPromptInput = React.forwardRef<CoworkPromptInputRef, CoworkPromptInp
                 >
                   <FolderIcon className="h-4 w-4 flex-shrink-0" />
                   <span className="max-w-[150px] truncate text-xs">
-                    {changingWorkingDirectory
-                      ? i18nService.t('workspacePickerApplying')
-                      : workingDirectory
-                        ? truncatePath(workingDirectory)
-                        : i18nService.t('coworkSelectProject')}
+                    {displayedWorkingDirectory
+                      ? truncatePath(displayedWorkingDirectory)
+                      : folderButtonTitle}
                   </span>
-                  <ChevronDownIcon className="h-3 w-3 shrink-0" />
+                  {changingWorkingDirectory ? (
+                    <ArrowPathIcon
+                      className="h-3 w-3 shrink-0 animate-spin motion-reduce:animate-spin"
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <ChevronDownIcon className="h-3 w-3 shrink-0" />
+                  )}
                   {workingDirectory && !changingWorkingDirectory && (
                     <span
                       role="button"

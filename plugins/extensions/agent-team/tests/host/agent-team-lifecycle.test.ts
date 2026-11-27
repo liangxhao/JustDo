@@ -356,6 +356,24 @@ const send = (roomId: string, requestId = 'request') => ({
 });
 
 describe.skipIf(!hostRoot)('Host integration (requires APP_PLUGIN_HOST_ROOT)', () => {
+  it('keeps a linked discussion on its source workspace even while the plugin is disabled', async () => {
+    const f = await fixture();
+    const room = f.room('linked');
+    const { summarySource: _summarySource, ...unboundRoom } = room;
+    f.metadata.create({ ...unboundRoom, id: 'unbound' });
+    const otherProject = path.join(room.cwd, 'other-project');
+
+    expect(f.participants.blocksWorkspaceChange(f.source.id, otherProject)).toBe(true);
+    expect(f.participants.blocksWorkspaceChange(f.source.id, room.cwd)).toBe(false);
+    expect(f.participants.blocksWorkspaceChange(f.peer.id, otherProject)).toBe(false);
+    expect(f.participants.isManaged(f.source.id)).toBe(false);
+
+    f.metadata.beginDelete(room.id);
+    for (const member of room.members) f.metadata.markMemberDeleted(room.id, member.agentId);
+    f.metadata.remove(room.id);
+    expect(f.participants.blocksWorkspaceChange(f.source.id, otherProject)).toBe(false);
+  });
+
   it('reconciles exact discussion receipts while disabled without admitting work or history', async () => {
     const f = await fixture();
     const room = f.room();

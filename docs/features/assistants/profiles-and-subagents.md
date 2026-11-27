@@ -22,7 +22,7 @@ main 不能禁用，默认隐藏助手选择器。设置中的“允许切换主
 
 `BOOTSTRAP.md` 在初始化完成后可能不存在。OpenClaw 的 `run-orchestrator` 从会话 agent 身份解析 canonical workspace，`attempt-bootstrap-prepare` 加载该助手的 bootstrap 文件，再叠加执行工程根目录的 `AGENTS.md`。
 
-切换助手不复制、改写或删除工程文件；工程规则仍有效，其中若包含 main 专属身份指令，用户应将它们整理到角色文件中，避免与新助手身份冲突。所有原生助手（包括 main）的角色文件固定在 `stateDir/agent-workspaces/<agentId>`。配置中的 `agents.defaults.workspace` 指向该角色目录根，受管条目显式指定各自 workspace；原生 `cwd` 指向所选工程，具体会话仍以 `sessions.create.cwd` 持久化自己的任务目录。受管配置使用原生 `agents.defaults.skipBootstrap: true` 关闭工作区角色模板生成，继续保留原生工程 workspace/cwd 与权限语义，以及现有角色和工程规则加载。
+切换助手不复制、改写或删除工程文件；工程规则仍有效，其中若包含 main 专属身份指令，用户应将它们整理到角色文件中，避免与新助手身份冲突。所有原生助手（包括 main）的角色文件固定在 `stateDir/agent-workspaces/<agentId>`。配置中的 `agents.defaults.workspace` 指向该角色目录根，受管条目显式指定各自 workspace。受管内嵌助手继承指向所选工程的 `agents.defaults.cwd`，普通目录切换无需更新这些助手的条目。具体会话仍以 `sessions.create.cwd` 持久化自己的任务目录。受管配置使用原生 `agents.defaults.skipBootstrap: true` 关闭工作区角色模板生成，继续保留原生工程 workspace/cwd 与权限语义，以及现有角色和工程规则加载。
 
 切换工程、常规保存和登录/退出登录同步都保持角色目录稳定。ACP 外部执行器保留其原有工程 workspace/cwd 合约。
 

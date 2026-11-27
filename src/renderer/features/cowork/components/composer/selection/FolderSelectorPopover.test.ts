@@ -23,11 +23,18 @@ describe('calculatePopoverPosition', () => {
 });
 
 describe('areFolderPathsEqual', () => {
-  it('ignores case and trailing separators on Windows', () => {
-    expect(areFolderPathsEqual('C:\\Work\\Project\\', 'c:\\work\\project', 'win32')).toBe(true);
+  it('ignores case, separator style and trailing separators on Windows', () => {
+    expect(areFolderPathsEqual('C:\\Work\\Project\\', 'c:/work/project', 'win32')).toBe(true);
   });
 
   it('preserves case sensitivity on non-Windows platforms', () => {
     expect(areFolderPathsEqual('/work/Project', '/work/project', 'linux')).toBe(false);
+  });
+
+  it('only removes trailing slash separators from POSIX directories', () => {
+    expect(areFolderPathsEqual('/work/project/', '/work/project', 'linux')).toBe(true);
+    expect(areFolderPathsEqual('/work/project\\', '/work/project', 'linux')).toBe(false);
+    expect(areFolderPathsEqual('/work/project ', '/work/project', 'linux')).toBe(false);
+    expect(areFolderPathsEqual('/', '', 'linux')).toBe(false);
   });
 });

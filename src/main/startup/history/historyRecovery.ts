@@ -1,18 +1,33 @@
+import { realpath } from 'node:fs/promises';
+import path from 'node:path';
+
 import { type BrowserWindow, dialog, ipcMain } from 'electron';
 
 import {
   HistoryRecoveryIpc,
   type HistoryWorkspaceResult,
 } from '../../../shared/app/startup/history';
+import { t } from '../../core/i18n';
 import { isHistoryWorkspaceAvailable } from '../../cowork/sessions/historyWorkspace';
 import type { CoworkStore } from '../../data/coworkStore';
 import type { SqliteStore } from '../../data/sqliteStore';
+
+async function resolveSelectedWorkspace(selectedPath: string): Promise<string | null> {
+  if (!path.isAbsolute(selectedPath)) return null;
+  try {
+    const cwd = await realpath(selectedPath);
+    return (await isHistoryWorkspaceAvailable(cwd)) ? cwd : null;
+  } catch {
+    return null;
+  }
+}
 
 export function registerHistoryRecoveryHandlers(deps: {
   getWindow: () => BrowserWindow | null;
   isReady: () => boolean;
   getStore: () => SqliteStore;
   getCoworkStore: () => CoworkStore;
+  blocksWorkspaceChange: (sessionId: string, cwd: string) => boolean;
 }): void {
   ipcMain.handle(
     HistoryRecoveryIpc.SelectWorkspace,
@@ -59,10 +74,9 @@ export function registerHistoryRecoveryHandlers(deps: {
         const selected = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
         if (selected.canceled || selected.filePaths.length !== 1)
           return { success: false, cancelled: true };
-        const cwd = selected.filePaths[0];
-        const [oldWorkspaceAvailable, selectedWorkspaceAvailable] = await Promise.all([
+        const [oldWorkspaceAvailable, cwd] = await Promise.all([
           isHistoryWorkspaceAvailable(before.cwd),
-          isHistoryWorkspaceAvailable(cwd),
+          resolveSelectedWorkspace(selected.filePaths[0]),
         ]);
         const current = validate();
         if (
@@ -75,8 +89,10 @@ export function registerHistoryRecoveryHandlers(deps: {
           throw new Error('The historical conversation changed while selecting its workspace.');
         if (oldWorkspaceAvailable)
           throw new Error('This historical conversation cannot change its missing workspace now.');
-        if (!selectedWorkspaceAvailable)
-          throw new Error('The selected workspace is unavailable.');
+        if (!cwd) throw new Error('The selected workspace is unavailable.');
+        if (deps.blocksWorkspaceChange(id, cwd)) {
+          return { success: false, error: t('sessionWorkspacePluginConflict') };
+        }
         store.updateSession(id, { cwd });
         return { success: true, cwd };
       } catch (error) {

@@ -18,6 +18,7 @@ export interface SessionWorkspaceDependencies {
   getCoworkEngineRouter: () => CoworkEngineRouter;
   isBlocked: (sessionId: string) => boolean;
   isManaged: (sessionId: string) => boolean;
+  blocksWorkspaceChange: (sessionId: string, cwd: string) => boolean;
   onSessionsChanged?: () => void;
 }
 
@@ -96,6 +97,8 @@ export function createSessionWorkspaceUpdater(
       } catch {
         return fail(SessionWorkspaceFailure.Invalid);
       }
+      if (deps.blocksWorkspaceChange(session.id, cwd))
+        return fail(SessionWorkspaceFailure.Unsupported);
       const status = await router.getSessionRuntimeStatus(session.id, {
         targeted: true,
         includeSubagents: true,
@@ -108,7 +111,8 @@ export function createSessionWorkspaceUpdater(
         JSON.stringify(store.getLatestSessionRun(session.id)) !== originalRun
       )
         return fail(SessionWorkspaceFailure.Changed);
-      if (deps.isManaged(session.id)) return fail(SessionWorkspaceFailure.Unsupported);
+      if (deps.isManaged(session.id) || deps.blocksWorkspaceChange(session.id, cwd))
+        return fail(SessionWorkspaceFailure.Unsupported);
       if (!isAllowed()) return fail(SessionWorkspaceFailure.Unsupported);
       if (router.hasUnconfirmedSessionPreparation(session.id))
         return fail(SessionWorkspaceFailure.PreparationUnknown);

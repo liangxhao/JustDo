@@ -228,6 +228,8 @@ export function register(host: AppMainHost): AppMainRegistration {
         getCollaboration().isSourceDeleting(id) ||
         Boolean(getCollaboration().read(id).room?.deleting),
       isManaged: id => Boolean(getCollaboration().read(id).room),
+      blocksWorkspaceChange: (id, cwd) =>
+        new TeamDiscussionStore(host.getDatabase()).hasWorkspaceConflict(id, cwd),
       prepareDelete: async ids => {
         for (const id of ids) {
           await getDiscussion().stopForSource(id, true);

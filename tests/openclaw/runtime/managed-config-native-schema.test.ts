@@ -70,7 +70,8 @@ type Assessment = {
   label: string; schemaSuccess: boolean; schemaIssues: { path: string; keys?: string[] }[];
   legacyIssues: { path: string; message: string }[];
   reloadPlan?: { changedPaths: string[]; restartGateway: boolean; restartReasons: string[];
-    hotReasons: string[]; restartServices: string[]; reloadPlugins: boolean };
+    hotReasons: string[]; restartServices: string[]; reloadPlugins: boolean;
+    refreshHooksPolicy: boolean; reloadInternalHooks: boolean };
 };
 function assess(cases: { label: string; config: unknown; previousConfig?: unknown }[]): Assessment[] {
   const directory = temporary();
@@ -114,10 +115,11 @@ function retainedConfig(canonicalVoice: boolean) {
 }
 const nativeTest = test.skipIf(!nativeAvailable);
 
-nativeTest('ordinary agent settings keep the native Gateway on the hot-reload path', () => {
+nativeTest('agent settings and working directory changes use the native hot-reload path', () => {
   const directory = temporary();
   const configPath = path.join(directory, 'openclaw.json');
   let settings = createDefaultAgentRuntimeSettings();
+  let workingDirectory = path.join(directory, 'project');
   setStoreGetter(() => ({ get: () => ({
     model: { defaultModel: 'chat', defaultModelProvider: 'internal' },
     providers: { internal: { enabled: true, apiKey: 'synthetic-key',
@@ -126,7 +128,7 @@ nativeTest('ordinary agent settings keep the native Gateway on the hot-reload pa
   const sync = new OpenClawConfigSync({
     engineManager: { getConfigPath: () => configPath, getStateDir: () => directory,
       getDesiredVersion: () => targetVersion.slice(1) },
-    getCoworkConfig: () => ({ workingDirectory: path.join(directory, 'project'),
+    getCoworkConfig: () => ({ workingDirectory,
       executionMode: 'local', agentEngine: 'openclaw' }),
     getAgentRuntimeSettings: () => settings,
     getBrowserMode: () => BrowserMode.User,
@@ -139,16 +141,30 @@ nativeTest('ordinary agent settings keep the native Gateway on the hot-reload pa
     agent: { ...settings.agent, thinking: AgentRuntimeThinkingLevel.Low },
   };
   expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: true });
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const settingsConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
 
-  const [result] = assess([{ label: 'default thinking level', config, previousConfig }]);
-  expect(result.schemaSuccess, JSON.stringify(result.schemaIssues)).toBe(true);
-  expect(result.reloadPlan).toMatchObject({
+  workingDirectory = path.join(directory, 'other-project');
+  expect(sync.sync('cowork-config-change')).toMatchObject({ ok: true, configChanged: true });
+  const workspaceConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+  const [settingsResult, workspaceResult] = assess([
+    { label: 'default thinking level', config: settingsConfig, previousConfig },
+    { label: 'default working directory', config: workspaceConfig, previousConfig: settingsConfig },
+  ]);
+  expect(settingsResult.schemaSuccess, JSON.stringify(settingsResult.schemaIssues)).toBe(true);
+  expect(settingsResult.reloadPlan).toMatchObject({
     changedPaths: ['agents.defaults.thinkingDefault'],
     restartGateway: false,
     restartReasons: [],
   });
-  expect(sync.sync('settings')).toMatchObject({ ok: true, configChanged: false });
+  expect(workspaceResult.schemaSuccess, JSON.stringify(workspaceResult.schemaIssues)).toBe(true);
+  expect(workspaceResult.reloadPlan).toMatchObject({
+    changedPaths: ['agents.defaults.cwd'],
+    restartGateway: false,
+    refreshHooksPolicy: false,
+    reloadInternalHooks: false,
+  });
 }, 120_000);
 
 nativeTest.each([false, true])('built-in login and logout stay hot-reloadable with custom provider=%s', custom => {

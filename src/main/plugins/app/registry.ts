@@ -507,6 +507,7 @@ export class AppPluginRegistry {
           'acquireDeletion',
           'isDeleting',
           'isManaged',
+          'blocksWorkspaceChange',
           'prepareDelete',
           'deleteManaged',
         ] as const;
@@ -526,6 +527,11 @@ export class AppPluginRegistry {
           wrapped[name] = (...args: unknown[]) =>
             this.runCleanup(instance, () => {
               const result: unknown = Reflect.apply(method, participant, args);
+              if (name === 'blocksWorkspaceChange') {
+                const blocked = requireSynchronous(result, 'workspace change check');
+                if (typeof blocked !== 'boolean') throw new Error('Invalid workspace change decision');
+                return blocked;
+              }
               if (name !== 'acquireDeletion') return result;
               if (typeof result !== 'function') throw new Error('Invalid resource cleanup lease');
               instance.resourceLeases++;

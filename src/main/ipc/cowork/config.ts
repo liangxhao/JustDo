@@ -420,23 +420,33 @@ export const registerCoworkConfigHandlers = ({
             (agentEngine !== undefined && agentEngine !== previous.agentEngine) ||
             workspaceChanged;
           if (shouldSync) {
-            const syncResult = await syncOpenClawConfig({
-              reason: 'cowork-config-change',
-            });
+            const synchronize = async (reason: string): Promise<SyncResult> => {
+              try {
+                return await syncOpenClawConfig({ reason });
+              } catch (error) {
+                return {
+                  success: false,
+                  changed: false,
+                  error:
+                    error instanceof Error
+                      ? error.message
+                      : 'OpenClaw configuration synchronization failed.',
+                };
+              }
+            };
+            const syncResult = await synchronize('cowork-config-change');
             if (!syncResult.success && next.agentEngine === 'openclaw') {
               store.setConfig(previous);
               if (agentEngine !== undefined && agentEngine !== previous.agentEngine) {
                 getCoworkEngineRouter().handleEngineConfigChanged(previous.agentEngine);
               }
-              const rollbackResult = await syncOpenClawConfig({
-                reason: 'cowork-config-change-rollback',
-              });
+              const rollbackResult = await synchronize('cowork-config-change-rollback');
               return {
                 success: false,
                 code: engineNotReadyCode,
                 error: rollbackResult.success
                   ? `The preference was rolled back. ${syncResult.error || 'OpenClaw configuration synchronization failed.'}`
-                  : `The preference rollback could not be confirmed. The Gateway remains stopped. ${
+                  : `The preference rollback could not be confirmed. ${
                       rollbackResult.error || syncResult.error || 'OpenClaw config sync failed.'
                     }`,
                 engineStatus: getEngineManager().getStatus(),

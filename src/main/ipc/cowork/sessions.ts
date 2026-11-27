@@ -123,6 +123,8 @@ export const registerCoworkSessionHandlers = ({
     getCoworkEngineRouter,
     isAllowedSender: event => isAllowedWorkspaceSender?.(event) === true,
     isManaged: sessionId => getSessionPlugins?.().isManaged(sessionId) === true,
+    blocksWorkspaceChange: (sessionId, cwd) =>
+      getSessionPlugins?.().blocksWorkspaceChange(sessionId, cwd) === true,
     isBlocked: sessionId => stoppingSessions.has(sessionId) || unknownAdmissions.has(sessionId) ||
       getSessionPlugins?.().isDeleting(sessionId) === true,
     onSessionsChanged,

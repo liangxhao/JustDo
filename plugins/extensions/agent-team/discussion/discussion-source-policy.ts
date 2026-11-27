@@ -138,13 +138,17 @@ export function captureDiscussionSourcePolicy(
       throw new Error('teamDiscussionSourcePolicyUnsupported');
     return entry;
   };
-  const fingerprint = (entry: SessionEntry, executing = false) =>
-    JSON.stringify([
+  const fingerprint = (entry: SessionEntry, executing = false) => {
+    const config = currentConfig();
+    // The source and member sessions already have an explicit room root.
+    const { cwd: _cwd, ...defaults } = config.agents?.defaults ?? {};
+    return JSON.stringify([
       executing ? discussionExecutionPolicyFingerprint(entry) : discussionSessionPolicy(entry),
-      sourceConfigPolicy(currentConfig(), source.agentId),
-      currentConfig().agents?.defaults,
-      currentConfig().tools,
+      sourceConfigPolicy(config, source.agentId),
+      defaults,
+      config.tools,
     ]);
+  };
   const entry = structuredClone(read());
   const policy = fingerprint(entry);
   const executionPolicy = fingerprint(entry, true);

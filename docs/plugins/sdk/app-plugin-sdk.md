@@ -54,6 +54,8 @@ The host provides an explicit session metadata/execution port, the real product 
 
 Cleanup capability declarations and parameter predicates are explicit. Cleanup must not create sessions or send turns. Receipt listeners consume identity/status only. Protected resources are recorded with their owner and exact artifact hash. An old approved artifact may recover cleanup for journal-referenced resources, but receives no business commands or UI. Unknown or failed cleanup vetoes destructive deletion and package changes. Never replay an uncertain send, duplicate native transcripts, or infer settled execution from a chat final.
 
+`resources.blocksWorkspaceChange(sessionId, cwd)` is an optional synchronous check for a product session's canonical target directory. Return `true` when the target conflicts with an existing resource binding. The host checks again immediately before saving. Keep the check read-only so retained resource owners can protect existing bindings while disabled.
+
 Use `host.publishEvent(name, payload)` for transient bounded metadata and Browser `host.onEvent(name, listener)` to observe it. The host binds the active plugin ID, artifact hash and business epoch; stale or foreign events are ignored and subscriptions retire with their browser instance. Validate and project native events in the plugin before publication. These events do not create another transcript or configuration authority.
 
 ### Companion update lifecycle

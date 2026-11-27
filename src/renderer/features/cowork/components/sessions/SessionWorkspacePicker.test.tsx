@@ -46,6 +46,39 @@ test('explains directory semantics and submits a recent folder with the original
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
+test('opens while recent folders are still loading and keeps loaded folders during refresh', async () => {
+  const firstLoad = Promise.withResolvers<string[]>();
+  const secondLoad = Promise.withResolvers<string[]>();
+  const refresh = Promise.withResolvers<string[]>();
+  vi.mocked(coworkService.getRecentCwds)
+    .mockReturnValueOnce(firstLoad.promise)
+    .mockReturnValueOnce(secondLoad.promise)
+    .mockReturnValueOnce(refresh.promise);
+  render(<SessionWorkspacePicker sessionId="session" cwd="C:/old" disabled={false} />);
+  const trigger = screen.getByRole('button', { name: i18nService.t('sessionWorkspaceChange') });
+  const browseLabel = i18nService.t('addFolder');
+
+  fireEvent.click(trigger);
+  expect(screen.getByRole('button', { name: new RegExp(browseLabel) })).toBeTruthy();
+  fireEvent.click(trigger);
+  fireEvent.click(trigger);
+  expect(screen.getByRole('button', { name: new RegExp(browseLabel) })).toBeTruthy();
+
+  await act(async () => {
+    firstLoad.resolve(['C:/stale']);
+    secondLoad.resolve(['C:/next']);
+  });
+  expect(screen.queryByTitle('C:/stale')).toBeNull();
+  expect(screen.getByTitle('C:/next')).toBeTruthy();
+
+  fireEvent.click(trigger);
+  fireEvent.click(trigger);
+  expect(screen.getByTitle('C:/next')).toBeTruthy();
+  await act(async () => refresh.resolve(['C:/latest']));
+  expect(screen.getByTitle('C:/latest')).toBeTruthy();
+  expect(screen.queryByTitle('C:/next')).toBeNull();
+});
+
 test('disables directory changes while execution is active', () => {
   render(<SessionWorkspacePicker sessionId="session" cwd="C:/old" disabled />);
   const button = screen.getByLabelText('Change working directory') as HTMLButtonElement;

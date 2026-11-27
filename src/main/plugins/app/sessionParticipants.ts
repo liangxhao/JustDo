@@ -36,6 +36,12 @@ export class AppSessionParticipants {
     return this.source.registrations().some(registration => registration.resources?.isManaged(id));
   }
 
+  blocksWorkspaceChange(id: string, cwd: string): boolean {
+    return this.source.registrations().some(registration =>
+      registration.resources?.blocksWorkspaceChange?.(id, cwd) === true,
+    );
+  }
+
   expandResources(ids: readonly string[]): string[] {
     const result = new Set(ids);
     for (;;) {

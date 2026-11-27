@@ -180,6 +180,13 @@ export class TeamDiscussionStore {
         room.active_discussion_id || this.queue.hasActive(room.id) || this.hasUnsettledSummary(room.id),
     );
   }
+  hasWorkspaceConflict(sourceSessionId: string, cwd: string): boolean {
+    return Boolean(this.db.prepare(`
+      SELECT 1 FROM team_discussion_rooms
+      WHERE source_session_id = ? AND summary_source_json IS NOT NULL AND cwd <> ?
+      LIMIT 1
+    `).get(sourceSessionId, cwd));
+  }
   summary(discussionId: string): TeamDiscussionSummary | undefined {
     return this.db
       .prepare(

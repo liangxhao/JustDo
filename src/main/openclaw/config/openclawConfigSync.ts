@@ -1083,8 +1083,8 @@ export class OpenClawConfigSync {
   /**
    * Build the canonical `agents.entries` roster for openclaw.json.
    *
-   * Native agents, including main, have stable role workspaces and a separate
-   * project cwd. OpenClaw owns bootstrap files and layers project AGENTS.md.
+   * Embedded agents have stable role workspaces and inherit agents.defaults.cwd.
+   * Duplicating cwd in their entries triggers a native roster reload on project changes.
    * External ACP owners retain their existing project workspace contract.
    *
    * Per-agent `identity` (name, emoji) is set from the agent database so
@@ -1130,7 +1130,6 @@ export class OpenClawConfigSync {
             'runtime' in entry
               ? mainWorkspaceDir
               : resolveManagedAgentWorkspace(this.engineManager.getStateDir(), agentId),
-          ...('runtime' in entry ? {} : { cwd: mainWorkspaceDir }),
         };
         const constrainedEntry = constrainAgentEntryToAvailableModels(
           normalizedEntry,
@@ -1550,13 +1549,18 @@ export class OpenClawConfigSync {
                   defaults: mergedDefaults,
                   entries: Object.fromEntries(
                     Object.entries({ ...existingEntries, ...minimalEntries }).map(
-                      ([id, entry]) => [
-                        id,
-                        {
+                      ([id, entry]) => {
+                        const mergedEntry = {
                           ...(isRecord(existingEntries[id]) ? existingEntries[id] : {}),
                           ...(isRecord(entry) ? entry : {}),
-                        },
-                      ],
+                        };
+                        const managedEntry = minimalEntries[id];
+                        if (!isRecord(managedEntry) || 'runtime' in managedEntry) {
+                          return [id, mergedEntry];
+                        }
+                        const { cwd: _cwd, ...inheritingEntry } = mergedEntry;
+                        return [id, inheritingEntry];
+                      },
                     ),
                   ),
                 },

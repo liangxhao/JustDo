@@ -2745,6 +2745,10 @@ if (agentBridgeArgv) {
         initialization.getState().phase === AppInitializationPhase.Ready,
       getStore,
       getCoworkStore,
+      blocksWorkspaceChange: (sessionId, cwd) => {
+        const sessions = getAppPlugins().sessions;
+        return sessions.isManaged(sessionId) || sessions.blocksWorkspaceChange(sessionId, cwd);
+      },
     });
   };
 

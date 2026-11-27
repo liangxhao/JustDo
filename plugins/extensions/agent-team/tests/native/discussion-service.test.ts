@@ -103,6 +103,7 @@ async function sourcePolicyFixture(policy: Record<string, unknown> = {}, partici
   const config = {
     plugins: { entries: { 'agent-team': { enabled: true } } },
     agents: {
+      defaults: { cwd: root, timeoutSeconds: 600 },
       entries: {
         main: { model: 'internal/source-model', tools: { allow: ['read', 'exec'] } },
         alice: { workspace: '/roles/alice', tools: { allow: ['read'] } },
@@ -522,6 +523,28 @@ it('preserves source tools and model config while retaining each member role wor
   expect(() => options.assertSourceCurrent()).not.toThrow();
   fixture.changeSource({ toolOverrides: { webSearch: true } });
   expect(() => options.assertSourceCurrent()).toThrow('teamDiscussionSessionChanged');
+});
+
+it('continues a linked discussion after the default cwd changes and still checks the source root', async () => {
+  const fixture = await sourcePolicyFixture();
+  const otherProject = path.join(fixture.root, 'other-project');
+  const afterDefaultChange = vi.fn((check: () => void) => check());
+  const afterSourceChange = vi.fn((check: () => void) => {
+    expect(check).toThrow('teamDiscussionSessionChanged');
+  });
+  sdk.execute.mockImplementationOnce(async options => {
+    fixture.config.agents.defaults.cwd = otherProject;
+    afterDefaultChange(options.assertSourceCurrent);
+    fixture.changeSource({ sessionRoot: otherProject });
+    afterSourceChange(options.assertSourceCurrent);
+  });
+  await fixture.methods.get(TeamDiscussionGateway.Start)!({
+    params: fixture.params,
+    respond: vi.fn(),
+  });
+
+  expect(afterDefaultChange).toHaveReturnedTimes(1);
+  expect(afterSourceChange).toHaveReturnedTimes(1);
 });
 
 it('rechecks the complete inherited selection between validation and admission', async () => {

@@ -64,12 +64,14 @@ function setup() {
   const isBlocked = vi.fn(() => false);
   const isAllowedSender = vi.fn(() => true);
   const isManaged = vi.fn(() => false);
+  const blocksWorkspaceChange = vi.fn<(id: string, cwd: string) => boolean>(() => false);
   const onSessionsChanged = vi.fn();
   registerSessionWorkspaceHandler({
     getCoworkStore: () => store,
     getCoworkEngineRouter: () => router,
     isBlocked,
     isManaged,
+    blocksWorkspaceChange,
     isAllowedSender,
     onSessionsChanged,
   });
@@ -90,6 +92,7 @@ function setup() {
     isBlocked,
     isAllowedSender,
     isManaged,
+    blocksWorkspaceChange,
     isSessionPreparing,
     hasUnconfirmedSessionPreparation,
     onSessionsChanged,
@@ -154,6 +157,26 @@ test('refuses unknown and active native executions without settling their outcom
   f.status.known = true;
   f.status.subagentRunning = true;
   await expect(f.set()).resolves.toEqual({ success: false, reason: 'busy' });
+  expect(f.updateSession).not.toHaveBeenCalled();
+});
+
+test('rejects a directory that conflicts with a plugin binding before committing the change', async () => {
+  const f = setup();
+  f.getSessionRuntimeStatus.mockImplementation(async () => {
+    f.blocksWorkspaceChange.mockReturnValue(true);
+    return f.status;
+  });
+
+  await expect(f.set()).resolves.toEqual({ success: false, reason: 'unsupported' });
+  expect(f.blocksWorkspaceChange).toHaveBeenCalledWith(
+    f.session.id,
+    fs.realpathSync.native(f.input.cwd),
+  );
+  expect(f.getSessionRuntimeStatus).toHaveBeenCalledOnce();
+  expect(f.updateSession).not.toHaveBeenCalled();
+
+  await expect(f.set()).resolves.toEqual({ success: false, reason: 'unsupported' });
+  expect(f.getSessionRuntimeStatus).toHaveBeenCalledOnce();
   expect(f.updateSession).not.toHaveBeenCalled();
 });
 
