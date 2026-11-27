@@ -89,10 +89,16 @@ test('passes the active native session to media in live tool details', async () 
   document.body.append(chat);
   await chat.updateComplete;
 
+  const root = chat.shadowRoot!;
+  const details = root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')!;
+  expect(details.open).toBe(false);
+  expect(bridge.prepareAssistantMediaPlayback).not.toHaveBeenCalled();
+  details.querySelector('summary')!.click();
+
   await vi.waitFor(() => expect(bridge.prepareAssistantMediaPlayback).toHaveBeenCalledWith({
     source, sessionKey, kind: 'audio',
   }));
-  expect(chat.shadowRoot!.querySelector<MessageMedia>('justdo-message-media')?.sessionKey)
+  expect(root.querySelector<MessageMedia>('justdo-message-media')?.sessionKey)
     .toBe(sessionKey);
 });
 

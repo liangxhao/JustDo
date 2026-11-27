@@ -1,8 +1,9 @@
 /** @vitest-environment jsdom */
 
-import { html, render } from 'lit';
+import { html, nothing, render } from 'lit';
 import { afterEach, expect, test, vi } from 'vitest';
 
+import type { HistoryViewportWindow } from '../../controllers/history-viewport-window';
 import { historyViewport, type HistoryViewportHandle } from './history-viewport';
 
 afterEach(() => {
@@ -12,7 +13,11 @@ afterEach(() => {
   document.getSelection()?.removeAllRanges();
 });
 
-function setup(count = 1_000, options: { disclosures?: boolean; outerAcrossShadow?: boolean } = {}) {
+function setup(count = 1_000, options: {
+  disclosures?: boolean;
+  outerAcrossShadow?: boolean;
+  retainedLayouts?: Map<string, HistoryViewportWindow>;
+} = {}) {
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   vi.stubGlobal(
@@ -55,9 +60,8 @@ function setup(count = 1_000, options: { disclosures?: boolean; outerAcrossShado
     },
   });
   function elementHeight(element: Element) {
-    return element.classList.contains('history-viewport-row')
-      ? 100
-      : Number.parseFloat((element as HTMLElement).style.height) || 0;
+    return Number.parseFloat((element as HTMLElement).style.height) ||
+      (element.classList.contains('history-viewport-row') ? 100 : 0);
   }
   vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
     if (options.disclosures && !outerDetails.open) return new DOMRect();
@@ -74,7 +78,7 @@ function setup(count = 1_000, options: { disclosures?: boolean; outerAcrossShado
   });
   let handle: HistoryViewportHandle | null = null;
   let follow = true;
-  let deferred = false;
+  let dragging = false;
   let items = Array.from({ length: count }, (_, index) => `row-${index}`);
   const before = vi.fn();
   const after = vi.fn();
@@ -90,8 +94,9 @@ function setup(count = 1_000, options: { disclosures?: boolean; outerAcrossShado
         render: renderItem,
         host,
         scope,
+        retainedLayouts: options.retainedLayouts,
         follow: () => follow,
-        defer: () => deferred,
+        isDraggingScrollbar: () => dragging,
         beforeCommit: before,
         afterCommit: after,
         ref,
@@ -134,8 +139,8 @@ function setup(count = 1_000, options: { disclosures?: boolean; outerAcrossShado
     setFollow: (value: boolean) => {
       follow = value;
     },
-    setDeferred: (value: boolean) => {
-      deferred = value;
+    setDragging: (value: boolean) => {
+      dragging = value;
     },
     prepend: (prefix: string[]) => {
       items = [...prefix, ...items];
@@ -195,21 +200,54 @@ test('materializes explicit targets and relinquishes that pin to real scrolling 
   expect(fixture.rows().some(row => row.dataset.historyKey === 'row-0')).toBe(false);
 });
 
-test('does not recycle rows while native scrollbar reflow is deferred', () => {
+test('fills the viewport when dragging across spacers without changing the scroll extent', () => {
   const fixture = setup();
   fixture.flush();
   const last = fixture.rows()[fixture.rows().length - 1]!;
   fixture.setFollow(false);
-  fixture.setDeferred(true);
+  fixture.setDragging(true);
+  fixture.handle.refresh();
+  fixture.flush();
+  const extent = fixture.host.scrollHeight;
+  for (const top of [extent / 2, extent / 4, 0]) {
+    fixture.host.scrollTop = top;
+    fixture.host.dispatchEvent(new Event('scroll'));
+    fixture.flush();
+    expect(fixture.visibleRow()).toBeDefined();
+    expect(fixture.host.scrollHeight).toBe(extent);
+  }
+  expect(last.isConnected).toBe(false);
+  expect(fixture.rows()[0].dataset.historyKey).toBe('row-0');
+
+  fixture.setDragging(false);
+  fixture.handle.refresh();
+  fixture.flush();
+  expect(fixture.rows()[0].style.height).toBe('');
+  expect(fixture.visibleRow()?.dataset.historyKey).toBe('row-0');
+});
+
+test('keeps offscreen row measurements when an expanded history viewport is recycled', () => {
+  const fixture = setup(1_000, { retainedLayouts: new Map() });
+  fixture.flush();
+  fixture.setFollow(false);
   fixture.host.scrollTop = 0;
   fixture.host.dispatchEvent(new Event('scroll'));
   fixture.flush();
-  expect(last.isConnected).toBe(true);
-  fixture.setDeferred(false);
-  fixture.handle.refresh();
+  fixture.host.scrollTop = 60_000;
+  fixture.host.dispatchEvent(new Event('scroll'));
   fixture.flush();
-  expect(last.isConnected).toBe(false);
-  expect(fixture.rows()[0].dataset.historyKey).toBe('row-0');
+  const knownOffset = fixture.handle.offsetFor('row-50');
+  expect(fixture.rows().some(row => row.dataset.historyKey === 'row-0')).toBe(false);
+
+  render(nothing, fixture.list);
+  fixture.commit();
+  fixture.flush();
+  expect(fixture.handle.offsetFor('row-50')).toBe(knownOffset);
+
+  render(nothing, fixture.list);
+  fixture.commit('different-physical-session');
+  fixture.flush();
+  expect(fixture.handle.offsetFor('row-50')).not.toBe(knownOffset);
 });
 
 test('keeps a focused or selected reading row mounted until the interaction ends', () => {

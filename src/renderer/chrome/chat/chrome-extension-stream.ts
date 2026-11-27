@@ -16,7 +16,7 @@ import { createRunActivity, type RunActivity } from '@/libs/openclaw-chat/model/
 import { projectChromeExtensionActivity } from './chrome-extension-activity';
 import { prepareChromeExtensionStreamEvent } from './chrome-extension-display';
 
-export { isOmittedChromeDeliveryText } from './chrome-extension-display';
+export { hasChromeProcessFoldText, isOmittedChromeDeliveryText } from './chrome-extension-display';
 export { foldChromeExtensionEntries, isChromeQuestionTool } from './chrome-extension-timeline';
 export { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 
@@ -33,7 +33,8 @@ type Item = Record<string, unknown> & {
   commentaryItemIds?: readonly string[];
 };
 /** Optional browser presentation groups; not the app-server's canonical Thread/Turn. */
-type ChromeDisplayView = { id: string; turns: Array<{ id: string; items: Item[] }> };
+type ChromeDisplayTurn = { id: string; items: Item[]; processMode?: 'live' | 'failed' };
+type ChromeDisplayView = { id: string; turns: ChromeDisplayTurn[] };
 type ChromeStreamEvent = ChromeExtensionStreamEvent & { retryAttempt?: number; startedAt?: number };
 const MAX_PENDING_STREAM_EVENTS = 64;
 const MAX_PENDING_STREAM_CHARS = 1_000_000;
@@ -375,6 +376,7 @@ export class ChromeExtensionStream {
   private historyOnly = false;
   private anchor: number | null = null;
   private completedRuns = new Set<string>();
+  private failedLiveRunId: string | null = null;
   private settled = false;
   private activeInput: OptimisticInput | null = null;
   private readonly optimisticInputs = new Map<string, OptimisticInput>();
@@ -584,6 +586,14 @@ export class ChromeExtensionStream {
     return result;
   }
 
+  /** Close the live process at a confirmed failure of its exact native run. */
+  markFailed(nativeRunId?: string): void {
+    if (nativeRunId && this.state.activeTurn?.runId === nativeRunId) {
+      this.failedLiveRunId = nativeRunId;
+      this.activity = null;
+    }
+  }
+
   accept(value: ChromeStreamEvent): boolean {
     if (this.pendingRunEvents !== null) {
       // A new send can overlap delayed events from an earlier run on the same
@@ -628,7 +638,9 @@ export class ChromeExtensionStream {
     if (!prepared) return false;
     value = prepared;
     const event = value.event;
-    if (!event.sessionKey || (event.runId && this.completedRuns.has(event.runId))) return false;
+    if (!event.sessionKey || (event.runId && (
+      this.completedRuns.has(event.runId) || event.runId === this.failedLiveRunId
+    ))) return false;
     if (this.boundRunId && event.runId !== this.boundRunId) return false;
     if (!this.state.sessionKey) this.state.sessionKey = event.sessionKey;
     // Native Agent snapshots own the live text once available. Chat deltas are
@@ -673,13 +685,23 @@ export class ChromeExtensionStream {
     const turn = this.state.activeTurn;
     if (!turn?.items.length)
       return { ...history, turns: this.projectOptimisticInputs(history.turns) };
-    const turns = this.history.turns.slice();
+    const turns = history.turns.slice();
     const index = this.anchor ?? Math.max(0, turns.length - 1);
     const historical = turns[index] ?? { id: turn.id, items: [] };
+    const failed = this.failedLiveRunId === turn.runId;
     const live = projectLiveItems(turn);
+    const { items } = reconcileItems(historical.items, live);
+    const liveKeys = failed ? new Set(live.map(item => item.displayKey)) : null;
     turns[index] = this.retainDisplayKeys({
       ...historical,
-      items: reconcileItems(historical.items, live).items,
+      items: liveKeys ? items.map(item =>
+        liveKeys.has(item.displayKey) && (
+          (item.type === 'reasoning' && item.status === 'running') ||
+          (item.type === 'toolCall' && item.status === 'inProgress') ||
+          (item.type === 'agentMessage' && item.status === 'streaming')
+        ) ? { ...item, status: 'interrupted' } : item,
+      ) : items,
+      processMode: failed ? 'failed' : 'live',
     });
     return { ...history, turns: this.projectOptimisticInputs(turns) };
   }
@@ -704,10 +726,12 @@ export class ChromeExtensionStream {
       const { covered } = reconcileItems(historical, live);
       if (!covered) {
         this.settled = true;
-        for (const item of this.state.activeTurn.items) {
-          if (item.type === 'tool' && item.status === 'running') item.status = 'interrupted';
-          if (item.type === 'thinking' && item.status === 'running') item.status = 'interrupted';
-          if (item.type === 'content' && item.status === 'streaming') item.status = 'interrupted';
+        if (this.failedLiveRunId !== this.state.activeTurn.runId) {
+          for (const item of this.state.activeTurn.items) {
+            if (item.type === 'tool' && item.status === 'running') item.status = 'interrupted';
+            if (item.type === 'thinking' && item.status === 'running') item.status = 'interrupted';
+            if (item.type === 'content' && item.status === 'streaming') item.status = 'interrupted';
+          }
         }
         return;
       }
@@ -746,6 +770,7 @@ export class ChromeExtensionStream {
     this.agentTextRun = null;
     this.anchor = null;
     this.settled = false;
+    this.failedLiveRunId = null;
     this.activeInput = null;
   }
 }

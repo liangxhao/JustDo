@@ -27,6 +27,43 @@ afterEach(() => {
 });
 
 describe('justdo-chat failed runs', () => {
+  test('folds finished work before a terminal error that arrives without reply text', async () => {
+    const state = createChatTranscriptState('session-1', 'sid-1');
+    const turn = beginAssistantTurn(state, { runId: 'run-1' }, {
+      now: () => 1,
+      createId: prefix => `${prefix}-1`,
+    });
+    const base = { runId: turn.runId, firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 2 };
+    turn.items.push(
+      { ...base, id: 'thinking', type: 'thinking', status: 'completed', text: 'Checking.' },
+      { ...base, id: 'tool', type: 'tool', status: 'completed', name: 'exec', toolCallId: 'call-1' },
+    );
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    chat.activeTurn = turn;
+    document.body.append(chat);
+    await chat.updateComplete;
+    const root = chat.shadowRoot!;
+    expect(root.querySelectorAll('[data-live-process-id]')).toHaveLength(2);
+    expect(root.querySelector('.process-summary-group')).toBeNull();
+
+    const message = 'The provider returned an incomplete response.';
+    chat.activeTurn = {
+      ...turn,
+      status: 'error',
+      items: [...turn.items, { ...base, id: 'terminal', type: 'terminal', status: 'error', message }],
+    };
+    await chat.updateComplete;
+    const summary = root.querySelector<HTMLDetailsElement>('.process-summary-group')!;
+    const error = root.querySelector<TerminalErrorMessage>('chat-terminal-error')!;
+    await error.updateComplete;
+    expect(summary.open).toBe(false);
+    expect(root.querySelectorAll('[data-live-process-id]')).toHaveLength(0);
+    expect([...summary.querySelectorAll('.process-summary__count')].map(count => count.textContent))
+      .toEqual(['1', '1']);
+    expect(summary.compareDocumentPosition(error) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(error.querySelector('.process-terminal__error-text')?.textContent).toBe(message);
+  });
+
   test('hands a repeated-tool failure to one historical error row and preserves earlier output', async () => {
     const error = 'OpenClaw stopped this turn after 3 consecutive identical tool failures. ' +
       'Check the tool arguments or switch to a model with native tool calling before retrying.';

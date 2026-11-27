@@ -1,3 +1,5 @@
+import { isHiddenNativeMessage } from '@shared/openclaw/messageVisibility';
+
 import { getTranscriptMedia, isTranscriptImage } from '@/libs/openclaw-chat/attachments';
 import {
   CHAT_HISTORY_INITIAL_LIMIT,
@@ -9,6 +11,7 @@ import {
   parseChatHistoryPage,
 } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import {
+  type AssistantTurn,
   type HistorySource,
   normalizeTranscriptSessionKey,
   type ToolItem,
@@ -39,8 +42,11 @@ import {
   isNativeToolResultMessage,
   isToolCallRecord,
   readToolCallId,
+  readToolInput,
+  readToolName,
   unwrapToolMessage,
 } from '@/libs/openclaw-chat/model/tools/tool-message-adapter';
+import { readToolPresentation } from '@/libs/openclaw-chat/model/tools/tool-presentation';
 import {
   confirmRecoveredToolSequence,
   hydrateToolPrecedingSegments,
@@ -70,7 +76,9 @@ import {
   precedingSegmentsByToolCallId,
   readExplicitMessageRunId,
   readLatestOpenClawMessageSeq,
+  readNonBlankString,
   readOpenClawMessageSeq,
+  readPositiveSafeInteger,
   readStringList,
   RewindEditorDraft,
   sliceActiveSubagentHistoryPrefix,
@@ -241,6 +249,84 @@ export function setCurrentSessionMessages(
   this.cacheSessionMessages(this.state.sessionKey);
 }
 
+function childrenByMissingToolParent(turn: AssistantTurn): Map<string, ToolItem> {
+  const childrenByMissingParent = new Map<string, ToolItem>();
+  for (const item of turn.items) {
+    if (item.type !== 'tool' || item.runId !== turn.runId || turn.toolById.get(item.toolCallId) !== item) continue;
+    const parentId = item.presentation?.parentToolCallId;
+    if (parentId && parentId !== item.toolCallId &&
+        !turn.toolById.has(parentId) && !childrenByMissingParent.has(parentId)) {
+      childrenByMissingParent.set(parentId, item);
+    }
+  }
+  return childrenByMissingParent;
+}
+
+function insertRecoveredToolParent(turn: AssistantTurn, tool: ToolItem, child: ToolItem): void {
+  turn.items.splice(turn.items.indexOf(child), 0, tool);
+  // Running-tool activity reads map insertion order. Keep the admitted child
+  // more recent than the restored parent there as well as in the timeline.
+  const entries = [...turn.toolById];
+  const childIndex = entries.findIndex(([, value]) => value === child);
+  entries.splice(childIndex, 0, [tool.toolCallId, tool]);
+  turn.toolById = new Map(entries);
+}
+
+function readUniqueNativeToolCalls(messages: readonly unknown[], runId: string) {
+  const calls = new Map<string, Record<string, unknown> | null>();
+  for (const entry of messages) {
+    if (isHiddenNativeMessage(entry)) continue;
+    const message = unwrapToolMessage(entry);
+    const marker = asToolRecord(asToolRecord(entry)?.__openclaw) ?? asToolRecord(message?.__openclaw);
+    if (message?.role !== 'assistant' || !Array.isArray(message.content) ||
+        !readNonBlankString(marker?.id) || readPositiveSafeInteger(marker?.seq) === null ||
+        readExplicitMessageRunId(entry) !== runId) continue;
+    for (const value of message.content) {
+      const call = asToolRecord(value);
+      if (!call || !isToolCallRecord(call)) continue;
+      const id = readToolCallId(call);
+      if (!id) continue;
+      calls.set(id, calls.has(id) ? null : call);
+    }
+  }
+  return calls;
+}
+
+/** Restore the caller of an admitted child when the bounded live snapshot omitted it. */
+function restoreActiveToolParentsFromHistory(
+  turn: AssistantTurn,
+  childrenByMissingParent: ReadonlyMap<string, ToolItem>,
+  calls: ReturnType<typeof readUniqueNativeToolCalls>,
+  dependencies: TranscriptReducerDependencies,
+): boolean {
+  let changed = false;
+  for (const [toolCallId, child] of childrenByMissingParent) {
+    const call = calls.get(toolCallId);
+    if (!call) continue;
+    const input = readToolInput(call);
+    const tool: ToolItem = {
+      id: dependencies.createId('history-tool'),
+      runId: turn.runId,
+      type: 'tool',
+      status: 'running',
+      name: readToolName(call),
+      toolCallId,
+      ...(input !== undefined ? { input } : {}),
+      presentation: readToolPresentation({ args: input }),
+      // The explicit child places the invocation before it. Native frames
+      // still confirm the sequence, and the result has independent ownership.
+      firstSeq: child.firstSeq,
+      lastSeq: child.firstSeq,
+      startedAt: child.startedAt,
+      updatedAt: child.startedAt,
+      agentSequenceUnconfirmed: true,
+    };
+    insertRecoveredToolParent(turn, tool, child);
+    changed = true;
+  }
+  return changed;
+}
+
 export function hydrateActiveToolItemsFromHistory(
   this: ChatControllerHistoryContext,
   messages: unknown[],
@@ -274,6 +360,9 @@ export function hydrateActiveToolItemsFromHistory(
     readExplicitMessageRunId(value) === activeTurn.runId && readOpenClawMessageSeq(value) !== null &&
     isNativeToolResultMessage(value),
   ));
+  const childByMissingParent = childrenByMissingToolParent(activeTurn);
+  let nativeCalls: ReturnType<typeof readUniqueNativeToolCalls> | undefined;
+  const readNativeCalls = () => (nativeCalls ??= readUniqueNativeToolCalls(activeRunMessages, activeTurn.runId));
   const repairsYieldedTurn = activeTurn.status === 'final' && this.state.runActivity?.yielded === true &&
     this.state.runActivity.runId === activeTurn.runId;
   const ownedImageSequences = new Set(activeRunMessages.flatMap(message => {
@@ -293,6 +382,8 @@ export function hydrateActiveToolItemsFromHistory(
       : undefined;
     let liveTool = activeTurn.toolById.get(toolCallId);
     if (!liveTool) {
+      const child = childByMissingParent.get(toolCallId);
+      if (child && readNativeCalls().get(toolCallId) === null) continue;
       const timestampMatchesActiveTurn =
         persistedTool.startedAt > 0 && persistedTool.startedAt >= activeTurn.startedAt;
       const canBackfillMissingTool =
@@ -318,15 +409,18 @@ export function hydrateActiveToolItemsFromHistory(
         lastSeq: activeTurn.lastAgentSeq,
         startedAt,
         updatedAt: Math.max(startedAt, persistedTool.updatedAt || now),
-        agentSequencePending: true,
+        ...(!child ? { agentSequencePending: true } : {}),
         agentSequenceUnconfirmed: true,
       };
       // A transcript append can beat the corresponding Thinking and Tool
       // Agent frames across their independent delivery paths. Every restored
       // Tool starts as a live-tail boundary, even when the first observed row
       // is already terminal; terminal evidence below releases it immediately.
-      activeTurn.items.push(liveTool);
-      activeTurn.toolById.set(toolCallId, liveTool);
+      if (child) insertRecoveredToolParent(activeTurn, liveTool, child);
+      else {
+        activeTurn.items.push(liveTool);
+        activeTurn.toolById.set(toolCallId, liveTool);
+      }
       changed = true;
     }
     const authoritativeSegments = authoritativeSegmentsByToolId.get(toolCallId);
@@ -410,6 +504,14 @@ export function hydrateActiveToolItemsFromHistory(
       liveTool.status = persistedTool.status;
       delete liveTool.completionInferredAtYield;
       changed = true;
+    }
+  }
+  if (activeTurn.status === 'running') {
+    const missingParents = childrenByMissingToolParent(activeTurn);
+    if (missingParents.size) {
+      changed = restoreActiveToolParentsFromHistory(
+        activeTurn, missingParents, readNativeCalls(), this.transcriptDependencies,
+      ) || changed;
     }
   }
   if (changed) this.state.transcript.revision += 1;

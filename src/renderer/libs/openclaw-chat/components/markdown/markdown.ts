@@ -6,37 +6,20 @@
 
 import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
 import DOMPurify from 'dompurify';
-import hljs from 'highlight.js/lib/core';
-import bash from 'highlight.js/lib/languages/bash';
-import c from 'highlight.js/lib/languages/c';
-import cpp from 'highlight.js/lib/languages/cpp';
-import csharp from 'highlight.js/lib/languages/csharp';
-import css from 'highlight.js/lib/languages/css';
-import diff from 'highlight.js/lib/languages/diff';
-import dockerfile from 'highlight.js/lib/languages/dockerfile';
-import go from 'highlight.js/lib/languages/go';
-import java from 'highlight.js/lib/languages/java';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import kotlin from 'highlight.js/lib/languages/kotlin';
-import markdown from 'highlight.js/lib/languages/markdown';
-import php from 'highlight.js/lib/languages/php';
-import powershell from 'highlight.js/lib/languages/powershell';
-import python from 'highlight.js/lib/languages/python';
-import ruby from 'highlight.js/lib/languages/ruby';
-import rust from 'highlight.js/lib/languages/rust';
-import sql from 'highlight.js/lib/languages/sql';
-import swift from 'highlight.js/lib/languages/swift';
-import typescript from 'highlight.js/lib/languages/typescript';
-import xml from 'highlight.js/lib/languages/xml';
-import yaml from 'highlight.js/lib/languages/yaml';
 import katex from 'katex';
 import MarkdownIt from 'markdown-it';
 import markdownItTaskLists from 'markdown-it-task-lists';
 import markdownItTexMath from 'markdown-it-texmath';
 
 import { matchAutoLinkPathPrefix } from '@/libs/openclaw-chat/components/markdown/markdownPathLinks';
+import { MARKDOWN_PARSE_LIMIT } from '@/libs/openclaw-chat/pipeline/constants';
 import { i18nService } from '@/services/i18n';
+import {
+  escapeHtml,
+  highlightCode,
+  initializeCodeHighlighting,
+  normalizeCodeHighlightLanguage,
+} from '@/shared/editor/code-highlighting';
 
 import { constrainDetailsStreamingBoundary, installMarkdownDetails } from './markdown-details';
 import {
@@ -45,9 +28,10 @@ import {
   sanitizeMessageFileLinkNode,
 } from './markdown-file-links';
 
+export { highlightCode } from '@/shared/editor/code-highlighting';
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const MARKDOWN_PARSE_LIMIT = 40_000;
 const MARKDOWN_CACHE_LIMIT = 200;
 const MARKDOWN_CACHE_MAX_CHARS = 50_000;
 const CJK_URL_TRAILING_PUNCTUATION_RE = /[，。；！？、（）]/u;
@@ -146,115 +130,7 @@ const progressCardSanitizeOptions = {
   ALLOWED_ATTR: [...allowedAttrs, 'value', 'max'],
 };
 
-// ── highlight.js setup ──────────────────────────────────────────────────────
-
-for (const [language, definition, aliases] of [
-  ['bash', bash, ['sh', 'shell']],
-  ['c', c, []],
-  ['cpp', cpp, ['c++', 'cxx']],
-  ['csharp', csharp, ['cs', 'c#']],
-  ['css', css, []],
-  ['diff', diff, ['patch']],
-  ['dockerfile', dockerfile, ['docker']],
-  ['go', go, ['golang']],
-  ['java', java, []],
-  ['javascript', javascript, ['js', 'jsx']],
-  ['json', json, []],
-  ['kotlin', kotlin, ['kt', 'kts']],
-  ['markdown', markdown, ['md']],
-  ['php', php, []],
-  ['powershell', powershell, ['ps1', 'pwsh']],
-  ['python', python, ['py']],
-  ['ruby', ruby, ['rb']],
-  ['rust', rust, ['rs']],
-  ['sql', sql, []],
-  ['swift', swift, []],
-  ['typescript', typescript, ['ts', 'tsx']],
-  ['xml', xml, ['html', 'svg']],
-  ['yaml', yaml, ['yml']],
-] as const) {
-  hljs.registerLanguage(language, definition);
-  if (aliases.length > 0) {
-    hljs.registerAliases([...aliases], { languageName: language });
-  }
-}
-
-hljs.registerLanguage('mermaid', () => ({
-  name: 'Mermaid',
-  case_insensitive: true,
-  keywords: {
-    keyword:
-      'graph flowchart sequenceDiagram classDiagram stateDiagram stateDiagram-v2 erDiagram ' +
-      'journey gantt pie gitGraph mindmap timeline quadrantChart requirementDiagram C4Context ' +
-      'subgraph end participant actor as activate deactivate note over loop alt else opt par and ' +
-      'rect critical break direction click linkStyle classDef class style state title section dateFormat ' +
-      'axisFormat excludes includes todayMarker accTitle accDescr',
-    literal: 'true false null',
-    built_in: 'TB TD BT RL LR',
-  },
-  contains: [
-    hljs.COMMENT('%%', '$'),
-    hljs.QUOTE_STRING_MODE,
-    hljs.APOS_STRING_MODE,
-    hljs.C_NUMBER_MODE,
-    {
-      className: 'symbol',
-      begin: /-->|---|-.->|==>|~~~|--|->|<--|<->/,
-    },
-    {
-      className: 'meta',
-      begin: /%%\{/,
-      end: /\}%%/,
-    },
-  ],
-}));
-
-const autoHighlightLanguages = [
-  'bash',
-  'c',
-  'cpp',
-  'csharp',
-  'css',
-  'diff',
-  'dockerfile',
-  'go',
-  'java',
-  'javascript',
-  'json',
-  'kotlin',
-  'markdown',
-  'mermaid',
-  'php',
-  'powershell',
-  'python',
-  'ruby',
-  'rust',
-  'sql',
-  'swift',
-  'typescript',
-  'xml',
-  'yaml',
-];
-
-const HIGHLIGHT_ALIASES: Record<string, string> = {
-  'c#': 'csharp',
-  'c++': 'cpp',
-  cs: 'csharp',
-  cxx: 'cpp',
-  docker: 'dockerfile',
-  js: 'javascript',
-  jsx: 'javascript',
-  kt: 'kotlin',
-  kts: 'kotlin',
-  md: 'markdown',
-  ps1: 'powershell',
-  pwsh: 'powershell',
-  rb: 'ruby',
-  sh: 'bash',
-  shell: 'bash',
-  ts: 'typescript',
-  tsx: 'typescript',
-};
+initializeCodeHighlighting();
 
 const CODE_LANGUAGE_LABELS: ReadonlyMap<string, string> = new Map(
   Object.entries({
@@ -318,35 +194,8 @@ function renderCodeBlockTitle(language: string): string {
 
 // ── Utility functions ───────────────────────────────────────────────────────
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-export function highlightCode(text: string, lang: string): string {
-  const language =
-    (HIGHLIGHT_ALIASES[lang.trim().toLowerCase()] ?? lang.trim().toLowerCase()) || '';
-  try {
-    if (language && hljs.getLanguage(language)) {
-      return hljs.highlight(text, { language, ignoreIllegals: true }).value;
-    }
-    if (!language && text.trim()) {
-      const result = hljs.highlightAuto(text, autoHighlightLanguages);
-      if (result.relevance >= 2) return result.value;
-    }
-  } catch {
-    // Fall back to escaped plaintext
-  }
-  return escapeHtml(text);
-}
-
 function codeClassAttribute(lang: string, highlighted: string): string {
-  const requestedLanguage = lang.trim().toLowerCase();
-  const language = HIGHLIGHT_ALIASES[requestedLanguage] ?? requestedLanguage;
+  const language = normalizeCodeHighlightLanguage(lang);
   const classes = [
     highlighted.includes('hljs-') ? 'hljs' : '',
     language ? `language-${language}` : '',

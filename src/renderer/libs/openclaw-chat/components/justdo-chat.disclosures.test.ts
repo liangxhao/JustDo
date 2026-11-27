@@ -5,7 +5,7 @@ import './justdo-chat';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 import { ChatScrollController } from '../controllers/chat-scroll-controller';
-import type { ContentItem } from '../model/chat-transcript-state';
+import type { ContentItem, ToolItem } from '../model/chat-transcript-state';
 import { beginAssistantTurn, createChatTranscriptState } from '../model/chat-transcript-state';
 import type { JustDoChatElement } from './justdo-chat';
 import { materializeDisclosureContents } from './timeline/disclosure-content';
@@ -15,6 +15,7 @@ const SOURCE = '<details>\n<summary>Evidence</summary>\n\n**Hidden evidence**\n\
 afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function commit(chat: JustDoChatElement): Promise<void> {
@@ -25,6 +26,95 @@ async function commit(chat: JustDoChatElement): Promise<void> {
 function disclosures(chat: JustDoChatElement): HTMLDetailsElement[] {
   return Array.from(chat.shadowRoot!.querySelectorAll('details.markdown-disclosure'));
 }
+
+async function openedProcess() {
+  const turn = beginAssistantTurn(
+    createChatTranscriptState('agent:main:disclosure-test'),
+    { runId: 'disclosure-run', startedAt: 1000 },
+    { now: () => 1000, createId: prefix => `${prefix}-1` },
+  );
+  const base = { runId: turn.runId, firstSeq: 1, lastSeq: 2, startedAt: 1000, updatedAt: 1000 };
+  const tool: ToolItem = {
+    ...base,
+    id: 'tool-1',
+    type: 'tool',
+    status: 'completed',
+    name: 'exec',
+    toolCallId: 'exec-1',
+    input: { command: 'echo result' },
+    output: 'result',
+  };
+  turn.items.push(tool, {
+    ...base, id: 'answer', type: 'content', status: 'streaming', sourceMode: 'snapshot', text: 'Done.',
+  });
+  turn.toolById.set(tool.toolCallId, tool);
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.activeTurn = turn;
+  document.body.append(chat);
+  await commit(chat);
+  const group = chat.shadowRoot!.querySelector<HTMLDetailsElement>('.process-summary-group')!;
+  const trigger = group.querySelector('summary')!;
+  trigger.click();
+  await commit(chat);
+  return {
+    chat, group, trigger,
+    toolTrigger: group.querySelector<HTMLElement>('.process-summary__tool > summary')!,
+  };
+}
+
+describe('process disclosure reading position', () => {
+  test('captures the native tool trigger before the details changes size', async () => {
+    const { toolTrigger } = await openedProcess();
+    const details = toolTrigger.parentElement as HTMLDetailsElement;
+    const states: boolean[] = [];
+    const preserve = vi.spyOn(ChatScrollController.prototype, 'preserveAnchorForInteraction')
+      .mockImplementation(() => states.push(details.open));
+
+    toolTrigger.click();
+    expect(details.open).toBe(true);
+    toolTrigger.click();
+    expect(details.open).toBe(false);
+    expect(preserve.mock.calls).toEqual([[toolTrigger], [toolTrigger]]);
+    expect(states).toEqual([false, true]);
+  });
+
+  test.each([
+    { description: 'visible', top: 40, anchors: true },
+    { description: 'above the viewport', top: -100, anchors: false },
+  ])('returns focus on Escape without scrolling a trigger $description into view', async ({ top, anchors }) => {
+    vi.stubGlobal('CSS', { ...globalThis.CSS, escape: (value: string) => value });
+    const { chat, group, trigger, toolTrigger } = await openedProcess();
+    vi.spyOn(chat, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ height: 500 }));
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue(DOMRect.fromRect({ y: top, height: 28 }));
+    const preserve = vi.spyOn(ChatScrollController.prototype, 'preserveAnchorForInteraction');
+    const focus = vi.spyOn(trigger, 'focus');
+    toolTrigger.focus();
+    expect(chat.shadowRoot!.activeElement).toBe(toolTrigger);
+
+    toolTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await commit(chat);
+
+    expect(group.open).toBe(false);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(chat.shadowRoot!.activeElement).toBe(trigger);
+    expect(preserve.mock.calls).toEqual(anchors ? [[trigger]] : []);
+  });
+
+  test('keeps focus outside the chat if Escape is followed by a composer focus', async () => {
+    vi.stubGlobal('CSS', { ...globalThis.CSS, escape: (value: string) => value });
+    const { chat, group, toolTrigger } = await openedProcess();
+    const composer = document.createElement('textarea');
+    document.body.append(composer);
+    toolTrigger.focus();
+
+    toolTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    composer.focus();
+    await commit(chat);
+
+    expect(group.open).toBe(false);
+    expect(document.activeElement).toBe(composer);
+  });
+});
 
 describe('message-authored disclosures', () => {
   test('renders message Markdown inside disclosures and copies the complete original source', async () => {

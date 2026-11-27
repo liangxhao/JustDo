@@ -7,6 +7,8 @@ import codeBlockStyles from './markdown/code-block.css?inline';
 import browserRecordingStyles from './message/browser-recording-presentation.css?inline';
 import chatAvatarStyles from './message/chat-avatar.css?inline';
 import processMotionStyles from './timeline/process-motion.css?inline';
+import toolPreviewStyles from './tools/tool-preview.css?inline';
+import { vscodeCodeStyles } from './tools/vscode-code.styles';
 
 export const chatStyles = [
   unsafeCSS(questionAnswerStyles),
@@ -476,7 +478,7 @@ export const chatStyles = [
 
     .history-viewport-row:has(> :is(.chat-group--timeline, .completed-process))
       + .history-viewport-spacer[data-viewport-edge='after']
-      + :is(.chat-history-row, .chat-group--content),
+      + :is(.chat-history-row, .chat-group--content, [data-quote-source]:has(> .chat-group--streaming)),
     .history-viewport-row:has(> :is(.chat-history-row, .chat-group--content))
       + .history-viewport-spacer[data-viewport-edge='after']
       + :is(.chat-group--timeline, .completed-process) {
@@ -724,11 +726,12 @@ export const chatStyles = [
       margin-top: max(var(--justdo-timeline-gap, 4px), var(--justdo-assistant-row-gap, 0px));
     }
 
+    /* Streaming Content is wrapped once for selection and quotation. */
     :is(.chat-container, .completed-process__items)
       > :is(.chat-group--timeline, .completed-process)
-      + .chat-group--content,
+      + :is(.chat-group--content, [data-quote-source]:has(> .chat-group--streaming)),
     :is(.chat-container, .completed-process__items)
-      > .chat-group--content
+      > :is(.chat-group--content, [data-quote-source]:has(> .chat-group--streaming))
       + :is(.chat-group--timeline, .completed-process),
     :is(.chat-container, .completed-process__items)
       > .chat-history-row
@@ -2665,6 +2668,8 @@ export const chatStyles = [
       height: 6px;
       border-radius: 50%;
       background: var(--justdo-chat-accent, #6366f1);
+    }
+    .chat-thinking--streaming .chat-thinking__indicator {
       animation: thinking-pulse 1.5s infinite ease-in-out;
     }
 
@@ -2992,9 +2997,6 @@ export const chatStyles = [
       outline: 2px solid var(--justdo-chat-accent, #2563eb);
       outline-offset: 2px;
     }
-    .process-summary__icon {
-      font-size: 16px;
-    }
     .process-summary__chevron {
       margin-left: 2px;
       font-size: 18px;
@@ -3246,6 +3248,10 @@ export const chatStyles = [
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .process-summary__tool-input[data-tool-search-source='edit-path']:has(.chat-search-mark) {
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
     .process-summary__tool-detail {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
@@ -3286,16 +3292,6 @@ export const chatStyles = [
       box-sizing: border-box;
     }
     .edit-diff {
-      --edit-diff-background: #272822;
-      --edit-diff-background-deep: #1e1f1c;
-      --edit-diff-background-muted: #34352f;
-      --edit-diff-border: #414339;
-      --edit-diff-foreground: #f8f8f2;
-      --edit-diff-muted: #90908a;
-      --edit-diff-added: #a6e22e;
-      --edit-diff-added-background: #4b661680;
-      --edit-diff-removed: #f92672;
-      --edit-diff-removed-background: #90274a70;
       width: 100%;
       max-height: 420px;
       box-sizing: border-box;
@@ -3304,13 +3300,10 @@ export const chatStyles = [
       border-radius: 6px;
       background: var(--edit-diff-background);
       color: var(--edit-diff-foreground);
-      font:
-        14px/20px Consolas,
-        'Courier New',
-        monospace;
+      font: 14px/20px var(--edit-diff-font-family);
       font-weight: 400;
       font-variant-ligatures: none;
-      scrollbar-color: #75715e var(--edit-diff-background-deep);
+      scrollbar-color: var(--edit-diff-scrollbar-thumb) var(--edit-diff-background-deep);
     }
     .edit-diff__header {
       position: sticky;
@@ -3318,30 +3311,27 @@ export const chatStyles = [
       top: 0;
       left: 0;
       display: flex;
+      flex-wrap: wrap;
       width: 100%;
       box-sizing: border-box;
       align-items: center;
-      gap: 10px;
-      border-bottom: 1px solid var(--edit-diff-border);
-      padding: 7px 9px;
-      background: var(--edit-diff-background-deep);
-    }
-    .edit-diff__path {
-      flex: 1 1 240px;
-      min-width: 80px;
-      overflow: hidden;
-      color: #ccccc7;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .edit-diff__path:empty {
-      display: none;
+      justify-content: flex-end;
+      gap: 3px 6px;
+      border-bottom: 1px solid color-mix(in srgb, var(--edit-diff-border) 70%, transparent);
+      padding: 1px 6px;
+      background: var(--edit-diff-background);
     }
     .edit-diff__stats {
       display: inline-flex;
+      align-items: center;
       flex: 0 0 auto;
-      gap: 8px;
+      gap: 4px;
+      padding-inline-start: 6px;
+      border-inline-start: 1px solid var(--edit-diff-border);
+      font-size: 12px;
       font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.1;
     }
     .edit-diff__stat--added {
       color: var(--edit-diff-added);
@@ -3353,24 +3343,38 @@ export const chatStyles = [
       display: inline-flex;
       flex: 0 0 auto;
       overflow: hidden;
-      border: 1px solid var(--edit-diff-border);
-      border-radius: 3px;
-      background: var(--edit-diff-background);
+      border-radius: 4px;
+      background: color-mix(in srgb, var(--edit-diff-background-muted) 45%, var(--edit-diff-background));
     }
     .edit-diff__mode-button {
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: 24px;
+      height: 24px;
       border: 0;
-      padding: 2px 9px;
+      padding: 0;
       background: transparent;
-      color: #ccccc7;
-      font: inherit;
-      line-height: 1.55;
+      color: var(--edit-diff-muted);
       cursor: pointer;
     }
-    .edit-diff__mode-button + .edit-diff__mode-button {
-      border-left: 1px solid var(--edit-diff-border);
+    .edit-diff__mode-switch > .edit-diff__mode-button {
+      display: inline-flex;
+    }
+    .edit-diff__mode-button > svg {
+      width: 14px;
+      height: 14px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .edit-diff__mode-button.edit-diff__review {
+      border-radius: 4px;
     }
     .edit-diff__mode-button:hover {
-      background: #3e3d32;
+      background: var(--edit-diff-background-muted);
       color: var(--edit-diff-foreground);
     }
     .edit-diff__mode-button:focus-visible {
@@ -3378,7 +3382,7 @@ export const chatStyles = [
       outline-offset: -2px;
     }
     .edit-diff__mode-button.is-active {
-      background: #75715e;
+      background: color-mix(in srgb, var(--edit-diff-foreground) 14%, var(--edit-diff-background-muted));
       color: var(--edit-diff-foreground);
     }
     .edit-diff__hunk-header {
@@ -3449,14 +3453,13 @@ export const chatStyles = [
     }
     .edit-diff__monaco-fallback {
       height: 100%;
-      overflow: hidden;
+      overflow: auto;
     }
     .edit-diff__monaco-host.is-ready .edit-diff__monaco-fallback {
       visibility: hidden;
     }
     .edit-diff__monaco-host.is-search-fallback .edit-diff__monaco-fallback {
       visibility: visible;
-      overflow: auto;
     }
     .edit-diff__monaco-host.is-search-fallback .edit-diff__monaco-editor {
       visibility: hidden;
@@ -3466,7 +3469,7 @@ export const chatStyles = [
       position: absolute;
       inset: 0;
     }
-    .edit-diff--monaco-ready .edit-diff__split-header {
+    .edit-diff:has(.edit-diff__monaco-host.is-ready:not(.is-search-fallback)) .edit-diff__split-header {
       display: none;
     }
     .edit-diff__split-rows {
@@ -3504,7 +3507,7 @@ export const chatStyles = [
       border-left: 1px solid var(--edit-diff-border);
     }
     .edit-diff__split-cell.is-empty {
-      min-height: 1.6em;
+      min-height: 1lh;
       background: var(--edit-diff-background-deep);
     }
     .process-live {
@@ -3515,10 +3518,13 @@ export const chatStyles = [
       background: transparent;
       font-size: 12px;
     }
-    .process-live--edit {
+    .process-live--preview {
       width: 100%;
       max-width: none;
-      box-sizing: border-box;
+    }
+    .process-live--tool,
+    .process-summary__item--tool {
+      padding-inline-start: calc(2px + var(--tool-nesting-indent, 0px));
     }
     .process-live__tool > summary {
       list-style-position: outside;
@@ -3788,14 +3794,6 @@ export const chatStyles = [
       .process-summary__items {
         margin-left: 8px;
       }
-
-      .edit-diff__header {
-        flex-wrap: wrap;
-      }
-
-      .edit-diff__path {
-        flex-basis: 100%;
-      }
     }
   `,
   css`
@@ -3855,4 +3853,6 @@ export const chatStyles = [
   `,
   unsafeCSS(codeBlockStyles),
   unsafeCSS(processMotionStyles),
+  unsafeCSS(toolPreviewStyles),
+  vscodeCodeStyles,
 ];

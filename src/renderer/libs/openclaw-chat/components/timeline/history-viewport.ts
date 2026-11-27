@@ -1,4 +1,4 @@
-import { html, noChange, type TemplateResult } from 'lit';
+import { html, noChange, nothing, type TemplateResult } from 'lit';
 import { AsyncDirective, type ChildPart, directive } from 'lit/async-directive.js';
 import { keyed } from 'lit/directives/keyed.js';
 import { repeat } from 'lit/directives/repeat.js';
@@ -23,13 +23,16 @@ export interface HistoryViewportOptions<T> {
   scope: string;
   follow?: boolean | (() => boolean);
   rowTag?: 'div' | 'li';
-  defer?: () => boolean;
+  estimatedRowHeight?: number;
+  retainedLayouts?: Map<string, HistoryViewportWindow>;
+  isDraggingScrollbar?: () => boolean;
   beforeCommit?: () => void;
   afterCommit?: () => void;
   ref?: (handle: HistoryViewportHandle | null) => void;
 }
 
 let viewportId = 0;
+const MAX_RETAINED_LAYOUTS = 32;
 
 interface ViewportInterval {
   start: number;
@@ -43,7 +46,7 @@ type ViewportEntry =
 /** Retains only layout measurements; message and process data remain with the caller. */
 class HistoryViewportDirective extends AsyncDirective implements HistoryViewportHandle {
   private readonly id = `history-viewport-${++viewportId}`;
-  private readonly window = new HistoryViewportWindow();
+  private window = new HistoryViewportWindow();
   private options: HistoryViewportOptions<unknown> | null = null;
   private parent: Element | null = null;
   private keys: readonly string[] = [];
@@ -58,6 +61,7 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
   private requestedKey: string | null = null;
   private interactionIntervals: ViewportInterval[] = [];
   private renderedLayout = '';
+  private fixedRowHeights = false;
 
   render(_options: HistoryViewportOptions<unknown>): unknown {
     return noChange;
@@ -75,6 +79,10 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
       this.requestedKey = null;
       this.range = null;
       this.interactionIntervals = [];
+      this.fixedRowHeights = false;
+      this.window = options.retainedLayouts?.get(options.scope) ??
+        new HistoryViewportWindow({ estimatedRowHeight: options.estimatedRowHeight });
+      options.retainedLayouts?.delete(options.scope);
     } else if (previous.ref !== options.ref) {
       previous.ref?.(null);
     }
@@ -136,11 +144,17 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
     if (!this.isConnected || this.frame !== null || !this.ownerWindow || this.hasClosedDisclosure()) return;
     this.frame = this.ownerWindow.requestAnimationFrame(() => {
       this.frame = null;
-      if (!this.isConnected || this.options?.defer?.() || this.hasClosedDisclosure()) return;
-      const anchor = this.readingAnchor();
-      const changedMeasurements = this.measure();
+      if (!this.isConnected || this.hasClosedDisclosure()) return;
+      const dragging = this.options?.isDraggingScrollbar?.() === true;
+      const anchor = dragging ? null : this.readingAnchor();
+      // Measure the current natural rows before locking their heights. While
+      // dragging, replacing a spacer with rows of different heights changes
+      // the native scrollbar extent and can interrupt the thumb gesture.
+      const changedMeasurements = !this.fixedRowHeights && this.measure();
       const next = this.select(changedMeasurements ? anchor : null);
-      if (this.rangeChanged(next)) this.commit(next);
+      const changedDragState = this.fixedRowHeights !== dragging;
+      this.fixedRowHeights = dragging;
+      if (changedDragState || this.rangeChanged(next)) this.commit(next);
     });
   }
 
@@ -149,9 +163,9 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
     this.options.beforeCommit?.();
     this.range = range;
     this.setValue(this.template(range));
-    const measured = this.measure();
     this.options.afterCommit?.();
-    this.observe();
+    const measured = !this.fixedRowHeights && this.measure();
+    if (this.fixedRowHeights) this.observe();
     if (measured) this.refresh();
   }
 
@@ -218,12 +232,16 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
   private renderRow(item: unknown, index: number): TemplateResult {
     const options = this.options!;
     const content = options.render(item, index);
+    const fixedHeight = this.fixedRowHeights
+      ? `height:${this.window.offsetAt(index + 1) - this.window.offsetAt(index)}px;box-sizing:border-box;overflow:clip`
+      : nothing;
     return options.rowTag === 'li'
       ? html`<li
           class="history-viewport-row"
           data-history-viewport=${this.id}
           data-history-key=${options.key(item)}
           data-history-row-index=${index}
+          style=${fixedHeight}
         >
           ${content}
         </li>`
@@ -232,6 +250,7 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
           data-history-viewport=${this.id}
           data-history-key=${options.key(item)}
           data-history-row-index=${index}
+          style=${fixedHeight}
         >
           ${content}
         </div>`;
@@ -347,7 +366,11 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
     const host = this.options?.host;
     if (!host) return null;
     const viewportTop = host.getBoundingClientRect().top + host.clientTop;
-    const row = this.rows().find(element => element.getBoundingClientRect().bottom > viewportTop);
+    const viewportBottom = viewportTop + this.viewportHeight();
+    const row = this.rows().find(element => {
+      const rect = element.getBoundingClientRect();
+      return rect.bottom > viewportTop && rect.top < viewportBottom;
+    });
     const key = row?.dataset.historyKey;
     return row && key ? { key, offset: row.getBoundingClientRect().top - viewportTop } : null;
   }
@@ -372,7 +395,10 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
     this.observed = next;
   }
 
-  private readonly onScroll = (): void => this.refresh();
+  private readonly onScroll = (): void => {
+    if (this.options?.isDraggingScrollbar?.()) this.requestedKey = null;
+    this.refresh();
+  };
   private readonly onScrollEnd = (): void => {
     this.requestedKey = null;
     this.refresh();
@@ -447,11 +473,22 @@ class HistoryViewportDirective extends AsyncDirective implements HistoryViewport
   }
 
   protected disconnected(): void {
+    const options = this.options;
+    const layouts = options?.retainedLayouts;
+    if (layouts && options) {
+      layouts.delete(options.scope);
+      layouts.set(options.scope, this.window);
+      if (layouts.size > MAX_RETAINED_LAYOUTS) layouts.delete(layouts.keys().next().value!);
+    }
     this.unsubscribe();
     this.options?.ref?.(null);
   }
 
   protected reconnected(): void {
+    const options = this.options;
+    if (options?.retainedLayouts?.get(options.scope) === this.window) {
+      options.retainedLayouts.delete(options.scope);
+    }
     this.subscribe();
     this.options?.ref?.(this);
     this.refresh();

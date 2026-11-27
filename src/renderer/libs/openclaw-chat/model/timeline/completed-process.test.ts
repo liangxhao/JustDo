@@ -62,6 +62,57 @@ function question(key: string): QuestionPresentationTimelineItem {
 }
 
 describe('foldCompletedProcessRows', () => {
+  test('folds a restored nested family together before a final reply when its child result is missing', () => {
+    const history = [
+      {
+        role: 'assistant', runId: 'run-1',
+        content: [
+          { type: 'toolCall', id: 'parent', name: 'tool_call' },
+          { type: 'thinking', thinking: 'Checking.' },
+          { type: 'toolCall', id: 'child', name: 'exec', parentToolCallId: 'parent' },
+        ],
+      },
+      { role: 'toolResult', runId: 'run-1', toolCallId: 'parent', toolName: 'tool_call', content: 'Returned.' },
+      { role: 'assistant', runId: 'run-1', content: 'Done.' },
+    ];
+    const recovered = projectPersistedTimeline(history);
+    const display = projectPersistedTimeline(history, [], { groupLiveToolFamilies: true });
+
+    expect(recovered).toMatchObject([
+      { kind: 'process-summary', items: [{ toolCallId: 'parent' }, { type: 'thinking' }] },
+      { kind: 'live-process', item: { toolCallId: 'child' } },
+      { kind: 'history-message' },
+    ]);
+    expect(display).toMatchObject([
+      { kind: 'live-process', toolDepth: 0, item: { toolCallId: 'parent', status: 'completed' } },
+      { kind: 'live-process', toolDepth: 1, item: { toolCallId: 'child', status: 'running' } },
+      { kind: 'process-summary', items: [{ type: 'thinking' }] },
+      { kind: 'history-message' },
+    ]);
+    const folded = foldCompletedProcessRows(prepareVisibleTimelineRows(display), { foldUnresolvedTools: true });
+    expect(folded.map(row => row.item)).toMatchObject([
+      { kind: 'completed-process', items: [{
+        kind: 'process-summary',
+        items: [{ toolCallId: 'parent', status: 'completed' },
+          { toolCallId: 'child', status: 'running' }, { type: 'thinking' }],
+      }] },
+      { kind: 'history-message' },
+    ]);
+    const settled = projectPersistedTimeline([
+      ...history,
+      { role: 'toolResult', runId: 'run-1', toolCallId: 'child', toolName: 'exec', content: 'Output.' },
+    ], [], { groupLiveToolFamilies: true });
+    const foldedAgain = foldCompletedProcessRows(prepareVisibleTimelineRows(settled), { foldUnresolvedTools: true });
+    expect(foldedAgain[0].item).toMatchObject({
+      kind: 'completed-process',
+      key: folded[0].item.key,
+      items: [{
+        kind: 'process-summary',
+        items: [{ toolCallId: 'parent' }, { type: 'thinking' }, { toolCallId: 'child', status: 'completed' }],
+      }],
+    });
+  });
+
   test.each([false, true])('keeps the delivered answers of exact native runs visible after Goal continuation (silent: %s)', silent => {
     const history = [
       { role: 'user', content: 'Prepare a result' },

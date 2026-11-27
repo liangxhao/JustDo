@@ -6,7 +6,12 @@ import { filterMediaDirectiveLines } from '@shared/openclaw/mediaDirectives';
 import { getTranscriptMedia, isTranscriptImage } from '@/libs/openclaw-chat/attachments';
 import { isTruncatedHistoryMessage } from '@/libs/openclaw-chat/gateway/history/chat-history-protocol';
 import { stripHeartbeatTokenForDisplay } from '@/libs/openclaw-chat/pipeline/heartbeat-display';
-import { stripSilentReplySuffixFromText } from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import {
+  shouldHideMessage,
+  stripSilentReplySuffixFromText,
+} from '@/libs/openclaw-chat/pipeline/history-display-normalizer';
+import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
+import { stripOpenClawLogHintText } from '@/libs/openclaw-chat/pipeline/system-message-display';
 
 /** The original text still participates in stream reconciliation. */
 export function isOmittedChromeDeliveryText(entry: {
@@ -34,6 +39,21 @@ function hidden(text: string): boolean {
 function stripSuffix(text: string): string {
   // Preserve spaces in ordinary delta chunks.
   return /NO_REPLY\s*$/i.test(text) ? stripSilentReplySuffixFromText(text) : text;
+}
+
+/** A rendered text block closes the preceding live process. Media alone leaves it visible. */
+export function hasChromeProcessFoldText(entry: {
+  text: string;
+  status?: string;
+  rawMessage?: Record<string, unknown>;
+}): boolean {
+  if (isOmittedChromeDeliveryText(entry) || (!entry.rawMessage && !entry.text.trim())) return false;
+  const raw = entry.rawMessage ?? { role: 'assistant', content: entry.text };
+  return normalizeMessage(raw).content.some(block => {
+    if (block.type !== 'text' || !block.text) return false;
+    const text = stripOpenClawLogHintText(stripSuffix(block.text), entry.status === 'streaming');
+    return Boolean(text.trim()) && !shouldHideMessage({ role: 'assistant', content: text });
+  });
 }
 
 function messageText(message: unknown): string {

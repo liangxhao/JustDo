@@ -42,6 +42,67 @@ function turn(items: TurnItem[]): AssistantTurn {
 }
 
 describe('projectTurnItems', () => {
+  test('keeps a running nested tool beside its completed parent until the family can fold', () => {
+    const parent = item('parent', 'tool', 'completed', { name: 'tool_call' });
+    const thinking = item('note', 'thinking', 'completed');
+    const child = item('child', 'tool', 'running', { presentation: { parentToolCallId: 'parent' } });
+    const answer = item('answer', 'content', 'streaming');
+    const nativeOrder = [parent, thinking, child, answer];
+
+    expect(projectTurnItems(turn(nativeOrder))).toMatchObject([
+      { kind: 'live-process', item: parent, toolDepth: 0 },
+      { kind: 'live-process', item: child, toolDepth: 1 },
+      { kind: 'process-summary', items: [thinking] },
+      { kind: 'content', item: answer },
+    ]);
+
+    const finished = { ...child, status: 'completed' } as TurnItem;
+    expect(projectTurnItems(turn([parent, thinking, finished, answer]))).toMatchObject([
+      { kind: 'process-summary', items: [parent, thinking, finished] },
+      { kind: 'content', item: answer },
+    ]);
+    expect(nativeOrder.map(process => process.id)).toEqual(['parent', 'note', 'child', 'answer']);
+  });
+
+  test('preserves visible Content between a parent and a later nested call', () => {
+    const parent = item('parent', 'tool', 'completed', { name: 'tool_call' });
+    const answer = item('answer', 'content', 'streaming');
+    const child = item('child', 'tool', 'running', { presentation: { parentToolCallId: 'parent' } });
+    const projected = projectTurnItems(turn([parent, answer, child]));
+
+    expect(projected).toMatchObject([
+      { kind: 'process-summary', items: [parent] },
+      { kind: 'content', item: answer },
+      { kind: 'live-process', item: child },
+    ]);
+    expect(projected[2]).not.toHaveProperty('toolDepth');
+  });
+
+  test('keeps a nested Widget tool under its caller when the standalone preview appears', () => {
+    const parent = item('parent', 'tool', 'running', { name: 'tool_call' });
+    const child = item('child', 'tool', 'running', {
+      name: 'show_widget', presentation: { parentToolCallId: 'parent' },
+    });
+    expect(projectTurnItems(turn([parent, child]))).toMatchObject([
+      { kind: 'live-process', item: parent, toolDepth: 0 },
+      { kind: 'live-process', item: child, toolDepth: 1 },
+    ]);
+
+    const finished = {
+      ...child,
+      status: 'completed',
+      output: JSON.stringify({
+        kind: 'canvas', view: { id: 'widget-123' },
+        presentation: { target: 'assistant_message', sandbox: 'scripts' },
+      }),
+    } as TurnItem;
+    expect(projectTurnItems(turn([parent, finished]))).toMatchObject([
+      { kind: 'live-process', item: parent, toolDepth: 0 },
+      { kind: 'live-process', item: finished, toolDepth: 1 },
+      { kind: 'native-widget', preview: { toolCallId: 'child' } },
+    ]);
+  });
+
   test('projects only a validated pending question or structured answer as question history', () => {
     const questions = [{
       id: 'stack',
@@ -72,7 +133,7 @@ describe('projectTurnItems', () => {
       item('old-name', 'tool', 'running', { name: 'AskUserQuestion', input: { questions } }),
       { ...answered, id: 'failed-stale-answer', status: 'failed' } as TurnItem,
     ]));
-    expect(fallback.map(row => row.kind)).toEqual(['live-process', 'question-presentation', 'process-summary', 'live-process', 'process-summary']);
+    expect(fallback.map(row => row.kind)).toEqual(['live-process', 'question-presentation', 'live-process', 'live-process', 'live-process']);
   });
 
   test('keeps one working indicator through output and removes it at settlement', () => {
@@ -167,45 +228,49 @@ describe('projectTurnItems', () => {
     expect(result[0]).toMatchObject({ thinkingCount: 1, toolCount: 1 });
   });
 
-  test('ignores an empty Content control item between two distinct Thinking items', () => {
+  test('keeps Thinking visible through empty, pending, and media-only Content', () => {
     const result = projectTurnItems(
       turn([
         item('think-1', 'thinking', 'completed', { text: 'First distinct thought.' }),
         item('content-empty', 'content', 'completed', { text: '' }),
         item('think-2', 'thinking', 'completed', { text: 'Second distinct thought.' }),
+        item('content-pending', 'content', 'streaming', { assistantTextSourcePending: true }),
+        item('media', 'content', 'completed', { text: 'MEDIA:E:/output/clip.mp4' }),
       ]),
     );
 
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      kind: 'process-summary',
-      thinkingCount: 2,
-      items: [{ id: 'think-1' }, { id: 'think-2' }],
-    });
+    expect(result).toMatchObject([
+      { kind: 'live-process', key: 'think-1' },
+      { kind: 'live-process', key: 'think-2' },
+      { kind: 'content', key: 'media' },
+    ]);
   });
 
-  test('keeps a running Tool visible, then folds it into the previous summary', () => {
+  test('keeps a Tool visible through completion, then folds it when Content is streamed', () => {
+    const first = item('tool-completed', 'tool', 'completed');
+    const second = item('tool-running', 'tool', 'running');
     const running = projectTurnItems(
-      turn([item('tool-completed', 'tool', 'completed'), item('tool-running', 'tool', 'running')]),
+      turn([first, second]),
     );
-    const completed = projectTurnItems(
-      turn([
-        item('tool-completed', 'tool', 'completed'),
-        item('tool-running', 'tool', 'completed'),
-      ]),
-    );
+    const finished = item(second.id, 'tool', 'completed');
+    const completed = projectTurnItems(turn([first, finished]));
+    const withReply = projectTurnItems(turn([first, finished, item('reply', 'content', 'streaming')]));
 
-    expect(running.map(entry => entry.kind)).toEqual(['process-summary', 'live-process']);
-    expect(running[0]).toMatchObject({ toolCount: 1 });
-    expect(running[1]).toMatchObject({
-      kind: 'live-process',
-      item: { id: 'tool-running', status: 'running' },
-    });
-    expect(completed.map(entry => entry.kind)).toEqual(['process-summary']);
-    expect(completed[0]).toMatchObject({ toolCount: 2 });
+    expect(running).toMatchObject([
+      { kind: 'live-process', key: first.id, item: first },
+      { kind: 'live-process', key: second.id, item: second },
+    ]);
+    expect(completed).toMatchObject([
+      { kind: 'live-process', key: first.id, item: first },
+      { kind: 'live-process', key: second.id, item: finished },
+    ]);
+    expect(withReply).toMatchObject([
+      { kind: 'process-summary', toolCount: 2, items: [first, finished] },
+      { kind: 'content', key: 'reply' },
+    ]);
   });
 
-  test('keeps streaming Thinking visible until it completes', () => {
+  test('keeps Thinking visible while streaming and after completion before any Content', () => {
     const streaming = projectTurnItems(
       turn([
         item('think-1', 'thinking', 'completed'),
@@ -219,21 +284,24 @@ describe('projectTurnItems', () => {
       ]),
     );
 
-    expect(streaming.map(entry => entry.kind)).toEqual(['process-summary', 'live-process']);
-    expect(streaming[0]).toMatchObject({ thinkingCount: 1 });
+    expect(streaming.map(entry => entry.kind)).toEqual(['live-process', 'live-process']);
     expect(streaming[1]).toMatchObject({
       item: { id: 'think-2', text: 'still streaming', status: 'running' },
     });
-    expect(completed.map(entry => entry.kind)).toEqual(['process-summary']);
-    expect(completed[0]).toMatchObject({ thinkingCount: 2 });
+    expect(completed).toMatchObject([
+      { kind: 'live-process', key: 'think-1' },
+      { kind: 'live-process', key: 'think-2', item: { status: 'completed', text: 'finished' } },
+    ]);
   });
 
   test('keeps the summary key stable when its count grows', () => {
-    const first = projectTurnItems(turn([item('think-1', 'thinking', 'completed')]));
-    const second = projectTurnItems(
-      turn([item('think-1', 'thinking', 'completed'), item('tool-1', 'tool', 'completed')]),
-    );
+    const thinking = item('think-1', 'thinking', 'completed');
+    const reply = item('reply', 'content', 'streaming');
+    const first = projectTurnItems(turn([thinking, item('tool-1', 'tool', 'running'), reply]));
+    const second = projectTurnItems(turn([thinking, item('tool-1', 'tool', 'completed'), reply]));
 
+    expect(first[0]).toMatchObject({ kind: 'process-summary', toolCount: 0 });
+    expect(second[0]).toMatchObject({ kind: 'process-summary', toolCount: 1 });
     expect(second[0].key).toBe(first[0].key);
   });
 
@@ -260,9 +328,9 @@ describe('projectTurnItems', () => {
     );
 
     expect(result.map(entry => entry.kind)).toEqual([
-      'process-summary',
+      'live-process',
       'progress-receipt',
-      'process-summary',
+      'live-process',
       'progress-receipt',
     ]);
     expect(result.filter(entry => entry.kind === 'progress-receipt')).toMatchObject([
@@ -297,9 +365,9 @@ describe('projectTurnItems', () => {
     );
 
     expect(result.map(entry => entry.kind)).toEqual([
-      'process-summary',
+      'live-process',
       'plan-presentation',
-      'process-summary',
+      'live-process',
     ]);
     expect(result[1]).toMatchObject({
       kind: 'plan-presentation',
@@ -307,17 +375,41 @@ describe('projectTurnItems', () => {
     });
   });
 
-  test('does not repeat a Tool failure as a terminal banner after Content', () => {
+  test('keeps the terminal banner when earlier Content already folded its matching Tool', () => {
     const result = projectTurnItems(
       turn([
         item('tool-1', 'tool', 'failed', { error: 'command failed' }),
         item('content-1', 'content', 'completed'),
+        item('thinking-after-content', 'thinking', 'completed'),
         item('terminal-1', 'terminal', 'error', { message: 'command failed' }),
       ]),
     );
 
-    expect(result.map(entry => entry.kind)).toEqual(['process-summary', 'content']);
-    expect(result[0]).toMatchObject({ errorCount: 1 });
+    expect(result).toMatchObject([
+      { kind: 'process-summary', errorCount: 1, items: [{ id: 'tool-1' }] },
+      { kind: 'content' },
+      { kind: 'process-summary', items: [{ id: 'thinking-after-content' }] },
+      { kind: 'terminal', item: { message: 'command failed' } },
+    ]);
+  });
+
+  test('folds before the failed Tool when a terminal error repeats its diagnostic', () => {
+    const thinking = item('thinking', 'thinking', 'completed');
+    const failed = item('tool-1', 'tool', 'failed', { error: 'command failed' });
+    const active = turn([thinking, failed]);
+
+    expect(projectTurnItems(active)).toMatchObject([
+      { kind: 'live-process', item: thinking },
+      { kind: 'live-process', item: failed },
+    ]);
+    expect(projectTurnItems({
+      ...active,
+      status: 'error',
+      items: [...active.items, item('terminal-1', 'terminal', 'error', { message: 'command failed' })],
+    })).toMatchObject([
+      { kind: 'process-summary', items: [thinking] },
+      { kind: 'live-process', item: failed },
+    ]);
   });
 
   test('keeps a terminal banner for a run error without a failed Tool', () => {
@@ -351,7 +443,10 @@ describe('projectTurnItems', () => {
       ]),
     );
 
-    expect(result.map(entry => entry.kind)).toEqual(['process-summary', 'terminal']);
+    expect(result).toMatchObject([
+      { kind: 'process-summary', items: [{ status: 'failed' }] },
+      { kind: 'terminal', item: { message: 'provider failover unavailable' } },
+    ]);
   });
 
   test('does not use arbitrary failed Tool output for terminal substring deduplication', () => {
@@ -365,5 +460,18 @@ describe('projectTurnItems', () => {
     );
 
     expect(result.map(entry => entry.kind)).toEqual(['process-summary', 'terminal']);
+  });
+
+  test('keeps a terminal reason that the failed Tool reader does not display', () => {
+    const failure = 'The command could not open the requested file.';
+    const result = projectTurnItems(turn([
+      item('tool-1', 'tool', 'failed', { output: 'Starting command...', error: failure }),
+      item('terminal-1', 'terminal', 'error', { message: failure }),
+    ]));
+
+    expect(result).toMatchObject([
+      { kind: 'process-summary', items: [{ id: 'tool-1' }] },
+      { kind: 'terminal', item: { message: failure } },
+    ]);
   });
 });

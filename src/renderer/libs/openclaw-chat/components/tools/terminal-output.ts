@@ -1,4 +1,4 @@
-import { html } from 'lit';
+import { html, type TemplateResult } from 'lit';
 
 // ANSI colors coordinated with the dark Monokai-style terminal card.
 const COLORS = [
@@ -21,6 +21,35 @@ const COLORS = [
 ];
 
 type TerminalSegment = { text: string; color: string; bold: boolean };
+
+// Consume OSC (including hyperlink/title payloads) and CSI sequences.
+const TERMINAL_CONTROLS = /\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]/g;
+const TERMINAL_OMISSIONS = new RegExp(TERMINAL_CONTROLS.source + '|\\r(?=\\n)', 'g');
+type TerminalSourceRange = { start: number; end: number };
+
+/** Source offsets of characters omitted by the terminal display. */
+export function terminalSourceOmissions(source: string): TerminalSourceRange[] {
+  return Array.from(source.matchAll(TERMINAL_OMISSIONS), match => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+}
+
+export function isRawOnlyTerminalMatch(
+  omissions: readonly TerminalSourceRange[],
+  start: number,
+  end: number,
+): boolean {
+  // The ranges are ordered and disjoint, so scans with many hits remain cheap.
+  let low = 0;
+  let high = omissions.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    if (omissions[middle].end <= start) low = middle + 1;
+    else high = middle;
+  }
+  return low < omissions.length && omissions[low].start < end;
+}
 
 /** Conservative highlighting for plain command output; original spacing stays intact. */
 function highlightPlainTerminal(source: string): TerminalSegment[] {
@@ -71,9 +100,7 @@ export function terminalSegments(
   const push = (text: string) => {
     if (text) segments.push({ text: text.replace(/\r\n/g, '\n'), color, bold });
   };
-  // Consume OSC (including hyperlink/title payloads) and CSI sequences.
-  const controls = /\x1b\][\s\S]*?(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]/g;
-  for (const match of source.matchAll(controls)) {
+  for (const match of source.matchAll(TERMINAL_CONTROLS)) {
     push(source.slice(cursor, match.index));
     cursor = match.index! + match[0].length;
     if (!match[0].startsWith('\x1b[') || !match[0].endsWith('m')) continue;
@@ -110,17 +137,23 @@ export function renderTerminalPage(
   end: number,
 ) {
   let offset = 0;
-  const visible = [];
+  const visible: Array<string | TemplateResult> = [];
   for (const segment of segments) {
     const from = Math.max(0, start - offset);
     const to = Math.min(segment.text.length, end - offset);
-    if (to > from)
-      visible.push(
-        html`<span
+    if (to > from) {
+      const text = segment.text.slice(from, to);
+      if (segment.color || segment.bold) {
+        visible.push(html`<span
           style=${`color: ${segment.color || 'inherit'}; font-weight: ${segment.bold ? '600' : 'inherit'}`}
-          >${segment.text.slice(from, to)}</span
-        >`,
-      );
+          >${text}</span
+        >`);
+      } else {
+        const previous = visible[visible.length - 1];
+        if (typeof previous === 'string') visible[visible.length - 1] = previous + text;
+        else visible.push(text);
+      }
+    }
     offset += segment.text.length;
     if (offset >= end) break;
   }

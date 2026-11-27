@@ -110,10 +110,10 @@ function readableToolValue(value) {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
     const parts = value.flatMap((entry) => {
-      const record6 = asRecord2(entry);
-      if (!record6) return typeof entry === "string" ? [entry] : [];
-      if (typeof record6.text === "string") return [record6.text];
-      return record6.content === void 0 ? [] : [readableToolValue(record6.content)];
+      const record7 = asRecord2(entry);
+      if (!record7) return typeof entry === "string" ? [entry] : [];
+      if (typeof record7.text === "string") return [record7.text];
+      return record7.content === void 0 ? [] : [readableToolValue(record7.content)];
     });
     if (parts.length > 0) return parts.join("\n");
   }
@@ -150,12 +150,12 @@ function outputIndicatesToolFailure(output) {
   }
   try {
     const parsed = JSON.parse(trimmed);
-    const record6 = asRecord2(parsed);
-    if (!record6) return false;
-    if (record6.isError === true || record6.is_error === true) return true;
-    if (typeof record6.error === "string") return Boolean(record6.error.trim());
-    if (record6.error === true || record6.error && typeof record6.error === "object") return true;
-    const status = typeof record6.status === "string" ? record6.status.trim().toLowerCase() : "";
+    const record7 = asRecord2(parsed);
+    if (!record7) return false;
+    if (record7.isError === true || record7.is_error === true) return true;
+    if (typeof record7.error === "string") return Boolean(record7.error.trim());
+    if (record7.error === true || record7.error && typeof record7.error === "object") return true;
+    const status = typeof record7.status === "string" ? record7.status.trim().toLowerCase() : "";
     return status === "error" || status === "failed" || status === "timeout";
   } catch {
     return false;
@@ -550,8 +550,8 @@ function isTranscriptImage(media) {
 function asRecord3(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
-function readCanonicalTranscriptMedia(record6) {
-  const metadata = asRecord3(record6.__openclaw);
+function readCanonicalTranscriptMedia(record7) {
+  const metadata = asRecord3(record7.__openclaw);
   if (!Array.isArray(metadata?.media)) return [];
   return metadata.media.map((value) => {
     const media = asRecord3(value);
@@ -576,25 +576,25 @@ function readTrimmedString(value) {
 }
 function getTranscriptMedia(message) {
   if (!message || typeof message !== "object" || Array.isArray(message)) return [];
-  const record6 = message;
-  const canonical = readCanonicalTranscriptMedia(record6);
-  const paths = readStringArray(record6.MediaPaths);
-  const urls = readStringArray(record6.MediaUrls);
-  const types = readStringArray(record6.MediaTypes);
+  const record7 = message;
+  const canonical = readCanonicalTranscriptMedia(record7);
+  const paths = readStringArray(record7.MediaPaths);
+  const urls = readStringArray(record7.MediaUrls);
+  const types = readStringArray(record7.MediaTypes);
   const count2 = Math.max(
     canonical.length,
     paths.length,
     urls.length,
     types.length,
-    record6.MediaPath || record6.MediaUrl || record6.MediaType ? 1 : 0
+    record7.MediaPath || record7.MediaUrl || record7.MediaType ? 1 : 0
   );
   return Array.from({ length: count2 }, (_, index) => {
     const fact = canonical[index];
-    const legacyPath = readTrimmedString(paths[index] ?? (index === 0 ? record6.MediaPath : null));
-    const legacyUrl = readTrimmedString(urls[index] ?? (index === 0 ? record6.MediaUrl : null));
+    const legacyPath = readTrimmedString(paths[index] ?? (index === 0 ? record7.MediaPath : null));
+    const legacyUrl = readTrimmedString(urls[index] ?? (index === 0 ? record7.MediaUrl : null));
     const path = fact?.path || legacyPath || legacyUrl;
     if (!path) return void 0;
-    const legacyType = readTrimmedString(types[index] ?? (index === 0 ? record6.MediaType : null));
+    const legacyType = readTrimmedString(types[index] ?? (index === 0 ? record7.MediaType : null));
     return {
       path,
       ...fact?.mimeType || legacyType ? { mimeType: fact?.mimeType || legacyType } : {},
@@ -6634,9 +6634,9 @@ function asToolRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function unwrapToolMessage(value) {
-  const record6 = asToolRecord(value);
-  if (!record6) return null;
-  return asToolRecord(record6.message) ?? record6;
+  const record7 = asToolRecord(value);
+  if (!record7) return null;
+  return asToolRecord(record7.message) ?? record7;
 }
 
 // src/renderer/libs/openclaw-chat/model/tools/tool-presentation.ts
@@ -6733,6 +6733,56 @@ function toolOutcome(tool) {
   if (tool.status === "completed" && tool.output === void 0 && tool.error === void 0)
     return "unknown";
   return tool.status;
+}
+var MAX_TOOL_NESTING_DEPTH = 32;
+function projectProcessNesting(items) {
+  const depths = /* @__PURE__ */ new Map();
+  const roots = /* @__PURE__ */ new Map();
+  const tools = items.filter((item) => item.type === "tool");
+  if (!tools.some((tool) => tool.presentation?.parentToolCallId)) return { items, depths, roots };
+  const identities = /* @__PURE__ */ new Map();
+  const key = (tool, id = tool.toolCallId) => JSON.stringify([tool.runId, id]);
+  for (const tool of tools) {
+    if (!tool.runId || !tool.toolCallId) continue;
+    const identity = key(tool);
+    identities.set(identity, identities.has(identity) ? null : tool);
+  }
+  const parents = /* @__PURE__ */ new Map();
+  for (const tool of tools) {
+    const parentId = tool.presentation?.parentToolCallId;
+    const parent = parentId ? identities.get(key(tool, parentId)) : null;
+    if (parent && parent !== tool && identities.get(key(tool)) === tool) parents.set(tool, parent);
+  }
+  const children = /* @__PURE__ */ new Map();
+  for (const tool of tools) {
+    const parent = parents.get(tool);
+    if (!parent) continue;
+    let root = parent;
+    let ancestor = parents.get(root);
+    let depth = 1;
+    while (ancestor && depth < MAX_TOOL_NESTING_DEPTH) {
+      root = ancestor;
+      ancestor = parents.get(root);
+      depth += 1;
+    }
+    if (ancestor) continue;
+    depths.set(tool, depth);
+    roots.set(tool, root);
+    const siblings = children.get(parent) ?? [];
+    siblings.push(tool);
+    children.set(parent, siblings);
+  }
+  if (roots.size === 0) return { items, depths, roots };
+  const ordered = [];
+  const append = (item) => {
+    ordered.push(item);
+    if (item.type !== "tool") return;
+    for (const child of children.get(item) ?? []) append(child);
+  };
+  for (const item of items) {
+    if (item.type !== "tool" || !roots.has(item)) append(item);
+  }
+  return { items: ordered, depths, roots };
 }
 
 // src/renderer/libs/openclaw-chat/model/turn/assistant-text-scope.ts
@@ -7040,6 +7090,19 @@ function acceptsBackfillSequence(turn, event) {
   }
   const previous = sequences?.get(ownerIdentity);
   return previous === void 0 || event.agentSeq > previous;
+}
+function restoreSnapshotToolParent(turn, event) {
+  if (event.stream !== "tool" || event.agentSeq > (turn.lastSnapshotAgentSeq ?? -1)) return false;
+  const { phase, parentToolCallId } = event.data;
+  if (phase !== "start" && phase !== "update" && phase !== "result" || typeof parentToolCallId !== "string" || !parentToolCallId.trim()) {
+    return false;
+  }
+  const tool = turn.toolById.get(itemToolCallId(event.data) ?? "");
+  if (tool?.runId !== event.runId || parentToolCallId === tool.toolCallId || tool.presentation?.parentToolCallId || event.agentSeq > tool.lastSeq) {
+    return false;
+  }
+  tool.presentation = { ...tool.presentation, parentToolCallId };
+  return true;
 }
 function recordActivitySequence(turn, event) {
   const ownerIdentity = activityEventIdentity(event);
@@ -7520,6 +7583,7 @@ function reduceTool(turn, event, dependencies, backfill = false) {
   if (existing) {
     if (backfill && existing.agentSequencePending !== true && existing.lastSeq >= event.agentSeq) {
       if (fillsMissingToolInput(turn, event)) {
+        restoreSnapshotToolParent(turn, event);
         existing.input = resolved.input;
         if (existing.name === "tool") existing.name = resolved.name;
         return true;
@@ -7618,8 +7682,17 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
     terminalRun: isTerminalRun(state, event.runId)
   });
   if (admission === "ignored-session") return "ignored-session";
-  const lateStartTool = event.stream === "tool" && event.data.phase === "start" && event.deliveryEvent === "agent" && options.allowSequenceBackfill !== true && options.replaySnapshot !== true && previousTurn?.runId === event.runId && admission !== "ignored-run" && admission !== "ignored-terminal" ? previousTurn.toolById.get(itemToolCallId(event.data) ?? "") : void 0;
+  if (admission === "ignored-run" || admission === "ignored-terminal") return "ignored-run";
+  const ignoreSequence = () => {
+    if (options.replaySnapshot || previousTurn?.runId !== event.runId || !restoreSnapshotToolParent(previousTurn, event)) {
+      return "ignored-sequence";
+    }
+    state.revision += 1;
+    return "presentation-repaired";
+  };
+  const lateStartTool = event.stream === "tool" && event.data.phase === "start" && event.deliveryEvent === "agent" && options.allowSequenceBackfill !== true && options.replaySnapshot !== true && previousTurn?.runId === event.runId ? previousTurn.toolById.get(itemToolCallId(event.data) ?? "") : void 0;
   if (lateStartTool && lateStartTool.status !== "running" && lateStartTool.agentSequenceUnconfirmed !== true && event.agentSeq < lateStartTool.firstSeq) {
+    restoreSnapshotToolParent(previousTurn, event);
     confirmRecoveredToolSequence(previousTurn, lateStartTool, event.agentSeq, event.timestamp);
     state.revision += 1;
     return "applied";
@@ -7627,14 +7700,13 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
   const isSequenceBackfill = admission === "ignored-sequence";
   const restoresCurrentBaseline = options.replaySnapshot === true && event.stream === "assistant" && event.data.assistantTextSnapshot === true && typeof event.data.text === "string" && previousTurn?.assistantTextRecoveryOwnerIds?.has(eventItemId(event.data) ?? "") === true && event.agentSeq === previousTurn.activityEventSeqById?.get(activityEventIdentity(event));
   if (isSequenceBackfill && (!options.allowSequenceBackfill || !previousTurn || !acceptsBackfillSequence(previousTurn, event) && !restoresCurrentBaseline)) {
-    return "ignored-sequence";
+    return ignoreSequence();
   }
-  if (admission === "ignored-run" || admission === "ignored-terminal") return "ignored-run";
   if (previousTurn?.runId === event.runId && !acceptsBackfillSequence(previousTurn, event) && !restoresCurrentBaseline) {
     if (!options.replaySnapshot) {
       previousTurn.lastAgentSeq = Math.max(previousTurn.lastAgentSeq, event.agentSeq);
     }
-    return "ignored-sequence";
+    return ignoreSequence();
   }
   const turn = admitTurn(state, event, dependencies, isSequenceBackfill);
   if (!turn) return "ignored-run";
@@ -7764,11 +7836,11 @@ function reduceAgentEvent(state, event, dependencies, options = {}) {
 function extractMessageText(message) {
   if (typeof message === "string") return message;
   if (!message || typeof message !== "object" || Array.isArray(message)) return "";
-  const record6 = message;
-  if (typeof record6.text === "string") return record6.text;
-  if (typeof record6.content === "string") return record6.content;
-  if (!Array.isArray(record6.content)) return "";
-  return record6.content.map((block2) => {
+  const record7 = message;
+  if (typeof record7.text === "string") return record7.text;
+  if (typeof record7.content === "string") return record7.content;
+  if (!Array.isArray(record7.content)) return "";
+  return record7.content.map((block2) => {
     if (!block2 || typeof block2 !== "object" || Array.isArray(block2)) return "";
     const value = block2;
     return typeof value.text === "string" ? value.text : "";
@@ -8756,14 +8828,14 @@ var BROWSER_DISPLAY_LENGTH_PREFIX = "display-metadata-length:";
 var boundedDisplayString = (value, maxLength) => typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, maxLength) : "";
 var parseDisplayRect = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const record6 = value;
-  const values = [record6.x, record6.y, record6.width, record6.height];
+  const record7 = value;
+  const values = [record7.x, record7.y, record7.width, record7.height];
   if (!values.every((item) => typeof item === "number" && Number.isFinite(item))) return null;
   return {
-    x: Math.max(-1e5, Math.min(1e5, record6.x)),
-    y: Math.max(-1e5, Math.min(1e5, record6.y)),
-    width: Math.max(0, Math.min(1e5, record6.width)),
-    height: Math.max(0, Math.min(1e5, record6.height))
+    x: Math.max(-1e5, Math.min(1e5, record7.x)),
+    y: Math.max(-1e5, Math.min(1e5, record7.y)),
+    width: Math.max(0, Math.min(1e5, record7.width)),
+    height: Math.max(0, Math.min(1e5, record7.height))
   };
 };
 var parseDisplayAnnotations = (value) => {
@@ -8772,8 +8844,8 @@ var parseDisplayAnnotations = (value) => {
     if (!Array.isArray(parsed)) return [];
     return parsed.slice(0, 4).flatMap((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return [];
-      const record6 = item;
-      const elementRecord = record6.element && typeof record6.element === "object" && !Array.isArray(record6.element) ? record6.element : null;
+      const record7 = item;
+      const elementRecord = record7.element && typeof record7.element === "object" && !Array.isArray(record7.element) ? record7.element : null;
       const rect = elementRecord ? parseDisplayRect(elementRecord.rect) : null;
       const element = elementRecord && rect ? {
         tag: boundedDisplayString(elementRecord.tag, 40).toLowerCase(),
@@ -8786,11 +8858,11 @@ var parseDisplayAnnotations = (value) => {
       } : void 0;
       return [
         {
-          id: boundedDisplayString(record6.id, 80),
-          title: boundedDisplayString(record6.title, 120),
-          displayUrl: boundedDisplayString(record6.displayUrl, 300),
-          markedRegionCount: typeof record6.markedRegionCount === "number" && Number.isFinite(record6.markedRegionCount) ? Math.max(0, Math.min(8, Math.floor(record6.markedRegionCount))) : 0,
-          ...boundedDisplayString(record6.comment, 2e3) ? { comment: boundedDisplayString(record6.comment, 2e3) } : {},
+          id: boundedDisplayString(record7.id, 80),
+          title: boundedDisplayString(record7.title, 120),
+          displayUrl: boundedDisplayString(record7.displayUrl, 300),
+          markedRegionCount: typeof record7.markedRegionCount === "number" && Number.isFinite(record7.markedRegionCount) ? Math.max(0, Math.min(8, Math.floor(record7.markedRegionCount))) : 0,
+          ...boundedDisplayString(record7.comment, 2e3) ? { comment: boundedDisplayString(record7.comment, 2e3) } : {},
           ...element?.tag ? { element } : {}
         }
       ];
@@ -8884,6 +8956,33 @@ display-metadata-length:2
   return null;
 }
 
+// src/shared/openclaw/messageVisibility.ts
+var USER_ROLE = "user";
+var CUSTOM_ROLE = "custom";
+var INTERNAL_SYSTEM_INPUT = "internal_system";
+var INTER_SESSION_INPUT = "inter_session";
+var EXEC_APPROVAL_FOLLOWUP = "exec_approval_followup";
+var RUNTIME_CONTEXT_TYPE = "openclaw.runtime-context";
+var SYSTEM_UPDATE_TYPE = "openclaw.system-update";
+var RUNTIME_CONTEXT_KIND = "runtime-context";
+function record4(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function isHiddenNativeMessage(value) {
+  const outer = record4(value);
+  if (!outer) return false;
+  if (outer.display === false) return true;
+  const message = typeof outer.role === "string" ? outer : record4(outer.message) ?? outer;
+  if (message.display === false) return true;
+  const role = typeof message.role === "string" ? message.role.toLowerCase() : "";
+  if (role === CUSTOM_ROLE) {
+    return message.customType === RUNTIME_CONTEXT_TYPE || message.customType === SYSTEM_UPDATE_TYPE && record4(message.details)?.kind === RUNTIME_CONTEXT_KIND;
+  }
+  if (role !== USER_ROLE) return false;
+  const provenance = record4(message.provenance);
+  return provenance?.kind === INTERNAL_SYSTEM_INPUT || provenance?.kind === INTER_SESSION_INPUT && provenance.sourceTool === EXEC_APPROVAL_FOLLOWUP;
+}
+
 // src/renderer/libs/openclaw-chat/pipeline/heartbeat-display.ts
 var HEARTBEAT_TOKEN = "HEARTBEAT_OK";
 var DEFAULT_HEARTBEAT_ACK_MAX_CHARS = 300;
@@ -8921,6 +9020,53 @@ function stripHeartbeatTokenForDisplay(raw, maxAckChars = DEFAULT_HEARTBEAT_ACK_
   }
   if (!didStrip) return { shouldSkip: false };
   return { shouldSkip: !text3 || text3.length <= maxAckChars };
+}
+function isHiddenDisplayBlockType(type) {
+  return type === "thinking" || type === "reasoning";
+}
+function hasReasoningDisplayBlock(content) {
+  if (!Array.isArray(content)) return false;
+  return content.some((block2) => {
+    if (!block2 || typeof block2 !== "object" || !("type" in block2)) return false;
+    const type = block2.type;
+    return type === "thinking" || type === "reasoning";
+  });
+}
+function resolveDisplayContent(content) {
+  if (typeof content === "string") return { text: content, hasVisibleNonTextContent: false };
+  if (!Array.isArray(content)) return { text: "", hasVisibleNonTextContent: content != null };
+  let hasVisibleNonTextContent = false;
+  const text3 = content.filter((block2) => {
+    if (!block2 || typeof block2 !== "object" || !("type" in block2)) {
+      hasVisibleNonTextContent = true;
+      return false;
+    }
+    if (block2.type !== "text") {
+      if (!isHiddenDisplayBlockType(block2.type)) {
+        hasVisibleNonTextContent = true;
+      }
+      return false;
+    }
+    if (typeof block2.text !== "string") {
+      hasVisibleNonTextContent = true;
+      return false;
+    }
+    return true;
+  }).map((block2) => block2.text).join("");
+  return { text: text3, hasVisibleNonTextContent };
+}
+function isAssistantHeartbeatAckForDisplay(message) {
+  if (!message || typeof message !== "object") return false;
+  const entry = message;
+  const role = normalizeLowercaseStringOrEmpty(entry.role);
+  if (role !== "assistant") return false;
+  if (typeof entry.senderLabel === "string" && entry.senderLabel.trim()) return false;
+  if (entry.__openclawLiveThinking === true) return false;
+  const content = typeof entry.content === "string" || Array.isArray(entry.content) ? entry.content : entry.text;
+  if (hasReasoningDisplayBlock(content)) return false;
+  const { text: text3, hasVisibleNonTextContent } = resolveDisplayContent(content);
+  if (hasVisibleNonTextContent) return false;
+  return stripHeartbeatTokenForDisplay(text3).shouldSkip;
 }
 
 // src/shared/browser/browserLinkOpening.ts
@@ -9117,12 +9263,12 @@ var isLocalTtsVoiceId = (modelId, value) => typeof value === "number" && Number.
 var MAX_TRANSCRIPTION_AUDIO_BYTES = 25 * 1024 * 1024;
 
 // src/shared/speech/onlineSpeechModels.ts
-var record4 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
+var record5 = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : null;
 var boundedText = (value, limit = 256) => typeof value === "string" && Boolean(value.trim()) && value.length <= limit && !/[\u0000-\u001f\u007f]/.test(value);
 var normalizeOnlineSpeechVoiceSelection = (value, legacyVoice) => {
   if (value === void 0)
     return boundedText(legacyVoice) ? { kind: "preset", voiceId: legacyVoice.trim() } : null;
-  const input = record4(value);
+  const input = record5(value);
   if (!input) return null;
   if (input.kind === "preset" && boundedText(input.voiceId) && Object.keys(input).length === 2)
     return { kind: "preset", voiceId: input.voiceId.trim() };
@@ -11555,6 +11701,10 @@ var chatTranslations = {
     coworkMessageHistoryMutationFailed: "\u66F4\u65B0\u6D88\u606F\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5",
     // JustDo
     coworkHistory: "\u6700\u8FD1\u5BF9\u8BDD",
+    sessionHistoryGrouping: "\u6700\u8FD1\u5BF9\u8BDD\u5206\u7EC4\u65B9\u5F0F",
+    sessionHistoryGroupByTime: "\u6309\u65F6\u95F4\u5206\u7EC4",
+    sessionHistoryGroupByWorkspace: "\u6309\u5DE5\u4F5C\u533A\u5206\u7EC4",
+    sessionHistoryNoWorkspace: "\u672A\u8BBE\u7F6E\u5DE5\u4F5C\u533A",
     groupedSessions: "\u5BF9\u8BDD\u5206\u7EC4",
     chromeExtensionSessionGroup: "Chrome",
     coworkNoSessions: "\u6682\u65E0\u6700\u8FD1\u5BF9\u8BDD",
@@ -12034,6 +12184,7 @@ var chatTranslations = {
     addFolder: "\u9009\u62E9\u5DE5\u4F5C\u7A7A\u95F4",
     recentFolders: "\u6700\u8FD1\u4F7F\u7528",
     workspacePickerTitle: "\u8BBE\u7F6E\u5DE5\u4F5C\u76EE\u5F55",
+    workspacePickerApplying: "\u6B63\u5728\u66F4\u6539\u5DE5\u4F5C\u76EE\u5F55\u2026",
     workspacePickerDescription: "\u6587\u4EF6\u8BFB\u53D6\u3001\u547D\u4EE4\u6267\u884C\u548C\u4EFB\u52A1\u4EA7\u7269\u90FD\u4F1A\u4EE5\u6B64\u76EE\u5F55\u4E3A\u51C6\u3002",
     sessionWorkspaceChange: "\u66F4\u6539\u5DE5\u4F5C\u76EE\u5F55",
     sessionWorkspaceDescription: "\u540E\u7EED\u6D88\u606F\u548C\u65B0\u7EC8\u7AEF\u4F7F\u7528\u6B64\u76EE\u5F55\u3002\u5386\u53F2\u8BB0\u5F55\u548C\u6587\u4EF6\u4FDD\u7559\u539F\u4F4D\uFF0C\u5DF2\u6253\u5F00\u7684\u7EC8\u7AEF\u4E0D\u5207\u6362\u76EE\u5F55\u3002",
@@ -12293,6 +12444,10 @@ var chatTranslations = {
     coworkMessageHistoryMutationFailed: "Failed to update the message. Please try again.",
     // JustDo
     coworkHistory: "Recent Chats",
+    sessionHistoryGrouping: "Recent chat grouping",
+    sessionHistoryGroupByTime: "Group by time",
+    sessionHistoryGroupByWorkspace: "Group by workspace",
+    sessionHistoryNoWorkspace: "No workspace",
     groupedSessions: "Groups",
     chromeExtensionSessionGroup: "Chrome",
     coworkNoSessions: "No chats yet",
@@ -12772,6 +12927,7 @@ var chatTranslations = {
     addFolder: "Select Workspace",
     recentFolders: "Recent Folders",
     workspacePickerTitle: "Set Working Directory",
+    workspacePickerApplying: "Changing working directory\u2026",
     workspacePickerDescription: "File access, commands, and task outputs will use this directory.",
     sessionWorkspaceChange: "Change working directory",
     sessionWorkspaceDescription: "Future messages and new terminals use this folder. History and files stay in place; open terminals keep their current directory.",
@@ -13629,8 +13785,7 @@ var mcpAppsTranslations = {
     mcpAppsPin: "\u5728\u4FA7\u8FB9\u680F\u6253\u5F00",
     mcpAppsPinned: "\u5DF2\u5728\u4FA7\u8FB9\u680F",
     mcpAppsViewReference: "\u67E5\u770B",
-    mcpAppsUpdated: "\u5DF2\u5728\u539F\u56FE\u66F4\u65B0",
-    mcpAppsDiagramLocal: "\u672C\u5730\u56FE\u8868 \xB7 \u53EF\u7EE7\u7EED\u4FEE\u6539",
+    mcpAppsUpdated: "\u539F\u5185\u5BB9\u5DF2\u66F4\u65B0",
     mcpAppsWorkspaceStartUnavailable: "\u5F53\u524D\u753B\u5E03\u5C5E\u4E8E\u5DF2\u9009\u6587\u4EF6\u5939\uFF0C\u8BF7\u5173\u95ED\u5DE5\u4F5C\u6811\u9009\u9879\u540E\u53D1\u9001\u3002",
     mcpAppsTitle: "\u5E94\u7528",
     mcpAppsAlreadyOpen: "\u5E94\u7528\u5DF2\u6253\u5F00",
@@ -13642,6 +13797,7 @@ var mcpAppsTranslations = {
     mcpAppsExpand: "\u5C55\u5F00",
     mcpAppsClose: "\u5173\u95ED\u5E94\u7528",
     mcpAppsReopen: "\u91CD\u65B0\u6253\u5F00",
+    mcpAppsReopenBlank: "\u6253\u5F00\u65B0\u7684\u7A7A\u767D\u753B\u5E03",
     mcpAppsCloseUnknown: "\u5DF2\u5173\u95ED\u754C\u9762\uFF0C\u5E94\u7528\u4E0A\u4E0B\u6587\u6E05\u7406\u672A\u786E\u8BA4\u3002",
     mcpAppsReadOnly: "\u5386\u53F2\u9884\u89C8 \xB7 \u53EA\u8BFB",
     mcpAppsConfirmDraft: "\u5C06\u4EE5\u4E0B\u5185\u5BB9\u52A0\u5165\u5F53\u524D\u8349\u7A3F\uFF1F",
@@ -13682,8 +13838,7 @@ var mcpAppsTranslations = {
     mcpAppsPin: "Open in sidebar",
     mcpAppsPinned: "In sidebar",
     mcpAppsViewReference: "View",
-    mcpAppsUpdated: "Original diagram updated",
-    mcpAppsDiagramLocal: "Local diagram \xB7 continue editing",
+    mcpAppsUpdated: "Original content updated",
     mcpAppsWorkspaceStartUnavailable: "The current canvas belongs to the selected folder. Turn off the worktree option before sending.",
     mcpAppsTitle: "Apps",
     mcpAppsAlreadyOpen: "App already open",
@@ -13695,6 +13850,7 @@ var mcpAppsTranslations = {
     mcpAppsExpand: "Expand",
     mcpAppsClose: "Close app",
     mcpAppsReopen: "Reopen app",
+    mcpAppsReopenBlank: "Open a new blank canvas",
     mcpAppsCloseUnknown: "The interface is closed; app context cleanup is unconfirmed.",
     mcpAppsReadOnly: "History preview \xB7 Read only",
     mcpAppsConfirmDraft: "Add this content to the current draft?",
@@ -15264,9 +15420,8 @@ var scheduledTaskTranslations = {
     cronDialogPermissionReadOnly: "\u53EA\u8BFB\uFF08\u9ED8\u8BA4\uFF09",
     cronDialogPermissionFull: "\u5B8C\u5168\u6743\u9650",
     cronDialogPermissionCustom: "\u4FDD\u7559\u73B0\u6709\u81EA\u5B9A\u4E49\u6743\u9650",
-    cronDialogPermissionReadOnlyHint: "\u4EC5\u5141\u8BB8\u8BFB\u53D6\u6587\u4EF6\u3001\u641C\u7D22\u7F51\u9875\u548C\u68C0\u7D22\u8BB0\u5FC6\uFF1B\u7981\u6B62\u6267\u884C\u547D\u4EE4\u3001\u4FEE\u6539\u6587\u4EF6\u53CA\u8C03\u7528\u5176\u4ED6\u5DE5\u5177\u3002\u7ED3\u679C\u4ECD\u6309\u4E0B\u65B9\u6295\u9012\u8BBE\u7F6E\u53D1\u9001\u3002",
-    cronDialogPermissionFullHint: "\u4F7F\u7528\u4E0E\u4E3B\u754C\u9762\u76F8\u540C\u7684\u5B8C\u5168\u6743\u9650\u6A21\u5F0F\uFF0C\u5141\u8BB8\u6267\u884C\u547D\u4EE4\u548C\u4FEE\u6539\u6587\u4EF6\uFF0C\u65E0\u9700\u4EBA\u5DE5\u5BA1\u6279\u3002",
-    cronDialogPermissionCustomHint: "\u4FDD\u7559\u539F\u6709\u6743\u9650\u6A21\u5F0F\u548C\u5DE5\u5177\u8BBE\u7F6E\uFF1B\u5982\u9700\u514D\u5BA1\u6279\u6267\u884C\uFF0C\u8BF7\u663E\u5F0F\u9009\u62E9\u5B8C\u5168\u6743\u9650\u3002",
+    cronDialogPermissionReadOnlyHint: "\u4EC5\u5141\u8BB8\u8BFB\u53D6\u6587\u4EF6\u3001\u68C0\u7D22\u8BB0\u5FC6\u548C\u83B7\u53D6\u6307\u5B9A\u7F51\u5740\u7684\u7F51\u9875\u5185\u5BB9\u3002",
+    cronDialogPermissionFullHint: "\u5141\u8BB8\u6267\u884C\u547D\u4EE4\u548C\u4FEE\u6539\u6587\u4EF6\uFF0C\u65E0\u9700\u4EBA\u5DE5\u5BA1\u6279\u3002",
     cronDialogCreateTitle: "\u521B\u5EFA\u4EFB\u52A1",
     cronDialogEditTitle: "\u7F16\u8F91\u4EFB\u52A1",
     cronDialogTaskName: "\u4EFB\u52A1\u540D\u79F0",
@@ -15620,9 +15775,8 @@ var scheduledTaskTranslations = {
     cronDialogPermissionReadOnly: "Read only (default)",
     cronDialogPermissionFull: "Full access",
     cronDialogPermissionCustom: "Keep existing custom permissions",
-    cronDialogPermissionReadOnlyHint: "Only file reads, web search and fetch, and memory retrieval are allowed. Commands, file changes, and other tools are blocked. Results still follow the delivery settings below.",
-    cronDialogPermissionFullHint: "Uses the same Full permission mode as chat. Commands and file changes run without human approval.",
-    cronDialogPermissionCustomHint: "Preserves the existing permission mode and tool settings. Select Full explicitly to enable execution without approval.",
+    cronDialogPermissionReadOnlyHint: "Can only read files, retrieve memories, and fetch web content from specified URLs.",
+    cronDialogPermissionFullHint: "Commands and file changes run without human approval.",
     cronDialogCreateTitle: "Create Task",
     cronDialogEditTitle: "Edit Task",
     cronDialogTaskName: "Task Name",
@@ -17791,11 +17945,9 @@ var settingsTranslations = {
     // 模型提供商设置
     modelProviders: "\u6A21\u578B\u63D0\u4F9B\u5546",
     builtinModelsProvider: "\u5185\u7F6E\u6A21\u578B",
-    builtinModelRefreshFailed: "\u65E0\u6CD5\u5237\u65B0\u5185\u7F6E\u6A21\u578B\uFF0C\u8BF7\u91CD\u8BD5\u3002",
-    builtinModelRefreshDeviceUnavailable: "\u65E0\u6CD5\u83B7\u53D6\u7528\u4E8E\u6A21\u578B\u6362\u8BC1\u7684\u8BBE\u5907\u7F51\u5361\u5730\u5740\u3002",
-    builtinModelRefreshExchangeTimeout: "\u6A21\u578B\u6362\u8BC1\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u91CD\u8BD5\u3002",
-    builtinModelRefreshExchangeHttpError: "\u6A21\u578B\u6362\u8BC1\u670D\u52A1\u8FD4\u56DE\u9519\u8BEF\u3002",
-    builtinModelRefreshExchangeHttpStatus: "\u6A21\u578B\u6362\u8BC1\u670D\u52A1\u8FD4\u56DE HTTP {status}\u3002",
+    builtinModelRefreshDeviceUnavailable: "Could not obtain a device MAC address for model authentication.",
+    builtinModelRefreshExchangeHttpError: "The model authentication service rejected the sign-in.",
+    builtinModelRefreshExchangeHttpStatus: "The model authentication service returned HTTP {status}.",
     editModel: "\u7F16\u8F91\u6A21\u578B",
     deleteModel: "\u5220\u9664\u6A21\u578B",
     addNewModel: "\u6DFB\u52A0\u65B0\u6A21\u578B",
@@ -17833,7 +17985,7 @@ var settingsTranslations = {
     connectionSuccess: "\u8FDE\u63A5\u6210\u529F",
     connectionFailed: "\u8FDE\u63A5\u5931\u8D25",
     connectionInvalidResponse: "\u54CD\u5E94\u683C\u5F0F\u65E0\u6548",
-    connectionTestSummary: "\u5DF2\u6D4B\u8BD5 {passed}/{total} \u4E2A\u6A21\u578B",
+    connectionTestSummary: "\u5DF2\u6D4B\u8BD5 {tested}/{total} \u4E2A\u6A21\u578B",
     testRequestUrl: "\u8BF7\u6C42\u5730\u5740",
     testModel: "\u6D4B\u8BD5\u6A21\u578B",
     testStatus: "\u72B6\u6001\u7801",
@@ -18780,10 +18932,8 @@ var settingsTranslations = {
     // Model Provider Settings
     modelProviders: "Model Providers",
     builtinModelsProvider: "Built-in Models",
-    builtinModelRefreshFailed: "Could not refresh built-in models. Try again.",
     builtinModelRefreshDeviceUnavailable: "Could not obtain a device MAC address for model authentication.",
-    builtinModelRefreshExchangeTimeout: "The model authentication request timed out. Try again.",
-    builtinModelRefreshExchangeHttpError: "The model authentication service returned an error.",
+    builtinModelRefreshExchangeHttpError: "The model authentication service rejected the sign-in.",
     builtinModelRefreshExchangeHttpStatus: "The model authentication service returned HTTP {status}.",
     editModel: "Edit Model",
     deleteModel: "Delete Model",
@@ -18822,7 +18972,7 @@ var settingsTranslations = {
     connectionSuccess: "Connection successful",
     connectionFailed: "Connection failed",
     connectionInvalidResponse: "Invalid response format",
-    connectionTestSummary: "Tested {passed}/{total} models",
+    connectionTestSummary: "Tested {tested}/{total} models",
     testRequestUrl: "Request URL",
     testModel: "Test model",
     testStatus: "Status",
@@ -20760,16 +20910,58 @@ ${item.text}`
 var SILENT_REPLY_PATTERN = /^\s*NO_REPLY\s*$/;
 var FAILED_RUN_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
 var INTERRUPTED_MESSAGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
+function asRecord6(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function extractSnapshotText(message) {
+  const record7 = asRecord6(message);
+  if (!record7) return null;
+  if (typeof record7.text === "string") return record7.text;
+  if (typeof record7.content === "string") return record7.content;
+  if (!Array.isArray(record7.content)) return null;
+  const texts = record7.content.flatMap((block2) => {
+    const item = asRecord6(block2);
+    return item?.type === "text" && typeof item.text === "string" ? [item.text] : [];
+  });
+  return texts.length > 0 ? texts.join("") : null;
+}
 function stripSilentReplySuffixFromText(text3) {
   if (SILENT_REPLY_PATTERN.test(text3.trim())) return text3;
   return text3.replace(/\s*NO_REPLY\s*$/i, "").trimEnd();
 }
+function isPersistedSilentReplyArtifactText(text3) {
+  const trimmed = text3.trim();
+  if (SILENT_REPLY_PATTERN.test(trimmed)) return true;
+  const upper = trimmed.toUpperCase();
+  return upper.startsWith("NO_") && "NO_REPLY".startsWith(upper);
+}
+function shouldHideMessage(message) {
+  if (isHiddenNativeMessage(message)) return true;
+  const record7 = asRecord6(message);
+  if (!record7) return false;
+  const role = typeof record7.role === "string" ? record7.role.toLowerCase() : "";
+  if (role !== "assistant") return false;
+  if (isPersistedFailedAssistantMessage(record7)) return false;
+  const text3 = extractSnapshotText(message);
+  return Boolean(text3 && isPersistedSilentReplyArtifactText(text3)) || isAssistantHeartbeatAckForDisplay(message);
+}
+function isEmptyMessageContent(content) {
+  return content === null || content === void 0 || typeof content === "string" && !content.trim() || Array.isArray(content) && content.every((block2) => {
+    const item = asRecord6(block2);
+    return item?.type === "text" && typeof item.text === "string" && !item.text.trim();
+  });
+}
+function isPersistedFailedAssistantMessage(message) {
+  if (String(message.role ?? "").toLowerCase() !== "assistant") return false;
+  const stopReason = message.stopReason ?? message.stop_reason;
+  return stopReason === "error" && isEmptyMessageContent(message.content);
+}
 
 // src/renderer/libs/openclaw-chat/gateway/history/chat-history-protocol.ts
 var HISTORY_MESSAGE_CHUNK_CHARS = 512 * 1024;
-var asRecord6 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+var asRecord7 = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 var isTruncatedHistoryMessage = (message) => {
-  const metadata = asRecord6(asRecord6(message)?.__openclaw);
+  const metadata = asRecord7(asRecord7(message)?.__openclaw);
   return metadata?.truncated === true;
 };
 
@@ -20787,6 +20979,15 @@ function hidden(text3) {
 }
 function stripSuffix(text3) {
   return /NO_REPLY\s*$/i.test(text3) ? stripSilentReplySuffixFromText(text3) : text3;
+}
+function hasChromeProcessFoldText(entry) {
+  if (isOmittedChromeDeliveryText(entry) || !entry.rawMessage && !entry.text.trim()) return false;
+  const raw = entry.rawMessage ?? { role: "assistant", content: entry.text };
+  return normalizeMessage(raw).content.some((block2) => {
+    if (block2.type !== "text" || !block2.text) return false;
+    const text3 = stripOpenClawLogHintText(stripSuffix(block2.text), entry.status === "streaming");
+    return Boolean(text3.trim()) && !shouldHideMessage({ role: "assistant", content: text3 });
+  });
 }
 function messageText(message) {
   if (typeof message === "string") return message;
@@ -20845,7 +21046,7 @@ function isPresentPlanToolName(toolName) {
 }
 
 // src/renderer/libs/openclaw-chat/model/history/transcript-identity.ts
-function asRecord7(value) {
+function asRecord8(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function readScalar(value) {
@@ -20854,44 +21055,44 @@ function readScalar(value) {
   return null;
 }
 function readTranscriptIdentity(message) {
-  const record6 = asRecord7(message);
-  if (!record6) return null;
-  const interruptedOverlayId = readScalar(record6.__justdoInterruptedOverlayId);
+  const record7 = asRecord8(message);
+  if (!record7) return null;
+  const interruptedOverlayId = readScalar(record7.__justdoInterruptedOverlayId);
   if (interruptedOverlayId) {
     return { kind: "durable-id", value: `interrupted:${interruptedOverlayId}` };
   }
-  const failedRunMessageId = readScalar(record6[FAILED_RUN_MESSAGE_ID]);
+  const failedRunMessageId = readScalar(record7[FAILED_RUN_MESSAGE_ID]);
   if (failedRunMessageId) {
     return { kind: "durable-id", value: `failed-run:${failedRunMessageId}` };
   }
-  const marker = asRecord7(record6.__openclaw);
+  const marker = asRecord8(record7.__openclaw);
   const openClawId = readScalar(marker?.id);
   if (openClawId) return { kind: "openclaw-id", value: openClawId };
   const openClawSeq = readScalar(marker?.seq);
   if (openClawSeq) return { kind: "openclaw-seq", value: openClawSeq };
   for (const key of ["entryId", "messageId", "id", "seq"]) {
-    const value = readScalar(record6[key]);
+    const value = readScalar(record7[key]);
     if (value) return { kind: "durable-id", value: `${key}:${value}` };
   }
   return null;
 }
 
 // src/renderer/libs/openclaw-chat/model/history/optimistic-history-tail.ts
-function asRecord8(value) {
+function asRecord9(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function readActiveTurnMessageRunId(message) {
-  const record6 = asRecord8(message);
-  const nested = asRecord8(record6?.message);
-  const nestedOpenClaw = asRecord8(nested?.__openclaw);
-  const openClaw = asRecord8(record6?.__openclaw);
+  const record7 = asRecord9(message);
+  const nested = asRecord9(record7?.message);
+  const nestedOpenClaw = asRecord9(nested?.__openclaw);
+  const openClaw = asRecord9(record7?.__openclaw);
   for (const candidate of [
     nested?.runId,
     nested?.run_id,
     nestedOpenClaw?.runId,
     nestedOpenClaw?.run_id,
-    record6?.runId,
-    record6?.run_id,
+    record7?.runId,
+    record7?.run_id,
     openClaw?.runId,
     openClaw?.run_id
   ]) {
@@ -21004,11 +21205,11 @@ function hasUnresolvedTool(item) {
     (process2) => process2.type === "tool" && process2.status === "running" && toolOutcome(process2) !== "running"
   );
 }
-function unresolvedToolSummary(item) {
+function persistedLiveToolSummary(item) {
   if (item.kind !== "live-process" || item.origin !== "persisted" || item.item.type !== "tool")
     return null;
   const tool = item.item;
-  if (tool.status !== "running") return null;
+  if (tool.status !== "running" && item.toolDepth === void 0) return null;
   const outcome = toolOutcome(tool);
   return {
     kind: "process-summary",
@@ -21096,7 +21297,8 @@ function foldCompletedProcessRows(rows, options = {}) {
       const sourceItems = prefix.map((row) => row.item);
       const items = options.foldUnresolvedTools ? coalesceAdjacentProcessSummaries(sourceItems).map((item) => {
         if (item.kind !== "process-summary") return item;
-        const tail = item.items[item.items.length - 1];
+        const ordered = projectProcessNesting(item.items).items;
+        const tail = ordered[ordered.length - 1];
         return tail?.id ? { ...item, key: `history-folded-process:${tail.type}:${tail.id}` } : item;
       }) : sourceItems;
       result.push({
@@ -21114,7 +21316,7 @@ function foldCompletedProcessRows(rows, options = {}) {
     };
     turn.forEach((row, index) => {
       if (options.foldUnresolvedTools && index < lastOrdinaryTextIndex && !protectedProcessKeys.has(row.item.key) && !options.keepVisibleKeys?.has(row.item.key)) {
-        const summary = unresolvedToolSummary(row.item);
+        const summary = persistedLiveToolSummary(row.item);
         if (summary) row = { ...row, item: summary };
       }
       const answer = answerSources[index];
@@ -21236,13 +21438,13 @@ function prepareVisibleTimelineRows(items, options) {
 }
 
 // src/renderer/chrome/chat/chrome-extension-timeline.ts
-function record5(value) {
+function record6(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function isChromeQuestionTool(item) {
   if (item.toolName !== ASK_USER_QUESTION_TOOL_NAME) return false;
   if (item.status === "completed") return item.isError !== true && parseQuestionResult(item.questionResult) !== null;
-  return ["running", "inProgress", "cancelled", "interrupted", "failed"].includes(String(item.status)) && parseQuestions(record5(item.input)?.questions) !== null;
+  return ["running", "inProgress", "cancelled", "interrupted", "failed"].includes(String(item.status)) && parseQuestions(record6(item.input)?.questions) !== null;
 }
 function processStatus(value) {
   if (value === "completed") return "completed";
@@ -21274,7 +21476,7 @@ function asProcessItem(item) {
 }
 function historyMessage(entry) {
   const outer = entry.rawMessage ?? {};
-  const nested = record5(outer.message);
+  const nested = record6(outer.message);
   const source = nested ?? outer;
   const display = entry.display;
   const message = {
@@ -21286,7 +21488,7 @@ function historyMessage(entry) {
   };
   if (entry.role === "compaction" && display?.kind) {
     message.__openclaw = {
-      ...record5(source.__openclaw),
+      ...record6(source.__openclaw),
       kind: display.kind,
       ...display.phase ? { phase: display.phase } : {}
     };
@@ -21611,6 +21813,7 @@ var ChromeExtensionStream = class {
   historyOnly = false;
   anchor = null;
   completedRuns = /* @__PURE__ */ new Set();
+  failedLiveRunId = null;
   settled = false;
   activeInput = null;
   optimisticInputs = /* @__PURE__ */ new Map();
@@ -21789,6 +21992,13 @@ var ChromeExtensionStream = class {
     }
     return result;
   }
+  /** Close the live process at a confirmed failure of its exact native run. */
+  markFailed(nativeRunId) {
+    if (nativeRunId && this.state.activeTurn?.runId === nativeRunId) {
+      this.failedLiveRunId = nativeRunId;
+      this.activity = null;
+    }
+  }
   accept(value) {
     if (this.pendingRunEvents !== null) {
       if (this.pendingRunChars >= 0) {
@@ -21818,7 +22028,7 @@ var ChromeExtensionStream = class {
     if (!prepared) return false;
     value = prepared;
     const event = value.event;
-    if (!event.sessionKey || event.runId && this.completedRuns.has(event.runId)) return false;
+    if (!event.sessionKey || event.runId && (this.completedRuns.has(event.runId) || event.runId === this.failedLiveRunId)) return false;
     if (this.boundRunId && event.runId !== this.boundRunId) return false;
     if (!this.state.sessionKey) this.state.sessionKey = event.sessionKey;
     if (value.kind === "chat" && value.event.state === "delta" && this.agentTextRun === event.runId)
@@ -21852,13 +22062,19 @@ var ChromeExtensionStream = class {
     const turn = this.state.activeTurn;
     if (!turn?.items.length)
       return { ...history, turns: this.projectOptimisticInputs(history.turns) };
-    const turns = this.history.turns.slice();
+    const turns = history.turns.slice();
     const index = this.anchor ?? Math.max(0, turns.length - 1);
     const historical = turns[index] ?? { id: turn.id, items: [] };
+    const failed = this.failedLiveRunId === turn.runId;
     const live = projectLiveItems(turn);
+    const { items } = reconcileItems(historical.items, live);
+    const liveKeys = failed ? new Set(live.map((item) => item.displayKey)) : null;
     turns[index] = this.retainDisplayKeys({
       ...historical,
-      items: reconcileItems(historical.items, live).items
+      items: liveKeys ? items.map(
+        (item) => liveKeys.has(item.displayKey) && (item.type === "reasoning" && item.status === "running" || item.type === "toolCall" && item.status === "inProgress" || item.type === "agentMessage" && item.status === "streaming") ? { ...item, status: "interrupted" } : item
+      ) : items,
+      processMode: failed ? "failed" : "live"
     });
     return { ...history, turns: this.projectOptimisticInputs(turns) };
   }
@@ -21881,10 +22097,12 @@ var ChromeExtensionStream = class {
       const { covered } = reconcileItems(historical, live);
       if (!covered) {
         this.settled = true;
-        for (const item of this.state.activeTurn.items) {
-          if (item.type === "tool" && item.status === "running") item.status = "interrupted";
-          if (item.type === "thinking" && item.status === "running") item.status = "interrupted";
-          if (item.type === "content" && item.status === "streaming") item.status = "interrupted";
+        if (this.failedLiveRunId !== this.state.activeTurn.runId) {
+          for (const item of this.state.activeTurn.items) {
+            if (item.type === "tool" && item.status === "running") item.status = "interrupted";
+            if (item.type === "thinking" && item.status === "running") item.status = "interrupted";
+            if (item.type === "content" && item.status === "streaming") item.status = "interrupted";
+          }
         }
         return;
       }
@@ -21917,12 +22135,14 @@ var ChromeExtensionStream = class {
     this.agentTextRun = null;
     this.anchor = null;
     this.settled = false;
+    this.failedLiveRunId = null;
     this.activeInput = null;
   }
 };
 export {
   ChromeExtensionStream,
   foldChromeExtensionEntries,
+  hasChromeProcessFoldText,
   isChromeQuestionTool,
   isOmittedChromeDeliveryText,
   isPresentPlanToolName

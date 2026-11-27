@@ -7,9 +7,29 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { i18nService } from '@/services/i18n';
 
 import { ChatScrollController } from '../controllers/chat-scroll-controller';
+import { beginAssistantTurn, createChatTranscriptState, type ToolItem } from '../model/chat-transcript-state';
 import type { GatewayMessage } from '../types';
 import type { JustDoChatElement } from './justdo-chat';
 import type { ToolOutput } from './tools/tool-output';
+
+const selectNativeEditRange = vi.hoisted(() => vi.fn());
+
+vi.mock('@/shared/dom/observeEditorLayout', () => ({ observeEditorLayout: () => () => {} }));
+vi.mock('@/shared/editor/monaco', () => ({
+  monaco: {
+    Uri: { parse: (uri: string) => uri },
+    editor: {
+      defineTheme() {},
+      createModel: () => ({ dispose() {} }),
+      createDiffEditor: () => ({
+        createViewModel: () => ({ dispose() {} }),
+        setModel() {},
+        dispose() {},
+        getModifiedEditor: () => ({ setSelection: selectNativeEditRange, revealRangeInCenter() {} }),
+      }),
+    },
+  },
+}));
 
 beforeEach(() => {
   vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
@@ -19,6 +39,7 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.replaceChildren();
+  selectNativeEditRange.mockClear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -41,6 +62,27 @@ async function toolHistory(input: unknown, output: string, name = 'read'): Promi
   ];
   const chat = document.createElement('justdo-chat') as JustDoChatElement;
   chat.messages = messages;
+  document.body.append(chat);
+  await chat.updateComplete;
+  return chat;
+}
+
+async function liveTool(
+  name: string,
+  input: unknown,
+  result: Partial<Pick<ToolItem, 'output' | 'presentation' | 'progressText' | 'status'>> = {},
+): Promise<JustDoChatElement> {
+  const turn = beginAssistantTurn(
+    createChatTranscriptState('tool-search-fixture'),
+    { runId: 'live-run' },
+    { now: () => 1_000, createId: prefix => prefix },
+  );
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.activeTurn = { ...turn, lastAgentSeq: 1, items: [{
+    type: 'tool', id: 'live-tool', toolCallId: 'live-call', runId: 'live-run', name, input,
+    status: 'running', firstSeq: 1, lastSeq: 1, startedAt: 1_000, updatedAt: 1_000, ...result,
+  }] };
+  chat.isStreaming = true;
   document.body.append(chat);
   await chat.updateComplete;
   return chat;
@@ -78,6 +120,203 @@ test('navigates indexed tool input and output instead of duplicate summary text'
   expect(highlightedSource(chat)).toMatchObject({ output: true, text: 'needle output' });
   expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 2 });
   expect(highlightedSource(chat).output).toBe(false);
+});
+
+test('finds Exec command and output in the collapsed row and opens only for a raw-only argument', async () => {
+  const chat = await toolHistory({ command: 'echo needle', cwd: 'native-needle-workdir' }, '\u001b[32mneedle\u001b[0m', 'exec');
+  chat.searchQuery = 'needle';
+  await chat.updateComplete;
+
+  expect(chat.getSearchMatchCount()).toBe(3);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 3 });
+  const root = chat.shadowRoot!;
+  expect(root.querySelector('[data-tool-search-source="exec-command"] .chat-search-mark')?.textContent).toBe('needle');
+  const details = root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')!;
+  expect(details.open).toBe(false);
+  expect(details.querySelector('[data-tool-search-source="raw-input"]')).toBeNull();
+  expect(chat.navigateSearch(1)).toEqual({ index: 1, total: 3 });
+  expect(root.querySelector('pre.tool-output-terminal .chat-search-mark')?.textContent).toBe('needle');
+  expect(details.open).toBe(false);
+
+  expect(chat.navigateSearch(1)).toEqual({ index: 2, total: 3 });
+  expect(details.open).toBe(true);
+  expect(root.querySelector('[data-tool-search-source="raw-input"] .chat-search-mark')?.previousSibling?.textContent)
+    .toContain('"cwd": "native-');
+});
+
+test('finds one terminal hit and one raw-only hit for a saved Exec result', async () => {
+  const output = '\u001b]0;terminal-token\u0007terminal-token';
+  const chat = await toolHistory({ command: 'run' }, output, 'exec');
+  chat.searchQuery = 'terminal-token';
+  await chat.updateComplete;
+  const root = chat.shadowRoot!;
+
+  expect(chat.getSearchMatchCount()).toBe(2);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 2 });
+  expect(root.querySelector('pre.tool-output-terminal .chat-search-mark')?.textContent).toBe(chat.searchQuery);
+  expect(root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(false);
+
+  expect(chat.navigateSearch(1)).toEqual({ index: 1, total: 2 });
+  const mark = root.querySelector('[data-tool-search-source="raw-result"] .chat-search-mark');
+  expect(mark?.textContent).toBe(chat.searchQuery);
+  expect(mark?.nextSibling?.textContent).toBe('\u0007terminal-token');
+  expect(root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(true);
+});
+
+test('deduplicates only the mirrored Exec command on the currently displayed live raw page', async () => {
+  const chat = await liveTool('exec', { padding: 'x'.repeat(17_000), command: 'echo needle', cwd: 'needle-workdir' });
+  chat.searchQuery = 'needle';
+  await chat.updateComplete;
+  expect(chat.getSearchMatchCount()).toBe(1);
+
+  const details = chat.shadowRoot!.querySelector<HTMLDetailsElement>('details[data-tool-identity]')!;
+  const reader = details.querySelector<ToolOutput>('[data-tool-search-source="raw-input"]')!;
+  details.open = true;
+  await reader.updateComplete;
+  const next = [...reader.querySelectorAll<HTMLButtonElement>('.message-reader-actions button')]
+    .find(button => button.textContent?.trim() === i18nService.t('messageNext'))!;
+  next.click();
+  await reader.updateComplete;
+
+  expect(chat.getSearchMatchCount()).toBe(2);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 2 });
+  expect(reader.querySelector('.chat-search-mark')?.nextSibling?.textContent).toContain('-workdir');
+  expect(chat.navigateSearch(1)).toEqual({ index: 1, total: 2 });
+  expect(chat.shadowRoot!.querySelector('[data-tool-search-source="exec-command"] .chat-search-mark')?.textContent)
+    .toBe('needle');
+});
+
+test('ignores the synthetic result placeholder when searching a live completed Exec', async () => {
+  const empty = await liveTool('exec', { command: 'echo' }, { status: 'completed' });
+  empty.searchQuery = i18nService.t('coworkToolNoOutput');
+  await empty.updateComplete;
+  empty.getSearchMatchCount();
+  const emptyRaw = empty.shadowRoot!.querySelector<ToolOutput>('[data-tool-search-source="raw-result"]')!;
+  await emptyRaw.updateComplete;
+  expect(emptyRaw.querySelector('[data-tool-search-placeholder]')?.textContent).toContain(empty.searchQuery);
+  expect(empty.getSearchMatchCount()).toBe(0);
+});
+
+test('counts recovered live Exec output once after replacing distinct progress and raw results', async () => {
+  const chat = await liveTool('exec', { command: 'check progress' }, {
+    output: 'Earlier summary',
+    progressText: 'Current summary',
+    presentation: { partial: true, resultMessageId: 'partial-result' },
+  });
+  chat.searchQuery = 'summary';
+  await chat.updateComplete;
+  chat.getSearchMatchCount();
+  const raw = chat.shadowRoot!.querySelector<ToolOutput>('[data-tool-search-source="raw-result"]')!;
+  await raw.updateComplete;
+  expect(chat.getSearchMatchCount()).toBe(2);
+
+  raw.resultScope!.complete('Recovered summary');
+  const inline = chat.shadowRoot!.querySelector<ToolOutput>('[data-tool-search-source="exec-result"]')!;
+  await Promise.all([raw.updateComplete, inline.updateComplete]);
+  expect(chat.getSearchMatchCount()).toBe(1);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  expect(inline.querySelector('.chat-search-mark')?.textContent).toBe('summary');
+});
+
+test('locates late Exec output in the continuous terminal and counts mirrored raw hits once', async () => {
+  const output = '\u001b[32mfirst output hit\u001b[0m\n' + 'progress output\n'.repeat(1_100) +
+    'later output hit\n\u001b]0;terminal-token\u0007terminal-token';
+  const chat = await liveTool('exec', { command: 'run' }, { output, status: 'completed' });
+  const root = chat.shadowRoot!;
+  const terminal = root.querySelector('pre.tool-output-terminal')!;
+  const details = root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')!;
+  const navigate = vi.mocked(ChatScrollController.prototype.navigateToElement);
+
+  chat.searchQuery = 'first output hit';
+  await chat.updateComplete;
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  expect(terminal.querySelector('.chat-search-mark')?.textContent).toBe(chat.searchQuery);
+  expect(details.open).toBe(false);
+
+  details.querySelector<HTMLElement>('summary')!.click();
+  const raw = details.querySelector<ToolOutput>('[data-tool-search-source="raw-result"]')!;
+  await raw.updateComplete;
+  const next = [...raw.querySelectorAll<HTMLButtonElement>('.message-reader-actions button')]
+    .find(button => button.textContent?.trim() === i18nService.t('messageNext'))!;
+  next.click();
+  await raw.updateComplete;
+  expect(raw.querySelector('pre')?.textContent).toContain('later output hit');
+
+  chat.searchQuery = 'later output hit';
+  await chat.updateComplete;
+  expect(chat.getSearchMatchCount()).toBe(1);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  const mark = terminal.querySelector('.chat-search-mark');
+  expect(mark?.textContent).toBe(chat.searchQuery);
+  expect(navigate).toHaveBeenLastCalledWith(mark, 'smooth');
+  expect(raw.querySelector('.chat-search-mark')).toBeNull();
+
+  chat.searchQuery = 'terminal-token';
+  await chat.updateComplete;
+  expect(chat.getSearchMatchCount()).toBe(2);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 2 });
+  expect(raw.querySelector('.chat-search-mark')?.nextSibling?.textContent).toContain('\u0007');
+  expect(chat.navigateSearch(1)).toEqual({ index: 1, total: 2 });
+  expect(terminal.querySelector('.chat-search-mark')?.textContent).toBe(chat.searchQuery);
+});
+
+test.each(['live.txt', 'live.ts'])('opens clipped live Write content before scrolling in %s', async path => {
+  const query = 'visibleAfterExpand';
+  const chat = await liveTool('write', { path, content: 'const entry = 0;\n'.repeat(11) + `const ${query} = 0;` });
+  chat.searchQuery = query;
+  await chat.updateComplete;
+  const reader = chat.shadowRoot!.querySelector<ToolOutput>('[data-tool-search-source="write"]')!;
+  expect(reader.querySelector('[data-preview-collapsed]')).not.toBeNull();
+  const navigate = vi.mocked(ChatScrollController.prototype.navigateToElement).mockImplementation(mark => {
+    expect(reader.querySelector('[data-preview-collapsed]')).toBeNull();
+    expect(mark.isConnected).toBe(true);
+    expect(mark.textContent).toBe(query);
+  });
+
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce());
+  expect(reader.querySelector('.chat-search-mark')?.textContent).toBe(query);
+  expect(chat.shadowRoot!.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(false);
+});
+
+test('reveals a later page of Write content without opening the raw tool details', async () => {
+  const content = 'first line\n' + 'x'.repeat(17_000) + '\nlater-write-hit';
+  const chat = await toolHistory({ path: 'long.txt', content }, 'Successfully wrote long.txt', 'write');
+  chat.searchQuery = 'later-write-hit';
+  await chat.updateComplete;
+
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  const root = chat.shadowRoot!;
+  const inline = root.querySelector('[data-tool-search-source="write"]')!;
+  expect(inline.querySelector('.chat-search-mark')?.textContent).toBe('later-write-hit');
+  expect(inline.querySelector('.message-reader-actions')?.textContent).toContain('2 / 2');
+  expect(root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(false);
+});
+
+test('locates a hit at the end of a long Exec command alongside the current output', async () => {
+  const fullCommand = 'x'.repeat(17_000) + 'later-command-hit';
+  const chat = await toolHistory({ command: fullCommand }, 'Exact output', 'exec');
+  chat.searchQuery = 'later-command-hit';
+  await chat.updateComplete;
+
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  const root = chat.shadowRoot!;
+  const command = root.querySelector('[data-tool-search-source="exec-command"]')!;
+  const mark = command.querySelector('.chat-search-mark');
+  expect(mark?.textContent).toBe('later-command-hit');
+  expect(command.textContent).toBe(fullCommand);
+  expect(ChatScrollController.prototype.navigateToElement).toHaveBeenLastCalledWith(mark, 'smooth');
+  expect(root.querySelector('pre.tool-output-terminal')?.textContent?.trim()).toBe('Exact output');
+  expect(root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(false);
+});
+
+test('reveals a history message while keeping closed tool arguments unmaterialized', async () => {
+  const chat = await toolHistory({ command: 'echo preview' }, 'Completed', 'exec');
+
+  expect(chat.revealMessage('final')).toBe(true);
+
+  expect(chat.shadowRoot!.querySelector('[data-tool-search-source="exec-result"]')).not.toBeNull();
+  expect(chat.shadowRoot!.querySelector('[data-tool-search-source="raw-input"]')).toBeNull();
 });
 
 test('keeps repeated tool occurrences ordered when the query also matches translated labels', async () => {
@@ -189,9 +428,10 @@ test.each(['unified', 'split'])(
     expect(chat.getSearchMatchCount()).toBe(5);
     // Materialize the native Edit presentation before choosing its display mode.
     chat.navigateSearch(1);
+    expect(chat.shadowRoot!.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(false);
     if (mode === 'split') {
       const split = [...chat.shadowRoot!.querySelectorAll<HTMLButtonElement>('.edit-diff__mode-button')]
-        .find(button => button.textContent?.trim() === i18nService.t('coworkEditDiffSplitMode'))!;
+        .find(button => button.getAttribute('aria-label') === i18nService.t('coworkEditDiffSplitMode'))!;
       split.click();
       await chat.updateComplete;
     }
@@ -209,20 +449,76 @@ test.each(['unified', 'split'])(
   },
 );
 
-test('does not count both split copies of an unchanged Edit context line', async () => {
-  const chat = await toolHistory({
+test.each(['history', 'live'])('counts an unchanged Edit context line once in split view in %s', async scope => {
+  const input = {
     path: 'file.txt', old_string: 'needle context\nold line', new_string: 'needle context\nnew line',
-  }, 'Done', 'edit');
+  };
+  const chat = scope === 'history' ? await toolHistory(input, 'Done', 'edit') : await liveTool('edit', input);
   chat.searchQuery = 'needle';
   await chat.updateComplete;
   expect(chat.getSearchMatchCount()).toBe(1);
   expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
   const split = [...chat.shadowRoot!.querySelectorAll<HTMLButtonElement>('.edit-diff__mode-button')]
-    .find(button => button.textContent?.trim() === i18nService.t('coworkEditDiffSplitMode'))!;
+    .find(button => button.getAttribute('aria-label') === i18nService.t('coworkEditDiffSplitMode'))!;
   split.click();
   await chat.updateComplete;
   expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
   expect(chat.shadowRoot!.querySelectorAll('.chat-search-mark')).toHaveLength(1);
+});
+
+test('reveals live Edit search hits in a mounted Monaco diff or its visible fallback', async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.mocked(window.requestAnimationFrame).mockImplementation(callback => frames.push(callback));
+  const chat = await liveTool('edit', {
+    path: 'file.ts', old_string: 'same context\nold source', new_string: 'same context\nnew source',
+  });
+  const root = chat.shadowRoot!;
+  const host = root.querySelector<HTMLElement>('[data-edit-diff-monaco]')!;
+  Object.defineProperty(host, 'getClientRects', { value: () => ({ length: 1 }) });
+  frames.splice(0).forEach(frame => frame(0));
+  await vi.waitFor(() => expect(host.classList.contains('is-ready')).toBe(true));
+
+  chat.searchQuery = 'new source';
+  await chat.updateComplete;
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  expect(selectNativeEditRange).toHaveBeenCalledWith({
+    startLineNumber: 2, endLineNumber: 2, startColumn: 1, endColumn: 11,
+  });
+
+  chat.searchQuery = 'old source';
+  await chat.updateComplete;
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  expect(host.querySelector('.edit-diff__monaco-fallback:not([aria-hidden]) .chat-search-mark')?.textContent)
+    .toBe('old source');
+  expect(root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(false);
+});
+
+test.each(['history', 'live'])('finds Edit path and raw metadata without searching omitted diff code in %s', async scope => {
+  const context = 'hidden-context\n'.repeat(20) + 'context\n'.repeat(5);
+  const input = { id: 'openclaw:core:edit', args: {
+    file_path: 'source/needle.ts', label: 'raw metadata only',
+    edits: [{ oldText: `${context}needle old`, newText: `${context}new` }],
+  } };
+  const chat = scope === 'history' ? await toolHistory(input, 'Done', 'tool_call') : await liveTool('tool_call', input);
+  chat.searchQuery = 'needle';
+  await chat.updateComplete;
+  chat.getSearchMatchCount();
+  const root = chat.shadowRoot!;
+  await root.querySelector<ToolOutput>('[data-tool-search-source="raw-input"]')?.updateComplete;
+  expect(chat.getSearchMatchCount()).toBe(2);
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 2 });
+  expect(root.querySelector('[data-tool-search-source="edit-path"] .chat-search-mark')?.textContent).toBe('needle');
+  expect(root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(false);
+
+  chat.searchQuery = 'raw metadata only';
+  await chat.updateComplete;
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 1 });
+  expect(root.querySelector('[data-tool-search-source="raw-input"] .chat-search-mark')?.textContent).toBe(chat.searchQuery);
+  expect(root.querySelector<HTMLDetailsElement>('details[data-tool-identity]')?.open).toBe(true);
+
+  chat.searchQuery = 'hidden-context';
+  await chat.updateComplete;
+  expect(chat.getSearchMatchCount()).toBe(0);
 });
 
 test('manual reader paging unwraps a marked boundary before replacing plain source text', async () => {

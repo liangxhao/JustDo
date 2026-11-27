@@ -7,6 +7,7 @@ import {
   ASK_USER_QUESTION_TOOL_NAME,
   parseQuestions,
 } from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
+import { normalizeMessage } from '../../pipeline/message-normalizer';
 import { decodeNativeAppReference } from '../../pipeline/native-app-reference';
 import {
   decodeNativeBoardResult,
@@ -18,6 +19,7 @@ import {
   decodeNativeMcpAppResult,
   stripNativeMcpAppFallbacks,
 } from '../../pipeline/native-mcp-app';
+import { stripOpenClawLogHintText } from '../../pipeline/system-message-display';
 import type {
   AssistantTurn,
   CompactionItem,
@@ -27,6 +29,7 @@ import type {
   ToolItem,
 } from '../chat-transcript-state';
 import type { RunActivity, RunProgressStage, WaitingStatusProjection } from '../turn/run-activity';
+import { projectProcessVisibility } from './process-visibility';
 
 export interface ProcessSummaryTimelineItem {
   kind: 'process-summary';
@@ -57,6 +60,8 @@ export interface LiveProcessTimelineItem {
   kind: 'live-process';
   key: string;
   item: ThinkingItem | ToolItem;
+  /** Present for every member of a displayed Tool family, including its root at depth zero. */
+  toolDepth?: number;
   /** Display provenance, independent of the Tool's native execution status. */
   origin?: 'persisted';
 }
@@ -151,20 +156,40 @@ function normalFailureText(value: string | undefined): string {
   return value?.trim().replace(/\s+/g, ' ').toLowerCase() ?? '';
 }
 
-function duplicatesFailedTool(terminal: TerminalItem, failedTools: readonly ToolItem[]): boolean {
+interface FailedToolPosition {
+  item: ToolItem;
+  index: number;
+}
+
+function findMatchingFailedTool(
+  terminal: TerminalItem,
+  failedTools: readonly FailedToolPosition[],
+  foldBoundary: number,
+  terminalIndex: number,
+): FailedToolPosition | undefined {
   const message = normalFailureText(terminal.message);
-  if (!message) return failedTools.length > 0;
-  return failedTools.some(tool => {
+  for (let index = failedTools.length - 1; index >= 0; index -= 1) {
+    const failed = failedTools[index];
+    if (failed.index < foldBoundary) break;
+    const tool = failed.item;
+    if (
+      failed.index >= terminalIndex ||
+      tool.runId !== terminal.runId ||
+      isQuestionPresentationTool(tool) ||
+      isPresentPlanToolName(tool.name) ||
+      tool.name.trim().toLowerCase() === 'progress_card'
+    ) continue;
+    if (!message) return failed;
     const error = normalFailureText(tool.error);
-    const output = normalFailureText(tool.output);
-    if (error === message || output === message) return true;
-    if (!error) return false;
+    const displayed = normalFailureText(tool.output ?? tool.error);
+    if (displayed === message) return failed;
+    if (!error || displayed !== error) continue;
     const shorter = error.length < message.length ? error : message;
     const longer = error.length < message.length ? message : error;
-    return (
-      shorter.length >= 12 && shorter.length / longer.length >= 0.5 && longer.includes(shorter)
-    );
-  });
+    if (shorter.length >= 12 && shorter.length / longer.length >= 0.5 && longer.includes(shorter))
+      return failed;
+  }
+  return undefined;
 }
 
 export function projectTurnItems(
@@ -212,8 +237,12 @@ export function projectTurnItems(
     return pending;
   }
   const projected: ActiveTurnTimelineItem[] = [];
+  const pending: Array<ThinkingItem | ToolItem> = [];
+  const visibleProcesses = new Set<ThinkingItem | ToolItem>();
   let archived: Array<ThinkingItem | ToolItem> = [];
-  const failedTools: ToolItem[] = [];
+  const failedTools: FailedToolPosition[] = [];
+  const terminalErrors: Array<{ item: TerminalItem; index: number }> = [];
+  let foldBoundary = -1;
   let summarySegment = 0;
   const widgets = new Map<ToolItem, NativeWidgetReference>();
   const boardNames = new Map<string, ToolItem>();
@@ -221,8 +250,14 @@ export function projectTurnItems(
   const references = new Map<ToolItem, McpAppContentReference>();
   const appViews = new Set<string>();
   const nativeDocIds = new Set<string>();
-  for (const item of turn.items) {
-    if (item.type !== 'tool' || item.status !== 'completed') continue;
+  for (const [index, item] of turn.items.entries()) {
+    if (item.type === 'terminal' && item.status === 'error') {
+      terminalErrors.push({ item, index });
+      continue;
+    }
+    if (item.type !== 'tool') continue;
+    if (item.status === 'failed') failedTools.push({ item, index });
+    if (item.status !== 'completed') continue;
     const board = decodeNativeBoardResult(item.output, item.name, item.toolCallId, item);
     const preview = decodeNativeCanvasResult(item.output, item.name, item.toolCallId);
     const app = decodeNativeMcpAppResult(item.output, item.name, item.toolCallId);
@@ -251,6 +286,36 @@ export function projectTurnItems(
     }
   }
 
+  // Determine which Tool rows visible text would already collapse.
+  const visibleContent = new Map<number, ContentItem>();
+  for (let index = turn.items.length - 1; index >= 0; index -= 1) {
+    const item = turn.items[index];
+    if (item.type !== 'content' || item.assistantTextScopeSuppressed || item.assistantTextSourcePending)
+      continue;
+    const text = stripNativeMcpAppFallbacks(
+      stripNativeWidgetFallbacks(item.text, nativeDocIds, appViews),
+      appViews,
+      nativeDocIds,
+    );
+    if (!text.trim()) continue;
+    visibleContent.set(index, { ...item, text });
+    if (index > foldBoundary && item.runId === turn.runId) {
+      const displayText = stripOpenClawLogHintText(text, item.status === 'streaming');
+      if (normalizeMessage({ role: 'assistant', content: displayText }).content.some(
+        block => block.type === 'text' && Boolean(block.text?.trim()),
+      )) foldBoundary = index;
+    }
+  }
+
+  const duplicateErrors = new Set<TerminalItem>();
+  for (const { item, index } of terminalErrors) {
+    // Suppress the banner only when the matching diagnostic remains available
+    // from a Tool row outside the folded process.
+    const failed = findMatchingFailedTool(item, failedTools, foldBoundary, index);
+    if (failed) duplicateErrors.add(item);
+    if (item.runId === turn.runId) foldBoundary = Math.max(foldBoundary, failed?.index ?? index);
+  }
+
   const flushSummary = () => {
     if (archived.length === 0) return;
     const first = archived[0];
@@ -270,28 +335,53 @@ export function projectTurnItems(
     summarySegment += 1;
   };
 
-  for (const item of turn.items) {
-    if (
-      item.type === 'content' &&
-      (item.assistantTextScopeSuppressed || item.assistantTextSourcePending)
-    )
+  const queueProcess = (item: ThinkingItem | ToolItem, index: number) => {
+    pending.push(item);
+    if (item.status === 'running' || index >= foldBoundary) visibleProcesses.add(item);
+  };
+
+  const flushProcesses = (previewTool?: ToolItem) => {
+    for (const { item, visible, toolDepth } of projectProcessVisibility(
+      pending, process => visibleProcesses.has(process),
+    )) {
+      if (visible && (item !== previewTool || toolDepth !== undefined)) {
+        flushSummary();
+        projected.push({
+          kind: 'live-process', key: item.id, item,
+          ...(toolDepth === undefined ? {} : { toolDepth }),
+        });
+        summarySegment += 1;
+      } else {
+        archived.push(item);
+      }
+    }
+    pending.length = 0;
+    visibleProcesses.clear();
+  };
+
+  const flushBeforePreview = (tool: ToolItem, index: number) => {
+    queueProcess(tool, index);
+    flushProcesses(tool);
+    flushSummary();
+  };
+
+  for (const [index, item] of turn.items.entries()) {
+    if (item.type === 'content') {
+      const content = visibleContent.get(index);
+      if (!content) continue;
+      flushProcesses();
+      flushSummary();
+      projected.push({
+        kind: 'content', key: item.id, item: content,
+        ...(item.runId === turn.runId ? { nativeRunId: turn.runId } : {}),
+      });
+      summarySegment += 1;
       continue;
-    const content =
-      item.type === 'content'
-        ? {
-            ...item,
-            text: stripNativeMcpAppFallbacks(
-              stripNativeWidgetFallbacks(item.text, nativeDocIds, appViews),
-              appViews,
-              nativeDocIds,
-            ),
-          }
-        : null;
-    if (content && !content.text.trim()) continue;
+    }
     if (item.type === 'thinking' || item.type === 'tool') {
       if (item.type === 'tool') {
-        if (item.status === 'failed') failedTools.push(item);
         if (isQuestionPresentationTool(item)) {
+          flushProcesses();
           flushSummary();
           projected.push({ kind: 'question-presentation', key: `question:${item.id}`, item });
           summarySegment += 1;
@@ -302,8 +392,7 @@ export function projectTurnItems(
         const app = apps.get(item);
         const reference = references.get(item);
         if (reference) {
-          archived.push(item);
-          flushSummary();
+          flushBeforePreview(item, index);
           projected.push({
             kind: 'app-reference',
             key: `app-reference:${item.id}`,
@@ -313,60 +402,48 @@ export function projectTurnItems(
           continue;
         }
         if (app) {
-          archived.push(item);
-          flushSummary();
+          flushBeforePreview(item, index);
           projected.push({ kind: 'mcp-app', key: `mcp-app:${item.id}`, preview: app });
           summarySegment += 1;
           continue;
         }
         if (widget) {
-          archived.push(item);
-          flushSummary();
+          flushBeforePreview(item, index);
           projected.push({ kind: 'native-widget', key: `widget:${item.id}`, preview: widget });
           summarySegment += 1;
           continue;
         }
         if (isPresentPlanToolName(item.name)) {
+          flushProcesses();
           flushSummary();
           projected.push({ kind: 'plan-presentation', key: `plan:${item.id}`, item });
           summarySegment += 1;
           continue;
         }
         if (normalizedName === 'progress_card') {
+          flushProcesses();
           flushSummary();
           projected.push({ kind: 'progress-receipt', key: `progress:${item.id}`, item });
           summarySegment += 1;
           continue;
         }
       }
-      if (item.status === 'running') {
-        flushSummary();
-        projected.push({ kind: 'live-process', key: item.id, item });
-        summarySegment += 1;
-      } else {
-        archived.push(item);
-      }
+      queueProcess(item, index);
       continue;
     }
 
+    flushProcesses();
     flushSummary();
     if (item.type === 'compaction') {
       if (item.message) projected.push({ kind: 'compaction', key: item.id, item });
       summarySegment += 1;
-    } else if (item.type === 'content') {
-      projected.push({ kind: 'content', key: item.id, item: content!,
-        ...(item.runId === turn.runId ? { nativeRunId: turn.runId } : {}),
-      });
-      summarySegment += 1;
     } else {
-      // A failed Tool already has a red status indicator and expandable error
-      // details. Suppress only the same failure; a later provider/run error is
-      // a separate diagnostic and must remain visible.
-      if (item.status === 'error' && duplicatesFailedTool(item, failedTools)) continue;
+      if (duplicateErrors.has(item)) continue;
       projected.push({ kind: 'terminal', key: item.id, item });
       summarySegment += 1;
     }
   }
+  flushProcesses();
   flushSummary();
   if ((turn.status === 'running' || yieldedWaiting) && activity?.runId === turn.runId) {
     projected.push({ kind: 'waiting', key: `waiting:${turn.runId}`, ...working });

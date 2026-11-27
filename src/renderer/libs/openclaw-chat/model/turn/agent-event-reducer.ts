@@ -41,6 +41,7 @@ export { readPreambleText } from './assistant-text-source';
 
 export type TranscriptReduceResult =
   | 'applied'
+  | 'presentation-repaired'
   | 'ignored-session'
   | 'ignored-run'
   | 'ignored-sequence'
@@ -340,6 +341,29 @@ function acceptsBackfillSequence(turn: AssistantTurn, event: NormalizedAgentEven
   }
   const previous = sequences?.get(ownerIdentity);
   return previous === undefined || event.agentSeq > previous;
+}
+
+function restoreSnapshotToolParent(turn: AssistantTurn, event: NormalizedAgentEvent): boolean {
+  if (event.stream !== 'tool' || event.agentSeq > (turn.lastSnapshotAgentSeq ?? -1)) return false;
+  const { phase, parentToolCallId } = event.data;
+  if (
+    (phase !== 'start' && phase !== 'update' && phase !== 'result') ||
+    typeof parentToolCallId !== 'string' ||
+    !parentToolCallId.trim()
+  ) {
+    return false;
+  }
+  const tool = turn.toolById.get(itemToolCallId(event.data) ?? '');
+  if (
+    tool?.runId !== event.runId ||
+    parentToolCallId === tool.toolCallId ||
+    tool.presentation?.parentToolCallId ||
+    event.agentSeq > tool.lastSeq
+  ) {
+    return false;
+  }
+  tool.presentation = { ...tool.presentation, parentToolCallId };
+  return true;
 }
 
 function recordActivitySequence(turn: AssistantTurn, event: NormalizedAgentEvent): void {
@@ -1169,8 +1193,9 @@ function reduceTool(
   if (existing) {
     if (backfill && existing.agentSequencePending !== true && existing.lastSeq >= event.agentSeq) {
       // A result may arrive before its start payload on the session subscription.
-      // Fill only the absent input; an older event cannot revise terminal output.
+      // Fill missing invocation details while retaining the terminal result.
       if (fillsMissingToolInput(turn, event)) {
+        restoreSnapshotToolParent(turn, event);
         existing.input = resolved.input;
         if (existing.name === 'tool') existing.name = resolved.name;
         return true;
@@ -1307,15 +1332,28 @@ export function reduceAgentEvent(
     terminalRun: isTerminalRun(state, event.runId),
   });
   if (admission === 'ignored-session') return 'ignored-session';
+  if (admission === 'ignored-run' || admission === 'ignored-terminal') return 'ignored-run';
+
+  // The bounded in-flight snapshot can claim a tool sequence without retaining
+  // its parent ID. Keep that ID from the canonical frame when its payload is stale.
+  const ignoreSequence = (): TranscriptReduceResult => {
+    if (
+      options.replaySnapshot ||
+      previousTurn?.runId !== event.runId ||
+      !restoreSnapshotToolParent(previousTurn, event)
+    ) {
+      return 'ignored-sequence';
+    }
+    state.revision += 1;
+    return 'presentation-repaired';
+  };
   const lateStartTool =
     event.stream === 'tool' &&
     event.data.phase === 'start' &&
     event.deliveryEvent === 'agent' &&
     options.allowSequenceBackfill !== true &&
     options.replaySnapshot !== true &&
-    previousTurn?.runId === event.runId &&
-    admission !== 'ignored-run' &&
-    admission !== 'ignored-terminal'
+    previousTurn?.runId === event.runId
       ? previousTurn.toolById.get(itemToolCallId(event.data) ?? '')
       : undefined;
   if (
@@ -1325,8 +1363,8 @@ export function reduceAgentEvent(
     event.agentSeq < lateStartTool.firstSeq
   ) {
     // A result can win delivery while its original start is still queued. The
-    // start supplies ordering only; the terminal owner fence still protects
-    // status, output, and all later payload updates.
+    // terminal owner fence still protects status, output, and later payload updates.
+    restoreSnapshotToolParent(previousTurn!, event);
     confirmRecoveredToolSequence(previousTurn!, lateStartTool, event.agentSeq, event.timestamp);
     state.revision += 1;
     return 'applied';
@@ -1345,9 +1383,8 @@ export function reduceAgentEvent(
       !previousTurn ||
       (!acceptsBackfillSequence(previousTurn, event) && !restoresCurrentBaseline))
   ) {
-    return 'ignored-sequence';
+    return ignoreSequence();
   }
-  if (admission === 'ignored-run' || admission === 'ignored-terminal') return 'ignored-run';
   // Snapshot owners may be newer than the live transport. Their fences dedupe
   // that owner's delayed frames, without discarding other owners in between.
   if (
@@ -1358,7 +1395,7 @@ export function reduceAgentEvent(
     if (!options.replaySnapshot) {
       previousTurn.lastAgentSeq = Math.max(previousTurn.lastAgentSeq, event.agentSeq);
     }
-    return 'ignored-sequence';
+    return ignoreSequence();
   }
   const turn = admitTurn(state, event, dependencies, isSequenceBackfill);
   if (!turn) return 'ignored-run';

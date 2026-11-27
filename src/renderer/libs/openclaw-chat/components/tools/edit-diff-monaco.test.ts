@@ -2,12 +2,28 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { EditDiffMonacoController, type EditDiffMonacoData, resolveEditDiffLanguage } from './edit-diff-monaco';
+import { resolveFileCodeLanguage } from '@/shared/editor/file-code-language';
+import { retainFileEditorMonacoTheme } from '@/shared/editor/file-editor-monaco-theme';
 
-const editors = vi.hoisted(() => ({
-  original: { setSelection: vi.fn(), revealRangeInCenter: vi.fn() },
-  modified: { setSelection: vi.fn(), revealRangeInCenter: vi.fn() },
-}));
+import { EditDiffMonacoController, type EditDiffMonacoData } from './edit-diff-monaco';
+
+const editors = vi.hoisted(() => {
+  const original = { setSelection: vi.fn(), revealRangeInCenter: vi.fn() };
+  const modified = { setSelection: vi.fn(), revealRangeInCenter: vi.fn() };
+  const disposeViewModel = vi.fn();
+  return {
+    original,
+    modified,
+    disposeViewModel,
+    disposeTextModel: vi.fn(),
+    createDiffEditor: vi.fn(() => ({
+      createViewModel: () => ({ dispose: disposeViewModel }),
+      setModel() {}, dispose() {},
+      getOriginalEditor: () => original,
+      getModifiedEditor: () => modified,
+    })),
+  };
+});
 
 vi.mock('@/shared/dom/observeEditorLayout', () => ({ observeEditorLayout: () => () => {} }));
 vi.mock('@/shared/editor/monaco', () => ({
@@ -15,22 +31,26 @@ vi.mock('@/shared/editor/monaco', () => ({
     Uri: { parse: (value: string) => value },
     editor: {
       defineTheme() {},
-      createModel: () => ({ dispose() {} }),
-      createDiffEditor: () => ({
-        setModel() {}, dispose() {},
-        getOriginalEditor: () => editors.original,
-        getModifiedEditor: () => editors.modified,
-      }),
+      createModel: () => ({ dispose: editors.disposeTextModel }),
+      createDiffEditor: editors.createDiffEditor,
     },
   },
 }));
 
 const controllers: EditDiffMonacoController[] = [];
+const releaseThemeLeases: Array<() => void> = [];
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => {
   for (const controller of controllers.splice(0)) controller.dispose();
+  for (const release of releaseThemeLeases.splice(0)) release();
   document.body.replaceChildren();
 });
+
+function openFileEditor() {
+  const release = retainFileEditorMonacoTheme();
+  releaseThemeLeases.push(release);
+  return release;
+}
 
 function preparedDiff(mode: 'unified' | 'split') {
   const host = document.createElement('div');
@@ -64,7 +84,7 @@ describe('edit Diff Monaco integration', () => {
     ['/workspace/Dockerfile', 'plaintext'],
     [null, 'plaintext'],
   ])('resolves the Monaco language for %s', (path, expected) => {
-    expect(resolveEditDiffLanguage(path)).toBe(expected);
+    expect(resolveFileCodeLanguage(path)).toBe(expected);
   });
 
   test.each(['unified', 'split'] as const)('reveals added code in the actual %s modified editor', async mode => {
@@ -99,6 +119,41 @@ describe('edit Diff Monaco integration', () => {
     expect(editor.hasAttribute('aria-hidden')).toBe(false);
     expect(fallback.getAttribute('aria-hidden')).toBe('true');
     expect(host.querySelector('.edit-diff__monaco-editor')).toBe(editor);
+  });
+
+  test('shows the bounded HTML diff until the last workspace file editor closes', async () => {
+    const { host } = await mountedDiff('split');
+    const closeFirst = openFileEditor();
+    const closeSecond = openFileEditor();
+
+    const fallback = host.querySelector('.edit-diff__monaco-fallback')!;
+    expect(fallback.hasAttribute('aria-hidden')).toBe(false);
+    expect(host.querySelector('.edit-diff__monaco-editor')).toBeNull();
+    expect(editors.disposeViewModel).toHaveBeenCalledBefore(editors.disposeTextModel);
+
+    closeFirst();
+    await Promise.resolve();
+    expect(editors.createDiffEditor).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('.edit-diff__monaco-editor')).toBeNull();
+
+    closeSecond();
+    await vi.waitFor(() => expect(fallback.getAttribute('aria-hidden')).toBe('true'));
+    expect(editors.createDiffEditor).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('.edit-diff__monaco-editor')).not.toBeNull();
+  });
+
+  test('cancels a pending native diff when a workspace editor opens during Monaco loading', async () => {
+    const { host, controller, sync } = preparedDiff('unified');
+    const closeFile = openFileEditor();
+
+    await sync;
+    expect(editors.createDiffEditor).not.toHaveBeenCalled();
+    expect(host.querySelector('.edit-diff__monaco-editor')).toBeNull();
+
+    controller.dispose();
+    closeFile();
+    await Promise.resolve();
+    expect(editors.createDiffEditor).not.toHaveBeenCalled();
   });
 
   test('does not select stale Monaco contents or a disconnected host', async () => {

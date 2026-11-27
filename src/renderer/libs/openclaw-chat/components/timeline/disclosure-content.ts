@@ -2,6 +2,7 @@ import { noChange } from 'lit';
 import { AsyncDirective, type ChildPart, directive } from 'lit/async-directive.js';
 
 const MATERIALIZE_DISCLOSURE = 'disclosure-materialize';
+let openingSequence = 0;
 
 /** Closed history does not parse Markdown or build tool editors until requested. */
 class DisclosureContentDirective extends AsyncDirective {
@@ -61,13 +62,32 @@ class DisclosureContentDirective extends AsyncDirective {
 
 export const disclosureContent = directive(DisclosureContentDirective);
 
+/** Animate an explicit opening without replaying it when a virtual row returns. */
+export function animateDisclosureOpening(details: HTMLElement | null): void {
+  if (!details?.matches('details:not([open])')) return;
+  const view = details.ownerDocument.defaultView;
+  if (!view) return;
+  const opening = String(++openingSequence);
+  details.dataset.disclosureOpening = opening;
+  view.requestAnimationFrame(() => {
+    const body = details.querySelector(':scope > .process-disclosure-content');
+    const animations = body?.getAnimations?.() ?? [];
+    void Promise.allSettled(animations.map(animation => animation.finished)).then(() => {
+      if (details.dataset.disclosureOpening === opening) delete details.dataset.disclosureOpening;
+    });
+  });
+}
+
 /** Prepare one disclosure without eagerly building its closed descendants. */
 export function materializeDisclosureContent(details: HTMLDetailsElement): void {
   details.dispatchEvent(new Event(MATERIALIZE_DISCLOSURE));
 }
 
 /** Search/reveal explicitly request hidden text before walking the local DOM. */
-export function materializeDisclosureContents(root: ParentNode): void {
+export function materializeDisclosureContents(
+  root: ParentNode,
+  shouldMaterialize?: (details: HTMLDetailsElement) => boolean,
+): void {
   const visited = new Set<HTMLDetailsElement>();
   for (;;) {
     const pending = [...root.querySelectorAll<HTMLDetailsElement>('details')].filter(
@@ -76,7 +96,7 @@ export function materializeDisclosureContents(root: ParentNode): void {
     if (!pending.length) return;
     for (const details of pending) {
       visited.add(details);
-      materializeDisclosureContent(details);
+      if (!shouldMaterialize || shouldMaterialize(details)) materializeDisclosureContent(details);
     }
   }
 }

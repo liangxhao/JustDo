@@ -221,6 +221,61 @@ const finalMessage = {
 };
 
 describe('Chrome extension shared display boundaries', () => {
+  it.each([undefined, 'live'])('keeps an earlier turn in its own process mode when the next input is queued (%s)', processMode => {
+    const thread = {
+      id: 'thread',
+      turns: [
+        { id: 'previous', processMode, items: [reasoning, endedTool()] },
+        {
+          id: 'queued',
+          items: [{
+            type: 'userMessage',
+            content: [{ type: 'text', text: 'Next input' }],
+            pendingInput: { state: 'queued' },
+          }],
+        },
+      ],
+    };
+
+    const entries = messagesFromThread(thread, { protectTrailingTurn: true });
+
+    expect(entries.map(entry => entry.role)).toEqual(processMode === 'live'
+      ? ['live-process', 'live-process', 'user']
+      : ['process', 'user']);
+  });
+
+  it('keeps the protected tail visible through an empty, hidden or media-only reply', () => {
+    const failed = endedTool({ status: 'failed', isError: true });
+    const turn = displayThread([
+      reasoning,
+      failed,
+      { type: 'agentMessage', text: '  ', status: 'streaming' },
+      { type: 'agentMessage', text: 'NO_REPLY', status: 'completed' },
+      { type: 'agentMessage', text: 'MEDIA:https://example.com/figure.png', status: 'streaming' },
+    ]);
+    const entries = messagesFromThread(turn, { protectTrailingTurn: true });
+    expect(entries.slice(0, 2)).toMatchObject([
+      { role: 'live-process', item: { type: 'thinking' } },
+      { role: 'live-process', item: { type: 'tool', status: 'failed', output: 'Native output' } },
+    ]);
+  });
+
+  it('keeps a native run error outside the summary and does not fold the next phase', () => {
+    const entries = messagesFromThread(displayThread([
+      reasoning,
+      endedTool({ status: 'failed', isError: true }),
+      { type: 'systemMessage', text: 'Native output', display: { nativeFailure: true } },
+      { type: 'phaseBoundary' },
+      endedTool({ toolUseId: 'later-tool' }),
+    ]), { protectTrailingTurn: true });
+    expect(entries).toMatchObject([
+      { role: 'process', thinkingCount: 1, toolCount: 1, errorCount: 1 },
+      { role: 'system', text: 'Native output' },
+      { role: 'phase-boundary' },
+      { role: 'live-process', item: { id: 'later-tool', type: 'tool' } },
+    ]);
+  });
+
   it('groups completed Thinking, Tool and intermediate body under the desktop outer disclosure', () => {
     const entries = messagesFromThread(
       displayThread([

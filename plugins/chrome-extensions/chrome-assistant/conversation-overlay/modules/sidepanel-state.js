@@ -1,5 +1,11 @@
 import { sidePanelText as t } from './sidepanel-i18n.js';
-import { foldChromeExtensionEntries, isChromeQuestionTool, isOmittedChromeDeliveryText, isPresentPlanToolName } from './sidepanel-stream.js';
+import {
+  foldChromeExtensionEntries,
+  hasChromeProcessFoldText,
+  isChromeQuestionTool,
+  isOmittedChromeDeliveryText,
+  isPresentPlanToolName,
+} from './sidepanel-stream.js';
 
 const TOOL_TITLES = {
   api: 'API',
@@ -96,9 +102,13 @@ export function isCurrentThreadRunning(activeThreadId, selectedThreadId) {
 export function shouldShowTurnError(completedThreadId, selectedThreadId, refreshApplied, display, errorMessage) {
   if (!refreshApplied || completedThreadId !== selectedThreadId) return false;
   const items = display?.turns?.at(-1)?.items ?? [];
-  return !items.some(item => (item.type === 'agentMessage' || item.type === 'systemMessage') &&
-    (item.display?.stopReason === 'error' || item.display?.nativeFailure === true) &&
+  return !items.some(item => isRunErrorMessage(item) &&
     typeof item.text === 'string' && item.text.trim() === errorMessage?.trim());
+}
+
+function isRunErrorMessage(item) {
+  return (item.type === 'agentMessage' || item.type === 'systemMessage') &&
+    (item.display?.stopReason === 'error' || item.display?.nativeFailure === true);
 }
 
 function formatSidePanelValue(value) {
@@ -186,11 +196,39 @@ function compactionMessage(item) {
   );
 }
 
+function liveProcessRange(items) {
+  let end = -1;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if ((item.type === 'userMessage' && !item.pendingInput) ||
+      item.type === 'phaseBoundary' || item.display?.kind === 'phase-boundary') {
+      return { start: index + 1, end };
+    }
+    if (end < 0 && (isRunErrorMessage(item) || (
+      item.type === 'agentMessage' && item.display?.kind !== 'unsupported-content' &&
+      typeof item.text === 'string' && hasChromeProcessFoldText(item)
+    ))) {
+      end = index;
+    }
+  }
+  return { start: 0, end };
+}
+
 export function messagesFromThread(thread, options = {}) {
   const entries = [];
   const keyOccurrences = new Map();
-  for (const [turnIndex, turn] of (thread?.turns ?? []).entries()) {
+  const turns = thread?.turns ?? [];
+  const protectTrailingTurn = options.protectTrailingTurn === true || Boolean(thread?.activity);
+  // A queued input can occupy the trailing turn while an earlier run is idle.
+  // The stream's explicit process mode still protects an earlier live turn.
+  const protectedTurnIndex = protectTrailingTurn ? turns.length - 1 : -1;
+  for (const [turnIndex, turn] of turns.entries()) {
     const turnKey = turn.id || `${thread?.id || 'thread'}-turn-${turnIndex}`;
+    const items = turn.items ?? [];
+    const liveRange = turn.processMode !== 'failed' &&
+      (turn.processMode === 'live' || turnIndex === protectedTurnIndex)
+      ? liveProcessRange(items)
+      : null;
     const itemKey = (item, index, role) => {
       const base = displayKey(turnKey, item, index, role);
       const occurrence = keyOccurrences.get(base) ?? 0;
@@ -223,11 +261,11 @@ export function messagesFromThread(thread, options = {}) {
       });
       processes = [];
     };
-    const addProcess = process => {
+    const addProcess = (process, index) => {
       // Historical reasoning is a display segment, not an execution outcome.
       // A Tool without a known result/status remains directly accessible.
       if (
-        !process.display?.keepVisible &&
+        (!liveRange || index < liveRange.start || index < liveRange.end) && !process.display?.keepVisible &&
         (ENDED_PROCESS_STATUSES.has(process.status) ||
           (process.type === 'thinking' && process.status === undefined))
       ) {
@@ -237,7 +275,7 @@ export function messagesFromThread(thread, options = {}) {
         entries.push({ role: 'live-process', key: process.key, item: process });
       }
     };
-    for (const [itemIndex, item] of (turn.items ?? []).entries()) {
+    for (const [itemIndex, item] of items.entries()) {
       const compaction = compactionMessage(item);
       if (item.display?.kind === 'unsupported-content') {
         flushProcesses();
@@ -322,7 +360,7 @@ export function messagesFromThread(thread, options = {}) {
             title: t('thinking'),
             status: item.status,
             ...(item.display ? { display: item.display } : {}),
-          });
+          }, itemIndex);
       } else if (item.type === 'toolCall') {
         const inputTitle = readToolInputTitle(item.input);
         const process = {
@@ -358,13 +396,11 @@ export function messagesFromThread(thread, options = {}) {
           flushProcesses();
           entries.push({ role: 'live-process', key: process.key, item: process });
         } else {
-          addProcess(process);
+          addProcess(process, itemIndex);
         }
       }
     }
     flushProcesses();
   }
-  return foldChromeExtensionEntries(entries, {
-    protectTrailingTurn: options.protectTrailingTurn === true || Boolean(thread?.activity),
-  });
+  return foldChromeExtensionEntries(entries, { protectTrailingTurn });
 }

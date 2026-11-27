@@ -2117,6 +2117,15 @@ export class ChatController {
       previousTurn?.runId === event.runId
         ? Math.max(previousTurn.lastAgentSeq, previousTurn.lastSnapshotAgentSeq ?? -1)
         : -1;
+    const phase = event.data.phase;
+    const parentId = event.stream === 'tool' && (phase === 'start' || phase === 'update' || phase === 'result')
+      ? event.data.parentToolCallId
+      : undefined;
+    const relatedToolId = typeof parentId === 'string' ? String(event.data.toolCallId ?? '') : '';
+    const previousTool = relatedToolId ? previousTurn?.toolById.get(relatedToolId) : undefined;
+    const previousParentId = previousTool?.presentation?.parentToolCallId;
+    const previouslyRecovered = previousTool?.runId === event.runId &&
+      previousTool.firstSeq <= (previousTurn?.lastSnapshotAgentSeq ?? -1);
     const reduceResult = reduceAgentEvent(
       this.state.transcript,
       event,
@@ -2148,6 +2157,27 @@ export class ChatController {
         },
       });
       this.notifyStream();
+      return;
+    }
+    const turn = this.state.transcript.activeTurn;
+    if (
+      (reduceResult === 'applied' || reduceResult === 'presentation-repaired') &&
+      typeof parentId === 'string' &&
+      parentId !== previousParentId &&
+      turn?.runId === event.runId &&
+      !turn.toolById.has(parentId) &&
+      turn.toolById.get(relatedToolId)?.presentation?.parentToolCallId === parentId
+    ) {
+      this.hydrateActiveToolItemsFromHistory(this.state.chatMessages);
+      if (!previousParentId && (reduceResult === 'presentation-repaired' || previouslyRecovered) &&
+          !options.replaySnapshot && turn.status === 'running' && !turn.toolById.has(parentId)) {
+        // The initial live-prefix projection can omit this same-run call.
+        // Reuse the authorized history read now that the child names its caller.
+        void this.loadHistory(true);
+      }
+    }
+    if (reduceResult === 'presentation-repaired') {
+      this.notifyStream('terminal');
       return;
     }
     if (reduceResult === 'applied') {

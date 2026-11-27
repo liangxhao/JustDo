@@ -1323,12 +1323,17 @@ export function shouldRenderGroupAvatarByPrevItem(
 // ─── Stream Rendering ───────────────────────────────────────────────────────
 
 /**
- * Render streaming thinking content as a separate collapsible block.
- * Shown above the assistant text stream when thinking is in progress.
+ * Render a Thinking row in the live timeline before the next assistant text.
  */
 export function renderStreamingThinkingGroup(
   text: string,
-  opts?: { showAvatar?: boolean; assistantAvatar?: TemplateResult; thinkingContent?: unknown; processId?: string },
+  opts?: {
+    showAvatar?: boolean;
+    assistantAvatar?: TemplateResult;
+    thinkingContent?: unknown;
+    processId?: string;
+    streaming?: boolean;
+  },
 ): TemplateResult {
   const isContinuation = opts?.showAvatar === false;
   return html`
@@ -1342,7 +1347,7 @@ export function renderStreamingThinkingGroup(
         ${(opts?.showAvatar ?? true) ? (opts?.assistantAvatar ?? renderChatAvatar('assistant')) : nothing}
       </div>
       <div class="chat-group__content">
-        ${renderStreamingThinkingBlock(text, opts?.thinkingContent)}
+        ${renderStreamingThinkingBlock(text, opts?.thinkingContent, opts?.streaming)}
       </div>
     </div>
   `;
@@ -1436,14 +1441,14 @@ function renderReadingIndicator(): TemplateResult {
   `;
 }
 
-function renderStreamingThinkingBlock(text: string, content?: unknown): TemplateResult {
+function renderStreamingThinkingBlock(text: string, content?: unknown, streaming = true): TemplateResult {
   return html`
-    <div class="chat-thinking chat-thinking--streaming">
+    <div class=${streaming ? 'chat-thinking chat-thinking--streaming' : 'chat-thinking'}>
       <div class="chat-thinking__header">
         <span class="chat-thinking__indicator"></span>
         <span class="chat-thinking__label">${i18nService.t('coworkThinkingLabel')}</span>
       </div>
-      <div class="chat-thinking__content">${content ?? renderThinkingContent(text, true)}</div>
+      <div class="chat-thinking__content">${content ?? renderThinkingContent(text, streaming)}</div>
     </div>
   `;
 }

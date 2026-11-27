@@ -6,7 +6,7 @@ import { normalizeMessage } from '../../pipeline/message-normalizer';
 import { readActiveTurnMessageRunId } from '../history/optimistic-history-tail';
 import { readTranscriptIdentity } from '../history/transcript-identity';
 import { asToolRecord, unwrapToolMessage } from '../tools/tool-message-adapter';
-import { toolOutcome } from '../tools/tool-presentation';
+import { projectProcessNesting, toolOutcome } from '../tools/tool-presentation';
 import { isFailedRunMessage } from '../turn/failed-run-message';
 import { coalesceAdjacentProcessSummaries } from './coalesce-process-summaries';
 import type { ProcessSummaryTimelineItem } from './project-turn-items';
@@ -90,11 +90,11 @@ function hasUnresolvedTool(item: SourceTimelineItem): boolean {
   );
 }
 
-function unresolvedToolSummary(item: VisibleTimelineItem): ProcessSummaryTimelineItem | null {
+function persistedLiveToolSummary(item: VisibleTimelineItem): ProcessSummaryTimelineItem | null {
   if (item.kind !== 'live-process' || item.origin !== 'persisted' || item.item.type !== 'tool')
     return null;
   const tool = item.item;
-  if (tool.status !== 'running') return null;
+  if (tool.status !== 'running' && item.toolDepth === undefined) return null;
   const outcome = toolOutcome(tool);
   return {
     kind: 'process-summary',
@@ -225,9 +225,10 @@ export function foldCompletedProcessRows(
       const items = options.foldUnresolvedTools
         ? coalesceAdjacentProcessSummaries(sourceItems).map(item => {
             if (item.kind !== 'process-summary') return item;
-            const tail = item.items[item.items.length - 1];
-            // Missing-result tools become summaries after history identity reconciliation.
-            // Retain their native tail through prepends and later result arrival.
+            // Keep the same displayed tail when a restored family switches
+            // from individual rows to a native-order summary after a result.
+            const ordered = projectProcessNesting(item.items).items;
+            const tail = ordered[ordered.length - 1];
             return tail?.id
               ? { ...item, key: `history-folded-process:${tail.type}:${tail.id}` }
               : item;
@@ -253,7 +254,7 @@ export function foldCompletedProcessRows(
         !protectedProcessKeys.has(row.item.key) &&
         !options.keepVisibleKeys?.has(row.item.key)
       ) {
-        const summary = unresolvedToolSummary(row.item);
+        const summary = persistedLiveToolSummary(row.item);
         if (summary) row = { ...row, item: summary };
       }
       const answer = answerSources[index];

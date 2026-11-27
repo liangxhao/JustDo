@@ -22,10 +22,14 @@ import { renderBrowserRecording } from '@/libs/openclaw-chat/components/message/
 import { renderAttachmentActionIcon, renderMessageFileIcon } from '@/libs/openclaw-chat/components/message/message-file-icon';
 import { renderCompactionMessage } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
 import { projectProgressReceipt } from '@/libs/openclaw-chat/model/tools/progress-receipt';
+import { MARKDOWN_PARSE_LIMIT } from '@/libs/openclaw-chat/pipeline/constants';
 import { normalizeMessage } from '@/libs/openclaw-chat/pipeline/message-normalizer';
 import type { GatewayMessage } from '@/libs/openclaw-chat/types';
 
-import { createMarkdownRenderer } from '../../../../plugins/chrome-extensions/chrome-assistant/scripts/chrome-extension-markdown-entry.mjs';
+import {
+  createMarkdownRenderer,
+  renderMarkdownHtml,
+} from '../../../../plugins/chrome-extensions/chrome-assistant/scripts/chrome-extension-markdown-entry.mjs';
 import {
   questionPresentationResponse,
   renderQuestionPresentation,
@@ -44,6 +48,26 @@ const incompleteMessageStatuses = new Set([
   'streaming', 'inProgress', 'running', 'unknown', 'interrupted',
 ]);
 const deliveryReference = (source: string) => unwrapAssistantDeliverableSource(source.trim());
+
+export function processDetailLabels() {
+  return {
+    thinkingExpand: i18nService.t('thinkingExpand'),
+    thinkingCollapse: i18nService.t('thinkingCollapse'),
+    toolInput: i18nService.t('coworkToolInput'),
+    toolResult: i18nService.t('coworkToolResult'),
+  };
+}
+
+export function renderThinkingMarkdown(host: HTMLElement, text: string): void {
+  if (text.length <= MARKDOWN_PARSE_LIMIT) {
+    host.innerHTML = renderMarkdownHtml(text);
+    return;
+  }
+  const plain = host.ownerDocument.createElement('div');
+  plain.className = 'process-thinking-plain';
+  plain.textContent = text.replace(/\r\n?/g, '\n');
+  host.replaceChildren(plain);
+}
 
 export function isIncompleteFileLinkSource(entry: {
   status?: string;

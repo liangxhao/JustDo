@@ -352,7 +352,7 @@
 }
 .review-number {
   user-select: none;
-  color: var(--justdo-text-secondary);
+  color: var(--monokai-line-number);
   text-align: right;
   box-sizing: content-box;
   flex: none;
@@ -360,19 +360,26 @@
 }
 .review-sign {
   user-select: none;
+  color: var(--monokai-line-number);
   width: 2ch;
   flex: none;
 }
 .review-line-added {
-  background: rgba(46, 160, 67, 0.15);
+  background: var(--monokai-added-background);
 }
 .review-line-deleted {
-  background: rgba(248, 81, 73, 0.15);
+  background: var(--monokai-removed-background);
+}
+.review-line-added .review-sign {
+  color: var(--monokai-function);
+}
+.review-line-deleted .review-sign {
+  color: var(--monokai-keyword);
 }
 .review-hunk {
   padding: 5px 10px;
-  background: var(--justdo-surface-raised);
-  color: var(--justdo-text-secondary);
+  background: var(--monokai-background-muted);
+  color: var(--monokai-line-number-active);
   overflow-wrap: anywhere;
 }
 .review-split-grid {
@@ -393,7 +400,7 @@
 }
 .review-split > .review-line {
   min-width: 0;
-  border-right: 1px solid var(--justdo-border);
+  border-right: 1px solid var(--monokai-border);
 }
 .review-wrap .review-line {
   min-width: 0;
@@ -403,33 +410,13 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.review-patch .hljs-keyword,
-.review-patch .hljs-selector-tag {
-  color: #a855c9;
+.review-patch > .review-button {
+  background: var(--monokai-background-muted);
+  border-color: var(--monokai-border);
+  color: var(--monokai-foreground);
 }
-.review-patch .hljs-string,
-.review-patch .hljs-attr {
-  color: #238b62;
-}
-.review-patch .hljs-number,
-.review-patch .hljs-literal {
-  color: #b77817;
-}
-.review-patch .hljs-comment {
-  color: #888;
-}
-
-.dark .review-patch .hljs-keyword,
-.dark .review-patch .hljs-selector-tag {
-  color: #c792ea;
-}
-.dark .review-patch .hljs-string,
-.dark .review-patch .hljs-attr {
-  color: #7ec49d;
-}
-.dark .review-patch .hljs-number,
-.dark .review-patch .hljs-literal {
-  color: #e6b568;
+.review-patch > .review-button:hover {
+  background: var(--monokai-line-highlight);
 }
 
 /* One file list by default; the directory index is an explicit menu option. */

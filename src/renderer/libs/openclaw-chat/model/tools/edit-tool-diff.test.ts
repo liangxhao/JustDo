@@ -85,6 +85,17 @@ describe('edit tool diff', () => {
     ).toBeNull();
   });
 
+  test('reuses one diff view across renders and rebuilds for a new argument snapshot', () => {
+    const input = { path: 'src/app.ts', oldText: 'before', newText: 'after' };
+    const initial = buildEditDiffView(parseEditToolDiff('edit', input)!);
+    expect(buildEditDiffView(parseEditToolDiff('edit', input)!)).toBe(initial);
+
+    const revised = { ...input, newText: 'updated' };
+    const next = buildEditDiffView(parseEditToolDiff('edit', revised)!);
+    expect(next).not.toBe(initial);
+    expect(next.hunks[0]?.lines).toContainEqual({ kind: 'added', text: 'updated' });
+  });
+
   test('builds a line diff while preserving shared context', () => {
     const hunk = buildEditDiffHunk({
       oldText: 'shared\nbefore\ntail',

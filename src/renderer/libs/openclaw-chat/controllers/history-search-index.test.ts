@@ -117,9 +117,9 @@ describe('HistorySearchIndex', () => {
     const matches = index.find(rows, 'needle', true);
 
     expect(matches).toHaveLength(3);
-    expect(matches.map(match => [match.path, match.processId, match.occurrence])).toEqual([
-      [['tool-row'], 'tool-id', 0], [['tool-row'], 'tool-id', 1],
-      [['terminal-row'], undefined, 0],
+    expect(matches.map(match => [match.path, match.processId, match.toolSource, match.occurrence])).toEqual([
+      [['tool-row'], 'tool-id', 'exec-result', 0], [['tool-row'], 'tool-id', 'raw-input', 0],
+      [['terminal-row'], undefined, undefined, 0],
     ]);
     expect(matches[0].text).not.toContain('\u001b');
   });
@@ -141,25 +141,47 @@ describe('HistorySearchIndex', () => {
     expect(index.find(rows, 'Before', true)).toHaveLength(1);
   });
 
-  test('indexes file/code-mode reader source instead of omitted input metadata', () => {
+  test('prefers the visible Write and Exec source while indexing raw-only parameters', () => {
     const index = new HistorySearchIndex();
-    const write = { ...tool('write', { path: 'HiddenWritePath.txt', content: 'VisibleWriteCode' }, 'Write complete'), name: 'write' };
-    const exec = { ...tool('exec', { code: 'VisibleExecCode()', title: 'HiddenExecTitle' }, 'Exec complete'), name: 'exec' };
+    const write = { ...tool('write', { path: 'WritePath.txt', content: 'VisibleWriteCode' }, 'Write complete'), name: 'write' };
+    const exec = { ...tool('exec', { code: 'VisibleExecCode()', title: 'ExecTitle' }, 'Exec complete'), name: 'exec' };
     const patch = { ...tool('patch', [
       '*** Begin Patch',
       '*** Add File: HiddenPatchPath.txt',
       '+VisiblePatchCode',
       '*** End Patch',
     ].join('\n'), 'Patch complete'), name: 'apply_patch' };
-    const edit = { ...tool('edit', { path: 'HiddenEditPath', oldText: 'VisibleOldCode', newText: 'VisibleNewCode' }, 'Edit complete'), name: 'edit' };
+    const edit = { ...tool('edit', { path: 'VisibleEditPath', oldText: 'VisibleOldCode', newText: 'VisibleNewCode' }, 'Edit complete'), name: 'edit' };
     const rows = [write, exec, patch, edit].map(item => row({ kind: 'live-process', key: item.id, item }));
 
     for (const query of ['VisibleWriteCode', 'VisibleExecCode', 'VisiblePatchCode', 'VisibleOldCode', 'VisibleNewCode'])
       expect(index.find(rows, query, true)).toHaveLength(1);
-    for (const query of ['HiddenWritePath', 'HiddenExecTitle', 'HiddenPatchPath', 'Begin Patch', 'HiddenEditPath', 'oldText', 'newText'])
+    for (const query of ['WritePath', 'ExecTitle'])
+      expect(index.find(rows, query, true)).toMatchObject([{ toolSource: 'raw-input' }]);
+    for (const query of ['HiddenPatchPath', 'Begin Patch', 'oldText', 'newText'])
       expect(index.find(rows, query, true)).toEqual([]);
+    expect(index.find(rows, 'VisibleEditPath', true)).toMatchObject([{ toolSource: 'edit-path' }]);
     expect(index.find(rows, 'VisibleOldCode', true)[0]).toMatchObject({ editDiff: true, processId: 'edit' });
     expect(index.find(rows, 'complete', true)).toHaveLength(4);
+  });
+
+  test('deduplicates the selected wrapped argument while preserving other matching JSON fields and their positions', () => {
+    const input = {
+      id: 'openclaw:core:exec',
+      metadata: { cmd: 'other needle' },
+      args: { cmd: 'echo needle', cwd: 'needle-workdir' },
+    };
+    const process = { ...tool('wrapped-tool', input, 'Complete'), name: 'tool_call' };
+    const rows = [row({ kind: 'live-process', key: process.id, item: process })];
+
+    const matches = new HistorySearchIndex().find(rows, 'needle', true);
+
+    expect(matches.map(match => [match.toolSource, match.occurrence, match.text.slice(match.start - 5, match.end + 5)]))
+      .toEqual([
+        ['exec-command', 0, 'echo needle'],
+        ['raw-input', 0, 'ther needle"\n  }'],
+        ['raw-input', 2, 'd": "needle-work'],
+      ]);
   });
 
   test('indexes only native diff hunks that are actually included in the bounded display', () => {
@@ -177,16 +199,31 @@ describe('HistorySearchIndex', () => {
     expect(index.find(rows, 'OmittedContext', true)).toEqual([]);
   });
 
-  test('normalizes only terminal output using the reader ANSI and newline projection', () => {
+  test('normalizes terminal output while keeping raw-only search hits in the result details', () => {
     const index = new HistorySearchIndex();
     const input = 'literal \u001b[31mInputValue';
     const output = '\u001b]0;HiddenTerminalTitle\u0007Visible\r\nOutputValue\u001b[0m';
     const process = { ...tool('terminal', input, output), name: 'exec' };
     const rows = [row({ kind: 'live-process', key: 'terminal', item: process })];
 
-    expect(index.find(rows, 'HiddenTerminalTitle', true)).toEqual([]);
-    expect(index.find(rows, 'Visible\nOutputValue', true)).toHaveLength(1);
+    expect(index.find(rows, 'HiddenTerminalTitle', true)).toMatchObject([{ toolSource: 'raw-result' }]);
+    expect(index.find(rows, 'Visible\nOutputValue', true)).toMatchObject([{ toolSource: 'exec-result' }]);
     expect(index.find(rows, '\u001b[31mInputValue', true)).toHaveLength(1);
+  });
+
+  test('keeps actual output searchable while a running Exec displays different progress', () => {
+    const index = new HistorySearchIndex();
+    const exec: ToolItem = {
+      ...tool('active-exec', { command: 'run checks' }, 'earlier status'),
+      name: 'exec',
+      status: 'running',
+      progressText: 'current status',
+    };
+    const rows = [row({ kind: 'live-process', key: 'active-exec', item: exec })];
+
+    expect(index.find(rows, 'current status', true)).toMatchObject([{ toolSource: 'exec-result' }]);
+    expect(index.find(rows, 'earlier status', true)).toMatchObject([{ toolSource: 'raw-result' }]);
+    expect(index.find(rows, 'status', true)).toMatchObject([{ toolSource: 'exec-result' }, { toolSource: 'raw-result' }]);
   });
 
   test('indexes only question content visible in its current native presentation', () => {

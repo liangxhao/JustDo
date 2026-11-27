@@ -81,6 +81,45 @@ describe('ChatScrollController', () => {
     controller.disconnect();
   });
 
+  test('keeps resize and viewport commits from taking over a native thumb drag', () => {
+    let resize = () => {};
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const { target, controller, press } = scrollbarHost();
+    const content = document.createElement('div');
+    content.className = 'chat-container';
+    const row = document.createElement('div');
+    row.className = 'chat-group';
+    content.append(row);
+    target.attachShadow({ mode: 'open' }).append(content);
+    document.body.append(target);
+    let rowTop = 60;
+    row.getBoundingClientRect = () => new DOMRect(0, rowTop, 500, 60);
+    controller.afterRender(1);
+    target.scrollTop = 400;
+
+    press();
+    rowTop = 120;
+    resize();
+    controller.beforeRender();
+    controller.afterRender(2);
+    expect(target.scrollTop).toBe(400);
+    expect(controller.state.unseenRevisions).toBe(0);
+
+    document.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+    controller.beforeRender();
+    rowTop = 140;
+    controller.afterRender(2);
+    expect(target.scrollTop).toBe(420);
+    expect(controller.state.unseenRevisions).toBe(1);
+    controller.disconnect();
+    target.remove();
+  });
+
   test('keeps scrollbar dragging paused until the matching pointer is released at the bottom', () => {
     const { target, controller, press } = scrollbarHost();
     press();
@@ -681,7 +720,7 @@ describe('ChatScrollController', () => {
       shadowRoot: { querySelector: () => object; querySelectorAll: () => object[] };
       getBoundingClientRect: () => { top: number };
     };
-    let fallbackTop = 300;
+    let fallbackTop = 280;
     const fallback = {
       isConnected: true,
       getBoundingClientRect: () => ({ top: fallbackTop, bottom: fallbackTop + 40 }),
@@ -700,7 +739,7 @@ describe('ChatScrollController', () => {
     controller.preserveAnchorForInteraction(clicked as unknown as HTMLElement);
     controller.beforeRender();
     clicked.isConnected = false;
-    fallbackTop = 260;
+    fallbackTop = 240;
     controller.afterRender(1);
 
     expect(target.scrollTop).toBe(660);
@@ -981,6 +1020,31 @@ describe('ChatScrollController', () => {
     triggerResize?.();
 
     expect(target.scrollTop).toBe(530);
+  });
+
+  test('keeps a collapsing preview trigger visible during a local resize without a transcript render', () => {
+    let resize = () => {};
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { resize = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    });
+    const target = host();
+    let triggerTop = 180;
+    const trigger = {
+      isConnected: true,
+      getBoundingClientRect: () => ({ top: triggerTop, bottom: triggerTop + 20 }),
+    };
+    const controller = new ChatScrollController(vi.fn());
+    controller.connect(target as unknown as HTMLElement);
+    target.scrollTop = 500;
+    controller.preserveAnchorForInteraction(trigger as unknown as HTMLElement);
+
+    triggerTop = -120;
+    resize();
+
+    expect(target.scrollTop).toBe(200);
   });
 
   test.each([-80, 80])(

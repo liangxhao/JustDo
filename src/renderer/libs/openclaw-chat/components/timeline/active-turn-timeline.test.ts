@@ -22,6 +22,7 @@ function flatten(value: unknown): string {
         .map(args[2] as (item: unknown) => unknown)
         .map(flatten)
         .join('');
+    if (typeof args[0] === 'string' && typeof args[1] === 'function') return flatten(args[1]());
   }
   if (typeof value === 'object' && 'strings' in value && 'values' in value) {
     const template = value as TemplateResult;
@@ -78,7 +79,7 @@ function summary(): ProcessSummaryTimelineItem {
 }
 
 describe('active turn timeline', () => {
-  test.each(['write', 'edit'])('%s shows the execution receipt instead of a duplicate result diff', name => {
+  test.each(['write', 'edit'])('%s shows its preview while the tool details are collapsed', name => {
     const fixture = summary();
     const tool = fixture.items[1];
     if (tool.type !== 'tool') throw new Error('Expected tool fixture');
@@ -91,7 +92,7 @@ describe('active turn timeline', () => {
 
     const rendered = flatten(renderTimelineItem(fixture, 100, true));
 
-    expect(rendered).toContain(tool.output);
+    expect(rendered).not.toContain(tool.output);
     expect(rendered).not.toContain('result-only-diff-marker');
     expect(rendered).toContain('const value = 2;');
   });
@@ -107,7 +108,6 @@ describe('active turn timeline', () => {
   });
 
   test.each([
-    ['exec', { command: 'npm test' }, 'npm test'],
     ['read', { path: 'src/main.ts' }, 'src/main.ts'],
     [
       'browser',
@@ -121,8 +121,6 @@ describe('active turn timeline', () => {
     ],
     ['custom_tool', { enabled: false, count: 0 }, 'false'],
     ['custom_tool', 'plain input', 'plain input'],
-    ['exec', { command: '', cmd: 'git status' }, 'git status'],
-    ['exec', { command: 'npm test', title: ' \n ' }, 'npm test'],
   ])(
     'previews %s arguments even when native title repeats the tool name',
     (name, input, preview) => {
@@ -140,6 +138,23 @@ describe('active turn timeline', () => {
       expect(previews[0][1]).toContain(preview);
     },
   );
+
+  test.each([
+    [{ command: 'npm test' }, 'npm test'],
+    [{ command: '', cmd: 'git status' }, 'git status'],
+    [{ command: 'npm test', title: ' \n ' }, 'npm test'],
+  ])('renders an untitled Exec command once in its terminal', (input, command) => {
+    const fixture = summary();
+    const tool = fixture.items[1];
+    if (tool.type !== 'tool') throw new Error('Expected tool fixture');
+    tool.name = 'exec';
+    tool.input = input;
+    tool.presentation = { title: 'exec' };
+
+    const rendered = flatten(renderTimelineItem(fixture, 100, true));
+    expect(rendered).toContain(`.terminalCommand=${command}`);
+    expect(rendered).not.toContain('class="process-summary__tool-input"');
+  });
 
   test('keeps command failure evidence in output without a duplicate exit-code line', () => {
     const fixture = summary();
@@ -391,14 +406,21 @@ describe('active turn timeline', () => {
     );
 
     expect(rendered).toContain('class="edit-diff"');
+    expect(rendered).toContain('data-tool-search-source="edit-path"');
     expect(rendered).toContain('src/app.ts');
+    const header = rendered.match(/<header class="edit-diff__header">([\s\S]*?)<\/header>/)?.[1] ?? '';
+    expect(header).not.toContain('src/app.ts');
+    expect(header.match(/<svg /g)).toHaveLength(3);
     expect(rendered).toContain('edit-diff__line--removed');
     expect(rendered).toContain('const value = 1;');
     expect(rendered).toContain('edit-diff__line--added');
     expect(rendered).toContain('const value = 2;');
-    expect(rendered).toContain('process-live--edit');
-    expect(rendered).toContain(i18nService.t('coworkEditDiffUnifiedMode'));
-    expect(rendered).toContain(i18nService.t('coworkEditDiffSplitMode'));
+    expect(rendered).toContain('process-live--preview');
+    for (const action of ['reviewOpenFile', 'coworkEditDiffUnifiedMode', 'coworkEditDiffSplitMode']) {
+      const label = i18nService.t(action);
+      expect(header).toContain(`title=${label}`);
+      expect(header).toContain(`aria-label=${label}`);
+    }
     expect(rendered).toContain('edit-diff__mode-button is-active');
     expect(rendered).toContain('data-edit-diff-monaco');
     expect(rendered).toContain('edit-diff__monaco-host--unified');
@@ -583,11 +605,11 @@ describe('active turn timeline', () => {
   });
 
   test.each([
-    [0, 2, 'Tool × 2', 'Thinking ×'],
-    [3, 0, 'Thinking × 3', 'Tool ×'],
+    [0, 2, 'Tool', 'Thinking'],
+    [3, 0, 'Thinking', 'Tool'],
   ] as const)(
     'omits zero-count process types from the summary',
-    (thinkingCount, toolCount, visibleLabel, omittedPrefix) => {
+    (thinkingCount, toolCount, visibleLabel, omittedLabel) => {
       const fixture = summary();
       fixture.thinkingCount = thinkingCount;
       fixture.toolCount = toolCount;
@@ -607,8 +629,9 @@ describe('active turn timeline', () => {
 
       const rendered = flatten(renderTimelineItem(fixture));
 
-      expect(rendered).toContain(visibleLabel);
-      expect(rendered).not.toContain(omittedPrefix);
+      expect(rendered).toContain(`<span>${visibleLabel}</span>`);
+      expect(rendered).toContain(`class="process-summary__count">${thinkingCount + toolCount}</span>`);
+      expect(rendered).not.toContain(`<span>${omittedLabel}</span>`);
     },
   );
 
@@ -783,7 +806,7 @@ describe('active turn timeline', () => {
     expect(rendered).toContain('src/history.ts');
     expect(rendered).toContain('return false;');
     expect(rendered).toContain('return true;');
-    expect(rendered).toContain('Successfully replaced 1 block.');
+    expect(rendered).not.toContain('Successfully replaced 1 block.');
     expect(rendered).not.toContain('process-summary__raw-input');
     expect(rendered).not.toContain('old_string');
   });

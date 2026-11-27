@@ -3,30 +3,44 @@ import type Token from 'markdown-it/lib/token.mjs';
 
 import { questionPresentationResponse } from '../../../../../plugins/extensions/ask-user-question/browser/presentation';
 import { parseQuestions } from '../../../../../plugins/extensions/ask-user-question/contracts/result';
-import { getCodeModeSource } from '../components/tools/code-mode-presentation';
-import { terminalSegments } from '../components/tools/terminal-output';
+import { isRawOnlyTerminalMatch, terminalSegments, terminalSourceOmissions } from '../components/tools/terminal-output';
+import {
+  projectToolInlinePreview,
+  toolEditInputBodyRanges,
+  type ToolInputMirrorRange,
+  toolInputMirrorRange,
+  toolInputText,
+  toolResultText,
+} from '../components/tools/tool-inline-preview';
 import type { ThinkingItem, ToolItem } from '../model/chat-transcript-state';
 import type { VisibleTimelineItem, VisibleTimelineRow } from '../model/timeline/timeline-avatar-state';
-import { buildEditDiffView, parseEditToolDiff } from '../model/tools/edit-tool-diff';
+import { buildEditDiffView } from '../model/tools/edit-tool-diff';
 import { fileToolCode, fileToolPatch } from '../model/tools/file-tool-presentation';
 import { projectProgressReceipt } from '../model/tools/progress-receipt';
-import { toolOperation } from '../model/tools/tool-presentation';
+import { projectProcessNesting, toolOperation } from '../model/tools/tool-presentation';
 import { normalizeMessage } from '../pipeline/message-normalizer';
 
 export interface HistorySearchMatch {
   path: readonly string[];
   processId?: string;
   editDiff?: true;
+  toolSource?: ToolSearchSource;
   occurrence: number;
   text: string;
   start: number;
   end: number;
 }
 
+type ToolSearchSource = 'edit-path' | 'exec-command' | 'exec-result' | 'write' | 'raw-input' | 'raw-result';
+
 interface SearchSource {
   path: readonly string[];
   processId?: string;
   editDiff?: true;
+  toolSource?: ToolSearchSource;
+  mirror?: { text: string; range: ToolInputMirrorRange };
+  ignored?: readonly ToolInputMirrorRange[];
+  terminalOmissions?: ReturnType<typeof terminalSourceOmissions>;
   text: string;
 }
 
@@ -54,37 +68,19 @@ function markdownText(source: string): string {
   return tokenText(markdown.parse(source, {})).trim();
 }
 
-function readableValue(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value === undefined || value === null) return '';
-  try {
-    return JSON.stringify(value, null, 2) ?? '';
-  } catch {
-    return '';
-  }
+function terminalText(text: string): string {
+  return terminalSegments(text).map(segment => segment.text).join('');
 }
 
-function processText(process: ThinkingItem | ToolItem): string {
-  if (process.type === 'thinking') return markdownText(process.text);
-  // Match the ordered reader sources in renderToolDetail. File/code-mode tools
-  // display their actual code instead of the full input envelope; raw metadata
-  // and native diff editors must not create unreachable reader hits.
+function standardToolText(process: ToolItem): string {
+  // Ordinary tools use the readers in the detail body in display order.
   const patch = fileToolPatch(process);
-  const input = process.input;
-  const hasInput = input !== undefined && input !== null &&
-    !(typeof input === 'object' && Object.keys(input).length === 0);
   const inputs = patch.length
     ? patch.map(file => file.text)
-    : parseEditToolDiff(process.name, input) || !hasInput
-      ? []
-      : [getCodeModeSource(process.name, input) ?? fileToolCode(process, false)?.text ?? readableValue(input)];
-  const output = fileToolCode(process, true)?.text ?? readableValue(
-    process.status === 'running' && process.progressText
-      ? process.progressText
-      : process.output ?? process.error,
-  );
+    : [toolInputText(process.input)];
+  const output = fileToolCode(process, true)?.text ?? toolResultText(process) ?? '';
   const displayedOutput = toolOperation(process) === 'commands'
-    ? terminalSegments(output).map(segment => segment.text).join('')
+    ? terminalText(output)
     : output;
   return [...inputs, displayedOutput]
     .filter(Boolean)
@@ -159,16 +155,25 @@ export class HistorySearchIndex {
       caseSensitive ? 'g' : 'gi',
     );
     const matches: HistorySearchMatch[] = [];
-    for (const source of this.sources) {
+    for (const { mirror, ignored, terminalOmissions, ...source } of this.sources) {
+      matcher.lastIndex = 0;
+      const ignoredRange = mirror && matcher.test(mirror.text) ? mirror.range : undefined;
       matcher.lastIndex = 0;
       let occurrence = 0;
       let match: RegExpExecArray | null;
       while ((match = matcher.exec(source.text))) {
+        const start = match.index;
+        const end = start + match[0].length;
+        // Keep the reader's absolute occurrence index even for skipped mirrors.
+        const position = occurrence++;
+        if (ignoredRange && start >= ignoredRange.start && end <= ignoredRange.end) continue;
+        if (ignored?.some(range => start < range.end && end > range.start)) continue;
+        if (terminalOmissions && !isRawOnlyTerminalMatch(terminalOmissions, start, end)) continue;
         matches.push({
           ...source,
-          occurrence: occurrence++,
-          start: match.index,
-          end: match.index + match[0].length,
+          occurrence: position,
+          start,
+          end,
         });
       }
     }
@@ -195,7 +200,7 @@ export class HistorySearchIndex {
     } else if (item.kind === 'content') {
       add(historyMessageText({ role: 'assistant', content: item.item.text }));
     } else if (item.kind === 'process-summary') {
-      for (const process of item.items) this.collectProcess(process, path);
+      for (const process of projectProcessNesting(item.items).items) this.collectProcess(process, path);
     } else if (item.kind === 'live-process') {
       this.collectProcess(item.item, path);
     } else if (item.kind === 'question-presentation') {
@@ -211,14 +216,54 @@ export class HistorySearchIndex {
   }
 
   private collectProcess(process: ThinkingItem | ToolItem, path: readonly string[]): void {
-    const diff = process.type === 'tool' ? parseEditToolDiff(process.name, process.input) : null;
-    if (diff) {
-      const text = buildEditDiffView(diff).hunks
+    const add = (
+      text?: string | null,
+      toolSource?: ToolSearchSource,
+      mirror?: SearchSource['mirror'],
+      ignored?: SearchSource['ignored'],
+    ) => {
+      if (text) this.sources.push({ path, processId: process.id, text, toolSource, mirror, ignored });
+    };
+    if (process.type === 'thinking') {
+      add(markdownText(process.text));
+      return;
+    }
+
+    const preview = projectToolInlinePreview(process);
+    if (!preview) {
+      add(standardToolText(process));
+      return;
+    }
+
+    const rawResult = process.output ?? process.error;
+    const input = toolInputText(process.input);
+    const displayedInput = preview.kind === 'edit' ? preview.diff.path
+      : preview.kind === 'exec' ? preview.command : preview.text;
+    const range = input && preview.rawInputPath ? toolInputMirrorRange(input, preview.rawInputPath) : undefined;
+    const mirror = displayedInput && range ? { text: displayedInput, range } : undefined;
+    if (preview.kind === 'edit') {
+      add(displayedInput, 'edit-path');
+      const text = buildEditDiffView(preview.diff).hunks
         .flatMap(hunk => hunk.lines.filter(line => line.kind !== 'omitted').map(line => line.text))
         .join('\n');
       if (text) this.sources.push({ path, processId: process.id, editDiff: true, text });
+      add(input, 'raw-input', mirror, input ? toolEditInputBodyRanges(input, preview.rawInputRoot) : undefined);
+      add(rawResult, 'raw-result');
+    } else {
+      add(displayedInput, preview.kind === 'exec' ? 'exec-command' : 'write');
+      const result = preview.kind === 'exec' ? toolResultText(process) : undefined;
+      if (result) add(terminalText(result), 'exec-result');
+      add(input, 'raw-input', mirror);
+      if (preview.kind === 'write' || rawResult !== result) {
+        add(rawResult, 'raw-result');
+      } else if (rawResult) {
+        const terminalOmissions = terminalSourceOmissions(rawResult);
+        if (terminalOmissions.length) {
+          this.sources.push({
+            path, processId: process.id, toolSource: 'raw-result', text: rawResult, terminalOmissions,
+          });
+        }
+      }
     }
-    const text = processText(process);
-    if (text) this.sources.push({ path, processId: process.id, text });
   }
 }

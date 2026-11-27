@@ -413,6 +413,90 @@ describe('extension streaming DOM', () => {
     expect(document.querySelector('.process-tool')?.textContent).toContain('File saved');
   });
 
+  it('keeps completed process rows in place until each following answer starts streaming', async () => {
+    const { emit } = await mountThread();
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    emit(1, 'thinking', { text: 'Inspect the file' });
+    emit(2, 'tool', { phase: 'start', toolCallId: 'read-1', name: 'read', args: { path: 'a.txt' } });
+    await vi.waitFor(() => expect(document.querySelectorAll('.process-live')).toHaveLength(2));
+    const tool = document.querySelector('.process-tool');
+    emit(3, 'tool', { phase: 'result', toolCallId: 'read-1', name: 'read', result: 'File contents' });
+    await vi.waitFor(() => expect(tool?.querySelector('.process-tool-status.completed')).not.toBeNull());
+    expect(document.querySelector('.process-tool')).toBe(tool);
+    expect(document.querySelector('.process-summary-group')).toBeNull();
+
+    emit(4, 'assistant', { text: 'The file is present.' });
+    await vi.waitFor(() => expect(document.querySelector('.assistant')?.textContent).toContain('The file is present.'));
+    expect(document.querySelector('.process-summary-group')?.nextElementSibling).toBe(document.querySelector('.assistant'));
+    expect(document.querySelectorAll('.process-live')).toHaveLength(0);
+
+    emit(5, 'tool', { phase: 'start', toolCallId: 'read-2', name: 'read' });
+    emit(6, 'tool', { phase: 'result', toolCallId: 'read-2', name: 'read', result: 'Second result' });
+    await vi.waitFor(() => expect(document.querySelector('.process-live .process-tool-status.completed')).not.toBeNull());
+    expect(document.querySelectorAll('.process-summary-group')).toHaveLength(1);
+  });
+
+  it('folds on the exact run failure while history is still loading and preserves its error', async () => {
+    const { emit, respond } = await mountThread();
+    let resolveHistory!: (value: unknown) => void;
+    mock.request.mockImplementation((method: string) => method === 'thread/resume'
+      ? new Promise(resolve => { resolveHistory = resolve; })
+      : respond(method));
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    emit(1, 'thinking', { text: 'Reading' });
+    emit(2, 'tool', { phase: 'start', toolCallId: 'read-1', name: 'read' });
+    emit(3, 'tool', { phase: 'result', toolCallId: 'read-1', name: 'read', result: 'Access denied', isError: true });
+    await vi.waitFor(() => expect(document.querySelector('.process-live .process-tool-status.failed')).not.toBeNull());
+    const observeFailure = (id: string, executionSettled: boolean) => mock.notify('chrome/thread/updated', {
+      threadId: 'one',
+      activeTurn: { id, nativeRunId: 'run-1', status: 'failed', executionSettled, error: { message: 'Access denied' } },
+    });
+    observeFailure('old-run', true);
+    observeFailure('run-1', false);
+    expect(document.querySelector('.process-summary-group')).toBeNull();
+
+    observeFailure('run-1', true);
+    expect(document.querySelector('.process-summary-group')).not.toBeNull();
+    expect(document.querySelector('.process-live')).toBeNull();
+    expect(document.getElementById('error')?.textContent).toBe('Access denied');
+    await vi.waitFor(() => expect(resolveHistory).toBeTypeOf('function'));
+    resolveHistory(await respond('thread/resume'));
+    await vi.waitFor(() => expect(document.getElementById('error')?.textContent).toBe('Access denied'));
+    expect(document.querySelector('.process-summary-group')).not.toBeNull();
+  });
+
+  it('replaces the reconnect banner when refreshed history already shows the run failure', async () => {
+    const { thread, respond } = await mountThread();
+    const message = 'Access denied';
+    const resumes: Array<(value: unknown) => void> = [];
+    mock.request.mockImplementation((method: string) => method === 'thread/resume'
+      ? new Promise(resolve => { resumes.push(resolve); })
+      : respond(method));
+    mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+    mock.notify('turn/completed', { threadId: 'one', turn: {
+      id: 'run-1', status: 'failed', executionSettled: true, error: { message },
+    } });
+    await vi.waitFor(() => expect(resumes).toHaveLength(1));
+    const banner = document.getElementById('error')!;
+    expect(banner.textContent).toBe(message);
+
+    mock.notify('connection/closed', {});
+    expect(banner.textContent).toBe(t('reconnecting'));
+    mock.notify('connection/reconnected', {});
+    await vi.waitFor(() => expect(resumes).toHaveLength(2));
+    const current = {
+      ...thread,
+      turns: [{ ...thread.turns[0], items: [...thread.turns[0].items, {
+        type: 'systemMessage', text: message, display: { nativeFailure: true },
+      }] }],
+    };
+    resumes[1]({ thread: current });
+    resumes[0]({ thread });
+    await vi.waitFor(() => expect(document.querySelector('.message.system')?.textContent).toContain(message));
+    expect(banner.classList.contains('hidden')).toBe(true);
+    expect(banner.textContent).toBe('');
+  });
+
   it('shows content-free native progress and keeps activity after a chat final until exact settled evidence', async () => {
     const { emit } = await mountThread();
     mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });

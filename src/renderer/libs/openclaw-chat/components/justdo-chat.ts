@@ -44,13 +44,18 @@ import {
 import { renderCompactionDivider } from '@/libs/openclaw-chat/components/timeline/compaction-divider';
 import { renderCompletedProcess } from '@/libs/openclaw-chat/components/timeline/completed-process';
 import { CompletedProcessMotion } from '@/libs/openclaw-chat/components/timeline/completed-process-motion';
-import { materializeDisclosureContents } from '@/libs/openclaw-chat/components/timeline/disclosure-content';
+import {
+  animateDisclosureOpening,
+  materializeDisclosureContent,
+  materializeDisclosureContents,
+} from '@/libs/openclaw-chat/components/timeline/disclosure-content';
 import { historyViewport, type HistoryViewportHandle } from '@/libs/openclaw-chat/components/timeline/history-viewport';
 import { AutomaticErrorRetryPresentationController } from '@/libs/openclaw-chat/controllers/automatic-error-retry-presentation';
 import { ChatScrollController } from '@/libs/openclaw-chat/controllers/chat-scroll-controller';
 import { HistoryDisclosureState } from '@/libs/openclaw-chat/controllers/history-disclosure-state';
 import { HistoryRenderScheduler } from '@/libs/openclaw-chat/controllers/history-render-scheduler';
 import { HistorySearchIndex, type HistorySearchMatch } from '@/libs/openclaw-chat/controllers/history-search-index';
+import type { HistoryViewportWindow } from '@/libs/openclaw-chat/controllers/history-viewport-window';
 import { MessageDisclosureState } from '@/libs/openclaw-chat/controllers/message-disclosure-state';
 import { StreamRenderScheduler } from '@/libs/openclaw-chat/controllers/stream-render-scheduler';
 import type { ChatController } from '@/libs/openclaw-chat/gateway/chat-controller';
@@ -172,6 +177,8 @@ import { getNativeWidgetPresentations } from './native-widget/presentations';
 import { NativeWidgetView } from './native-widget/view';
 import type { TerminalErrorMessage } from './timeline/terminal-error-message';
 import { EditDiffMonacoController } from './tools/edit-diff-monaco';
+import { isRawOnlyTerminalMatch, terminalSourceOmissions } from './tools/terminal-output';
+import { toolEditInputBodyRanges, type ToolInputMirrorRange, toolInputMirrorRange } from './tools/tool-inline-preview';
 import { TOOL_OUTPUT_REQUEST, type ToolOutput } from './tools/tool-output';
 import { WebpageEmbedAnchor } from './webpage-embed/anchor';
 import { WEBPAGE_EMBED_CONTEXT_REQUEST, type WebpageEmbedContext } from './webpage-embed/context';
@@ -183,7 +190,10 @@ const MERMAID_BUBBLE_HORIZONTAL_PADDING = 64;
 const MINIMAP_VISIBLE_ENTRY_THRESHOLD = 2;
 const MINIMAP_RENDER_LIMIT = 250;
 const FOLLOWING_HISTORY_VIEWPORT = 'following-history';
+const PROCESS_ROW_ESTIMATE_PX = 64;
 const MAX_SPEECH_AUDIO_BASE64_LENGTH = 64 * 1024 * 1024;
+const TOOL_PREVIEW_DISCLOSURE_SELECTOR = '.process-tool-preview-layout > details[data-tool-identity]';
+const EDIT_PATH_SEARCH_SELECTOR = '[data-tool-search-source="edit-path"]';
 
 interface SearchDomMatch {
   node: Text;
@@ -191,6 +201,12 @@ interface SearchDomMatch {
   endNode: Text;
   end: number;
   editDiff?: { host: HTMLElement; lineIndex: number };
+}
+
+interface ToolSearchFilter {
+  mirror?: ToolInputMirrorRange;
+  ignored?: readonly ToolInputMirrorRange[];
+  terminalOmissions?: ReturnType<typeof terminalSourceOmissions>;
 }
 
 function openClawEntryId(message: GatewayMessage | undefined): string | null {
@@ -389,12 +405,13 @@ export class JustDoChatElement extends LitElement {
       return shifted;
     },
     undefined,
-    () => {
-      if (this.scrollbarRenderDeferred) this.requestUpdate();
+    dragging => {
+      if (!dragging && this.scrollbarRenderDeferred) this.requestUpdate();
       for (const viewport of this.historyViewports.values()) viewport.refresh();
     },
   );
   private readonly historyViewports = new Map<string, HistoryViewportHandle>();
+  private readonly processViewportLayouts = new Map<string, HistoryViewportWindow>();
   private historyPresentationRows: readonly VisibleTimelineRow[] = [];
   private readonly historyProcessIdentity = new HistoryProcessIdentity();
   private readonly historySearchIndex = new HistorySearchIndex();
@@ -447,6 +464,14 @@ export class JustDoChatElement extends LitElement {
   private renderedOpenProcessSummaryKey: string | null = null;
   private renderedCollapsedProcessSummaryKeys: ReadonlySet<string> = new Set();
   private focusedProcessSummaryKeyBeforeRender: string | null = null;
+  private liveProcessFocus: { row: HTMLElement; target?: VisibleTimelineItem } | null = null;
+  private completedProcessFocus: {
+    element: HTMLElement;
+    key: string;
+    sources: readonly string[];
+    scope: string | null;
+    toolIdentity?: string;
+  } | null = null;
   private processSummarySessionIdentity: string | null = null;
   private lastSearchEnhancementKey = '';
   private lastMermaidEnhancementKey = '';
@@ -541,6 +566,7 @@ export class JustDoChatElement extends LitElement {
     if (this._controller === ctrl) return;
     this.toolImageReaderScope = undefined;
     this.historyOwnerRevision += 1;
+    this.processViewportLayouts.clear();
     this.processResolution = null;
     this.processSummarySessionIdentity = null;
     this.stopSpeech();
@@ -934,7 +960,9 @@ export class JustDoChatElement extends LitElement {
           runTimingSignature,
         },
         () => this.historyProcessIdentity.reconcile(
-          coalesceAdjacentProcessSummaries(projectPersistedTimeline(messages, persistedRunTimings)),
+          coalesceAdjacentProcessSummaries(
+            projectPersistedTimeline(messages, persistedRunTimings, { groupLiveToolFamilies: true }),
+          ),
           JSON.stringify([ctrl?.state.sessionKey ?? '', ctrl?.state.currentSessionId ?? null,
             ctrl?.state.transcript.historyGeneration ?? 0, ctrl?.state.client?.generation ?? 0]),
         ),
@@ -1256,6 +1284,7 @@ export class JustDoChatElement extends LitElement {
     this.persistedTimelineRenderCache.clear();
     this.historyRenderScheduler.clear();
     this.historyDisclosureState.reset(null);
+    this.processViewportLayouts.clear();
     this.completedProcessMotion.reset(null);
     this.messageDisclosureState.reset(null);
     this.thinkingContentPresentation.reset(null);
@@ -1353,6 +1382,17 @@ export class JustDoChatElement extends LitElement {
         .processSummaryKey ?? null;
     this.focusedProcessSummaryKeyBeforeRender =
       focusedKey === this.openProcessSummaryKey ? focusedKey : null;
+    const focusedElement = this.shadowRoot?.activeElement;
+    const liveProcessRow = focusedElement?.closest<HTMLElement>('[data-live-process-id]');
+    this.liveProcessFocus = liveProcessRow ? { row: liveProcessRow } : null;
+    const completedKey = focusedElement?.closest<HTMLElement>('[data-completed-process-key]')?.dataset.completedProcessKey;
+    this.completedProcessFocus = isDomHTMLElement(focusedElement) && completedKey ? {
+      element: focusedElement,
+      key: completedKey,
+      sources: this.historyDisclosureState.completedProcessSources(completedKey),
+      scope: this.processSummarySessionIdentity,
+      toolIdentity: focusedElement.closest<HTMLElement>('[data-tool-identity]')?.dataset.toolIdentity,
+    } : null;
     if (changedProperties.has('processSummariesExpanded')) {
       this.completedProcessMotion.reset(null);
       this.historyDisclosureState.clear();
@@ -1376,11 +1416,10 @@ export class JustDoChatElement extends LitElement {
       this.focusedProcessSummaryKeyBeforeRender !== this.renderedOpenProcessSummaryKey &&
       this.renderedOpenProcessSummaryKey !== null
     ) {
-      Array.from(this.renderRoot.querySelectorAll<HTMLElement>('[data-process-summary-key]'))
-        .find(element => element.dataset.processSummaryKey === this.renderedOpenProcessSummaryKey)
-        ?.focus({ preventScroll: true });
+      this.focusProcessSummary(this.renderedOpenProcessSummaryKey);
     }
     this.focusedProcessSummaryKeyBeforeRender = null;
+    this.restoreFoldedLiveProcessFocus();
     const transcriptRevision =
       this._controller?.state.transcript.revision ??
       this.messages.length + (this.stream?.length ?? 0) + (this.activeTurn?.lastAgentSeq ?? 0);
@@ -1403,6 +1442,7 @@ export class JustDoChatElement extends LitElement {
     this.messageDisclosureState.restore(this.renderRoot as ShadowRoot);
     this.richMessageControls.sync();
     this.syncReturningProcessSummaries();
+    this.restoreCompletedProcessFocus();
     this.completedProcessMotion.afterRender();
     this.chatScrollController.afterRender(transcriptRevision);
     this.syncScrollIndicator();
@@ -1480,11 +1520,67 @@ export class JustDoChatElement extends LitElement {
     this.activeTurnClockTimer = null;
   }
 
+  private focusProcessSummary(key: string): void {
+    Array.from(this.renderRoot.querySelectorAll<HTMLElement>('[data-process-summary-key]'))
+      .find(element => element.dataset.processSummaryKey === key)
+      ?.focus({ preventScroll: true });
+  }
+
+  private restoreFoldedLiveProcessFocus(): void {
+    const focus = this.liveProcessFocus;
+    this.liveProcessFocus = null;
+    if (!focus?.target || focus.row.isConnected || this.shadowRoot?.activeElement) return;
+
+    if (focus.target.kind === 'completed-process') {
+      const key = focus.target.key;
+      Array.from(this.renderRoot.querySelectorAll<HTMLDetailsElement>('[data-completed-process-key]'))
+        .find(element => element.dataset.completedProcessKey === key)
+        ?.querySelector<HTMLElement>(':scope > summary')
+        ?.focus({ preventScroll: true });
+      return;
+    }
+    this.focusProcessSummary(focus.target.key);
+  }
+
+  private restoreCompletedProcessFocus(): void {
+    const focus = this.completedProcessFocus;
+    this.completedProcessFocus = null;
+    if (!focus || focus.scope !== this.processSummarySessionIdentity || focus.element.isConnected ||
+      this.shadowRoot?.activeElement) return;
+
+    const documentFocus = this.ownerDocument.activeElement;
+    if (documentFocus && documentFocus !== this.ownerDocument.body && documentFocus !== this) return;
+
+    const processes = [...this.renderRoot.querySelectorAll<HTMLDetailsElement>('[data-completed-process-key]')];
+    const key = this.historyDisclosureState.completedProcessMatch(
+      focus.key, processes.map(process => process.dataset.completedProcessKey!), focus.sources, focus.toolIdentity,
+    );
+    const process = processes.find(candidate => candidate.dataset.completedProcessKey === key);
+    if (!process) return;
+
+    if (process.open && focus.toolIdentity) {
+      [...process.querySelectorAll<HTMLDetailsElement>('[data-tool-identity]')]
+        .find(details => details.dataset.toolIdentity === focus.toolIdentity)
+        ?.querySelector<HTMLElement>('summary')
+        ?.focus({ preventScroll: true });
+    }
+    if (!this.shadowRoot?.activeElement) {
+      process.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
+    }
+  }
+
   private resolveOpenProcessSummaryKey(
     rows: readonly VisibleTimelineRow[],
     activeItems: readonly VisibleTimelineItem[],
     sessionIdentity: string,
   ): void {
+    if (this.liveProcessFocus && this.processSummarySessionIdentity === sessionIdentity) {
+      const processId = this.liveProcessFocus.row.dataset.liveProcessId;
+      const containsProcess = (item: VisibleTimelineItem) => item.kind === 'process-summary' &&
+        item.items.some(process => process.id === processId);
+      this.liveProcessFocus.target = activeItems.find(item => containsProcess(item) ||
+        (item.kind === 'completed-process' && item.items.some(containsProcess)));
+    }
     this.completedProcessMotion.reset(JSON.stringify([
       sessionIdentity,
       this._controller?.state.client?.generation ?? 0,
@@ -1507,6 +1603,7 @@ export class JustDoChatElement extends LitElement {
       previous.expanded === this.processSummariesExpanded) return;
     if (this.processSummarySessionIdentity !== sessionIdentity) {
       this.historyDisclosureState.reset(sessionIdentity);
+      this.processViewportLayouts.clear();
       this.thinkingContentPresentation.reset(sessionIdentity);
       this.processSummaryTakeoverTracker.clear();
       this.collapsedProcessSummaryTakeoverTracker.clear();
@@ -1568,20 +1665,31 @@ export class JustDoChatElement extends LitElement {
     if (handleMessageLinkClick(event, this.workingDirectory, this.onOpenFile)) return;
     const element = event.composedPath().find(node => isDomHTMLElement(node)) as
       HTMLElement | undefined;
+    const toolPreviewToggle = element?.closest<HTMLElement>('.tool-output-preview-toggle');
+    if (toolPreviewToggle) {
+      const anchor = toolPreviewToggle.getAttribute('aria-expanded') === 'true'
+        ? toolPreviewToggle
+        : toolPreviewToggle.closest<HTMLElement>('justdo-tool-output') ?? toolPreviewToggle;
+      this.chatScrollController.preserveAnchorForInteraction(anchor);
+      return;
+    }
     const disclosureSummary = element?.closest<HTMLElement>(
-      '.completed-process > summary, [data-message-disclosure-owner] details.markdown-disclosure > summary',
+      '.completed-process > summary, .process-summary__tool > summary, [data-message-disclosure-owner] details.markdown-disclosure > summary',
     );
     if (disclosureSummary) {
-      if (disclosureSummary.parentElement?.matches('.completed-process')) {
-        this.completedProcessMotion.cancel(disclosureSummary.parentElement as HTMLDetailsElement);
+      const details = disclosureSummary.parentElement;
+      if (details?.matches('.completed-process')) {
+        this.completedProcessMotion.cancel(details as HTMLDetailsElement);
       }
       this.chatScrollController.preserveAnchorForInteraction(disclosureSummary);
+      if (details?.matches('.completed-process, .process-summary__tool')) animateDisclosureOpening(details);
       return;
     }
     const summaryButton = element?.closest<HTMLElement>('[data-process-summary-key]');
     if (summaryButton) {
       const summaryKey = summaryButton.dataset.processSummaryKey ?? null;
       this.chatScrollController.preserveAnchorForInteraction(summaryButton);
+      animateDisclosureOpening(summaryButton.parentElement);
       if (this.processSummariesExpanded && summaryKey) {
         const collapsedKeys = new Set(this.renderedCollapsedProcessSummaryKeys);
         if (collapsedKeys.has(summaryKey)) {
@@ -1629,13 +1737,32 @@ export class JustDoChatElement extends LitElement {
     }
     if (keyboardEvent.key !== 'Escape' || !this.openProcessSummaryKey) return;
     keyboardEvent.preventDefault();
-    const summaryKey = this.openProcessSummaryKey;
+    const selector = `[data-process-summary-key="${CSS.escape(this.openProcessSummaryKey)}"]`;
+    const summary = this.shadowRoot?.querySelector<HTMLElement>(selector);
+    const focused = this.shadowRoot?.activeElement;
+    const restoreFocus = summary && focused && summary.parentElement?.contains(focused);
+    if (restoreFocus) {
+      const summaryRect = summary.getBoundingClientRect();
+      const viewport = this.getBoundingClientRect();
+      if (summaryRect.bottom > viewport.top && summaryRect.top < viewport.bottom) {
+        this.chatScrollController.preserveAnchorForInteraction(summary);
+      }
+    }
     this.openProcessSummaryKey = null;
-    void this.updateComplete.then(() => {
-      this.shadowRoot
-        ?.querySelector<HTMLElement>(`[data-process-summary-key="${CSS.escape(summaryKey)}"]`)
-        ?.focus();
-    });
+    if (restoreFocus) {
+      void this.updateComplete.then(() => {
+        const activeElement = this.shadowRoot?.activeElement;
+        let documentFocus = this.ownerDocument.activeElement;
+        while (documentFocus?.shadowRoot?.activeElement) {
+          documentFocus = documentFocus.shadowRoot.activeElement;
+        }
+        const focusLost = !activeElement &&
+          (!documentFocus || documentFocus === this || documentFocus === this.ownerDocument.body);
+        if (focusLost || activeElement === focused) {
+          this.shadowRoot?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
+        }
+      });
+    }
   };
 
   private readonly handleEditDiffModeChange = (toolId: string, mode: EditDiffMode): void => {
@@ -2024,7 +2151,7 @@ export class JustDoChatElement extends LitElement {
     this.revealHistoryPresentation(item =>
       item.kind === 'history-message' && openClawEntryId(item.message) === normalizedEntryId,
     );
-    materializeDisclosureContents(this.renderRoot);
+    materializeDisclosureContents(this.renderRoot, details => !details.matches(TOOL_PREVIEW_DISCLOSURE_SELECTOR));
     const rows = this.renderRoot.querySelectorAll<HTMLElement>('.chat-history-row[data-entry-id]');
     const target = [...rows].find(row => row.dataset.entryId === normalizedEntryId);
     if (!target) return false;
@@ -2059,6 +2186,8 @@ export class JustDoChatElement extends LitElement {
     element: HTMLElement;
     occurrence: number;
   } | null {
+    const materializeGrouping = (details: HTMLDetailsElement): boolean =>
+      !details.matches(TOOL_PREVIEW_DISCLOSURE_SELECTOR);
     let target: HTMLElement | null = null;
     for (let index = 0; index < match.path.length; index += 1) {
       const key = match.path[index];
@@ -2067,15 +2196,40 @@ export class JustDoChatElement extends LitElement {
       target = [...this.renderRoot.querySelectorAll<HTMLElement>('.history-viewport-row')]
         .find(row => row.dataset.historyKey === key) ?? null;
       if (!target) return null;
-      materializeDisclosureContents(target);
+      materializeDisclosureContents(target, materializeGrouping);
     }
     if (match.processId) {
       this.historyViewports.get(`process:${match.path[match.path.length - 1]}`)?.reveal(match.processId);
-      target = [...(target?.querySelectorAll<HTMLElement>('[data-inline-process-id]') ?? [])]
-        .find(row => row.dataset.inlineProcessId === match.processId) ?? target;
+      const processRow = [...(target?.querySelectorAll<HTMLElement>('[data-inline-process-id], [data-live-process-id]') ?? [])]
+        .find(row => (row.dataset.inlineProcessId ?? row.dataset.liveProcessId) === match.processId);
+      if (processRow) {
+        materializeDisclosureContents(processRow, materializeGrouping);
+        target = processRow;
+      } else if (match.toolSource || match.editDiff) return null;
     }
     if (match.editDiff && target) {
       return { element: target.querySelector<HTMLElement>('.edit-diff') ?? target, occurrence: match.occurrence };
+    }
+    if (match.toolSource === 'edit-path' && target) {
+      const element = target.querySelector<HTMLElement>(EDIT_PATH_SEARCH_SELECTOR);
+      return element ? { element, occurrence: match.occurrence } : null;
+    }
+    if (match.toolSource && target) {
+      if (match.toolSource === 'raw-input' || match.toolSource === 'raw-result') {
+        const details = target.querySelector<HTMLDetailsElement>('details[data-tool-identity]');
+        if (details) materializeDisclosureContent(details);
+      }
+      const readerSource = match.toolSource === 'exec-command' ? 'exec-result' : match.toolSource;
+      const reader = target.querySelector<ToolOutput>(`justdo-tool-output[data-tool-search-source="${readerSource}"]`);
+      if (!reader) return null;
+      if (match.toolSource === 'exec-command')
+        return reader.prepareCommandSearch(this.searchQuery, this.searchCaseSensitive, match.occurrence);
+      const result = reader.prepareSearch(this.searchQuery, this.searchCaseSensitive, match.occurrence);
+      if (result.occurrence === null) return null;
+      const element = match.toolSource === 'exec-result'
+        ? reader.querySelector<HTMLElement>('pre.tool-output-terminal') ?? reader
+        : reader;
+      return { element, occurrence: result.occurrence };
     }
     if (match.processId && target) {
       let occurrence = match.occurrence;
@@ -2089,20 +2243,56 @@ export class JustDoChatElement extends LitElement {
   }
 
   private collectEditDiffSearchMatches(target: HTMLElement): SearchDomMatch[] {
+    return [...target.querySelectorAll<HTMLElement>('[data-edit-diff-monaco]')]
+      .flatMap(host => this.collectEditDiffHunkSearchMatches(host));
+  }
+
+  private collectEditDiffHunkSearchMatches(host: HTMLElement): SearchDomMatch[] {
+    const rows = new Map<number, HTMLElement>();
+    for (const row of host.querySelectorAll<HTMLElement>('[data-edit-diff-line-index]')) {
+      const index = Number(row.dataset.editDiffLineIndex);
+      const code = row.querySelector<HTMLElement>('code');
+      if (code && !rows.has(index)) rows.set(index, code);
+    }
     const matches: SearchDomMatch[] = [];
-    for (const host of target.querySelectorAll<HTMLElement>('[data-edit-diff-monaco]')) {
-      const rows = new Map<number, HTMLElement>();
-      for (const row of host.querySelectorAll<HTMLElement>('[data-edit-diff-line-index]')) {
-        const index = Number(row.dataset.editDiffLineIndex);
-        const code = row.querySelector<HTMLElement>('code');
-        if (code && !rows.has(index)) rows.set(index, code);
-      }
-      for (const [lineIndex, code] of [...rows].sort(([left], [right]) => left - right)) {
-        matches.push(...this.collectSearchMatches(code)
-          .map(match => ({ ...match, editDiff: { host, lineIndex } })));
+    for (const [lineIndex, code] of [...rows].sort(([left], [right]) => left - right)) {
+      for (const match of this.collectSearchMatches(code)) {
+        matches.push({ ...match, editDiff: { host, lineIndex } });
       }
     }
     return matches;
+  }
+
+  private mirroredToolSearchReaders(root: Element, matcher: RegExp): Map<Element, true | ToolSearchFilter> {
+    const readers = new Map<Element, true | ToolSearchFilter>();
+    for (const reader of root.querySelectorAll<ToolOutput>(
+      'justdo-tool-output[data-tool-search-source="raw-input"], justdo-tool-output[data-tool-search-source="raw-result"]',
+    )) {
+      if (reader.closest('.chat-container > .history-viewport-row')) continue;
+      const details = reader.closest(TOOL_PREVIEW_DISCLOSURE_SELECTOR);
+      const preview = details?.nextElementSibling;
+      if (!preview?.classList.contains('process-tool-preview')) continue;
+      if (reader.dataset.toolSearchSource === 'raw-result') {
+        const result = preview.querySelector<ToolOutput>('justdo-tool-output[data-tool-search-source="exec-result"]');
+        if (result?.paginate !== false || result.resultText !== reader.resultText ||
+            !result.querySelector('pre.tool-output-terminal')) continue;
+        // The full terminal mirrors every raw page, except characters removed
+        // from its display. Check the original offsets even across page breaks.
+        const terminalOmissions = terminalSourceOmissions(reader.resultText);
+        readers.set(reader, terminalOmissions.length ? { terminalOmissions } : true);
+        continue;
+      }
+      const edit = preview.querySelector('.edit-diff');
+      const ignored = edit ? toolEditInputBodyRanges(reader.text, reader.dataset.toolSearchEditRoot) : undefined;
+      const path = reader.dataset.toolSearchMirror;
+      const input = (edit ? details?.querySelector(EDIT_PATH_SEARCH_SELECTOR) : preview.querySelector(
+        'justdo-tool-output[data-tool-search-source="write"] pre, [data-tool-search-source="exec-command"]',
+      ))?.textContent;
+      matcher.lastIndex = 0;
+      const mirror = path && input && matcher.test(input) ? toolInputMirrorRange(reader.text, path.split('.')) : undefined;
+      if (mirror || ignored?.length) readers.set(reader, { mirror, ignored });
+    }
+    return readers;
   }
 
   private collectSearchMatches(
@@ -2112,21 +2302,32 @@ export class JustDoChatElement extends LitElement {
     const query = this.searchQuery.trim();
     const root = container ?? this.shadowRoot?.querySelector('.chat-container');
     if (!query || !root) return [];
-    materializeDisclosureContents(root);
+    materializeDisclosureContents(root, excludeHistory
+      ? details => !details.matches(TOOL_PREVIEW_DISCLOSURE_SELECTOR) ||
+          !details.closest('.chat-container > .history-viewport-row')
+      : undefined);
 
     const matcher = new RegExp(this.escapeRegExp(query), this.searchCaseSensitive ? 'g' : 'gi');
+    const mirroredReaders = excludeHistory ? this.mirroredToolSearchReaders(root, matcher) : undefined;
     const walker = this.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
       acceptNode(node) {
         const parent = node.parentElement;
         if (!parent || !node.nodeValue) return NodeFilter.FILTER_REJECT;
         if (parent.closest(
           '.chat-group__footer, button, input, textarea, select, script, style, template, ' +
-          '.process-summary, .process-summary__item-heading, .process-summary__tool-title, ' +
-          '.process-summary__detail-label, .code-block-header, .message-reader-actions',
+          '.process-summary, .process-summary__item-heading, ' +
+          '.process-summary__detail-label, .code-block-header, .message-reader-actions, .tool-output-feedback, ' +
+          '[data-tool-search-placeholder]',
+        ) || (
+          parent.closest('.process-summary__tool-title') && !parent.closest(EDIT_PATH_SEARCH_SELECTOR)
         )) {
           return NodeFilter.FILTER_REJECT;
         }
         if (excludeHistory && parent.closest('.chat-container > .history-viewport-row')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        const reader = mirroredReaders?.size ? parent.closest('justdo-tool-output') : null;
+        if (reader && mirroredReaders?.get(reader) === true) {
           return NodeFilter.FILTER_REJECT;
         }
         return NodeFilter.FILTER_ACCEPT;
@@ -2138,11 +2339,24 @@ export class JustDoChatElement extends LitElement {
     let nodes: Text[] = [];
     const flush = () => {
       const text = nodes.map(node => node.nodeValue ?? '').join('');
+      const pre = block?.matches('pre') ? block as HTMLPreElement : null;
+      const reader = pre && mirroredReaders?.size ? pre.closest('justdo-tool-output') : null;
+      const filter = reader && mirroredReaders?.get(reader);
+      const pageStart = Number(pre?.dataset.toolSearchStart ?? 0);
       matcher.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = matcher.exec(text))) {
         const start = match.index;
         const end = start + match[0].length;
+        if (filter && filter !== true) {
+          const { mirror, ignored, terminalOmissions } = filter;
+          const sourceStart = pageStart + start;
+          const sourceEnd = pageStart + end;
+          const overlaps = (range: ToolInputMirrorRange) => sourceStart < range.end && sourceEnd > range.start;
+          if (mirror && sourceStart >= mirror.start && sourceEnd <= mirror.end) continue;
+          if (ignored?.some(overlaps)) continue;
+          if (terminalOmissions && !isRawOnlyTerminalMatch(terminalOmissions, sourceStart, sourceEnd)) continue;
+        }
         let offset = 0;
         let first: { node: Text; offset: number } | null = null;
         for (const node of nodes) {
@@ -2157,8 +2371,21 @@ export class JustDoChatElement extends LitElement {
       }
       nodes = [];
     };
+    const liveEditHosts = excludeHistory ? new Set<HTMLElement>() : null;
     while (walker.nextNode()) {
       const node = walker.currentNode as Text;
+      if (liveEditHosts) {
+        const host = node.parentElement?.closest<HTMLElement>('[data-edit-diff-monaco]');
+        if (host) {
+          if (!liveEditHosts.has(host)) {
+            flush();
+            block = null;
+            matches.push(...this.collectEditDiffHunkSearchMatches(host));
+            liveEditHosts.add(host);
+          }
+          continue;
+        }
+      }
       const parentBlock = node.parentElement?.closest('p, pre, li, td, th, h1, h2, h3, h4, h5, h6, summary, .chat-bubble__text, .markdown-content') ?? node.parentElement;
       if (block !== parentBlock) flush();
       block = parentBlock;
@@ -2193,7 +2420,13 @@ export class JustDoChatElement extends LitElement {
     mark.append(range.extractContents());
     range.insertNode(mark);
     this.expandSearchMatchContainers(mark);
-    this.chatScrollController.navigateToElement(mark, 'smooth');
+    const preview = mark.closest('[data-preview-collapsed]')
+      ?.closest<ToolOutput>('justdo-tool-output[data-tool-search-source="write"]');
+    if (preview) {
+      void preview.revealSearchPreview().then(() => {
+        if (mark.isConnected) this.chatScrollController.navigateToElement(mark, 'smooth');
+      });
+    } else this.chatScrollController.navigateToElement(mark, 'smooth');
   }
 
   private expandSearchMatchContainers(mark: HTMLElement): void {
@@ -2203,8 +2436,10 @@ export class JustDoChatElement extends LitElement {
     while (current) {
       const details: HTMLDetailsElement | null = current.closest('details');
       if (!details) return;
-      this.completedProcessMotion.cancel(details);
-      details.open = true;
+      if (current.closest('summary')?.parentElement !== details) {
+        this.completedProcessMotion.cancel(details);
+        details.open = true;
+      }
       current = details.parentElement;
     }
   }
@@ -2500,6 +2735,7 @@ export class JustDoChatElement extends LitElement {
     key: (item: T) => string,
     render: (item: T, index: number) => unknown,
   ) {
+    const isMainHistory = name === 'history' || name === FOLLOWING_HISTORY_VIEWPORT;
     return historyViewport({
       items,
       key,
@@ -2507,9 +2743,10 @@ export class JustDoChatElement extends LitElement {
       host: this,
       scope: JSON.stringify([this.processSummarySessionIdentity ?? 'direct',
         this._controller?.state.client?.generation ?? 0, this.historyOwnerRevision, name]),
-      follow: () => (name === 'history' || name === FOLLOWING_HISTORY_VIEWPORT) &&
-        this.chatScrollController.state.mode === 'follow',
-      defer: () => this.chatScrollController.isDraggingScrollbar,
+      follow: () => isMainHistory && this.chatScrollController.state.mode === 'follow',
+      estimatedRowHeight: isMainHistory ? undefined : PROCESS_ROW_ESTIMATE_PX,
+      retainedLayouts: isMainHistory ? undefined : this.processViewportLayouts,
+      isDraggingScrollbar: () => this.chatScrollController.isDraggingScrollbar,
       beforeCommit: () => {
         this.historyDisclosureState.capture(this.renderRoot);
         this.completedProcessMotion.capture(this.renderRoot);
@@ -2572,7 +2809,13 @@ export class JustDoChatElement extends LitElement {
         item.items.flatMap(child => [
           child.key,
           ...(child.kind === 'process-summary'
-            ? child.items.map(process => `process:${process.id}`)
+            ? child.items.flatMap(process => [
+                `process:${process.id}`,
+                // The live and persisted projections can assign different row IDs to the same call.
+                ...(process.type === 'tool' && process.toolCallId && process.toolCallId !== process.id
+                  ? [JSON.stringify([process.runId, process.toolCallId])]
+                  : []),
+              ])
             : []),
         ]),
       );
@@ -2773,9 +3016,9 @@ export class JustDoChatElement extends LitElement {
         withinCompletedProcess,
       },
       item.kind === 'process-summary'
-        ? render => this.renderHistoryViewport(
+        ? (items, render) => this.renderHistoryViewport(
             `process:${item.key}`,
-            item.items,
+            items,
             process => process.id,
             render,
           )

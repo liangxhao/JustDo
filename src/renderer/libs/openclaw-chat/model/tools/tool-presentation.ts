@@ -9,7 +9,7 @@ import {
   readQuestionResult,
 } from '../../../../../../plugins/extensions/ask-user-question/contracts/result';
 import { getTranscriptMedia, type TranscriptMedia } from '../../attachments';
-import type { ToolItem } from '../chat-transcript-state';
+import type { ThinkingItem, ToolItem } from '../chat-transcript-state';
 import { isToolResultType, readToolCallId, readToolOutput } from './tool-message-adapter';
 
 export interface ToolPresentation {
@@ -246,30 +246,66 @@ export function summarizeTools(tools: readonly ToolItem[]): Record<string, numbe
   return counts;
 }
 
-/** Resolve explicit same-run parents without reordering the native timeline. */
-export function toolNesting(tools: readonly ToolItem[]): Map<ToolItem, number> {
+const MAX_TOOL_NESTING_DEPTH = 32;
+
+/** Keep each tool family together at its root's position within a display segment. */
+export function projectProcessNesting<T extends ThinkingItem | ToolItem>(
+  items: readonly T[],
+): {
+  items: readonly T[];
+  depths: ReadonlyMap<ToolItem, number>;
+  roots: ReadonlyMap<ToolItem, ToolItem>;
+} {
+  const depths = new Map<ToolItem, number>();
+  const roots = new Map<ToolItem, ToolItem>();
+  const tools = items.filter((item): item is T & ToolItem => item.type === 'tool');
+  if (!tools.some(tool => tool.presentation?.parentToolCallId)) return { items, depths, roots };
+
   const identities = new Map<string, ToolItem | null>();
   const key = (tool: ToolItem, id = tool.toolCallId) => JSON.stringify([tool.runId, id]);
-  for (const tool of tools) identities.set(key(tool), identities.has(key(tool)) ? null : tool);
+  for (const tool of tools) {
+    if (!tool.runId || !tool.toolCallId) continue;
+    const identity = key(tool);
+    identities.set(identity, identities.has(identity) ? null : tool);
+  }
   const parents = new Map<ToolItem, ToolItem>();
   for (const tool of tools) {
     const parentId = tool.presentation?.parentToolCallId;
-    const parent = parentId && tool.runId ? identities.get(key(tool, parentId)) : null;
+    const parent = parentId ? identities.get(key(tool, parentId)) : null;
     if (parent && parent !== tool && identities.get(key(tool)) === tool) parents.set(tool, parent);
   }
-  const depths = new Map<ToolItem, number>();
+  const children = new Map<ToolItem, T[]>();
   for (const tool of tools) {
-    const seen = new Set<ToolItem>([tool]);
-    let current = parents.get(tool);
-    let depth = 0;
-    while (current && !seen.has(current) && depth < 32) {
-      seen.add(current);
+    const parent = parents.get(tool);
+    if (!parent) continue;
+    let root = parent;
+    let ancestor = parents.get(root);
+    let depth = 1;
+    while (ancestor && depth < MAX_TOOL_NESTING_DEPTH) {
+      root = ancestor;
+      ancestor = parents.get(root);
       depth += 1;
-      current = parents.get(current);
     }
-    depths.set(tool, current ? 0 : depth);
+    // A path that never reaches a root is cyclic or too deep to display.
+    if (ancestor) continue;
+    depths.set(tool, depth);
+    roots.set(tool, root);
+    const siblings = children.get(parent) ?? [];
+    siblings.push(tool);
+    children.set(parent, siblings);
   }
-  return depths;
+  if (roots.size === 0) return { items, depths, roots };
+
+  const ordered: T[] = [];
+  const append = (item: T) => {
+    ordered.push(item);
+    if (item.type !== 'tool') return;
+    for (const child of children.get(item) ?? []) append(child);
+  };
+  for (const item of items) {
+    if (item.type !== 'tool' || !roots.has(item)) append(item);
+  }
+  return { items: ordered, depths, roots };
 }
 
 /** Select one authorized result, never unrelated text from the containing entry. */

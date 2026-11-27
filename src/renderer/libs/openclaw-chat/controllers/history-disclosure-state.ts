@@ -49,6 +49,27 @@ export class HistoryDisclosureState {
     return this.latestSourceChoice(sources ?? [])?.open ?? this.states.get(key) ?? fallback;
   }
 
+  completedProcessSources(key: string): readonly string[] {
+    return this.completedSources.get(key) ?? [];
+  }
+
+  completedProcessMatch(
+    key: string,
+    candidates: readonly string[],
+    previousSources: readonly string[],
+    toolIdentity?: string,
+  ): string | undefined {
+    // A split group may reuse the old key for a different part of its contents.
+    const sources = new Set(previousSources);
+    const focusedSource = toolIdentity && sources.has(toolIdentity) ? toolIdentity : undefined;
+    if (!focusedSource && candidates.includes(key)) return key;
+    const matches = candidates.filter(candidate => {
+      const current = this.completedSources.get(candidate) ?? [];
+      return focusedSource ? current.includes(focusedSource) : current.some(source => sources.has(source));
+    });
+    return matches.length === 1 ? matches[0] : undefined;
+  }
+
   private latestSourceChoice(sources: readonly string[]) {
     let latest: { open: boolean; revision: number } | undefined;
     for (const source of sources) {

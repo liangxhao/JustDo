@@ -69,6 +69,118 @@ describe('quiet foreground run recovery', () => {
     hasActiveRun: false,
   };
 
+  test('publishes late parent metadata for a recovered running Tool', async () => {
+    const runId = 'run-progress';
+    const parent = { phase: 'start', toolCallId: 'parent', name: 'tool_call' };
+    const child = { phase: 'start', toolCallId: 'nested', name: 'read' };
+    controller.state.client!.request = vi.fn().mockResolvedValue({
+      messages: [],
+      sessionId: nativeSession.sessionId,
+      sessionInfo: { ...nativeSession, hasActiveRun: true, activeRunIds: [runId] },
+      inFlightRun: {
+        runId,
+        events: [parent, child].map((data, index) => ({
+          runId, seq: index + 2, stream: 'tool', ts: Date.now(), data,
+        })),
+      },
+    });
+    await controller.loadHistory();
+    const turn = controller.state.transcript.activeTurn;
+    expect(turn?.toolById.get('nested')).toMatchObject({ status: 'running' });
+    expect(turn?.toolById.get('nested')?.presentation?.parentToolCallId).toBeUndefined();
+    const listener = vi.fn();
+    controller.onStream(listener);
+
+    emit('tool', { ...child, parentToolCallId: 'parent' }, { seq: 3 });
+
+    expect(listener).toHaveBeenCalledExactlyOnceWith('terminal');
+    expect(projectTurnItems(turn)).toMatchObject([
+      { kind: 'live-process', item: { toolCallId: 'parent' }, toolDepth: 0 },
+      { kind: 'live-process', item: { toolCallId: 'nested', status: 'running' }, toolDepth: 1 },
+    ]);
+  });
+
+  test.each([
+    'owned', 'completed', 'excluded by live prefix', 'newer update after live prefix',
+    'different run', 'hidden', 'ambiguous', 'ambiguous with result',
+  ] as const)(
+    'recovers an evicted parent only from a unique same-run durable call (%s)', async ownership => {
+      const runId = 'run-progress';
+      const needsHistoryRead = ownership === 'excluded by live prefix' || ownership === 'newer update after live prefix';
+      if (!needsHistoryRead) {
+        controller.state.transcript = createChatTranscriptState(sessionKey, nativeSession.sessionId);
+        controller.state.chatRunId = null;
+        controller.state.chatSending = false;
+        controller.state.runActivity = null;
+      }
+      const parent = {
+        role: 'assistant',
+        ...(ownership === 'hidden' ? { display: false } : {}),
+        __openclaw: { id: 'parent-entry', seq: 1, runId: ownership === 'different run' ? 'other' : runId },
+        content: [{ type: 'toolCall', id: 'parent', name: 'tool_call', arguments: { id: 'read' } }],
+      };
+      const messages: unknown[] = [parent];
+      if (ownership === 'ambiguous' || ownership === 'ambiguous with result') {
+        messages.push({ ...parent, __openclaw: { id: 'duplicate-entry', seq: 2, runId } });
+      }
+      if (ownership === 'completed' || ownership === 'ambiguous with result') {
+        messages.push({
+          role: 'toolResult', toolCallId: 'parent', toolName: 'tool_call', content: 'Finished',
+          __openclaw: { id: 'parent-result', seq: 2, runId },
+        });
+      }
+      const child = { phase: ownership === 'completed' ? 'result' : 'start', toolCallId: 'nested', name: 'read' };
+      const request = vi.fn().mockResolvedValue({
+        messages,
+        sessionId: nativeSession.sessionId,
+        sessionInfo: { ...nativeSession, hasActiveRun: true, activeRunIds: [runId] },
+        inFlightRun: {
+          runId,
+          events: [{ runId, seq: 100, stream: 'tool', ts: Date.now(), data: child }],
+        },
+      });
+      controller.state.client!.request = request;
+      await controller.loadHistory();
+      const turn = controller.state.transcript.activeTurn!;
+      expect(turn.toolById.has('parent')).toBe(false);
+      const historyReads = request.mock.calls.filter(([method]) => method === 'chat.history').length;
+
+      const liveUpdate = ownership === 'newer update after live prefix';
+      emit('tool', {
+        ...child, parentToolCallId: 'parent',
+        ...(liveUpdate ? { phase: 'update', partialResult: 'Reading...' } : {}),
+      }, { seq: liveUpdate ? 101 : 100 });
+      await vi.advanceTimersByTimeAsync(0);
+
+      if (ownership === 'owned' || needsHistoryRead || ownership === 'completed') {
+        const status = ownership === 'completed' ? 'completed' : 'running';
+        expect(turn.toolById.get('parent')).toMatchObject({
+          input: { id: 'read' }, status, agentSequenceUnconfirmed: true,
+        });
+        expect(turn.toolById.get('parent')?.output).toBe(ownership === 'completed' ? 'Finished' : undefined);
+        expect(projectTurnItems(turn)).toMatchObject([
+          { kind: 'live-process', item: { toolCallId: 'parent' }, toolDepth: 0 },
+          { kind: 'live-process', item: { toolCallId: 'nested', status }, toolDepth: 1 },
+        ]);
+        expect(request.mock.calls.filter(([method]) => method === 'chat.history')).toHaveLength(
+          historyReads + (needsHistoryRead ? 1 : 0),
+        );
+        if (ownership === 'owned' || ownership === 'completed') {
+          emit('assistant', { text: 'Next reply' }, { seq: 101 });
+          expect(turn.items.map(value => value.type === 'tool' ? value.toolCallId : value.type))
+            .toEqual(['parent', 'nested', 'content']);
+          expect(projectTurnItems(turn).map(value => value.kind)).toEqual(ownership === 'completed'
+            ? ['process-summary', 'content'] : ['live-process', 'live-process', 'content']);
+        }
+      } else {
+        expect(turn.toolById.has('parent')).toBe(false);
+        expect(projectTurnItems(turn)).toMatchObject([
+          { kind: 'live-process', item: { toolCallId: 'nested' } },
+        ]);
+      }
+    },
+  );
+
   test('recovers an ordinary missed terminal and lets the next message reach Gateway', async () => {
     const answer = {
       role: 'assistant',

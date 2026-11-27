@@ -24,6 +24,7 @@ import {
   useContext,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -44,6 +45,7 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 import { observeEditorLayout } from '@/shared/dom/observeEditorLayout';
 import { useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
+import { retainFileEditorMonacoTheme } from '@/shared/editor/file-editor-monaco-theme';
 
 import { FilePreviewToolbarContext } from '../shared/FilePreviewToolbarContext';
 import BrowserFilePreviewPanel from './BrowserFilePreviewPanel';
@@ -230,6 +232,7 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
     const fileName = preview.filePath.split(/[\\/]/).pop() || preview.filePath;
     const isJson = extension === '.json';
     const isPreformatted = !isMarkdown;
+    const usesMonacoEditor = mode === 'edit' || (!isHtml && isPreformatted);
     const isDirty = hasUnsavedFilePreviewChanges(draft, savedContent);
     const editorLanguage = getFilePreviewEditorLanguage(extension);
     const fileTypeLabel = extension.slice(1).toUpperCase();
@@ -251,6 +254,11 @@ const TextPreviewDrawer = forwardRef<FilePreviewDrawerHandle, TextPreviewProps>(
             }),
       [content, isPreformatted],
     );
+
+    // Reserve the shared palette before Monaco mounts, including hidden file tabs.
+    useLayoutEffect(() => {
+      if (usesMonacoEditor) return retainFileEditorMonacoTheme();
+    }, [usesMonacoEditor]);
 
     useEffect(() => {
       const previousEditToken = editTokenRef.current;

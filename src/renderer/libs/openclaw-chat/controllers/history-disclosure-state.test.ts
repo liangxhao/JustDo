@@ -3,6 +3,17 @@ import { expect, test } from 'vitest';
 
 import { HistoryDisclosureState } from './history-disclosure-state';
 
+test('finds the focused call after a split gives the old group key to a different call', () => {
+  const state = new HistoryDisclosureState();
+  state.expanded('original', true, ['first-call', 'second-call']);
+  const previousSources = state.completedProcessSources('original');
+
+  state.expanded('original', false, ['second-call']);
+  state.expanded('split', false, ['first-call']);
+
+  expect(state.completedProcessMatch('original', ['original', 'split'], previousSources, 'first-call')).toBe('split');
+});
+
 test('does not retain a temporary automatic fold as an explicit expansion choice', () => {
   const state = new HistoryDisclosureState();
   state.reset('native-session');

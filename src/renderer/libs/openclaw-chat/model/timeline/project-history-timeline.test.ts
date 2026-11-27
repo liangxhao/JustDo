@@ -354,8 +354,8 @@ describe('projectPersistedTimeline', () => {
       { kind: 'process-summary', items: [{ type: 'thinking', text: thinking }] },
       { kind: 'content', item: { text: commentary } },
       {
-        kind: 'process-summary',
-        items: [{ type: 'tool', toolCallId: 'history-1', status: 'completed' }],
+        kind: 'live-process',
+        item: { type: 'tool', toolCallId: 'history-1', status: 'completed' },
       },
     ]);
   });

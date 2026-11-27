@@ -1,0 +1,45 @@
+.monokai-code {
+  background: var(--monokai-background);
+  color: var(--monokai-foreground);
+  color-scheme: dark;
+  scrollbar-color: var(--monokai-scrollbar-thumb) var(--monokai-background);
+}
+
+.monokai-code .monokai-code__source :is(.hljs-comment, .hljs-quote) {
+  color: var(--monokai-comment);
+}
+
+.monokai-code .monokai-code__source :is(.hljs-keyword, .hljs-operator, .hljs-selector-tag, .hljs-tag, .hljs-name) {
+  color: var(--monokai-keyword);
+}
+
+.monokai-code .monokai-code__source :is(.hljs-string, .hljs-regexp, .hljs-doctag) {
+  color: var(--monokai-string);
+}
+
+.monokai-code .monokai-code__source :is(.hljs-number, .hljs-literal) {
+  color: var(--monokai-number);
+}
+
+.monokai-code .monokai-code__source :is(
+  .hljs-title, .hljs-section, .hljs-attr, .hljs-attribute, .hljs-selector-class, .hljs-selector-id
+) {
+  color: var(--monokai-function);
+}
+
+.monokai-code .monokai-code__source :is(.hljs-type, .hljs-title.class_) {
+  color: var(--monokai-type);
+  font-style: italic;
+}
+
+.monokai-code .monokai-code__source :is(.hljs-built_in, .hljs-builtin-name) {
+  color: var(--monokai-type);
+}
+
+.monokai-code .monokai-code__source :is(.hljs-params, .hljs-meta, .hljs-symbol) {
+  color: var(--monokai-parameter);
+}
+
+.monokai-code .monokai-code__source :is(.hljs-subst, .hljs-punctuation) {
+  color: var(--monokai-foreground);
+}

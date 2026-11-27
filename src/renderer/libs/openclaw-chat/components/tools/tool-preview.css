@@ -1,0 +1,133 @@
+.tool-output-bubble--preview {
+  background: var(--justdo-chat-thinking-bg, rgba(0, 0, 0, 0.05));
+  border-radius: 0 8px 8px 8px;
+}
+
+.tool-output-bubble--preview .tool-output-copy {
+  z-index: 1;
+}
+
+.tool-output-bubble.tool-output-bubble--preview > .tool-output-preview-text {
+  box-sizing: border-box;
+  max-height: none;
+  padding: 8px 40px 6px 10px;
+  color: var(--justdo-chat-text-secondary, #64748b);
+  font: 12px/1.5 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  white-space: pre-wrap;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
+.tool-output-bubble--preview > .tool-output-preview-text[data-preview-collapsed] {
+  max-height: calc(var(--tool-output-preview-lines) * 1lh + 14px);
+  overflow: hidden;
+  overflow-anchor: none;
+}
+
+.thinking-content__disclosure.tool-output-preview-disclosure {
+  position: relative;
+  height: auto;
+  padding-block-end: 2px;
+}
+
+.tool-output-preview-disclosure:has(.tool-output-preview-toggle[aria-expanded='false'])::before {
+  position: absolute;
+  inset: -0.7em 0 100%;
+  background: linear-gradient(transparent, var(--justdo-chat-thinking-bg, #f5f6f8));
+  content: '';
+  pointer-events: none;
+}
+
+.tool-output-preview-disclosure .tool-output-preview-toggle {
+  position: relative;
+  bottom: auto;
+  width: 36px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+}
+
+.tool-output-preview-disclosure .tool-output-preview-toggle:hover {
+  background: color-mix(in srgb, var(--justdo-chat-accent, #6366f1) 8%, transparent);
+}
+
+.tool-output-terminal-input {
+  position: relative;
+}
+
+.tool-output-bubble.tool-output-bubble--terminal .tool-output-terminal-command {
+  position: relative;
+  max-height: 240px;
+  margin: 0;
+  padding: 7px 16px;
+  padding-inline-start: 37px;
+  border-block-start: 1px solid #414339;
+  border-radius: 0;
+  color: var(--terminal-path);
+  font: 12px/1.65 Menlo, Monaco, Consolas, 'Cascadia Mono', monospace;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow: auto;
+}
+
+.tool-output-bubble.tool-output-bubble--terminal .tool-output-terminal-input[data-copyable] > pre {
+  padding-inline-end: 42px;
+}
+
+.tool-output-terminal-input > :is(.tool-output-copy, .tool-output-feedback) {
+  z-index: 1;
+}
+
+.tool-output-terminal-command > code {
+  font: inherit;
+}
+
+.tool-output-terminal-command :is(.hljs-comment, .hljs-quote) {
+  color: var(--terminal-muted);
+}
+
+.tool-output-terminal-command :is(.hljs-keyword, .hljs-selector-tag) {
+  color: #ff6188;
+}
+
+.tool-output-terminal-command :is(.hljs-string, .hljs-regexp, .hljs-title, .hljs-type) {
+  color: var(--terminal-file);
+}
+
+.tool-output-terminal-command :is(.hljs-number, .hljs-literal) {
+  color: var(--terminal-number);
+}
+
+.tool-output-terminal-command :is(.hljs-built_in, .hljs-builtin-name, .hljs-attr, .hljs-meta) {
+  color: var(--terminal-path);
+}
+
+.tool-output-bubble--terminal > .tool-output-terminal-input + .tool-output-terminal {
+  position: relative;
+  border-block-start: 1px solid #414339;
+  padding-top: 9px;
+  padding-inline-start: 37px;
+}
+
+.process-tool-preview .tool-output-bubble > pre.tool-output-terminal {
+  box-sizing: border-box;
+  max-height: min(240px, 40vh);
+}
+
+.tool-output-terminal-marker {
+  position: absolute;
+  inset-block-start: 0.85em;
+  inset-inline-start: 14px;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.45;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  user-select: none;
+}
+
+.tool-output-terminal > .tool-output-terminal-marker {
+  color: var(--terminal-muted);
+}

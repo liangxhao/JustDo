@@ -55,6 +55,28 @@ const chat = (
 const items = (view: ChromeExtensionStream) => view.project().turns.flatMap(turn => turn.items);
 
 describe('extension live projection', () => {
+  it('interrupts only current live items when the exact native run fails', () => {
+    const view = new ChromeExtensionStream('one');
+    view.setHistory(history([
+      { type: 'toolCall', toolUseId: 'earlier-tool', status: 'inProgress' },
+      { type: 'phaseBoundary' },
+    ]));
+    view.bindRun('run-1');
+    view.accept(agent(1, 'thinking', { text: 'Thinking in the new phase' }));
+
+    view.markFailed('old-run');
+    expect(view.project().turns[0].processMode).toBe('live');
+    view.markFailed('run-1');
+
+    expect(view.project().turns[0].processMode).toBe('failed');
+    expect(items(view)).toMatchObject([
+      { type: 'userMessage' },
+      { type: 'toolCall', toolUseId: 'earlier-tool', status: 'inProgress' },
+      { type: 'phaseBoundary' },
+      { type: 'reasoning', status: 'interrupted' },
+    ]);
+  });
+
   it('retains the structured question result for the browser presentation', () => {
     const questionResult = {
       version: 1,

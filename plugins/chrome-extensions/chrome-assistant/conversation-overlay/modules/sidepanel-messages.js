@@ -2,13 +2,17 @@ import {
   isIncompleteFileLinkSource,
   messageCopyText,
   pendingInputLabel,
+  processDetailLabels,
   renderRichContent,
+  renderThinkingMarkdown,
   retryRichImages,
 } from './sidepanel-rich-content.js';
 import { createCopyController } from './sidepanel-copy.js';
 import { sidePanelText as t } from './sidepanel-i18n.js';
-import { toolInputSummary } from './sidepanel-state.js';
-import { renderMarkdownHtml } from './sidepanel-markdown.js';
+import { toolDisplayTitle, toolInputSummary } from './sidepanel-state.js';
+
+const THINKING_PREVIEW_LINES = 10;
+let nextThinkingBodyId = 0;
 
 function reconcileChildren(parent, nodes) {
   const retained = new Set(nodes);
@@ -39,6 +43,7 @@ export function createMessageRenderer(
 ) {
   const document = container.ownerDocument;
   const copyController = createCopyController(container);
+  const processLabels = processDetailLabels();
   const scopes = new Map();
   let currentScope = '';
   let scopeState = null;
@@ -228,6 +233,7 @@ export function createMessageRenderer(
       return;
     }
     expectedScrollTop = null;
+    const wasFollowing = following;
     following = following
       ? nearBottom()
       : container.scrollHeight - container.scrollTop - container.clientHeight <= 2;
@@ -235,11 +241,13 @@ export function createMessageRenderer(
       scopeState.following = following;
       scopeState.scrollTop = container.scrollTop;
     }
+    if (following && !wasFollowing) refreshLiveThinking();
     showLatestButton();
   };
   const onLatest = () => {
     following = true;
     if (scopeState) scopeState.following = true;
+    refreshLiveThinking();
     setScroll(container.scrollHeight);
     showLatestButton();
   };
@@ -268,6 +276,12 @@ export function createMessageRenderer(
       ? new ResizeObserver(() => {
           if (following) setScroll(container.scrollHeight);
           showLatestButton();
+        })
+      : null;
+  const thinkingResizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(entries => {
+          for (const { target } of entries) updateThinkingPreview(target);
         })
       : null;
 
@@ -309,6 +323,61 @@ export function createMessageRenderer(
     return details;
   }
 
+  function updateThinkingPreview(content) {
+    if (!container.contains(content) || !content.getBoundingClientRect().width) return;
+    const viewport = content.parentElement;
+    const toggle = viewport.nextElementSibling;
+    const thinking = content.closest('.process-thinking');
+    const preview = content.preview;
+    const lineHeight = Number.parseFloat(document.defaultView.getComputedStyle(content).lineHeight);
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) return;
+    const overflow = Math.max(0, content.scrollHeight - lineHeight * THINKING_PREVIEW_LINES);
+    toggle.hidden = overflow <= 1 && !preview.expanded;
+    if (!preview.expanded && preview.tail &&
+      (preview.settleTail || (following && thinking.dataset.status === 'running'))) {
+      preview.offset = overflow;
+    }
+    preview.settleTail = false;
+    preview.offset = Math.min(preview.offset, overflow);
+    viewport.scrollTop = preview.expanded ? 0 : preview.offset;
+    viewport.classList.toggle('has-hidden-prefix', !preview.expanded && preview.offset > 0);
+  }
+
+  function refreshLiveThinking() {
+    for (const content of container.querySelectorAll(
+      '.process-live .process-thinking[data-status="running"] .message-detail',
+    )) {
+      updateThinkingPreview(content);
+    }
+  }
+
+  function patchThinkingDisclosure(content, expanded) {
+    const viewport = content.parentElement;
+    const toggle = viewport.nextElementSibling;
+    content.preview.expanded = expanded;
+    viewport.classList.toggle('is-expanded', expanded);
+    const label = expanded ? processLabels.thinkingCollapse : processLabels.thinkingExpand;
+    toggle.setAttribute('aria-expanded', String(expanded));
+    toggle.setAttribute('aria-label', label);
+    toggle.title = label;
+  }
+
+  function setThinkingExpanded(content, expanded) {
+    const viewport = content.parentElement;
+    const bubble = viewport.parentElement;
+    const toggle = viewport.nextElementSibling;
+    const preview = content.preview;
+    if (preview.expanded === expanded) return;
+    const anchor = expanded ? bubble : toggle;
+    const previousTop = anchor.getBoundingClientRect().top;
+    pauseFollowing();
+    preview.settleTail = !expanded && preview.tail;
+    patchThinkingDisclosure(content, expanded);
+    updateThinkingPreview(content);
+    setScroll(container.scrollTop + anchor.getBoundingClientRect().top - previousTop);
+    showLatestButton();
+  }
+
   function patchThinking(row, process) {
     let thinking = row.firstElementChild;
     if (!thinking) {
@@ -321,19 +390,53 @@ export function createMessageRenderer(
       marker.setAttribute('aria-hidden', 'true');
       const heading = document.createElement('strong');
       headingRow.append(marker, heading);
+      const bubble = document.createElement('div');
+      bubble.className = 'process-thinking-bubble';
+      const viewport = document.createElement('div');
+      viewport.className = 'process-thinking-viewport';
+      viewport.style.setProperty('--thinking-preview-lines', String(THINKING_PREVIEW_LINES));
       const content = document.createElement('div');
       content.className = 'message-detail markdown-content';
-      thinking.append(headingRow, content);
+      content.id = `thinking-body-${++nextThinkingBodyId}`;
+      content.preview = { expanded: false, tail: false, settleTail: false, offset: 0 };
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'process-thinking-toggle';
+      toggle.hidden = true;
+      toggle.setAttribute('aria-controls', content.id);
+      toggle.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg>';
+      toggle.addEventListener('click', () => setThinkingExpanded(content, !content.preview.expanded));
+      viewport.addEventListener('focusin', () => {
+        if (!toggle.hidden) setThinkingExpanded(content, true);
+      });
+      viewport.append(content);
+      bubble.append(viewport, toggle);
+      thinking.append(headingRow, bubble);
       row.append(thinking);
+      thinkingResizeObserver?.observe(content);
     }
     thinking.querySelector('strong').textContent = process.title;
     const content = thinking.querySelector('.message-detail');
-    if (content.sourceText !== process.text) {
+    const status = toolStatus(process);
+    const previousStatus = thinking.dataset.status;
+    const text = process.text || '';
+    const textChanged = content.sourceText !== text;
+    thinking.dataset.status = status;
+    if (textChanged) {
+      if (content.sourceText === undefined || !text.startsWith(content.sourceText)) {
+        content.preview.tail = status === 'running';
+        content.preview.settleTail = content.preview.tail;
+        content.preview.offset = 0;
+        patchThinkingDisclosure(content, false);
+      }
       copyController.invalidate(content);
-      content.innerHTML = renderMarkdownHtml(process.text || '');
-      content.sourceText = process.text;
+      renderThinkingMarkdown(content, text);
+      content.sourceText = text;
     }
-    thinking.dataset.status = toolStatus(process);
+    if (previousStatus === 'running' && status !== 'running' && following) {
+      content.preview.settleTail = true;
+    }
+    if (textChanged || previousStatus !== status) updateThinkingPreview(content);
   }
 
   function patchTool(row, process, key) {
@@ -345,10 +448,11 @@ export function createMessageRenderer(
       summary.className = 'process-tool-title';
       const status = document.createElement('span');
       status.className = 'process-tool-status';
+      status.setAttribute('role', 'img');
       const name = document.createElement('strong');
       const input = document.createElement('span');
       input.className = 'process-tool-input';
-      summary.append(status, name, input);
+      summary.prepend(status, name, input);
       const progress = document.createElement('div');
       progress.className = 'process-tool-progress';
       tool.append(progress);
@@ -380,8 +484,8 @@ export function createMessageRenderer(
     progress.textContent = normalizedStatus === 'running' ? process.progressText || '' : '';
     progress.hidden = !progress.textContent;
     for (const [name, heading, value] of [
-      ['input', t('input'), process.input],
-      ['output', t(process.isError ? 'error' : 'output'), process.output],
+      ['input', processLabels.toolInput, process.input],
+      ['output', processLabels.toolResult, process.output],
     ]) {
       const section = tool.querySelector(`[data-section="${name}"]`);
       section.hidden = !value;
@@ -409,10 +513,7 @@ export function createMessageRenderer(
     return row;
   }
 
-  function summaryLabel(entry) {
-    const thinkingCount =
-      entry.thinkingCount ?? entry.items.filter(item => item.type === 'thinking').length;
-    const toolCount = entry.toolCount ?? entry.items.filter(item => item.type === 'tool').length;
+  function summaryLabel(thinkingCount, toolCount) {
     return thinkingCount && toolCount
       ? t('thinkingToolsSummary', { thinkingCount, toolCount })
       : t(thinkingCount ? 'thinkingSummary' : 'toolSummary', { count: thinkingCount || toolCount });
@@ -423,13 +524,18 @@ export function createMessageRenderer(
     const summary = node.firstElementChild;
     summary.className = 'process-summary';
     summary.dataset.processSummaryKey = key;
-    const icon = document.createElement('span');
-    icon.className = 'process-summary-icon';
-    icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = '⌁';
-    const label = document.createElement('span');
-    label.className = 'process-summary-label';
-    summary.prepend(icon, label);
+    const metrics = document.createElement('span');
+    metrics.className = 'process-summary-metrics';
+    metrics.setAttribute('aria-hidden', 'true');
+    for (const kind of ['thinking', 'tool']) {
+      const metric = document.createElement('span');
+      metric.className = 'process-summary-metric';
+      const count = document.createElement('span');
+      count.className = 'process-summary-count';
+      metric.append(kind === 'thinking' ? t('thinking') : toolDisplayTitle('tool'), count);
+      metrics.append(metric);
+    }
+    summary.prepend(metrics);
     const list = document.createElement('ol');
     list.className = 'process-items';
     node.append(list);
@@ -439,8 +545,16 @@ export function createMessageRenderer(
   function patchProcessSummary(node, entry, key) {
     setDisclosureOpen(node, disclosureOpen(key, 'summary'));
     const summary = node.firstElementChild;
-    const label = summaryLabel(entry);
-    summary.querySelector('.process-summary-label').textContent = label;
+    const thinkingCount =
+      entry.thinkingCount ?? entry.items.filter(item => item.type === 'thinking').length;
+    const toolCount = entry.toolCount ?? entry.items.filter(item => item.type === 'tool').length;
+    const metrics = summary.firstElementChild.children;
+    for (const [index, count] of [thinkingCount, toolCount].entries()) {
+      const metric = metrics[index];
+      metric.hidden = !count;
+      metric.lastElementChild.textContent = count || '';
+    }
+    const label = summaryLabel(thinkingCount, toolCount);
     summary.setAttribute(
       'aria-label',
       `${label} · ${t(node.open ? 'closeProcessDetails' : 'openProcessDetails')}`,
@@ -677,6 +791,25 @@ export function createMessageRenderer(
     });
   }
 
+  function foldedProcessTrigger(entries, itemKey, prefix = '', collapsedTrigger = null) {
+    for (const [index, entry] of entries.entries()) {
+      const key = entryKey(entry, `${prefix}${index}`);
+      if (
+        entry.role === 'process' &&
+        entry.items.some((item, itemIndex) => processKey(item, key, itemIndex) === itemKey)
+      ) return collapsedTrigger ?? entryNodes.get(key)?.firstElementChild;
+      if (entry.role !== 'completed-process') continue;
+      const details = entryNodes.get(key);
+      // A closed history wrapper may never have mounted its inner disclosures.
+      const trigger = foldedProcessTrigger(
+        entry.items, itemKey, `${key}/`,
+        collapsedTrigger ?? (details?.open ? null : details?.firstElementChild),
+      );
+      if (trigger) return trigger;
+    }
+    return null;
+  }
+
   const view = {
     render(entries, scope) {
       rememberDisclosures();
@@ -693,6 +826,7 @@ export function createMessageRenderer(
         processSummariesExpanded = false;
         entryNodes = new Map();
         processRows = new Map();
+        thinkingResizeObserver?.disconnect();
         interactionAnchor = null;
         container.replaceChildren();
       }
@@ -700,6 +834,7 @@ export function createMessageRenderer(
       updateProcessDetailsButton();
       const focused =
         !changedScope && container.contains(document.activeElement) ? document.activeElement : null;
+      const focusedLiveItem = focused?.closest('.process-live [data-item-key]')?.dataset.itemKey;
       const anchor = interactionAnchor ?? (following ? null : captureReadingAnchor());
       interactionAnchor = null;
       const previousScrollTop = container.scrollTop;
@@ -739,15 +874,20 @@ export function createMessageRenderer(
       const itemKeys = new Set();
       retainKeys(entries, entryKeys, itemKeys);
       for (const key of entryNodes.keys()) if (!entryKeys.has(key)) entryNodes.delete(key);
-      for (const key of processRows.keys()) if (!itemKeys.has(key)) processRows.delete(key);
+      for (const [key, row] of processRows) {
+        if (itemKeys.has(key)) continue;
+        const thinkingContent = row.querySelector('.process-thinking .message-detail');
+        if (thinkingContent) thinkingResizeObserver?.unobserve(thinkingContent);
+        processRows.delete(key);
+      }
       // A retained node may move from the live lane into a newly mounted
       // history wrapper. Preserve keyboard reading when it stays visible.
-      if (
-        focused?.isConnected &&
-        document.activeElement !== focused &&
-        isDisclosureTargetVisible(focused)
-      )
-        focused.focus({ preventScroll: true });
+      if (focused?.isConnected && isDisclosureTargetVisible(focused)) {
+        if (document.activeElement !== focused) focused.focus({ preventScroll: true });
+      } else if (focusedLiveItem &&
+        (document.activeElement === document.body || document.activeElement === focused)) {
+        foldedProcessTrigger(entries, focusedLiveItem)?.focus({ preventScroll: true });
+      }
       resizeObserver?.disconnect();
       for (const node of nodes) resizeObserver?.observe(node);
       if (following) setScroll(container.scrollHeight);
@@ -766,6 +906,7 @@ export function createMessageRenderer(
       currentScope = '';
       copyController.dispose();
       resizeObserver?.disconnect();
+      thinkingResizeObserver?.disconnect();
       container.removeEventListener('wheel', onWheel);
       container.removeEventListener('touchstart', onTouchStart);
       container.removeEventListener('touchmove', onTouchMove);

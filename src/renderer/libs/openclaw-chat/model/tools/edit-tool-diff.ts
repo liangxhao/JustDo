@@ -1,11 +1,11 @@
 export type EditToolReplacement = {
-  oldText: string;
-  newText: string;
+  readonly oldText: string;
+  readonly newText: string;
 };
 
 export type EditToolDiff = {
-  path: string | null;
-  edits: EditToolReplacement[];
+  readonly path: string | null;
+  readonly edits: readonly EditToolReplacement[];
 };
 
 export type EditDiffLine = {
@@ -42,13 +42,21 @@ const MAX_RENDERED_DIFF_LINES = 600;
 const MAX_RENDERED_DIFF_HUNKS = 40;
 const DIFF_CONTEXT_LINES = 3;
 
+// Live and historical projections replace native argument snapshots as a whole.
+const parsedEditDiffs = new WeakMap<Record<string, unknown>, EditToolDiff | null>();
+const editDiffViews = new WeakMap<EditToolDiff, EditDiffView>();
+
+export const EDIT_OLD_TEXT_FIELDS = ['oldText', 'old_string', 'oldString', 'old_str'] as const;
+export const EDIT_NEW_TEXT_FIELDS = ['newText', 'new_string', 'newString', 'new_str'] as const;
+export const EDIT_PATH_FIELDS = ['path', 'file_path', 'filePath', 'file'] as const;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
 }
 
-function readString(record: Record<string, unknown>, keys: string[]): string | null {
+function readString(record: Record<string, unknown>, keys: readonly string[]): string | null {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === 'string') return value;
@@ -70,8 +78,8 @@ function parseEdits(value: unknown): unknown[] | null {
 function parseReplacement(value: unknown): EditToolReplacement | null {
   const record = asRecord(value);
   if (!record) return null;
-  const oldText = readString(record, ['oldText', 'old_string', 'oldString', 'old_str']);
-  const newText = readString(record, ['newText', 'new_string', 'newString', 'new_str']);
+  const oldText = readString(record, EDIT_OLD_TEXT_FIELDS);
+  const newText = readString(record, EDIT_NEW_TEXT_FIELDS);
   return oldText !== null && newText !== null ? { oldText, newText } : null;
 }
 
@@ -84,7 +92,14 @@ export function parseEditToolDiff(toolName: string, input: unknown): EditToolDif
   if (!isEditToolName(toolName)) return null;
   const record = asRecord(input);
   if (!record) return null;
+  const cached = parsedEditDiffs.get(record);
+  if (cached !== undefined) return cached;
+  const diff = readEditToolDiff(record);
+  parsedEditDiffs.set(record, diff);
+  return diff;
+}
 
+function readEditToolDiff(record: Record<string, unknown>): EditToolDiff | null {
   const edits: EditToolReplacement[] = [];
   if (record.edits !== undefined) {
     const declaredEdits = parseEdits(record.edits);
@@ -94,22 +109,14 @@ export function parseEditToolDiff(toolName: string, input: unknown): EditToolDif
     edits.push(...(parsedEdits as EditToolReplacement[]));
   }
 
-  const declaresLegacyEdit = [
-    'oldText',
-    'old_string',
-    'oldString',
-    'old_str',
-    'newText',
-    'new_string',
-    'newString',
-    'new_str',
-  ].some(key => record[key] !== undefined);
+  const declaresLegacyEdit = [...EDIT_OLD_TEXT_FIELDS, ...EDIT_NEW_TEXT_FIELDS]
+    .some(key => record[key] !== undefined);
   const legacyEdit = parseReplacement(record);
   if (declaresLegacyEdit && !legacyEdit) return null;
   if (legacyEdit) edits.push(legacyEdit);
   if (edits.length === 0) return null;
 
-  const rawPath = readString(record, ['path', 'file_path', 'filePath', 'file']);
+  const rawPath = readString(record, EDIT_PATH_FIELDS);
   return {
     path: rawPath?.trim() || null,
     edits,
@@ -281,6 +288,8 @@ function renderedEditIndexes(editCount: number): Set<number> {
 }
 
 export function buildEditDiffView(diff: EditToolDiff): EditDiffView {
+  const cached = editDiffViews.get(diff);
+  if (cached) return cached;
   const visibleIndexes = renderedEditIndexes(diff.edits.length);
   const perHunkLineBudget = Math.max(
     1,
@@ -307,13 +316,15 @@ export function buildEditDiffView(diff: EditToolDiff): EditDiffView {
     });
   });
 
-  return {
+  const view = {
     hunks,
     totalEditCount: diff.edits.length,
     omittedEditCount: diff.edits.length - hunks.length,
     addedCount,
     removedCount,
   };
+  editDiffViews.set(diff, view);
+  return view;
 }
 
 export function buildEditSplitDiffRows(lines: EditDiffLine[]): EditSplitDiffRow[] {

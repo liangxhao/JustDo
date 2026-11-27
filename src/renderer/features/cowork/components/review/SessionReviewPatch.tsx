@@ -1,8 +1,12 @@
-import hljs from 'highlight.js/lib/common';
-import { useMemo, useState } from 'react';
+import '@/shared/editor/vscode-code.css';
 
-import { resolveEditDiffLanguage } from '@/libs/openclaw-chat/components/tools/edit-diff-monaco';
+import hljs from 'highlight.js/lib/common';
+import { type CSSProperties, useMemo, useState } from 'react';
+
 import { i18nService } from '@/services/i18n';
+import { highlightRegisteredCode } from '@/shared/editor/code-highlighting';
+import { resolveFileCodeLanguage } from '@/shared/editor/file-code-language';
+import { VS_CODE_MONOKAI_CSS_VARIABLES } from '@/shared/editor/vscode-code-theme';
 
 import { parseReviewPatch, type ReviewLine, splitReviewLines } from './parseReviewPatch';
 
@@ -31,7 +35,7 @@ export default function SessionReviewPatch({
     };
   }, [parsed]);
   const [limit, setLimit] = useState(200);
-  const language = resolveEditDiffLanguage(path);
+  const language = resolveFileCodeLanguage(path);
   const visible = parsed.lines.slice(0, limit);
   const highlighted = useMemo(() => {
     const result = new Map<ReviewLine, string>();
@@ -40,7 +44,7 @@ export default function SessionReviewPatch({
         if (line.kind !== 'hunk' && line.kind !== 'note')
           result.set(
             line,
-            hljs.highlight(line.text.slice(0, 4000), { language, ignoreIllegals: true }).value,
+            highlightRegisteredCode(hljs, line.text.slice(0, 4000), language),
           );
       }
     }
@@ -80,8 +84,11 @@ export default function SessionReviewPatch({
     );
   };
   return (
-    <div className={`review-patch ${wrap ? 'review-wrap' : ''}`}>
-      <div className={split ? 'review-split-grid' : undefined}>
+    <div
+      className={`review-patch monokai-code${wrap ? ' review-wrap' : ''}`}
+      style={VS_CODE_MONOKAI_CSS_VARIABLES as CSSProperties}
+    >
+      <div className={split ? 'monokai-code__source review-split-grid' : 'monokai-code__source'}>
         {split
           ? splitReviewLines(visible).map((row, index) =>
               row.header ? (

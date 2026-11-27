@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { sidePanelText as t } from '../conversation-overlay/modules/sidepanel-i18n.js';
 import { createMessageRenderer } from '../conversation-overlay/modules/sidepanel-messages.js';
+import { processDetailLabels } from '../conversation-overlay/modules/sidepanel-rich-content.js';
 import { messagesFromThread } from '../conversation-overlay/modules/sidepanel-state.js';
 import { ChromeExtensionStream } from '../conversation-overlay/modules/sidepanel-stream.js';
 
@@ -39,6 +40,7 @@ const live = (item: Record<string, unknown>) => ({
   key: `live:${item.key}`,
   item,
 });
+const processLabels = processDetailLabels();
 
 describe('side panel process presentation matches the desktop', () => {
   let renderer: ReturnType<typeof createMessageRenderer>;
@@ -464,6 +466,26 @@ describe('side panel process presentation matches the desktop', () => {
     expect(messages.querySelectorAll('.process-summary-group[open]')).toHaveLength(0);
   });
 
+  it('shows compact counts in one accessible summary and omits empty metrics', () => {
+    renderer.render([
+      process('both', [thinking('one'), thinking('two'), tool('one')]),
+      process('thinking-only', [thinking('three')]),
+      process('tool-only', [tool('two')]),
+    ], 'one');
+    const counts = (key: string) => [...summary(key).querySelectorAll('.process-summary-metric:not([hidden])')]
+      .map(metric => [metric.firstChild?.textContent, metric.lastElementChild?.textContent]);
+    expect(counts('both')).toEqual([[t('thinking'), '2'], [t('tool'), '1']]);
+    expect(counts('thinking-only')).toEqual([[t('thinking'), '1']]);
+    expect(counts('tool-only')).toEqual([[t('tool'), '1']]);
+    expect(summary('both').textContent).not.toContain('×');
+    expect(summary('both').getAttribute('aria-label')).toBe(
+      `${t('thinkingToolsSummary', { thinkingCount: 2, toolCount: 1 })} · ${t('openProcessDetails')}`,
+    );
+    expect(summary('both').getAttribute('aria-expanded')).toBe('false');
+    summary('both').click();
+    expect(summary('both').getAttribute('aria-expanded')).toBe('true');
+  });
+
   it('shows live Thinking and Tool directly and preserves focused raw readers while their output grows', () => {
     const currentThinking = thinking('live', 'running');
     const currentTool = tool('live', 'inProgress', 'First result');
@@ -492,6 +514,55 @@ describe('side panel process presentation matches the desktop', () => {
     expect(output.textContent).toBe('Second result');
   });
 
+  it('previews long live Thinking, preserves the expansion across fold, and keeps short Thinking directly readable', () => {
+    const thought = thinking('long', 'running');
+    renderer.render([live(thought)], 'one');
+    const body = messages.querySelector<HTMLElement>('.process-thinking .message-detail')!;
+    const button = messages.querySelector<HTMLButtonElement>('.process-thinking-toggle')!;
+    const viewport = body.parentElement!;
+    expect(button.hidden).toBe(true);
+    body.style.lineHeight = '20px';
+    vi.spyOn(body, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 220, 500));
+    const height = vi.spyOn(body, 'scrollHeight', 'get').mockReturnValue(500);
+    const updated = { ...thought, text: `${thought.text}\n${'More text\n'.repeat(24)}` };
+    renderer.render([live(updated)], 'one');
+    expect(button.hidden).toBe(false);
+    expect(button.getAttribute('aria-controls')).toBe(body.id);
+    expect(viewport.scrollTop).toBe(300);
+    expect(button.getAttribute('aria-label')).toBe(processLabels.thinkingExpand);
+    button.click();
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+    expect(viewport.scrollTop).toBe(0);
+
+    button.focus();
+    renderer.render([process('folded', [{ ...updated, status: 'completed' }]), answer('after', 'Answer')], 'one');
+    expect(document.activeElement).toBe(summary('folded'));
+    expect(disclosure('folded').open).toBe(false);
+    summary('folded').click();
+    expect(messages.querySelector('.process-thinking-toggle')).toBe(button);
+    expect(button.getAttribute('aria-label')).toBe(processLabels.thinkingCollapse);
+    button.click();
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(viewport.scrollTop).toBe(300);
+    button.click();
+    height.mockReturnValue(20);
+    renderer.render([
+      process('folded', [{ ...thought, status: 'completed', text: 'Corrected native thought' }]),
+      answer('after', 'Answer'),
+    ], 'one');
+    expect(body.textContent).toBe('Corrected native thought\n');
+    expect(button.hidden).toBe(true);
+    expect(button.getAttribute('aria-expanded')).toBe('false');
+    expect(viewport.scrollTop).toBe(0);
+  });
+
+  it('keeps oversized Thinking as complete escaped text', () => {
+    const text = '## Markdown\n' + '<example>\n'.repeat(5000);
+    renderer.render([live({ ...thinking('large'), text })], 'one');
+    expect(messages.querySelector('.process-thinking-plain')?.textContent).toBe(text);
+    expect(messages.querySelector('.process-thinking h2, .process-thinking example')).toBeNull();
+  });
+
   it('shows the Exec input title before progress and keeps the raw input available', () => {
     const input = { title: 'Run\n tests', command: 'npm test' };
     const item = {
@@ -509,19 +580,23 @@ describe('side panel process presentation matches the desktop', () => {
     expect(messages.querySelector('.process-tool-input')?.textContent).toBe('Run tests');
     expect(messages.querySelector('.process-tool-progress')?.textContent).toBe(item.progressText);
     expect(messages.querySelector('[data-section="input"] pre')?.textContent).toBe(item.input);
+    expect(messages.querySelector('[data-section="input"] strong')?.textContent).toBe(processLabels.toolInput);
   });
 
   it('retains the same raw Tool reader and choice when live content becomes a summary and later enters completed history', () => {
     const item = tool('same-source', 'inProgress');
     renderer.render([live(item)], 'one');
     const reader = messages.querySelector<HTMLDetailsElement>('.process-tool')!;
-    reader.querySelector<HTMLElement>('summary')!.click();
+    const title = reader.querySelector<HTMLElement>('summary')!;
+    title.click();
+    title.focus();
     const output = reader.querySelector<HTMLElement>('[data-section="output"] pre')!;
     output.scrollTop = 51;
     const settled = { ...item, status: 'completed' };
     const archived = process('summary', [settled]);
     renderer.render([archived], 'one');
     expect(disclosure('summary').open).toBe(false);
+    expect(document.activeElement).toBe(summary('summary'));
     summary('summary').click();
     expect(messages.querySelector('.process-tool')).toBe(reader);
     expect(reader.open).toBe(true);
@@ -531,6 +606,7 @@ describe('side panel process presentation matches the desktop', () => {
     expect(messages.querySelector('.process-tool')).toBe(reader);
     expect(disclosure('summary').open).toBe(true);
     expect(output.scrollTop).toBe(51);
+    expect(reader.querySelector('[data-section="output"] strong')?.textContent).toBe(processLabels.toolResult);
   });
 
   it('renders native compaction details visibly and patches the same open reader when history enriches its summary', () => {

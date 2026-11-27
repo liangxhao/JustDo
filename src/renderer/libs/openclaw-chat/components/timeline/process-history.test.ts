@@ -18,6 +18,74 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test('keeps live process rows until visible Content arrives, even if native history arrives first', async () => {
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  const base = { runId: 'active-run', firstSeq: 1, lastSeq: 2, startedAt: 1_000, updatedAt: 2_000 };
+  const thinking = { ...base, id: 'thought', type: 'thinking', status: 'completed', text: 'Checking.' } as const;
+  const tool = { ...base, id: 'tool', type: 'tool', toolCallId: 'call', name: 'exec', status: 'running' } as const;
+  const turn: AssistantTurn = {
+    id: 'active-turn', runId: base.runId, sessionId: 'session', sessionKey: 'session',
+    lifecycleGeneration: null, lastAgentSeq: 2, startedAt: 1_000,
+    status: 'running', toolById: new Map([[tool.toolCallId, tool]]), items: [thinking, tool],
+  };
+  chat.messages = [
+    { role: 'user', content: 'Run a check.' },
+    { role: 'assistant', __openclaw: { id: 'native-call', runId: base.runId }, content: [
+      { type: 'thinking', thinking: thinking.text },
+      { type: 'toolCall', id: tool.toolCallId, name: tool.name },
+    ] },
+    { role: 'toolResult', __openclaw: { id: 'native-result', runId: base.runId },
+      toolCallId: tool.toolCallId, toolName: tool.name, content: 'Done.' },
+  ];
+  chat.activeTurn = turn;
+  document.body.append(chat);
+  await chat.updateComplete;
+  const root = chat.shadowRoot!;
+  const summaries = () => [...root.querySelectorAll<HTMLDetailsElement>('.process-summary-group')];
+  const liveIds = () => [...root.querySelectorAll<HTMLElement>('[data-live-process-id]')]
+    .map(row => row.dataset.liveProcessId);
+  const toolRow = root.querySelector('[data-live-process-id="tool"]');
+  expect(liveIds()).toEqual(['thought', 'tool']);
+  expect(summaries()).toHaveLength(0);
+  expect(root.querySelector('[data-live-process-id="thought"] .chat-thinking--streaming')).toBeNull();
+
+  const completed = { ...tool, status: 'completed', output: 'Done.' } as const;
+  const completedTurn = { ...turn, toolById: new Map([[tool.toolCallId, completed]]) };
+  chat.activeTurn = { ...completedTurn, items: [thinking, completed] };
+  await chat.updateComplete;
+  expect(root.querySelector('[data-live-process-id="tool"]')).toBe(toolRow);
+  expect(liveIds()).toEqual(['thought', 'tool']);
+  expect(summaries()).toHaveLength(0);
+
+  const toolSummary = toolRow!.querySelector<HTMLElement>('summary')!;
+  toolSummary.focus();
+  expect(root.activeElement).toBe(toolSummary);
+
+  const reply = { ...base, id: 'reply', type: 'content', status: 'streaming',
+    sourceMode: 'snapshot', text: 'The check passed.' } as const;
+  const nextThought = { ...thinking, id: 'next-thought', text: 'Verifying the result.' };
+  chat.activeTurn = { ...completedTurn, items: [thinking, completed, reply, nextThought] };
+  await chat.updateComplete;
+  expect(root.textContent).toContain(reply.text);
+  expect(liveIds()).toEqual(['next-thought']);
+  expect(summaries()).toHaveLength(1);
+  const firstSummary = summaries()[0];
+  expect(firstSummary.open).toBe(false);
+  expect(root.activeElement).toBe(firstSummary.querySelector('summary'));
+  expect([...firstSummary.querySelectorAll('.process-summary__count')].map(count => count.textContent))
+    .toEqual(['1', '1']);
+  expect(root.querySelector('.completed-process')).toBeNull();
+
+  chat.activeTurn = { ...completedTurn, items: [
+    thinking, completed, reply, nextThought, { ...reply, id: 'follow-up', text: 'Verification complete.' },
+  ] };
+  await chat.updateComplete;
+  expect(liveIds()).toEqual([]);
+  expect(summaries()).toHaveLength(2);
+  expect(summaries()[0]).toBe(firstSummary);
+  expect(root.textContent).toContain('Verification complete.');
+});
+
 test('animates a newly settled live process without opening it or replacing the final answer', async () => {
   vi.stubGlobal('CSS', { supports: () => true });
   vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(1);
@@ -62,6 +130,85 @@ test('animates a newly settled live process without opening it or replacing the 
   chat.requestUpdate();
   await chat.updateComplete;
   expect(process.open).toBe(true);
+});
+
+test.each([true, false])('retains a focused tool through history takeover of the same run (%s)', async sameRun => {
+  const controller = new ChatController();
+  const sessionKey = 'agent:main:process-takeover';
+  const sessionId = 'physical-process-takeover';
+  controller.state.sessionKey = controller.state.transcript.sessionKey = sessionKey;
+  controller.state.currentSessionId = controller.state.transcript.sessionId = sessionId;
+  controller.state.initialHistoryReady = true;
+
+  const runId = 'active-run';
+  const historyRunId = sameRun ? runId : 'other-run';
+  const base = { runId, firstSeq: 1, lastSeq: 2, startedAt: 4_000, updatedAt: 5_000 };
+  const tool = {
+    ...base, id: 'live-check', type: 'tool', toolCallId: 'check-call', name: 'exec',
+    status: 'completed', input: { command: 'echo ready' }, output: 'ready',
+  } as const;
+  const answer = { ...base, id: 'live-answer', type: 'content', status: 'completed',
+    sourceMode: 'snapshot', text: 'The check passed.' } as const;
+  const user: GatewayMessage = {
+    role: 'user', content: 'Run a check.', __openclaw: { id: 'question', runId },
+  };
+  (controller as unknown as {
+    setCurrentSessionMessages(messages: GatewayMessage[], options: { resetLoadedHistory: boolean }): void;
+  }).setCurrentSessionMessages([user], { resetLoadedHistory: true });
+  controller.state.transcript.activeTurn = {
+    id: 'active-turn', runId, sessionKey, sessionId, lifecycleGeneration: null,
+    lastAgentSeq: 2, startedAt: base.startedAt, endedAt: base.updatedAt, status: 'final',
+    toolById: new Map([[tool.toolCallId, tool]]), items: [tool, answer],
+  };
+
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  chat.controller = controller;
+  document.body.append(chat);
+  try {
+    await chat.historyRenderComplete;
+    const root = chat.shadowRoot!;
+    const outerGroup = () => root.querySelector<HTMLDetailsElement>('.completed-process')!;
+    const toolDetails = () => root.querySelector<HTMLDetailsElement>('details[data-tool-identity]');
+    const liveGroup = outerGroup();
+    liveGroup.querySelector('summary')!.click();
+    liveGroup.querySelector<HTMLElement>('[data-process-summary-key]')!.click();
+    const liveToolSummary = toolDetails()!.querySelector('summary')!;
+    liveToolSummary.click();
+    liveToolSummary.focus();
+    expect(root.activeElement).toBe(liveToolSummary);
+    expect(toolDetails()?.open).toBe(true);
+
+    const authoritative: GatewayMessage[] = [
+      user,
+      { role: 'assistant', stopReason: 'toolUse', __openclaw: { id: 'history-call', runId: historyRunId },
+        content: [{ type: 'toolCall', id: tool.toolCallId, name: tool.name, arguments: tool.input }] },
+      { role: 'toolResult', toolCallId: tool.toolCallId, toolName: tool.name, content: tool.output,
+        __openclaw: { id: 'history-result', runId: historyRunId } },
+      { role: 'assistant', stopReason: 'stop', content: answer.text,
+        __openclaw: { id: 'history-answer', runId: historyRunId } },
+    ];
+    controller.state.client = {
+      request: vi.fn().mockResolvedValue({ messages: authoritative, sessionId }), stop: vi.fn(),
+    } as never;
+    controller.state.connected = true;
+    const historyGeneration = controller.state.transcript.historyGeneration;
+    expect(await controller.loadHistory(true)).toBe(true);
+    await chat.historyRenderComplete;
+
+    expect(controller.state.transcript.activeTurn).toBeNull();
+    expect(controller.state.transcript.historyGeneration).toBe(historyGeneration);
+    expect(outerGroup()).not.toBe(liveGroup);
+    expect(outerGroup().open).toBe(sameRun);
+    if (sameRun) {
+      expect(toolDetails()?.open).toBe(true);
+      expect(root.activeElement).toBe(toolDetails()?.querySelector('summary'));
+    } else {
+      expect(toolDetails()).toBeNull();
+      expect(root.activeElement).toBeNull();
+    }
+  } finally {
+    controller.disconnect();
+  }
 });
 
 // These structural tests also inspect closed rows. Request their contents through
@@ -128,7 +275,8 @@ test('archives historical Yield gaps in a single process disclosure with unknown
   await inspectProcessHistory(chat);
   expect(root.querySelectorAll('.process-summary__tool-status--unknown')).toHaveLength(2);
   expect(root.querySelector('.process-summary__tool-status--running')).toBeNull();
-  expect(root.textContent).toContain('Thinking × 2, Tool × 2');
+  expect([...root.querySelectorAll('.process-summary__metric')].map(metric => metric.textContent?.trim().replace(/\s+/g, ' ')))
+    .toEqual(['Thinking 2', 'Tool 2']);
 });
 
 function createChat(state: 'running' | 'completed' | 'failed' | 'aborted' = 'completed') {
@@ -361,7 +509,7 @@ describe('completed chat process history', () => {
       const disclosures = chat.shadowRoot!.querySelectorAll('.completed-process');
       expect(disclosures).toHaveLength(phase === 'settled' ? 2 : 1);
       if (phase === 'settled') {
-        expect(disclosures[1].textContent).toContain('Thinking × 1');
+        expect(disclosures[1].querySelector('.process-summary__metric')?.textContent).toMatch(/Thinking\s+1/u);
         expect(disclosures[1].textContent).not.toContain('Second final answer');
         expect((disclosures[1] as HTMLDetailsElement).open).toBe(false);
         chat.processSummariesExpanded = true;

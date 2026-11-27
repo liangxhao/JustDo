@@ -53,6 +53,7 @@ import {
   readAssistantFailureDetail,
   readUncoveredFailureDetail,
 } from '../turn/failed-run-message';
+import { projectProcessVisibility } from './process-visibility';
 import type {
   AppReferenceTimelineItem,
   LiveProcessTimelineItem,
@@ -245,6 +246,7 @@ function withToolMessageContext(
 export function projectPersistedTimeline(
   messages: GatewayMessage[],
   runTimings: readonly SessionRunTiming[] = [],
+  options: { groupLiveToolFamilies?: boolean } = {},
 ): PersistedTimelineItem[] {
   const projected: PersistedTimelineItem[] = [];
   let archived: Array<ThinkingItem | ToolItem> = [];
@@ -1032,6 +1034,30 @@ export function projectPersistedTimeline(
       settledSegment += 1;
     };
 
+    const pending: Array<ThinkingItem | ToolItem> = [];
+    const flushProcesses = () => {
+      // History recovery consumes this projection in native order. Only the
+      // desktop display may move a running child and its ancestors together.
+      const processes = options.groupLiveToolFamilies
+        ? projectProcessVisibility(pending, process => process.status === 'running')
+        : pending.map(process => ({ item: process, visible: process.status === 'running', toolDepth: undefined }));
+      for (const { item: process, visible, toolDepth } of processes) {
+        if (visible) {
+          flushSettled();
+          normalized.push({
+            kind: 'live-process',
+            key: `history-live:${process.id}`,
+            item: process,
+            origin: 'persisted',
+            ...(toolDepth === undefined ? {} : { toolDepth }),
+          });
+        } else {
+          settled.push(process);
+        }
+      }
+      pending.length = 0;
+    };
+
     for (const process of item.items) {
       if (process.status === 'running') {
         const latestRootTiming = toolTimingByRootRunId.get(process.runId);
@@ -1047,24 +1073,18 @@ export function projectPersistedTimeline(
         }
       }
       if (process.type === 'tool' && isQuestionPresentationTool(process)) {
+        flushProcesses();
         flushSettled();
         normalized.push({
           kind: 'question-presentation',
           key: `history-question:${process.id}`,
           item: process,
         });
-      } else if (process.status === 'running') {
-        flushSettled();
-        normalized.push({
-          kind: 'live-process',
-          key: `history-live:${process.id}`,
-          item: process,
-          origin: 'persisted',
-        });
       } else {
-        settled.push(process);
+        pending.push(process);
       }
     }
+    flushProcesses();
     flushSettled();
     return normalized;
   });

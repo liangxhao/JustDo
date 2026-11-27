@@ -14,6 +14,8 @@ import {
   extractPresentPlanPreview,
 } from '@/libs/openclaw-chat/model/turn/plan-preview';
 import { i18nService } from '@/services/i18n';
+import { resolveFileCodeLanguage, resolveWriteCodeLanguage } from '@/shared/editor/file-code-language';
+import { VS_CODE_MONOKAI_LINE_HEIGHT } from '@/shared/editor/vscode-code-theme';
 
 import {
   questionPresentationResponse,
@@ -35,7 +37,6 @@ import {
   type EditDiffViewHunk,
   type EditSplitDiffRow,
   type EditToolDiff,
-  parseEditToolDiff,
 } from '../../model/tools/edit-tool-diff';
 import { fileToolCode, fileToolPatch } from '../../model/tools/file-tool-presentation';
 import { projectProgressReceipt } from '../../model/tools/progress-receipt';
@@ -45,7 +46,7 @@ import {
 } from '../../model/tools/spawn-tool-target';
 import { asToolRecord } from '../../model/tools/tool-message-adapter';
 import {
-  toolNesting,
+  projectProcessNesting,
   toolOperation,
   toolOutcome,
   toolTarget,
@@ -62,9 +63,16 @@ import {
   renderStreamingThinkingGroup,
 } from '../message/message-render';
 import { renderThinkingContent, type ThinkingContentRenderer } from '../message/thinking-content';
-import { getCodeModeSource } from '../tools/code-mode-presentation';
-import { type EditDiffMonacoData, resolveEditDiffLanguage } from '../tools/edit-diff-monaco';
+import type { EditDiffMonacoData } from '../tools/edit-diff-monaco';
 import { resolveToolDisplay } from '../tools/tool-display';
+import {
+  projectToolInlinePreview,
+  readableToolValue,
+  type ToolInlinePreview,
+  toolInputText,
+  toolResultText,
+} from '../tools/tool-inline-preview';
+import { type ToolResultScope, withToolResultScope } from '../tools/tool-result-scope';
 import { renderCompactionMessage } from './compaction-divider';
 import { disclosureContent } from './disclosure-content';
 import { REVIEW_OPEN_EVENT } from './review-navigation';
@@ -88,44 +96,35 @@ function summaryLabel(item: ProcessSummaryTimelineItem): string {
   return '';
 }
 
-function readableValue(value: unknown): string {
-  if (typeof value === 'string') return value;
-  if (value === undefined) return '';
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function toolResult(tool: ToolItem): string {
-  if (tool.status === 'running' && tool.progressText) return tool.progressText;
-  if (tool.output !== undefined) return readableValue(tool.output);
-  if (tool.error !== undefined) return readableValue(tool.error);
-  return i18nService.t('coworkToolNoOutput');
-}
-
-function hasToolResult(tool: ToolItem): boolean {
-  return (
-    tool.status !== 'running' ||
-    tool.output !== undefined ||
-    tool.error !== undefined ||
-    Boolean(tool.progressText)
-  );
+function renderSummaryMetrics(item: ProcessSummaryTimelineItem): TemplateResult {
+  const metrics = [
+    { label: i18nService.t('coworkThinkingLabel'), count: item.thinkingCount },
+    { label: resolveToolDisplay('tool').title, count: item.toolCount },
+  ];
+  return html`
+    <span class="process-summary__metrics" aria-hidden="true">
+      ${metrics.filter(metric => metric.count > 0).map(metric => html`
+        <span class="process-summary__metric">
+          <span>${metric.label}</span>
+          <span class="process-summary__count">${metric.count}</span>
+        </span>
+      `)}
+    </span>
+  `;
 }
 
 function toolSummaryInput(value: unknown): string {
-  const compact = readableValue(value).trim().replace(/\s+/g, ' ');
+  const compact = readableToolValue(value).trim().replace(/\s+/g, ' ');
   if (!compact) return '';
   return compact.length <= 160 ? compact : `${compact.slice(0, 159)}…`;
 }
 
-function toolSummary(tool: ToolItem): string {
-  if (getCodeModeSource(tool.name, tool.input) !== null) {
+function toolSummary(tool: ToolItem, preview: ToolInlinePreview | null): string {
+  if (preview?.kind === 'exec' && preview.language === 'javascript') {
     return toolSummaryInput(i18nService.t('coworkCodeMode'));
   }
-  const editDiff = parseEditToolDiff(tool.name, tool.input);
-  return toolTarget(tool) || editDiff?.path || toolSummaryInput(tool.input);
+  const path = preview?.kind === 'edit' ? preview.diff.path : preview?.kind === 'write' ? preview.path : null;
+  return toolTarget(tool) || path || toolSummaryInput(tool.input);
 }
 
 export type EditDiffMode = 'unified' | 'split';
@@ -230,13 +229,13 @@ function buildEditDiffMonacoData(
   return {
     data: {
       key: `${toolId}:${hunk.editIndex}`,
-      language: resolveEditDiffLanguage(path),
+      language: resolveFileCodeLanguage(path),
       mode,
       modified: modifiedLines.join('\n'),
       original: originalLines.join('\n'),
       lines: hunk.lines,
     },
-    height: Math.min(Math.max(visibleLineCount * 20 + 16, 76), 360),
+    height: Math.min(Math.max(visibleLineCount * VS_CODE_MONOKAI_LINE_HEIGHT + 16, 76), 360),
   };
 }
 
@@ -253,16 +252,18 @@ function renderEditDiff(
   const removedLinesLabel = i18nService
     .t('coworkEditDiffRemovedLines')
     .replace('{count}', String(view.removedCount));
+  const reviewLabel = i18nService.t('reviewOpenFile');
 
   return html`
     <section class="edit-diff" aria-label=${i18nService.t('coworkEditDiffLabel')}>
       <header class="edit-diff__header">
-        <code class="edit-diff__path" title=${diff.path ?? ''}>${diff.path ?? ''}</code>
         ${
           diff.path
             ? html`<button
                 type="button"
                 class="edit-diff__mode-button edit-diff__review"
+                title=${reviewLabel}
+                aria-label=${reviewLabel}
                 @click=${(event: Event) => {
                   event.stopPropagation();
                   const button = event.currentTarget as HTMLElement;
@@ -276,7 +277,10 @@ function renderEditDiff(
                     );
                 }}
               >
-                ${i18nService.t('reviewOpenFile')}
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M13 5h6v6m0-6-8 8" />
+                  <path d="M17 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5" />
+                </svg>
               </button>`
             : nothing
         }
@@ -288,19 +292,25 @@ function renderEditDiff(
         >
           ${(['unified', 'split'] as const).map(candidate => {
             const active = candidate === mode;
+            const label = i18nService.t(
+              candidate === 'unified' ? 'coworkEditDiffUnifiedMode' : 'coworkEditDiffSplitMode',
+            );
             return html`
               <button
                 type="button"
                 class=${`edit-diff__mode-button${active ? ' is-active' : ''}`}
+                title=${label}
+                aria-label=${label}
                 aria-pressed=${active}
                 @click=${(event: Event) => {
                   event.stopPropagation();
                   onModeChange?.(toolId, candidate);
                 }}
               >
-                ${i18nService.t(
-                  candidate === 'unified' ? 'coworkEditDiffUnifiedMode' : 'coworkEditDiffSplitMode',
-                )}
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d=${candidate === 'unified' ? 'M7 10h10m-10 4h10' : 'M12 5v14m-6-9h3m6 0h3m-12 4h3m6 0h3'} />
+                </svg>
               </button>
             `;
           })}
@@ -400,14 +410,15 @@ function renderSpawnedAgentLink(tool: ToolItem): TemplateResult | typeof nothing
 
 function renderToolDetail(
   tool: ToolItem,
-  editDiffMode: EditDiffMode,
-  onEditDiffModeChange?: EditDiffModeChangeHandler,
+  preview: ToolInlinePreview | null,
   sessionKey?: string,
+  resultScope?: ToolResultScope,
 ): TemplateResult {
-  const editDiff = parseEditToolDiff(tool.name, tool.input);
-  const inputCode = fileToolCode(tool, false);
-  const outputCode = fileToolCode(tool, true);
-  const patch = fileToolPatch(tool);
+  const raw = preview !== null;
+  const outputCode = raw ? null : fileToolCode(tool, true);
+  const patch = raw ? [] : fileToolPatch(tool);
+  const input = patch.length ? null : toolInputText(tool.input);
+  const result = raw ? tool.output ?? tool.error : outputCode?.text ?? toolResultText(tool);
   const media = (tool.presentation?.media ?? []).map(item => ({
     url: item.path,
     label:
@@ -423,7 +434,6 @@ function renderToolDetail(
           ? ('audio' as const)
           : ('document' as const),
   }));
-  const codeModeSource = getCodeModeSource(tool.name, tool.input);
   return html`
     <div class="process-summary__tool-detail">
       ${renderMessageImages(
@@ -431,48 +441,30 @@ function renderToolDetail(
         true,
       )}
       ${renderAssistantAttachments(media.filter(item => item.kind !== 'image'), undefined, sessionKey)}
+      <div class="process-summary__detail-label">${i18nService.t('coworkToolInput')}</div>
       ${
         patch.length
-          ? html`<div class="process-summary__detail-label">
-                ${i18nService.t('coworkToolInput')}
-              </div>
-              ${patch.map(
-                file =>
-                  html`<details class="file-patch" open>
-                    <summary>
-                      ${i18nService.t(`messagePatch${file.operation}`)} ·
-                      ${file.path}${file.moveTo ? html` → ${file.moveTo}` : nothing}
-                    </summary>
-                    ${file.text ? html`<justdo-tool-output .text=${file.text} language="diff"></justdo-tool-output>` : nothing}
-                  </details>`,
-              )}`
-          : nothing
+          ? patch.map(file => html`
+              <details class="file-patch" open>
+                <summary>
+                  ${i18nService.t(`messagePatch${file.operation}`)} ·
+                  ${file.path}${file.moveTo ? html` → ${file.moveTo}` : nothing}
+                </summary>
+                ${file.text ? html`<justdo-tool-output .text=${file.text} language="diff"></justdo-tool-output>` : nothing}
+              </details>`)
+          : input === null
+            ? html`<span>${i18nService.t(tool.status === 'running' ? 'messageInputPending' : 'messageNoParameters')}</span>`
+            : html`<justdo-tool-output
+                data-tool-search-source=${raw ? 'raw-input' : nothing}
+                data-tool-search-mirror=${preview && 'rawInputPath' in preview
+                  ? preview.rawInputPath?.join('.') ?? nothing
+                  : nothing}
+                data-tool-search-edit-root=${preview?.kind === 'edit' ? preview.rawInputRoot ?? nothing : nothing}
+                .text=${input}
+              ></justdo-tool-output>`
       }
       ${
-        patch.length
-          ? nothing
-          : editDiff
-            ? renderEditDiff(tool.id, editDiff, editDiffMode, onEditDiffModeChange)
-            : html`
-                <div class="process-summary__detail-label">
-                  ${i18nService.t(codeModeSource !== null ? 'coworkCodeModeSource' : 'coworkToolInput')}
-                </div>
-                ${
-                  tool.input === undefined ||
-                  tool.input === null ||
-                  (typeof tool.input === 'object' && Object.keys(tool.input).length === 0)
-                    ? html`<span
-                        >${i18nService.t(tool.status === 'running' ? 'messageInputPending' : 'messageNoParameters')}</span
-                      >`
-                    : html`<justdo-tool-output
-                        .text=${codeModeSource ?? inputCode?.text ?? readableValue(tool.input)}
-                        .language=${codeModeSource !== null ? 'javascript' : inputCode ? resolveEditDiffLanguage(inputCode.path) : ''}
-                      ></justdo-tool-output>`
-                }
-              `
-      }
-      ${
-        hasToolResult(tool)
+        result !== undefined || tool.status !== 'running'
           ? html`
               <div class="process-summary__detail-label">${i18nService.t('coworkToolResult')}</div>
               ${tool.presentation?.fileRead?.kind === 'truncated' ? html`<span>${i18nService.t('messagePartialOutput')}</span>` : nothing}
@@ -480,16 +472,63 @@ function renderToolDetail(
                 class=${`process-summary__tool-result${toolOutcome(tool) === 'failed' ? ' process-summary__error' : ''}`}
               >
                 <justdo-tool-output
-                  .text=${outputCode?.text ?? toolResult(tool)}
-                  .language=${outputCode ? resolveEditDiffLanguage(outputCode.path) : ''}
-                  .terminal=${toolOperation(tool) === 'commands'}
+                  data-tool-search-source=${raw ? 'raw-result' : nothing}
+                  .text=${result ?? (raw ? '' : i18nService.t('coworkToolNoOutput'))}
+                  .showEmptyResult=${raw && result === undefined}
+                  .language=${outputCode ? resolveFileCodeLanguage(outputCode.path) : ''}
+                  .terminal=${!raw && toolOperation(tool) === 'commands'}
                   .partial=${tool.presentation?.partial === true}
                   .identity=${{ runId: tool.runId, toolCallId: tool.toolCallId, messageId: tool.presentation?.resultMessageId }}
+                  .resultScope=${resultScope}
                 ></justdo-tool-output>
               </div>
             `
           : nothing
       }
+    </div>
+  `;
+}
+
+function renderToolPreview(
+  tool: ToolItem,
+  preview: ToolInlinePreview,
+  editDiffMode: EditDiffMode,
+  onEditDiffModeChange?: EditDiffModeChangeHandler,
+  resultScope?: ToolResultScope,
+): TemplateResult | typeof nothing {
+  if (preview.kind === 'edit') return renderEditDiff(tool.id, preview.diff, editDiffMode, onEditDiffModeChange);
+  if (preview.kind === 'write') {
+    if (preview.text === undefined) return nothing;
+    const path = preview.path ?? null;
+    const codeLanguage = resolveWriteCodeLanguage(path);
+    return html`
+      <justdo-tool-output
+        data-tool-search-source="write"
+        .text=${preview.text}
+        .language=${codeLanguage ?? resolveFileCodeLanguage(path)}
+        .collapsible=${true}
+        .editorStyle=${codeLanguage !== undefined}
+        .identity=${{ runId: tool.runId, toolCallId: tool.toolCallId }}
+      ></justdo-tool-output>
+    `;
+  }
+
+  const result = toolResultText(tool);
+  if (preview.command === undefined && result === undefined && tool.status === 'running') return nothing;
+  return html`
+    <div class="process-summary__tool-result">
+      <justdo-tool-output
+        data-tool-search-source="exec-result"
+        .text=${result ?? ''}
+        .showEmptyResult=${tool.status !== 'running'}
+        .terminal=${true}
+        .terminalCommand=${preview.command}
+        .terminalCommandLanguage=${preview.language}
+        .paginate=${false}
+        .partial=${tool.presentation?.partial === true}
+        .identity=${{ runId: tool.runId, toolCallId: tool.toolCallId, messageId: tool.presentation?.resultMessageId }}
+        .resultScope=${resultScope}
+      ></justdo-tool-output>
     </div>
   `;
 }
@@ -711,12 +750,83 @@ function renderToolImages(tool: ToolItem, readImage?: ToolImageArtifactReader) {
   `;
 }
 
-function renderToolInputPreview(tool: ToolItem, readImage?: ToolImageArtifactReader) {
+function renderToolInputPreview(
+  tool: ToolItem,
+  inlinePreview: ToolInlinePreview | null,
+  readImage?: ToolImageArtifactReader,
+) {
+  if (inlinePreview?.kind === 'edit' && inlinePreview.diff.path) {
+    const path = inlinePreview.diff.path;
+    return html`<span class="process-summary__tool-input" data-tool-search-source="edit-path" title=${path}>${path}</span>`;
+  }
   const inputTitle = asToolRecord(tool.input)?.title;
   const title = typeof inputTitle === 'string' ? toolSummaryInput(inputTitle) : '';
   if (!title && readImage && tool.presentation?.imageArtifacts?.length) return nothing;
-  const preview = title || toolSummary(tool);
+  if (!title && inlinePreview?.kind === 'exec' && !inlinePreview.language && inlinePreview.command !== undefined)
+    return nothing;
+  const preview = title || toolSummary(tool, inlinePreview);
   return html`<span class="process-summary__tool-input" title=${preview}>${preview}</span>`;
+}
+
+function renderToolRow(
+  tool: ToolItem,
+  preview: ToolInlinePreview | null,
+  options: {
+    editDiffMode: EditDiffMode;
+    onEditDiffModeChange?: EditDiffModeChangeHandler;
+    sessionKey?: string;
+    readToolImage?: ToolImageArtifactReader;
+    live?: boolean;
+  },
+): TemplateResult {
+  const title = resolveToolDisplay(tool.name).title;
+  const renderRow = (resultScope?: ToolResultScope): TemplateResult => {
+    const detailContent = () => renderToolDetail(tool, preview, options.sessionKey, resultScope);
+    const details = html`
+      <details
+        data-tool-identity=${JSON.stringify([tool.runId, tool.toolCallId])}
+        class=${`process-summary__tool${options.live ? ' process-live__tool' : ''}${
+          preview?.kind === 'edit' ? ' process-summary__tool--edit' : ''
+        }`}
+      >
+        <summary class="process-summary__tool-title">
+          <span
+            class=${`process-summary__tool-status process-summary__tool-status--${toolOutcome(tool)}`}
+            role="img"
+            aria-label=${toolStateLabel(tool)}
+          ></span>
+          <strong title=${title}>${title}</strong>
+          ${renderSpawnedAgentLink(tool)}
+          ${renderToolInputPreview(tool, preview, options.readToolImage)}
+        </summary>
+        <div class="process-disclosure-content">
+          ${preview || options.live ? disclosureContent(detailContent) : detailContent()}
+        </div>
+      </details>
+    `;
+    if (!preview) return details;
+    return html`
+      <div class="process-tool-preview-layout">
+        ${details}
+        <div class="process-tool-preview">
+          ${renderToolPreview(tool, preview, options.editDiffMode, options.onEditDiffModeChange, resultScope)}
+        </div>
+      </div>
+    `;
+  };
+  return html`
+    ${preview?.kind === 'exec'
+      ? withToolResultScope(
+          JSON.stringify([tool.runId, tool.toolCallId, tool.presentation?.resultMessageId]),
+          renderRow,
+        )
+      : renderRow()}
+    ${renderToolImages(tool, options.readToolImage)}
+  `;
+}
+
+function toolNestingStyle(depth = 0): string | typeof nothing {
+  return depth ? `--tool-nesting-indent: ${Math.min(depth, 6) * 16}px` : nothing;
 }
 
 function renderProcessItem(
@@ -728,14 +838,15 @@ function renderProcessItem(
   sessionKey?: string,
   readToolImage?: ToolImageArtifactReader,
 ): TemplateResult {
+  const preview = process.type === 'tool' ? projectToolInlinePreview(process) : null;
   return html`
     <div role="listitem"
       class=${`process-summary__item process-summary__item--${process.type}${
-        process.type === 'tool' && parseEditToolDiff(process.name, process.input) !== null
+        preview?.kind === 'edit'
           ? ' process-summary__item--edit'
           : ''
       }`}
-      style=${process.type === 'tool' ? `margin-inline-start: ${Math.min(depths.get(process) ?? 0, 6) * 16}px` : ''}
+      style=${process.type === 'tool' ? toolNestingStyle(depths.get(process)) : nothing}
       data-inline-process-id=${process.id}
       tabindex="-1"
     >
@@ -759,38 +870,12 @@ function renderProcessItem(
                 ${renderThinking?.(process) ?? renderThinkingContent(process.text, false)}
               </div>
             `
-          : html`
-              <details
-                data-tool-identity=${JSON.stringify([process.runId, process.toolCallId])}
-                class=${`process-summary__tool${
-                  parseEditToolDiff(process.name, process.input) !== null
-                    ? ' process-summary__tool--edit'
-                    : ''
-                }`}
-              >
-                <summary class="process-summary__tool-title">
-                  <span
-                    class="process-summary__tool-status process-summary__tool-status--${toolOutcome(process)}"
-                    role="img"
-                    aria-label=${toolStateLabel(process)}
-                  ></span>
-                  <strong title=${resolveToolDisplay(process.name).title}
-                    >${resolveToolDisplay(process.name).title}</strong
-                  >
-                  ${renderSpawnedAgentLink(process)}
-                  ${renderToolInputPreview(process, readToolImage)}
-                </summary>
-                <div class="process-disclosure-content">
-                  ${renderToolDetail(
-                    process,
-                    editDiffModes.get(process.id) ?? 'unified',
-                    onEditDiffModeChange,
-                    sessionKey,
-                  )}
-                </div>
-              </details>
-              ${renderToolImages(process, readToolImage)}
-            `
+          : renderToolRow(process, preview, {
+              editDiffMode: editDiffModes.get(process.id) ?? 'unified',
+              onEditDiffModeChange,
+              sessionKey,
+              readToolImage,
+            })
       }
     </div>
   `;
@@ -813,7 +898,10 @@ export function renderTimelineItem(
     readToolImage?: ToolImageArtifactReader;
     withinCompletedProcess?: boolean;
   },
-  renderProcessItems?: (render: (item: ThinkingItem | ToolItem) => unknown) => unknown,
+  renderProcessItems?: (
+    items: readonly (ThinkingItem | ToolItem)[],
+    render: (item: ThinkingItem | ToolItem) => unknown,
+  ) => unknown,
 ): TemplateResult {
   if (item.kind === 'mcp-app') {
     return renderAssistantTimelineRow(
@@ -891,42 +979,28 @@ export function renderTimelineItem(
     if (item.item.type === 'thinking') {
       return renderStreamingThinkingGroup(item.item.text, {
         processId: item.item.id,
+        streaming: item.item.status === 'running',
         showAvatar,
         assistantAvatar,
         thinkingContent: renderThinking?.(item.item),
       });
     }
     const tool = item.item;
-    const isEditDiff = parseEditToolDiff(tool.name, tool.input) !== null;
+    const preview = projectToolInlinePreview(tool);
     return renderAssistantTimelineRow(
       html`
         <section
-          class=${`process-live process-live--tool${isEditDiff ? ' process-live--edit' : ''}`}
+          class=${`process-live process-live--tool${preview ? ' process-live--preview' : ''}`}
+          style=${toolNestingStyle(item.toolDepth)}
           data-live-process-id=${tool.id}
         >
-          <details
-            data-tool-identity=${JSON.stringify([tool.runId, tool.toolCallId])}
-            class=${`process-summary__tool process-live__tool${
-              isEditDiff ? ' process-summary__tool--edit' : ''
-            }`}
-          >
-            <summary class="process-summary__tool-title">
-              <span
-                class="process-summary__tool-status process-summary__tool-status--${toolOutcome(tool)}"
-                role="img"
-                aria-label=${toolStateLabel(tool)}
-              ></span>
-              <strong title=${resolveToolDisplay(tool.name).title}
-                >${resolveToolDisplay(tool.name).title}</strong
-              >
-              ${renderSpawnedAgentLink(tool)}
-              ${renderToolInputPreview(tool, contentOptions?.readToolImage)}
-            </summary>
-            <div class="process-disclosure-content">
-              ${renderToolDetail(tool, editDiffModes.get(tool.id) ?? 'unified', onEditDiffModeChange, contentOptions?.sessionKey)}
-            </div>
-          </details>
-          ${renderToolImages(tool, contentOptions?.readToolImage)}
+          ${renderToolRow(tool, preview, {
+            editDiffMode: editDiffModes.get(tool.id) ?? 'unified',
+            onEditDiffModeChange,
+            sessionKey: contentOptions?.sessionKey,
+            readToolImage: contentOptions?.readToolImage,
+            live: true,
+          })}
         </section>
       `,
       showAvatar,
@@ -936,17 +1010,15 @@ export function renderTimelineItem(
     );
   }
   if (item.kind === 'process-summary') {
-    const tail = item.items[item.items.length - 1];
-    const depths = toolNesting(
-      item.items.filter((entry): entry is ToolItem => entry.type === 'tool'),
-    );
+    const { items: ordered, depths } = projectProcessNesting(item.items);
+    const tail = ordered[ordered.length - 1];
     const renderProcess = (process: ThinkingItem | ToolItem) => renderProcessItem(
       process, depths, editDiffModes, onEditDiffModeChange, renderThinking,
       contentOptions?.sessionKey, contentOptions?.readToolImage,
     );
     const renderContents = () =>
       html` <div class="process-summary__items" role="list">
-        ${renderProcessItems?.(renderProcess) ?? repeat(item.items, process => process.id, renderProcess)}
+        ${renderProcessItems?.(ordered, renderProcess) ?? repeat(ordered, process => process.id, renderProcess)}
       </div>`;
     // The surrounding completed process already supplies the disclosure for these images.
     if (contentOptions?.withinCompletedProcess && contentOptions.readToolImage &&
@@ -967,8 +1039,7 @@ export function renderTimelineItem(
               expanded ? 'coworkProcessCloseDetails' : 'coworkProcessOpenDetails',
             )}`}
           >
-            <span class="process-summary__icon" aria-hidden="true">⌁</span>
-            <span>${summaryLabel(item)}</span>
+            ${renderSummaryMetrics(item)}
             <span class="process-summary__chevron" aria-hidden="true">›</span>
           </summary>
           <div class="process-disclosure-content">

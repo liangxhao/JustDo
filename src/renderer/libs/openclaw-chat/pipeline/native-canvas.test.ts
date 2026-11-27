@@ -199,9 +199,10 @@ describe('native show_widget descriptors', () => {
       expect(projected.filter(item => item.kind === 'native-widget')).toHaveLength(1);
       expect(
         projected
-          .flatMap(item => (item.kind === 'process-summary' ? item.items : []))
-          .filter(item => item.type === 'tool'),
-      ).toHaveLength(2);
+          .flatMap(item => item.kind === 'process-summary' ? item.items :
+            item.kind === 'live-process' ? [item.item] : [])
+          .flatMap(item => item.type === 'tool' ? [item.toolCallId] : []),
+      ).toEqual(records.map(record => record.toolCallId));
     }
     expect(
       projectTurnItems(state.activeTurn).find(item => item.kind === 'native-widget'),

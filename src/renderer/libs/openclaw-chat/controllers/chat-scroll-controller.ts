@@ -29,7 +29,7 @@ export class ChatScrollController {
     private readonly onStateChange: () => void,
     private readonly onNearTop?: () => boolean | void | Promise<boolean>,
     private readonly onNearBottom?: () => boolean | Promise<boolean>,
-    private readonly onScrollbarInteractionEnd?: () => void,
+    private readonly onScrollbarInteractionChange?: (dragging: boolean) => void,
   ) {}
 
   get state(): { mode: ChatScrollMode; unseenRevisions: number } {
@@ -78,7 +78,7 @@ export class ChatScrollController {
   }
 
   beforeRender(): void {
-    if (!this.host) return;
+    if (!this.host || this.isDraggingScrollbar) return;
     if (this.navigationTargetTop !== null) {
       this.pausedAnchors = [];
     } else if (!this.interactionAnchor) {
@@ -89,6 +89,11 @@ export class ChatScrollController {
   afterRender(revision: number): void {
     const host = this.host;
     if (!host) return;
+    if (this.isDraggingScrollbar) {
+      this.observeContent();
+      this.updateScrollAvailability();
+      return;
+    }
     const changed = revision !== this.previousRevision;
     this.previousRevision = revision;
     if (this.mode === 'follow') {
@@ -98,10 +103,7 @@ export class ChatScrollController {
     }
     const navigating = this.navigationTargetTop !== null;
     if (!navigating) {
-      const survivingAnchor =
-        this.interactionAnchor?.element.isConnected === true
-          ? this.interactionAnchor
-          : this.pausedAnchors.find(anchor => anchor.element.isConnected);
+      const survivingAnchor = this.takeReadingAnchor();
       if (survivingAnchor) {
         const nextOffset =
           survivingAnchor.element.getBoundingClientRect().top - host.getBoundingClientRect().top;
@@ -297,6 +299,7 @@ export class ChatScrollController {
     this.mode = 'paused';
     this.pausedAnchors = this.captureVisibleAnchorsNow(host);
     if (modeChanged) this.onStateChange();
+    this.onScrollbarInteractionChange?.(true);
   };
 
   private readonly handleScrollbarPointerEnd = (event: PointerEvent): void => {
@@ -306,6 +309,7 @@ export class ChatScrollController {
     const direction = this.scrollbarDirection;
     this.clearScrollbarPointer();
     this.pausedAnchors = this.captureVisibleAnchorsNow(host);
+    this.lastScrollTop = host.scrollTop;
     const threshold = Math.max(
       ChatScrollController.MIN_HISTORY_SHIFT_THRESHOLD_PX,
       host.clientHeight * ChatScrollController.HISTORY_SHIFT_THRESHOLD_VIEWPORTS,
@@ -330,7 +334,7 @@ export class ChatScrollController {
       this.unseenRevisions = 0;
       this.onStateChange();
     }
-    this.onScrollbarInteractionEnd?.();
+    this.onScrollbarInteractionChange?.(false);
   };
 
   private clearScrollbarPointer(): void {
@@ -353,12 +357,13 @@ export class ChatScrollController {
   private cancelScrollbarInteraction(): void {
     const active = this.isDraggingScrollbar;
     this.clearScrollbarPointer();
-    if (active) this.onScrollbarInteractionEnd?.();
+    if (active) this.onScrollbarInteractionChange?.(false);
   }
 
   private readonly handleScrollbarBlur = (): void => {
     if (!this.host || !this.isDraggingScrollbar) return;
     this.pausedAnchors = this.captureVisibleAnchorsNow(this.host);
+    this.lastScrollTop = this.host.scrollTop;
     this.cancelScrollbarInteraction();
   };
 
@@ -474,7 +479,10 @@ export class ChatScrollController {
     this.lastScrollTop = scrollTop;
     if (scrollDelta === 0) return;
     this.anchorScrollRemainder = 0;
-    if (this.isDraggingScrollbar) this.scrollbarDirection = Math.sign(scrollDelta);
+    if (this.isDraggingScrollbar) {
+      this.scrollbarDirection = Math.sign(scrollDelta);
+      return;
+    }
     // The next frame refreshes the visible rows. Until then, keep the old
     // anchors relative to the user's new position so resize cannot undo it.
     this.pausedAnchors = this.pausedAnchors.map(anchor => ({
@@ -494,7 +502,6 @@ export class ChatScrollController {
     );
     if (
       scrollDelta > 0 &&
-      !this.isDraggingScrollbar &&
       distance <= historyShiftThreshold &&
       this.pendingNewerHistoryShift === null &&
       this.requestNewerHistory()
@@ -506,8 +513,7 @@ export class ChatScrollController {
     const nextMode: ChatScrollMode =
       scrollDelta > 0 &&
       distance <= 0.5 &&
-      this.pendingNewerHistoryShift === null &&
-      this.scrollbarPointerId === null
+      this.pendingNewerHistoryShift === null
         ? 'follow'
         : 'paused';
     if (nextMode !== this.mode) {
@@ -518,7 +524,6 @@ export class ChatScrollController {
     if (this.mode === 'paused') this.scheduleVisibleAnchorCapture(host);
     if (
       scrollDelta < 0 &&
-      !this.isDraggingScrollbar &&
       host.scrollTop <= historyShiftThreshold &&
       this.pendingOlderHistoryRequest === null &&
       this.onNearTop
@@ -537,12 +542,12 @@ export class ChatScrollController {
     const host = this.host;
     if (!host) return;
     this.updateScrollAvailability();
-    if (this.navigationTargetTop !== null) return;
+    if (this.navigationTargetTop !== null || this.isDraggingScrollbar) return;
     if (this.mode === 'follow') {
       this.scrollToBottom();
       return;
     }
-    const survivingAnchor = this.pausedAnchors.find(anchor => anchor.element.isConnected);
+    const survivingAnchor = this.takeReadingAnchor();
     if (survivingAnchor) {
       const delta =
         survivingAnchor.element.getBoundingClientRect().top -
@@ -552,6 +557,22 @@ export class ChatScrollController {
     }
     this.pausedAnchors = this.captureVisibleAnchorsNow(host);
     this.updateScrollAvailability();
+  }
+
+  private takeReadingAnchor(): { element: HTMLElement; offset: number } | undefined {
+    const interaction = this.interactionAnchor;
+    this.interactionAnchor = null;
+    if (interaction && this.canRestoreAnchor(interaction.element)) return interaction;
+    return this.pausedAnchors.find(anchor => this.canRestoreAnchor(anchor.element));
+  }
+
+  private canRestoreAnchor(element: HTMLElement): boolean {
+    if (!element.isConnected) return false;
+    for (let details = element.closest?.('details:not([open])'); details;
+      details = details.parentElement?.closest('details:not([open])') ?? null) {
+      if (!details.querySelector(':scope > summary')?.contains(element)) return false;
+    }
+    return true;
   }
 
   private finishNavigation(): void {
@@ -687,7 +708,7 @@ export class ChatScrollController {
     if (!root) return [];
     const viewportTop = host.getBoundingClientRect().top;
     const rows = [...root.querySelectorAll<HTMLElement>(
-      '.chat-container .history-viewport-row, .chat-container > [data-history-key], .chat-container > [data-process-id], .chat-container > .timeline-content, .chat-container > .chat-group',
+      '.chat-container .history-viewport-row, .chat-container > [data-history-key], .chat-container > [data-process-id], .chat-container > .timeline-content, .chat-container > .chat-group, .chat-container > [data-quote-source]:has(> .chat-group--streaming)',
     )];
     const virtualRows = rows.filter(element =>
       element.matches?.('.history-viewport-row') && !element.closest('details:not([open])'),
@@ -713,8 +734,30 @@ export class ChatScrollController {
         low = middle + 1;
       }
     }
-    return candidates
-      .slice(low, low + 3)
-      .map(element => ({ element, offset: element.getBoundingClientRect().top - viewportTop }));
+    const viewportBottom = viewportTop + host.clientHeight;
+    const visibleAnchor = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      // A newly mounted row may be shorter than its temporary drag height.
+      // Its empty trailing space isn't a reading position to restore.
+      const content = element.matches?.('.history-viewport-row') && element.style?.height
+        ? element.firstElementChild?.getBoundingClientRect()
+        : undefined;
+      return rect.top < viewportBottom && Math.min(rect.bottom, content?.bottom ?? rect.bottom) > viewportTop
+        ? [{ element, offset: rect.top - viewportTop }]
+        : [];
+    };
+    const anchors = candidates.slice(low, low + 4).flatMap(visibleAnchor);
+    if (anchors.length) return anchors;
+    // If the details heading is on screen but its nested window starts
+    // below the viewport, keep the heading as the local reading position.
+    for (const parent of parentRows) {
+      const summary = parent.querySelector<HTMLElement>(
+        ':scope > .completed-process > summary, :scope > .chat-group--timeline > .chat-group__content > .process-summary-group > summary',
+      );
+      if (!summary) continue;
+      const visibleSummary = visibleAnchor(summary);
+      if (visibleSummary.length) return visibleSummary;
+    }
+    return [];
   }
 }

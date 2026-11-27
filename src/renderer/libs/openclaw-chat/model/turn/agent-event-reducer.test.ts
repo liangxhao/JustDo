@@ -915,9 +915,8 @@ describe('agent event reducer', () => {
     ]);
     expect(projectTurnItems(state.activeTurn)).toMatchObject([
       {
-        kind: 'process-summary',
-        thinkingCount: 1,
-        items: [{ type: 'thinking', text: `${thinking}.` }],
+        kind: 'live-process',
+        item: { type: 'thinking', status: 'completed', text: `${thinking}.` },
       },
     ]);
   });

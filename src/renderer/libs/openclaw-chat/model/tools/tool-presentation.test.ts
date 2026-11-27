@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'vitest';
 
-import type { ToolItem } from '../chat-transcript-state';
+import type { ThinkingItem, ToolItem } from '../chat-transcript-state';
 import { readToolOutput } from './tool-message-adapter';
 import {
   patchOperations,
+  projectProcessNesting,
   readToolPresentation,
   resolveFullToolOutput,
   summarizeTools,
-  toolNesting,
   toolOutcome,
   toolTarget,
 } from './tool-presentation';
@@ -106,7 +106,7 @@ describe('native tool presentation', () => {
       }),
     });
     expect(summarizeTools([parent, child])).toEqual({ commands: 1, failed: 1 });
-    expect(toolNesting([parent, child]).get(child)).toBe(1);
+    expect(projectProcessNesting([parent, child]).depths.get(child)).toBe(1);
     expect(child.status).toBe('completed');
   });
   test('includes failed routine activity after its running snapshot hid it', () => {
@@ -145,9 +145,57 @@ describe('native tool presentation', () => {
     const b = tool('b', { presentation: { parentToolCallId: 'a' } });
     const missing = tool('missing', { presentation: { parentToolCallId: 'absent' } });
     const other = tool('other', { runId: 'other', presentation: { parentToolCallId: 'a' } });
-    expect([...toolNesting([a, b, missing, other]).values()]).toEqual([0, 0, 0, 0]);
     const child = tool('child', { presentation: { parentToolCallId: 'parent' } });
-    expect(toolNesting([tool('parent'), tool('parent'), child]).get(child)).toBe(0);
+    const items = [a, b, missing, other, tool('parent'), tool('parent'), child];
+
+    const projected = projectProcessNesting(items);
+
+    expect(projected.items).toBe(items);
+    expect(projected.depths.size).toBe(0);
+    expect(projected.roots.size).toBe(0);
+  });
+  test('places a tool family together at the parent slot and preserves unrelated order', () => {
+    const parent = tool('parent');
+    const first = tool('first', { presentation: { parentToolCallId: 'parent' } });
+    const second = tool('second', { presentation: { parentToolCallId: 'parent' } });
+    const nested = tool('nested', { presentation: { parentToolCallId: 'first' } });
+    const before = tool('before');
+    const after = tool('after');
+    const thinking: ThinkingItem = {
+      id: 'thinking',
+      runId: 'r',
+      type: 'thinking',
+      status: 'completed',
+      text: 'Check the result',
+      firstSeq: 1,
+      lastSeq: 2,
+      startedAt: 1,
+      updatedAt: 2,
+    };
+    const items = [before, first, thinking, parent, after, second, nested];
+
+    const projected = projectProcessNesting(items);
+
+    expect(projected.items).toEqual([before, thinking, parent, first, nested, second, after]);
+    expect(projected.depths.get(first)).toBe(1);
+    expect(projected.depths.get(nested)).toBe(2);
+    expect(projected.roots.get(nested)).toBe(parent);
+    expect(items).toEqual([before, first, thinking, parent, after, second, nested]);
+  });
+  test('keeps an overlong ancestry flat without dropping its tools', () => {
+    const tools = Array.from({ length: 35 }, (_, index) =>
+      tool(String(index), {
+        ...(index > 0 && { presentation: { parentToolCallId: String(index - 1) } }),
+      }),
+    );
+    const items = tools.slice().reverse();
+
+    const projected = projectProcessNesting(items);
+
+    expect(projected.items).toEqual([tools[34], tools[33], ...tools.slice(0, 33)]);
+    expect(projected.depths.get(tools[32])).toBe(32);
+    expect(projected.depths.has(tools[33])).toBe(false);
+    expect(projected.roots.has(tools[34])).toBe(false);
   });
   test('does not infer a successful result from a completed call with no result', () => {
     expect(toolOutcome(tool('a', { output: undefined }))).toBe('unknown');

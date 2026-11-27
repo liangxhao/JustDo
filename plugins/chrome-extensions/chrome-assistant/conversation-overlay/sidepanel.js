@@ -334,6 +334,8 @@ function rememberSettledTurn(threadId, turnId) {
 }
 
 function recordTurnCompletion(threadId, turn) {
+  const known = knownTurns.get(threadId);
+  const nativeRunId = turn.nativeRunId ?? (known?.id === turn.id ? known.nativeRunId : undefined);
   approvals.cancelTurn(threadId, turn.id);
   pendingSubmissions.delete(threadId);
   knownTurns.delete(threadId);
@@ -342,11 +344,13 @@ function recordTurnCompletion(threadId, turn) {
   if (stoppingThreadId === threadId) stoppingThreadId = '';
   const selected = threadId === sessionSelect.value;
   const view = streamViews.get(threadId);
+  if (turn.status === 'failed') view?.markFailed(nativeRunId);
   if (!selected || turn.status === 'interrupted') view?.finish(true);
   if (selected) {
     setRunningTurn('', '');
-    if (view && turn.status === 'interrupted')
+    if (view && (turn.status === 'interrupted' || turn.status === 'failed'))
       renderThreadMessages(projectThreadMessages(view.project()), threadId);
+    if (turn.status === 'failed' && turn.error?.message) showError(turn.error.message);
   }
 }
 
@@ -637,11 +641,14 @@ async function refreshMessages(threadId, generation) {
   if (completed && (!currentTurnId || currentTurnId === completed.id)) {
     const view = streamView(threadId);
     const display = chromeDisplayThread(result.thread);
+    if (completed.status === 'failed') view.markFailed(completed.nativeRunId);
     view.setHistory(display, true);
-    view.finish(completed.status === 'interrupted' && !nextRun);
+    view.finish((completed.status === 'interrupted' || completed.status === 'failed') && !nextRun);
     renderThreadMessages(projectThreadMessages(view.project()), threadId);
-    if (completed.error?.message && shouldShowTurnError(threadId, sessionSelect.value, true, display, completed.error.message)) {
-      showError(completed.error.message);
+    const message = completed.error?.message;
+    if (message) {
+      if (shouldShowTurnError(threadId, sessionSelect.value, true, display, message)) showError(message);
+      else if (errorLine.textContent === message) clearError();
     }
   } else {
     renderHistory(result.thread);
@@ -685,7 +692,12 @@ function applyTurnObservation(threadId, observation, expectedTurnId) {
 async function refreshAll(preferredSessionId) {
   const generation = ++refreshGeneration;
   setComposerReady(false);
-  clearError();
+  const pendingFailure = () => {
+    if (preferredSessionId !== sessionSelect.value) return undefined;
+    const completion = pendingCompletions.get(preferredSessionId);
+    return completion?.status === 'failed' ? completion.error?.message : undefined;
+  };
+  if (errorLine.textContent !== pendingFailure()) clearError();
   try {
     if (!(await refreshSessions(preferredSessionId, generation))) return false;
     const threadId = sessionSelect.value;
@@ -702,7 +714,7 @@ async function refreshAll(preferredSessionId) {
       return true;
     }
   } catch (error) {
-    if (generation === refreshGeneration) showError(error);
+    if (generation === refreshGeneration) showError(pendingFailure() ?? error);
   }
   return false;
 }
