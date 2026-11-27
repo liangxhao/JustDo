@@ -374,9 +374,11 @@ credential 对象、URL query 或代理认证信息。
 
 ### 查看应用当前加载的策略
 
-在“设置 → 通用”累计点击页面标题 10 次，展开开发者区域，点击“全局出站请求头策略”旁的“查看策略”。每次打开都读取 Main 内存中当前加载的策略和请求头值。视图按匹配地址展示键、值、来源和状态。来源列显示“策略固定值”或映射的字段名，例如 `account_id`。长值可在单元格内横向滚动。
+在“设置 → 通用”累计点击页面标题 10 次，展开开发者区域，点击“全局出站请求头策略”旁的“查看策略”。打开时读取 Main 内存中当前加载的策略和请求头值，弹窗打开期间随缓存或续期状态更新。视图按匹配地址展示键、值、来源和状态。来源列显示“策略固定值”或映射的字段名，例如 `account_id`。长值可在单元格内横向滚动。
 
-每个地址按实际请求的规则匹配顺序、同名覆盖和请求头字符校验计算，重叠路径各自展示对应结果。值为空白时，对号表示注入了空字符串，横杠表示未注入。查看只接受主应用窗口的主 frame，匹配地址只返回 origin 和路径，值只用于当前弹窗，不写入日志或设置。查看不会重读文件、刷新策略或发出网络请求；若启停结果提示 Gateway 路由待更新，需等路由更新后再验证请求。
+每个地址按实际请求的规则匹配顺序、同名覆盖和请求头字符校验计算，重叠路径各自展示对应结果。取值自 `X-Cookie` 的行（包括映射为 `Cookie` 的规则）仅在 SDK 提供的有效 Cookie 已发布到当前账号的缓存时显示对号。最近一次续期失败时，状态列显示叉号，悬停时显示失败说明，值列仍展示缓存中的值。只从磁盘载入、尚未经 SDK 提交的 Cookie 显示横杠，悬停时提示“Cookie 更新未确认”。同一账号、同一值的策略重载保留确认结果，退出或更换账号后重新确认。其他行继续以对号表示可注入的值，允许注入空字符串。
+
+变更通知仅发往主应用窗口的主 frame，消息不含请求头值。查看也仅接受该 frame，匹配地址只返回 origin 和路径，值只用于当前弹窗。查看不会重读文件、刷新策略或发出网络请求。若启停结果提示 Gateway 路由待更新，需等路由更新后再验证请求。
 
 ### 并发请求
 
@@ -398,9 +400,21 @@ credential 对象、URL query 或代理认证信息。
 
 ### 可以记录什么
 
-允许记录：request id、origin、matched、注入 header 数、route 类型、耗时和错误类别。禁止记录完整 URL query（可能含 token）、Header 值、Proxy-Authorization、上游密码、capability 与 CA 私钥。
+允许记录请求 ID、origin、HTTP 方法、匹配及注入状态、注入数量、缓存发布序号、上游响应状态码、route 类型、耗时和错误类别。禁止记录完整 URL query（可能含 token）、Header 值、Proxy-Authorization、上游密码、capability 与 CA 私钥。
 
-策略激活日志包含规则组数与目标条目数，目标为零时没有可命中的地址。匹配日志包含随机 request id、origin 和 injectedHeaderCount。生产诊断还应关联 Gateway generation，但不能通过把 secret 写入 correlation id 达成。
+策略激活日志包含规则组数与目标条目数，目标为零时没有可命中的地址。`[OutboundHeaderPolicy] User info cache published`
+记录 Main 进程内递增的缓存发布序号及 `X-Cookie` 源值是否可用。成功续期、登录文件重读等发布操作都会产生新序号，
+即使值相同。该序号在 Main 重启后重新计数。
+
+`[OutboundHeaderProxy] outbound header policy matched` 包含请求 ID、origin、HTTP 方法、注入数量和本次使用的缓存
+序号 `valuesRevision`。其中 `renewalValueStatus` 指最终匹配规则从 `X-Cookie` 读取的值，涵盖映射到标准
+`Cookie` 或其他 Header 的规则。状态为 `injected`（注入非空值）、`empty`（注入空值）、`missing`（源字段
+未载入）、`unsafe`（字符校验失败）或 `not-configured`（最终规则未引用此源字段）。上游返回 3xx、4xx 或 5xx 时，
+`[OutboundHeaderProxy] Upstream response` 使用同一请求 ID 记录状态码。
+
+排查 Cookie 拒绝时先核对续期提交和缓存发布，再按请求时间、origin 和方法查匹配记录、缓存序号及响应。
+Proxy 日志中的 `injected` 说明代理已为本次转发填入非空值。远端仍负责判断该值是否有效。缺少匹配日志时，
+检查 Exec 的 Python 客户端是否使用继承的代理环境，以及实际请求和重定向的目标是否命中策略。
 
 ## 8. 支持范围与验证
 

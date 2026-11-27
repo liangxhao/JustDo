@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
+import { OutboundCookieRefreshStatus, type OutboundHeaderPolicyView } from '@shared/network/network';
 import { defaultCustomProxyConfig, ProxyMode } from '@shared/network/proxy';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { type ComponentProps, createRef, useState } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 
@@ -81,7 +82,9 @@ test('reads the current outbound header policy each time its developer dialog op
       ],
     })
     .mockResolvedValueOnce({ enabled: false, targets: [] });
-  vi.stubGlobal('electron', { api: { getOutboundHeaderPolicy } });
+  vi.stubGlobal('electron', { api: {
+    getOutboundHeaderPolicy, onOutboundHeaderPolicyChanged: () => () => {},
+  } });
   render(<Draft />);
   const button = screen.getByRole('button', { name: 'outboundHeaderPolicyView' });
   expect(getOutboundHeaderPolicy).not.toHaveBeenCalled();
@@ -117,6 +120,45 @@ test('reads the current outbound header policy each time its developer dialog op
   expect(await screen.findByText('outboundHeaderPolicyDisabled')).toBeTruthy();
   expect(screen.queryByText('https://internal.example/v1/')).toBeNull();
   expect(getOutboundHeaderPolicy).toHaveBeenCalledTimes(2);
+});
+
+test('removes the Cookie check in an open policy dialog when refresh fails', async () => {
+  const policy = (cookieRefreshStatus: OutboundCookieRefreshStatus): OutboundHeaderPolicyView => ({
+    enabled: true,
+    targets: [{
+      url: 'https://internal.example/v1/',
+      headers: [{ name: 'Cookie', sourceField: 'X-Cookie', value: 'session=fixture', cookieRefreshStatus }],
+    }],
+  });
+  const previous = Promise.withResolvers<OutboundHeaderPolicyView>();
+  const getOutboundHeaderPolicy = vi.fn()
+    .mockResolvedValueOnce(policy(OutboundCookieRefreshStatus.Confirmed))
+    .mockReturnValueOnce(previous.promise)
+    .mockResolvedValueOnce(policy(OutboundCookieRefreshStatus.Failed))
+    .mockResolvedValueOnce(policy(OutboundCookieRefreshStatus.Confirmed));
+  const unsubscribe = vi.fn();
+  const onOutboundHeaderPolicyChanged = vi.fn((_listener: () => void) => unsubscribe);
+  vi.stubGlobal('electron', { api: { getOutboundHeaderPolicy, onOutboundHeaderPolicyChanged } });
+  render(<Draft />);
+  fireEvent.click(screen.getByRole('button', { name: 'outboundHeaderPolicyView' }));
+  const dialog = within(screen.getByRole('dialog'));
+  expect(await dialog.findByRole('img', { name: 'outboundHeaderPolicyCookieConfirmed' })).toBeTruthy();
+
+  const [notify] = onOutboundHeaderPolicyChanged.mock.calls[0];
+  act(notify);
+  expect(dialog.queryByRole('img', { name: 'outboundHeaderPolicyCookieConfirmed' })).toBeNull();
+  act(notify);
+  const failed = await dialog.findByRole('img', { name: 'outboundHeaderPolicyCookieRefreshFailed' });
+  expect(failed.textContent).toBe('');
+  expect(failed.getAttribute('title')).toBe('outboundHeaderPolicyCookieRefreshFailedCached');
+  await act(async () => { previous.resolve(policy(OutboundCookieRefreshStatus.Confirmed)); });
+  expect(dialog.queryByRole('img', { name: 'outboundHeaderPolicyCookieConfirmed' })).toBeNull();
+  expect(dialog.getByText('session=fixture')).toBeTruthy();
+
+  act(notify);
+  expect(await dialog.findByRole('img', { name: 'outboundHeaderPolicyCookieConfirmed' })).toBeTruthy();
+  fireEvent.click(dialog.getByRole('button', { name: 'close' }));
+  expect(unsubscribe).toHaveBeenCalledOnce();
 });
 
 test('toggles the controlled Control UI preference without saving it', () => {

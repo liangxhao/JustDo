@@ -9,7 +9,7 @@ import net from 'net';
 import path from 'path';
 import type { Duplex } from 'stream';
 
-import type { OutboundHeaderPolicyView } from '../../../shared/network/network';
+import { OutboundCookieRefreshStatus, type OutboundHeaderPolicyView } from '../../../shared/network/network';
 import {
   getOutboundHeaderName,
   HTTP_HEADER_NAME_PATTERN,
@@ -24,8 +24,10 @@ import {
   collectOutboundHeaderSourceKeys,
   freezeOutboundHeaderPolicyGroup,
   getCachedOutboundHeaderUserInfo,
+  getOutboundCookieRefreshStatus,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
+  getOutboundHeaderValuesRevision,
   type OutboundHeaderPolicyGroup,
   resolveOutboundHeaderUserInfoPath,
 } from './outboundHeaderPolicyConfig';
@@ -147,41 +149,36 @@ export const shouldInjectOutboundHeaders = (
   }
 };
 
-export const shouldApplyOutboundHeadersForRequest = (
+export const resolveOutboundHeaderEntriesForRequest = (
   config: OutboundHeaderProxyConfig,
   requestUrl: string,
-): boolean => config.enabled && shouldInjectOutboundHeaders(requestUrl, config.baseUrlWhitelist);
-
-const resolveOutboundHeaderEntriesForRequest = (
-  config: OutboundHeaderProxyConfig,
-  requestUrl: string,
-): readonly OutboundHeaderEntry[] => {
-  if (!config.enabled) return [];
-  return mergeOutboundHeaderEntries(config.groups.flatMap(group =>
-    shouldInjectOutboundHeaders(requestUrl, group.baseUrlWhitelist) ? group.headerNames : [],
-  ));
+): readonly OutboundHeaderEntry[] | null => {
+  if (!config.enabled) return null;
+  const matchingGroups = config.groups.filter(group =>
+    shouldInjectOutboundHeaders(requestUrl, group.baseUrlWhitelist),
+  );
+  return matchingGroups.length > 0
+    ? mergeOutboundHeaderEntries(matchingGroups.flatMap(group => group.headerNames))
+    : null;
 };
-
-export const resolveOutboundHeaderNamesForRequest = (
-  config: OutboundHeaderProxyConfig,
-  requestUrl: string,
-): readonly string[] => resolveOutboundHeaderEntriesForRequest(config, requestUrl).map(getOutboundHeaderName);
-
-export const resolveOutboundHeaderValuesForRequest = (
-  config: OutboundHeaderProxyConfig,
-  requestUrl: string,
-  userInfo: Readonly<Record<string, string>>,
-): Record<string, string> => resolveOutboundHeaderEntryValues(
-  resolveOutboundHeaderEntriesForRequest(config, requestUrl),
-  userInfo,
-);
 
 const getOutboundHeaderSourceField = (entry: OutboundHeaderEntry): string | null => {
   if (typeof entry === 'string') return entry;
   return 'from' in entry ? entry.from : null;
 };
 
-const resolveOutboundHeaderEntryValues = (
+function getRenewalValueStatus(
+  entries: readonly OutboundHeaderEntry[],
+  userInfo: Readonly<Record<string, string>>,
+): 'not-configured' | 'missing' | 'empty' | 'unsafe' | 'injected' {
+  if (!entries.some(entry => getOutboundHeaderSourceField(entry) === 'X-Cookie')) return 'not-configured';
+  if (!Object.hasOwn(userInfo, 'X-Cookie')) return 'missing';
+  const value = userInfo['X-Cookie'];
+  if (value === '') return 'empty';
+  return HTTP_HEADER_VALUE_PATTERN.test(value) ? 'injected' : 'unsafe';
+}
+
+export const resolveOutboundHeaderEntryValues = (
   entries: readonly OutboundHeaderEntry[],
   userInfo: Readonly<Record<string, string>>,
 ): Record<string, string> => {
@@ -228,6 +225,7 @@ export const getOutboundHeaderPolicyView = (): OutboundHeaderPolicyView => {
   if (!policy.enabled) return { enabled: false, targets: [] };
 
   const userInfo = getCachedOutboundHeaderUserInfo() ?? {};
+  const cookieRefreshStatus = getOutboundCookieRefreshStatus();
   const targets = new Set(policy.groups.filter(group => group.headerNames.length > 0)
     .flatMap(group => group.baseUrlWhitelist)
     .map(target => {
@@ -238,17 +236,24 @@ export const getOutboundHeaderPolicyView = (): OutboundHeaderPolicyView => {
   return {
     enabled: true,
     targets: Array.from(targets, url => {
-      const entries = resolveOutboundHeaderEntriesForRequest(policy, url);
+      const entries = resolveOutboundHeaderEntriesForRequest(policy, url) ?? [];
       const headers: Record<string, string> = {};
       applyOutboundHeaders(headers, resolveOutboundHeaderEntryValues(entries, userInfo), () => {});
       return {
         url,
         headers: entries.map(entry => {
           const name = getOutboundHeaderName(entry);
+          const sourceField = getOutboundHeaderSourceField(entry);
+          const value = Object.hasOwn(headers, name) ? headers[name] : null;
           return {
             name,
-            sourceField: getOutboundHeaderSourceField(entry),
-            value: Object.hasOwn(headers, name) ? headers[name] : null,
+            sourceField,
+            value,
+            ...(sourceField === 'X-Cookie' && {
+              cookieRefreshStatus: cookieRefreshStatus === OutboundCookieRefreshStatus.Confirmed && !value
+                ? OutboundCookieRefreshStatus.Unconfirmed
+                : cookieRefreshStatus,
+            }),
           };
         }),
       };
@@ -515,29 +520,6 @@ const parseConnectAuthority = (authority: string | undefined): ConnectAuthority 
   }
 };
 
-const excludeLoopbackWhitelistEntries = (
-  config: OutboundHeaderProxyConfig,
-  logIgnoredEntries = true,
-): OutboundHeaderProxyConfig => {
-  const groups = config.groups.map(group => ({
-    ...group,
-    baseUrlWhitelist: group.baseUrlWhitelist.filter(value => {
-      try {
-        return !isLoopbackHostname(new URL(value).hostname);
-      } catch {
-        return true;
-      }
-    }),
-  }));
-  const baseUrlWhitelist = Array.from(new Set(groups.flatMap(group => group.baseUrlWhitelist)));
-  if (logIgnoredEntries && baseUrlWhitelist.length !== config.baseUrlWhitelist.length) {
-    console.warn(
-      `[OutboundHeaderProxy] Ignored ${config.baseUrlWhitelist.length - baseUrlWhitelist.length} loopback whitelist entry or entries; loopback remains direct.`,
-    );
-  }
-  return { ...config, groups, baseUrlWhitelist };
-};
-
 const isConnectInterceptionCandidate = (
   authority: ConnectAuthority,
   protocol: 'http:' | 'https:',
@@ -742,27 +724,13 @@ export class OutboundHeaderProxy {
     this.caDirectory = caDirectory;
   }
 
-  private getConfig(): OutboundHeaderProxyConfig {
-    return this.configuredPolicy ?? resolveOutboundHeaderProxyConfig();
-  }
-
   private getActiveRequestPolicy(): OutboundHeaderProxyConfig | null {
     if (!this.activePolicy) {
       return null;
     }
     return this.configuredPolicy
       ? this.activePolicy
-      : excludeLoopbackWhitelistEntries(resolveOutboundHeaderProxyConfig(), false);
-  }
-
-  private getActiveHeaderValues(
-    policy: OutboundHeaderProxyConfig,
-    requestUrl: string,
-  ): Readonly<Record<string, string>> {
-    const values = this.configuredPolicy
-      ? this.activeHeaderValues
-      : getOutboundHeaderUserInfo(this.userInfoPath);
-    return resolveOutboundHeaderValuesForRequest(policy, requestUrl, values);
+      : resolveOutboundHeaderProxyConfig();
   }
 
   private async resolveGatewayUpstreamProxy(targetUrl: string): Promise<string | null> {
@@ -783,7 +751,7 @@ export class OutboundHeaderProxy {
       return this.info;
     }
 
-    const config = excludeLoopbackWhitelistEntries(this.getConfig());
+    const config = this.configuredPolicy ?? resolveOutboundHeaderProxyConfig();
     if (!isOutboundHeaderProxyActive(config)) {
       return null;
     }
@@ -805,12 +773,12 @@ export class OutboundHeaderProxy {
       baseUrlWhitelist: Object.freeze([...config.baseUrlWhitelist]),
       headerNames: Object.freeze([...config.headerNames]),
     });
-    this.activeHeaderValues = Object.freeze({
-      ...getOutboundHeaderUserInfo(
+    if (this.configuredPolicy) {
+      this.activeHeaderValues = getOutboundHeaderUserInfo(
         this.userInfoPath,
         collectOutboundHeaderSourceKeys(config.groups),
-      ),
-    });
+      );
+    }
     this.capability = crypto.randomBytes(32).toString('base64url');
 
     const proxy = new Proxy();
@@ -934,9 +902,8 @@ export class OutboundHeaderProxy {
           this.resolveGatewayUpstreamProxy(targetUrl),
         );
         const activePolicy = this.getActiveRequestPolicy();
-        const matched =
-          !!activePolicy && shouldApplyOutboundHeadersForRequest(activePolicy, requestUrl);
-        if (!matched) {
+        const entries = activePolicy && resolveOutboundHeaderEntriesForRequest(activePolicy, requestUrl);
+        if (!entries) {
           callback();
           return;
         }
@@ -945,13 +912,26 @@ export class OutboundHeaderProxy {
           callback(new Error('Upstream request headers are unavailable.'));
           return;
         }
+        const values = this.configuredPolicy
+          ? this.activeHeaderValues
+          : getOutboundHeaderUserInfo(this.userInfoPath);
+        const revision = this.configuredPolicy ? null : getOutboundHeaderValuesRevision();
         const injectedHeaderCount = applyOutboundHeaders(
           upstreamHeaders,
-          this.getActiveHeaderValues(activePolicy, requestUrl),
+          resolveOutboundHeaderEntryValues(entries, values),
         );
+        const renewalValueStatus = getRenewalValueStatus(entries, values);
+        const requestId = crypto.randomUUID();
         console.log(
-          `[OutboundHeaderProxy] outbound header policy matched requestId=${crypto.randomUUID()} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount}`,
+          `[OutboundHeaderProxy] outbound header policy matched requestId=${requestId} origin=${new URL(requestUrl).origin} matched=true injectedHeaderCount=${injectedHeaderCount} method=${context.clientToProxyRequest.method ?? 'unknown'} valuesRevision=${revision} renewalValueStatus=${renewalValueStatus}`,
         );
+        context.onResponse((responseContext, next) => {
+          const status = responseContext.serverToProxyResponse?.statusCode;
+          if (status !== undefined && status >= 300) {
+            console.info(`[OutboundHeaderProxy] Upstream response requestId=${requestId} status=${status}`);
+          }
+          next();
+        });
         callback();
       })().catch(error => callback(error instanceof Error ? error : new Error(String(error))));
     });
@@ -1028,9 +1008,9 @@ export class OutboundHeaderProxy {
 
   /** The local first hop is stable; upstream preferences are resolved per request. */
   isGatewayEnvironmentReusable(env: Readonly<NodeJS.ProcessEnv>): boolean {
-    if (!this.info || !this.capability || !this.activePolicy) return false;
     const policy = this.getActiveRequestPolicy();
-    if (policy && [...this.rawConnectTargets].some(([socket, target]) =>
+    if (!this.info || !this.capability || !policy) return false;
+    if ([...this.rawConnectTargets].some(([socket, target]) =>
       !socket.destroyed && isConnectInterceptionCandidate(target.authority, target.protocol, policy)))
       return false;
     const proxyUrl = new URL(this.info.proxyUrl);
@@ -1045,10 +1025,10 @@ export class OutboundHeaderProxy {
   }
 
   buildGatewayEnvironment(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-    if (!this.info || !this.capability || !this.activePolicy) {
+    const activePolicy = this.getActiveRequestPolicy();
+    if (!this.info || !this.capability || !activePolicy) {
       return { ...baseEnv };
     }
-    const activePolicy = this.getActiveRequestPolicy() ?? this.activePolicy;
     // Preserve the original bypass policy for local-proxy -> upstream routing,
     // then keep all remote bypasses out of Gateway -> local routing so runtime
     // whitelist refreshes cannot make the first-hop environment stale.

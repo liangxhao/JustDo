@@ -43,6 +43,7 @@ import {
   WORKSPACE_WINDOW_BOUNDS_KEY,
   type WorkspaceWindowBounds,
 } from '../shared/cowork/workspaceWindow';
+import { OutboundCookieRefreshStatus } from '../shared/network/network';
 import type { ProxySettings } from '../shared/network/proxy';
 import { EngineFailureReason, EnginePhase } from '../shared/openclaw/engineStatus';
 import { OpenClawModelsIpc } from '../shared/openclaw/models';
@@ -140,6 +141,7 @@ import {
 import { getRetainedLogPaths, LogKind } from './core/logging/logMaintenance';
 import { mainProcessFetch, mainProcessTitleFetch } from './core/network/mainProcessFetch';
 import {
+  invalidateOutboundCookieRefresh,
   publishOutboundHeaderUserInfoCache,
   resolveOutboundHeaderUserInfoPath,
   updateOutboundHeaderUserInfoCache,
@@ -1146,6 +1148,7 @@ export const refreshAfterLogin = async (): Promise<void> => {
 export const refreshAfterLogout = (): Promise<void> => {
   userActivityService?.stop();
   updateOutboundHeaderUserInfoCache();
+  invalidateOutboundCookieRefresh(OutboundCookieRefreshStatus.Unconfirmed);
   return getBuiltinModelAuth().coordinator.logout();
 };
 
@@ -1156,7 +1159,10 @@ const getLoginService = (): LoginService => {
     onLoginCommitted: finishLoginSync,
     onLogoutCommitted: refreshAfterLogout,
     waitForLogoutCatalog: () => getBuiltinModelAuth().lifecycle.waitForLogoutCatalog(),
-    publishCommittedHeaders: publishOutboundHeaderUserInfoCache,
+    publishCommittedHeaders: (values, options) =>
+      publishOutboundHeaderUserInfoCache(values, undefined, options),
+    onCookieRefreshFailed: expectedBinding =>
+      invalidateOutboundCookieRefresh(OutboundCookieRefreshStatus.Failed, expectedBinding),
     onStateChanged: state => {
       if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
         try {

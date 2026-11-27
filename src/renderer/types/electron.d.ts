@@ -803,6 +803,7 @@ interface IElectronAPI {
     ) => Promise<import('../../shared/network/network').BuiltinModelProbeResult>;
     cancelFetch: (requestId: string) => Promise<void>;
     getOutboundHeaderPolicy: () => Promise<import('../../shared/network/network').OutboundHeaderPolicyView>;
+    onOutboundHeaderPolicyChanged: (callback: () => void) => () => void;
   };
   getApiConfig: () => Promise<CoworkApiConfig | null>;
   checkApiConfig: (options?: {

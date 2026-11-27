@@ -11,6 +11,7 @@ import {
   type BuiltinModelProbeResult,
   NetworkFetchPurpose,
   NetworkIpc,
+  OutboundCookieRefreshStatus,
 } from '../../../shared/network/network';
 import type { OutboundHeaderPolicyConfig } from '../../core/network/outboundHeaderPolicyConfig';
 
@@ -53,7 +54,9 @@ vi.mock('../../core/network/outboundHeaderPolicyConfig', async importOriginal =>
 }));
 
 import { BUILTIN_MODEL_PROVIDER_CONFIG } from '../../../config/builtinModels';
-import { publishOutboundHeaderUserInfoCache } from '../../core/network/outboundHeaderPolicyConfig';
+import {
+  getOutboundCookieBinding, invalidateOutboundCookieRefresh, publishOutboundHeaderUserInfoCache,
+} from '../../core/network/outboundHeaderPolicyConfig';
 import { BuiltinModelAuthDiagnosticReason } from '../../providers/builtinModelAuthDiagnostics';
 import {
   clearActiveBuiltinModelCredential,
@@ -78,7 +81,7 @@ beforeEach(() => {
 });
 
 test('shows effective outbound header values from memory for each target to the current main frame', () => {
-  const mainFrame = {};
+  const mainFrame = { send: vi.fn(), detached: false };
   const contents = { mainFrame, isDestroyed: () => false };
   const window = { webContents: contents, isDestroyed: () => false } as unknown as BrowserWindow;
   const event = { sender: contents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent;
@@ -169,6 +172,44 @@ test('shows effective outbound header values from memory for each target to the 
   } finally {
     readFileSync.mockRestore();
   }
+});
+
+test('reports refresh evidence for mapped Cookie values and notifies only the main frame', () => {
+  const mainFrame = { send: vi.fn(), detached: false };
+  const contents = { mainFrame, isDestroyed: () => false };
+  const window = { webContents: contents, isDestroyed: () => false } as unknown as BrowserWindow;
+  const event = { sender: contents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent;
+  mocks.getOutboundHeaderPolicyConfig.mockReturnValue({
+    enabled: true,
+    groups: [{
+      baseUrlWhitelist: ['https://internal.example/v1/'],
+      headerNames: [{ name: 'Cookie', from: 'X-Cookie' }],
+    }],
+  });
+  registerNetworkHandlers(() => window);
+  const read = mocks.handle.mock.calls.find(([channel]) => channel === NetworkIpc.GetOutboundHeaderPolicy)![1];
+  const row = () => read(event).targets[0].headers[0];
+  const userInfo = { 'X-Cookie': 'session=fixture', 'X-User-Account': 'first-account' };
+
+  publishOutboundHeaderUserInfoCache(userInfo, ['X-Cookie']);
+  expect(row()).toEqual({
+    name: 'Cookie', sourceField: 'X-Cookie', value: 'session=fixture',
+    cookieRefreshStatus: OutboundCookieRefreshStatus.Unconfirmed,
+  });
+
+  publishOutboundHeaderUserInfoCache(userInfo, ['X-Cookie'], { cookieRefreshed: true });
+  expect(row().cookieRefreshStatus).toBe(OutboundCookieRefreshStatus.Confirmed);
+  invalidateOutboundCookieRefresh(OutboundCookieRefreshStatus.Failed);
+  publishOutboundHeaderUserInfoCache(userInfo, ['X-Cookie']);
+  expect(row()).toMatchObject({
+    value: 'session=fixture', cookieRefreshStatus: OutboundCookieRefreshStatus.Failed,
+  });
+  expect(mainFrame.send.mock.calls).toEqual(Array.from({ length: 4 }, () => [NetworkIpc.OutboundHeaderPolicyChanged]));
+
+  publishOutboundHeaderUserInfoCache(userInfo, ['X-Cookie'], { cookieRefreshed: true });
+  publishOutboundHeaderUserInfoCache({ ...userInfo, 'X-User-Account': 'second-account' }, ['X-Cookie']);
+  invalidateOutboundCookieRefresh(OutboundCookieRefreshStatus.Failed, getOutboundCookieBinding(userInfo));
+  expect(row().cookieRefreshStatus).toBe(OutboundCookieRefreshStatus.Unconfirmed);
 });
 
 const probeBody = JSON.stringify({ model: 'team-model', messages: [{ role: 'user', content: 'Hi' }], max_tokens: 1 });

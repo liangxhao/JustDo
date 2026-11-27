@@ -5,13 +5,28 @@ export const NetworkIpc = {
   CancelFetch: 'api:cancelFetch',
   TestBuiltinModel: 'api:testBuiltinModel',
   GetOutboundHeaderPolicy: 'network:getOutboundHeaderPolicy',
+  OutboundHeaderPolicyChanged: 'network:outboundHeaderPolicyChanged',
 } as const;
+
+export const OutboundCookieRefreshStatus = {
+  Unconfirmed: 'unconfirmed',
+  Confirmed: 'confirmed',
+  Failed: 'failed',
+} as const;
+
+export type OutboundCookieRefreshStatus =
+  (typeof OutboundCookieRefreshStatus)[keyof typeof OutboundCookieRefreshStatus];
 
 export interface OutboundHeaderPolicyView {
   enabled: boolean;
   targets: {
     url: string;
-    headers: { name: string; sourceField: string | null; value: string | null }[];
+    headers: {
+      name: string;
+      sourceField: string | null;
+      value: string | null;
+      cookieRefreshStatus?: OutboundCookieRefreshStatus;
+    }[];
   }[];
 }
 

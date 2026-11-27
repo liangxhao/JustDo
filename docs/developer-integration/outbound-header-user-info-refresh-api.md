@@ -12,6 +12,7 @@
 SDK 自行调度时，在开始异步续期之前捕获 `captureCredentialLease()`，取得结果后交给
 `updateCredentials(lease, update)`。服务会重新核对账号身份、操作代次和文件凭据版本，
 原子提交到现有文件。应用内的 `LoginService` 用已提交的值直接刷新请求头缓存。`mtoken` 变化时也重新执行模型认证。
+自动续期返回的 `X-Cookie` 须为非空且符合 HTTP 请求头字符约束的字符串。适配器收到取消信号后须停止续期请求。
 
 ```ts
 // SDK 自行续期时，loginService 和 signal 由 Main 装配层持有。
@@ -32,6 +33,7 @@ Main 日志中的 `[LoginService] Credential update` 记录提交结果和两个
 `cookieProvided` 表示此次提交是否包含 `headerValues['X-Cookie']`，`cookieChanged` 表示已保存的同名字段是否变化。
 `session-changed` 和 `storage-failed` 表示提交未写入。`sync-failed` 也可能发生在文件已经保存、随后模型认证未完成时。
 这些记录不包含 Cookie 值，也不代表目标服务已经验证通过。
+联查自动续期、内存缓存和单次出站请求时，参见[出站请求头诊断](../features/network/outbound-headers.md#7-并发与诊断)。
 
 ## 接口
 

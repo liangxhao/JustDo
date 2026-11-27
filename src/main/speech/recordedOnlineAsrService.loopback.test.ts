@@ -21,8 +21,8 @@ vi.mock('../core/network/outboundHeaderPolicyConfig', () => ({
   getOutboundHeaderPolicyConfig: vi.fn(), getOutboundHeaderUserInfo: vi.fn(),
 }));
 vi.mock('../core/network/outboundHeaderProxy', () => ({
-  applyOutboundHeaders: vi.fn(), resolveOutboundHeaderValuesForRequest: vi.fn(),
-  resolveOutboundHeaderProxyConfig: vi.fn(), shouldApplyOutboundHeadersForRequest: vi.fn(),
+  applyOutboundHeaders: vi.fn(), resolveOutboundHeaderEntriesForRequest: vi.fn(),
+  resolveOutboundHeaderEntryValues: vi.fn(), resolveOutboundHeaderProxyConfig: vi.fn(),
 }));
 
 interface CapturedRequest { method: string; path: string; headers: IncomingHttpHeaders; body: Buffer }

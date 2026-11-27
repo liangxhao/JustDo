@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import type { AuthProfile } from '../../../../shared/app/auth';
+import { HTTP_HEADER_VALUE_PATTERN } from '../../../../shared/plugins/outboundHeaderPolicy';
 import type { AuthenticatedLogin, CredentialUpdate } from './loginSdkAdapter';
 
 const MAX_FILE_BYTES = 256 * 1024;
@@ -23,6 +24,12 @@ export class LoginStorageError extends Error {
   constructor() {
     super('Unable to persist login state.');
   }
+}
+
+export function isValidLoginCookie(value: unknown): value is string {
+  if (typeof value !== 'string' || UNSAFE_VALUE.test(value)) return false;
+  const cookie = value.trim();
+  return cookie.length > 0 && HTTP_HEADER_VALUE_PATTERN.test(cookie);
 }
 
 export type StoredLogin = Readonly<{
@@ -89,7 +96,8 @@ function applyHeaders(
       !HEADER_NAME.test(name) ||
       RESERVED_HEADERS.has(name.toLowerCase()) ||
       typeof value !== 'string' ||
-      UNSAFE_VALUE.test(value)
+      UNSAFE_VALUE.test(value) ||
+      (name === 'X-Cookie' && !HTTP_HEADER_VALUE_PATTERN.test(value.trim()))
     )
       throw new LoginStorageError();
     values[name] = value;

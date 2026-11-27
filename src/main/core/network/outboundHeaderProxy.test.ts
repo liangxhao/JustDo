@@ -19,6 +19,7 @@ import {
   activateOutboundHeaderPolicyConfig,
   getOutboundHeaderPolicyConfig,
   getOutboundHeaderUserInfo,
+  getOutboundHeaderValuesRevision,
   loadOutboundHeaderPolicyAndUserInfoCache,
   type OutboundHeaderPolicyGroup,
   publishOutboundHeaderUserInfoCache,
@@ -30,8 +31,8 @@ import {
   isIgnorableProxyClientError,
   isOutboundHeaderProxyActive,
   OutboundHeaderProxy,
+  resolveOutboundHeaderEntriesForRequest,
   resolveOutboundHeaderProxyConfig,
-  shouldApplyOutboundHeadersForRequest,
   shouldInjectOutboundHeaders,
   shouldSuppressMitmProxyErrorLog,
   suppressNoisyMitmDisconnectLogs,
@@ -485,6 +486,7 @@ const requestHttpThroughConnectProxy = (
   targetPort: number,
   authorization: string,
   requestPath = '/protected',
+  method = 'GET',
 ): Promise<number> =>
   new Promise((resolve, reject) => {
     const socket = net.connect(Number(proxyUrl.port), proxyUrl.hostname);
@@ -514,8 +516,9 @@ const requestHttpThroughConnectProxy = (
         tunnelEstablished = true;
         response = response.subarray(headerEnd + 4);
         socket.write(
-          `GET ${requestPath} HTTP/1.1\r\n` +
+          `${method} ${requestPath} HTTP/1.1\r\n` +
             `Host: ${targetHost}:${targetPort}\r\n` +
+            'Content-Length: 0\r\n' +
             'Connection: close\r\n\r\n',
         );
       }
@@ -604,18 +607,23 @@ test('applies outbound headers only when enabled and the URL is whitelisted', ()
         baseUrlWhitelist: ['https://example.com/api/'],
         headerNames: [HEADER_NAMES.USER_ACCOUNT],
       },
+      {
+        baseUrlWhitelist: ['https://example.com/empty/'],
+        headerNames: [],
+      },
     ],
   });
 
   expect(isOutboundHeaderProxyActive(config)).toBe(true);
-  expect(shouldApplyOutboundHeadersForRequest(config, 'https://example.com/api/users')).toBe(true);
-  expect(shouldApplyOutboundHeadersForRequest(config, 'https://example.com/other')).toBe(false);
+  expect(resolveOutboundHeaderEntriesForRequest(config, 'https://example.com/api/users')).toEqual([HEADER_NAMES.USER_ACCOUNT]);
+  expect(resolveOutboundHeaderEntriesForRequest(config, 'https://example.com/empty/')).toEqual([]);
+  expect(resolveOutboundHeaderEntriesForRequest(config, 'https://example.com/other')).toBeNull();
   expect(
-    shouldApplyOutboundHeadersForRequest(
+    resolveOutboundHeaderEntriesForRequest(
       { ...config, enabled: false },
       'https://example.com/api/users',
     ),
-  ).toBe(false);
+  ).toBeNull();
 });
 
 test('reads configured values from user_info.json', () => {
@@ -768,7 +776,7 @@ test('does not log file contents when user info JSON is malformed', () => {
   try {
     expect(updateOutboundHeaderUserInfoCache(userInfoPath, ['X-Cookie'])).toEqual({ 'X-Cookie': '' });
     expect(warningSpy).toHaveBeenCalledWith(
-      '[OutboundHeaderPolicy] Failed to read login user info:', 'Invalid JSON',
+      '[OutboundHeaderPolicy] Failed to read login user info reason=invalid-json',
     );
     expect(warningSpy.mock.calls.flat().join(' ')).not.toContain('SYNTHETIC');
   } finally {
@@ -1124,7 +1132,7 @@ test('requires coordinated recovery when a live raw CONNECT tunnel newly needs i
   const upstream = http.createServer((request, response) => {
     forwardedHeaders.push(request.headers);
     interceptedReuse.push(reuseWhileServing?.() === true);
-    response.writeHead(200, { 'Content-Length': 7 });
+    response.writeHead(request.method === 'POST' ? 403 : 200, { 'Content-Length': 7 });
     response.end('fixture');
   });
   const coveredHost = 'intercepted.runtime.invalid:8183';
@@ -1187,6 +1195,8 @@ test('requires coordinated recovery when a live raw CONNECT tunnel newly needs i
     socket.once('error', fail);
     socket.write(`GET /probe HTTP/1.1\r\nHost: ${host}\r\nConnection: keep-alive\r\n\r\n`);
   });
+  const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   try {
     await outboundProxy.start();
     const env = outboundProxy.buildGatewayEnvironment({});
@@ -1218,12 +1228,22 @@ test('requires coordinated recovery when a live raw CONNECT tunnel newly needs i
       'x-mapped-cookie': 'fixture-cookie', 'x-policy-literal': 'fixed-fixture',
     });
     expect(forwardedHeaders.at(-1)?.[HEADER_NAMES.COOKIE.toLowerCase()]).toBeUndefined();
+    const previousRevision = getOutboundHeaderValuesRevision();
     publishOutboundHeaderUserInfoCache({ [HEADER_NAMES.COOKIE]: 'renewed-fixture' });
+    const revision = getOutboundHeaderValuesRevision();
+    expect(revision).toBe(previousRevision + 1);
     expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
-      authorization)).toBe(200);
+      authorization, '/protected', 'POST')).toBe(403);
     expect(forwardedHeaders.at(-1)).toMatchObject({
       'x-mapped-cookie': 'renewed-fixture', 'x-policy-literal': 'fixed-fixture',
     });
+    const matchLog = String(log.mock.lastCall?.[0]);
+    expect(matchLog).toContain(`method=POST valuesRevision=${revision} renewalValueStatus=injected`);
+    const requestId = matchLog.match(/requestId=([\w-]+)/)?.[1];
+    expect(requestId).toBeDefined();
+    expect(info).toHaveBeenCalledWith(`[OutboundHeaderPolicy] User info cache published {"revision":${revision},"renewalValueAvailable":true}`);
+    expect(info).toHaveBeenCalledWith(`[OutboundHeaderProxy] Upstream response requestId=${requestId} status=403`);
+    expect(matchLog).not.toContain('renewed-fixture');
     expect(await requestHttpThroughConnectProxy(proxyUrl, 'intercepted.runtime.invalid', 8183,
       authorization, '/protected-adjacent')).toBe(200);
     expect(forwardedHeaders.at(-1)).not.toHaveProperty('x-mapped-cookie');
@@ -1246,6 +1266,8 @@ test('requires coordinated recovery when a live raw CONNECT tunnel newly needs i
     sockets.forEach(socket => socket.destroy());
     await new Promise<void>(resolve => upstream.close(() => resolve()));
     activateOutboundHeaderPolicyConfig(previousPolicy, userInfoPath);
+    log.mockRestore();
+    info.mockRestore();
   }
 });
 
@@ -1764,8 +1786,8 @@ test.skipIf(!NON_LOOPBACK_IPV4)(
       ).toBe(true);
       expect(
         injectionLogs.every(([message]) =>
-          String(message).endsWith(
-            `origin=https://${targetHost}:${targetAddress.port} matched=true injectedHeaderCount=1`,
+          String(message).includes(
+            `origin=https://${targetHost}:${targetAddress.port} matched=true injectedHeaderCount=1 `,
           ),
         ),
       ).toBe(true);

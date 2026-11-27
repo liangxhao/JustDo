@@ -7,7 +7,7 @@ import { PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG } from '../../../config/outbou
 import type { InstalledOpenClawExtension } from '../../../shared/plugins/extensions';
 import { OutboundHeaderPolicyService } from './outboundHeaderPolicyService';
 import {
-  resolveOutboundHeaderNamesForRequest,
+  resolveOutboundHeaderEntriesForRequest,
   resolveOutboundHeaderProxyConfig,
 } from './outboundHeaderProxy';
 
@@ -104,7 +104,7 @@ test('accepts an explicit intranet HTTP policy and preserves exact runtime reque
     'http://port.internal.example:443/v1/models',
     'https://port.internal.example:80/v1/models',
   ]) {
-    expect(resolveOutboundHeaderNamesForRequest(policy, target)).toEqual([
+    expect(resolveOutboundHeaderEntriesForRequest(policy, target)).toEqual([
       'X-Cookie',
       'X-User-Account',
     ]);
@@ -117,7 +117,7 @@ test('accepts an explicit intranet HTTP policy and preserves exact runtime reque
     'http://port.internal.example/v1/models',
     'https://port.internal.example/v1/models',
   ]) {
-    expect(resolveOutboundHeaderNamesForRequest(policy, target)).toEqual([]);
+    expect(resolveOutboundHeaderEntriesForRequest(policy, target)).toBeNull();
   }
 });
 
@@ -131,8 +131,8 @@ test('removes HTTP contributions when disabled or uninstalled while preserving t
 
   expect(disabled.groups).toEqual(PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups);
   expect(
-    resolveOutboundHeaderNamesForRequest(resolveOutboundHeaderProxyConfig(disabled), target),
-  ).toEqual([]);
+    resolveOutboundHeaderEntriesForRequest(resolveOutboundHeaderProxyConfig(disabled), target),
+  ).toBeNull();
   f.setEnabled(true);
   expect(f.service.reconcile().digest).toBe(initial.digest);
   f.remove();
@@ -140,8 +140,8 @@ test('removes HTTP contributions when disabled or uninstalled while preserving t
   expect(removed.groups).toEqual(PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG.groups);
   expect(removed.enabled).toBe(true);
   const policy = resolveOutboundHeaderProxyConfig(removed);
-  expect(resolveOutboundHeaderNamesForRequest(policy, target)).toEqual([]);
+  expect(resolveOutboundHeaderEntriesForRequest(policy, target)).toBeNull();
   expect(
-    resolveOutboundHeaderNamesForRequest(policy, 'https://builtin-model.example.test/v1/models'),
+    resolveOutboundHeaderEntriesForRequest(policy, 'https://builtin-model.example.test/v1/models'),
   ).toEqual(['X-User-Account', 'X-Cookie']);
 });

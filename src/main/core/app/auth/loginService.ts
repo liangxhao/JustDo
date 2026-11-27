@@ -1,3 +1,5 @@
+import { addAbortListener } from 'node:events';
+
 import { LOGIN_STORAGE_CONFIG } from '../../../../config/loginStorage';
 import {
   type AuthActionResult,
@@ -11,6 +13,7 @@ import {
 } from '../../../../shared/app/auth';
 import { BuiltinModelAuthDiagnosticReason } from '../../../providers/builtinModelAuthDiagnostics';
 import { requiresBuiltinModelUserAction } from '../../../providers/builtinModelTokenExchange';
+import { getOutboundCookieBinding } from '../../network/outboundHeaderPolicyConfig';
 import {
   type CredentialUpdate,
   type LoginSdkAdapter,
@@ -18,7 +21,7 @@ import {
   LoginSdkRestoreStatus,
   LoginSdkStatus,
 } from './loginSdkAdapter';
-import { LoginStorageError, LoginUserInfoStore, type StoredLogin } from './loginUserInfoStore';
+import { isValidLoginCookie, LoginStorageError, LoginUserInfoStore, type StoredLogin } from './loginUserInfoStore';
 
 const COOKIE_REFRESH_MIN_INTERVAL_MS = 1_000;
 const SDK_REQUEST_TIMEOUT_MS = 15_000;
@@ -33,8 +36,14 @@ type Dependencies = {
   onLogoutCommitted: () => Promise<void>;
   waitForLogoutCatalog?: () => Promise<void>;
   onStateChanged: (state: AuthState) => void;
+  onCookieRefreshFailed?: (expectedBinding?: string | null) => void;
 } & (
-  | { publishCommittedHeaders: (values: Readonly<StoredLogin['values']>) => void }
+  | {
+      publishCommittedHeaders: (
+        values: Readonly<StoredLogin['values']>,
+        options?: { cookieRefreshed: true },
+      ) => void;
+    }
   | { publishCommittedHeaders?: undefined; onHeadersCommitted: () => void }
 );
 
@@ -47,9 +56,41 @@ export type AuthCredentialLease = Readonly<{
 
 type CookieRenewal = {
   lease: AuthCredentialLease;
+  cookieBinding: string | null;
   refreshAt: number;
+  monotonicRefreshAt: number;
   retryDelayMs: number;
 };
+
+function remainingRenewalTime(renewal: CookieRenewal): number {
+  return Math.min(renewal.refreshAt - Date.now(), renewal.monotonicRefreshAt - performance.now());
+}
+
+async function waitForCookieRenewal(
+  controller: AbortController,
+  refresh: (signal: AbortSignal) => Promise<CredentialUpdate>,
+): Promise<CredentialUpdate> {
+  const { signal } = controller;
+  const timeOut = () => controller.abort(new DOMException('Cookie renewal timed out.', 'TimeoutError'));
+  const deadline = performance.now() + SDK_REQUEST_TIMEOUT_MS;
+  const timer = setTimeout(timeOut, SDK_REQUEST_TIMEOUT_MS);
+  timer.unref();
+  const aborted = Promise.withResolvers<never>();
+  const listener = addAbortListener(signal, () => aborted.reject(signal.reason));
+  try {
+    const result = Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return refresh(signal);
+    });
+    const update = await Promise.race([result, aborted.promise]);
+    if (performance.now() >= deadline) timeOut();
+    signal.throwIfAborted();
+    return update;
+  } finally {
+    clearTimeout(timer);
+    listener[Symbol.dispose]();
+  }
+}
 
 export class LoginService {
   private state: AuthState;
@@ -138,14 +179,14 @@ export class LoginService {
             if (confirmed !== true) {
               if (
                 confirmed.account !== current.profile.account ||
-                typeof confirmed.cookie !== 'string' || !confirmed.cookie.trim()
+                !isValidLoginCookie(confirmed.cookie)
               ) return false;
               if (current.credentialVersion !== before.credentialVersion) return true;
               login = store.update(current, { headerValues: { 'X-Cookie': confirmed.cookie } });
             }
             this.applyLogin(login, AuthStatus.SignedIn);
             this.scheduleCookieRenewal(login, { restored: confirmed === true });
-            this.publishHeaders(login);
+            this.publishHeaders(login, confirmed !== true);
             return false;
           });
           if (!retryWithLatestCredentials || controller.signal.aborted) return;
@@ -288,13 +329,19 @@ export class LoginService {
     update: CredentialUpdate,
     renewal?: CookieRenewal,
   ): Promise<AuthActionResult> {
+    const queuedAt = performance.now();
     return this.enqueue(async () => {
+      const commitStartedAt = performance.now();
       const cookieProvided = Object.hasOwn(update?.headerValues ?? {}, 'X-Cookie');
       const report = (result: AuthActionResult, cookieChanged = false): AuthActionResult => {
         const message = `[LoginService] Credential update ${JSON.stringify({
           result: result.success ? 'success' : result.errorCode,
           cookieProvided,
           cookieChanged,
+          ...(renewal && {
+            queueWaitMs: Math.round(commitStartedAt - queuedAt),
+            commitDurationMs: Math.round(performance.now() - commitStartedAt),
+          }),
         })}`;
         if (result.success) console.info(message);
         else console.warn(message);
@@ -304,19 +351,16 @@ export class LoginService {
       if (!this.matchesCredentialLease(lease, current)) {
         return report(this.failure(AuthErrorCode.SessionChanged));
       }
-      if (renewal) {
-        if (this.cookieRenewalPaused || this.cookieRenewal !== renewal) {
-          return this.failure(AuthErrorCode.SessionChanged);
-        }
-        const cookie = update?.headerValues?.['X-Cookie'];
-        if (!cookieProvided || typeof cookie !== 'string' || !cookie.trim()) {
-          return { success: false, errorCode: AuthErrorCode.SyncFailed, state: this.state };
-        }
+      if (renewal && (this.cookieRenewalPaused || this.cookieRenewal !== renewal)) {
+        return report(this.failure(AuthErrorCode.SessionChanged));
       }
       let next: StoredLogin;
       try {
         next = this.dependencies.store.update(current, update);
       } catch {
+        if (!renewal && cookieProvided) {
+          this.dependencies.onCookieRefreshFailed?.(getOutboundCookieBinding(current.values));
+        }
         return report(this.failure(AuthErrorCode.StorageFailed));
       }
       const previousCookie = current.values['X-Cookie'];
@@ -331,7 +375,7 @@ export class LoginService {
       this.scheduleCookieRenewal(next);
       if (next.identity !== current.identity) {
         this.setState({ operation: AuthOperation.Sync, errorCode: null });
-        const synced = await this.sync(next);
+        const synced = await this.sync(next, cookieProvided);
         this.setState({ operation: AuthOperation.Idle });
         return report(
           synced ? this.success() : this.failure(this.state.errorCode ?? AuthErrorCode.SyncFailed),
@@ -339,7 +383,7 @@ export class LoginService {
         );
       }
       try {
-        this.publishHeaders(next);
+        this.publishHeaders(next, cookieProvided);
       } catch {
         this.setState({ syncStatus: AuthSyncStatus.Failed });
         return report(this.failure(AuthErrorCode.SyncFailed), cookieChanged);
@@ -403,9 +447,12 @@ export class LoginService {
     const intervalMs = LOGIN_STORAGE_CONFIG.cookieRefreshIntervalMs;
     if (!Number.isSafeInteger(intervalMs) || intervalMs < COOKIE_REFRESH_MIN_INTERVAL_MS) return;
     const now = Date.now();
+    const delayMs = restored ? 0 : intervalMs;
     this.cookieRenewal = {
       lease,
-      refreshAt: previous?.refreshAt ?? (restored ? now : now + intervalMs),
+      cookieBinding: getOutboundCookieBinding(login.values),
+      refreshAt: previous?.refreshAt ?? now + delayMs,
+      monotonicRefreshAt: previous?.monotonicRefreshAt ?? performance.now() + delayMs,
       retryDelayMs: previous?.retryDelayMs ?? SDK_RETRY_INITIAL_MS,
     };
     this.cookieRenewalPaused = false;
@@ -417,50 +464,88 @@ export class LoginService {
     this.cookieRenewalTimer = null;
     const renewal = this.cookieRenewal;
     if (!renewal || this.cookieRenewalPaused || this.cookieRenewalRequest) return;
-    const delayMs = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, renewal.refreshAt - Date.now()));
+    const delayMs = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, Math.ceil(remainingRenewalTime(renewal))));
     this.cookieRenewalTimer = setTimeout(() => {
       this.cookieRenewalTimer = null;
       if (this.cookieRenewalPaused || this.cookieRenewal !== renewal) return;
-      if (Date.now() < renewal.refreshAt) this.armCookieRenewal();
-      else void this.renewCookie(renewal);
+      const remainingMs = remainingRenewalTime(renewal);
+      if (remainingMs > 0) this.armCookieRenewal();
+      else void this.renewCookie(renewal, Math.round(-remainingMs));
     }, delayMs);
     this.cookieRenewalTimer.unref();
   }
 
-  private async renewCookie(renewal: CookieRenewal): Promise<void> {
+  private async renewCookie(renewal: CookieRenewal, timerLateMs: number): Promise<void> {
     const adapter = this.dependencies.adapter;
-    if (!adapter.available || !adapter.refreshCredentials || !this.matchesCredentialLease(renewal.lease, this.dependencies.store.read())) {
+    const refresh = adapter.refreshCredentials;
+    const available = adapter.available && !!refresh;
+    if (!available || !this.matchesCredentialLease(renewal.lease, this.dependencies.store.read())) {
       this.cookieRenewal = null;
       this.pauseCookieRenewal();
+      this.dependencies.onCookieRefreshFailed?.(renewal.cookieBinding);
+      const result = available ? AuthErrorCode.SessionChanged : 'adapter-unavailable';
+      console.warn(`[LoginService] Cookie renewal skipped ${JSON.stringify({ result, timerLateMs })}`);
       return;
     }
     const controller = new AbortController();
     const request: { controller: AbortController | null } = { controller };
     this.cookieRenewalRequest = request;
-    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(SDK_REQUEST_TIMEOUT_MS)]);
+    const sdkStartedAt = performance.now();
+    let sdkDurationMs: number | undefined;
+    let outcome: string = 'sdk-error';
     try {
-      const update = await adapter.refreshCredentials({ signal });
+      const refreshed = await waitForCookieRenewal(controller, signal => refresh.call(adapter, { signal }));
+      sdkDurationMs = Math.round(performance.now() - sdkStartedAt);
       request.controller = null;
-      if (!signal.aborted && !this.cookieRenewalPaused && this.cookieRenewal === renewal) {
-        const result = await this.commitCredentials(renewal.lease, update, renewal);
-        if (!result.success && result.errorCode === AuthErrorCode.SessionChanged && this.cookieRenewal === renewal) {
-          this.cookieRenewal = null;
-          this.pauseCookieRenewal();
-        }
+      if (this.cookieRenewalPaused || this.cookieRenewal !== renewal) {
+        outcome = AuthErrorCode.SessionChanged;
+        return;
       }
+      const headers = refreshed?.headerValues;
+      if (!headers || typeof headers !== 'object' || Array.isArray(headers)) {
+        outcome = 'invalid-cookie';
+        return;
+      }
+      // The adapter may reuse its result object while the Main commit queue is busy.
+      const headerValues = { ...headers };
+      if (!isValidLoginCookie(headerValues['X-Cookie'])) {
+        outcome = 'invalid-cookie';
+        return;
+      }
+      const result = await this.commitCredentials(
+        renewal.lease,
+        { mtoken: refreshed.mtoken, headerValues },
+        renewal,
+      );
+      outcome = result.success ? 'success' : result.errorCode;
     } catch {
-      // Retries below are confined to this still-current schedule.
+      if (controller.signal.aborted) {
+        outcome = controller.signal.reason?.name === 'TimeoutError' ? 'timeout' : 'canceled';
+      } else if (sdkDurationMs !== undefined) {
+        outcome = 'commit-failed';
+      }
     } finally {
+      sdkDurationMs ??= Math.round(performance.now() - sdkStartedAt);
+      let retryDelayMs: number | undefined;
       if (this.cookieRenewalRequest === request) {
         this.cookieRenewalRequest = null;
         if (!this.cookieRenewalPaused && this.cookieRenewal === renewal) {
-          const delayMs = renewal.retryDelayMs;
-          renewal.refreshAt = Date.now() + delayMs;
-          renewal.retryDelayMs = Math.min(SDK_RETRY_MAX_MS, delayMs * 2);
-          console.warn(`[LoginService] Cookie renewal retry scheduled ${JSON.stringify({ delayMs })}`);
+          this.dependencies.onCookieRefreshFailed?.(renewal.cookieBinding);
+          if (outcome === AuthErrorCode.SessionChanged) {
+            this.cookieRenewal = null;
+            this.cookieRenewalPaused = true;
+          } else {
+            retryDelayMs = renewal.retryDelayMs;
+            renewal.refreshAt = Date.now() + retryDelayMs;
+            renewal.monotonicRefreshAt = performance.now() + retryDelayMs;
+            renewal.retryDelayMs = Math.min(SDK_RETRY_MAX_MS, retryDelayMs * 2);
+          }
         }
         this.armCookieRenewal();
       }
+      const message = `[LoginService] Cookie renewal ${JSON.stringify({ result: outcome, timerLateMs, sdkDurationMs, retryDelayMs })}`;
+      if (outcome === 'success') console.info(message);
+      else console.warn(message);
     }
   }
 
@@ -525,7 +610,7 @@ export class LoginService {
         }
         const login = this.dependencies.store.writeLogin(result.session);
         this.applyLogin(login, AuthStatus.SignedIn);
-        await this.sync(login);
+        await this.sync(login, true);
         this.setState({ operation: AuthOperation.Idle });
         return this.success();
       });
@@ -543,13 +628,13 @@ export class LoginService {
     }
   }
 
-  private async sync(login: StoredLogin | null): Promise<boolean> {
+  private async sync(login: StoredLogin | null, cookieRefreshed = false): Promise<boolean> {
     const attempt = ++this.syncAttempt;
     this.setState({ syncStatus: AuthSyncStatus.Pending });
     try {
       let confirmed = true;
       if (login) {
-        this.dependencies.publishCommittedHeaders?.(login.values);
+        if (this.dependencies.publishCommittedHeaders) this.publishHeaders(login, cookieRefreshed);
         confirmed = (await this.dependencies.onLoginCommitted()) !== false;
       } else {
         await this.dependencies.onLogoutCommitted();
@@ -586,11 +671,18 @@ export class LoginService {
     });
   }
 
-  private publishHeaders(login: StoredLogin): void {
-    if ('onHeadersCommitted' in this.dependencies) {
-      this.dependencies.onHeadersCommitted();
-    } else {
-      this.dependencies.publishCommittedHeaders(login.values);
+  private publishHeaders(login: StoredLogin, cookieRefreshed = false): void {
+    try {
+      if ('onHeadersCommitted' in this.dependencies) {
+        this.dependencies.onHeadersCommitted();
+      } else if (cookieRefreshed && login.cookie) {
+        this.dependencies.publishCommittedHeaders(login.values, { cookieRefreshed: true });
+      } else {
+        this.dependencies.publishCommittedHeaders(login.values);
+      }
+    } catch (error) {
+      if (cookieRefreshed) this.dependencies.onCookieRefreshFailed?.();
+      throw error;
     }
   }
 

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { app } from 'electron';
 import fs from 'fs';
 import os from 'os';
@@ -10,7 +12,10 @@ import {
   type OutboundHeaderPolicyGroup,
   PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG,
 } from '../../../config/outboundHeaders';
-import { type OutboundHeaderEntry, parseOutboundHeaderObject } from '../../../shared/plugins/outboundHeaderPolicy';
+import { OutboundCookieRefreshStatus } from '../../../shared/network/network';
+import {
+  HTTP_HEADER_VALUE_PATTERN, type OutboundHeaderEntry, parseOutboundHeaderObject,
+} from '../../../shared/plugins/outboundHeaderPolicy';
 import { USER_DATA_DIRECTORY_NAME } from '../../../shared/productMetadata';
 
 export type {
@@ -92,7 +97,39 @@ Example:
 `;
 
 let cachedOutboundHeaderValues: Readonly<Record<string, string>> | null = null;
+let outboundHeaderValuesRevision = 0;
 let cachedOutboundHeaderPolicyConfig = PREDEFINED_OUTBOUND_HEADER_POLICY_CONFIG;
+let cachedCookieBinding: string | null = null;
+let cookieRefreshStatus: OutboundCookieRefreshStatus = OutboundCookieRefreshStatus.Unconfirmed;
+const policyViewListeners = new Set<() => void>();
+
+export function onOutboundHeaderPolicyChanged(listener: () => void): () => void {
+  policyViewListeners.add(listener);
+  return () => { policyViewListeners.delete(listener); };
+}
+
+function notifyPolicyViewChanged(): void {
+  for (const listener of policyViewListeners) {
+    try {
+      listener();
+    } catch {
+      console.warn('[OutboundHeaderPolicy] Failed to notify the policy view.');
+    }
+  }
+}
+
+export function invalidateOutboundCookieRefresh(
+  status: Exclude<OutboundCookieRefreshStatus, typeof OutboundCookieRefreshStatus.Confirmed>,
+  expectedBinding?: string | null,
+): void {
+  if (expectedBinding !== undefined && expectedBinding !== cachedCookieBinding) return;
+  if (status === OutboundCookieRefreshStatus.Unconfirmed) cachedCookieBinding = null;
+  if (cookieRefreshStatus === status) return;
+  cookieRefreshStatus = status;
+  notifyPolicyViewChanged();
+}
+
+export const getOutboundCookieRefreshStatus = (): OutboundCookieRefreshStatus => cookieRefreshStatus;
 
 const normalizeHeaderValue = (value: unknown): string => {
   if (value === null || value === undefined) {
@@ -111,6 +148,15 @@ const normalizeHeaderValue = (value: unknown): string => {
   }
   return EMPTY_HEADER_VALUE;
 };
+
+export function getOutboundCookieBinding(userInfo: Readonly<Record<string, unknown>>): string | null {
+  const cookie = typeof userInfo['X-Cookie'] === 'string' ? userInfo['X-Cookie'].trim() : '';
+  const account = typeof userInfo['X-User-Account'] === 'string' ? userInfo['X-User-Account'].trim() : '';
+  // Scope the result to this account and Cookie without storing a second copy of the credential.
+  return cookie && HTTP_HEADER_VALUE_PATTERN.test(cookie)
+    ? createHash('sha256').update(JSON.stringify([account, cookie])).digest('hex')
+    : null;
+}
 
 export const collectOutboundHeaderSourceKeys = (groups: readonly OutboundHeaderPolicyGroup[]): string[] => {
   const keys = new Set<string>();
@@ -255,10 +301,8 @@ export const updateOutboundHeaderUserInfoCache = (
   } catch (error) {
     const errorCode = (error as NodeJS.ErrnoException).code;
     if (errorCode !== 'ENOENT') {
-      console.warn(
-        '[OutboundHeaderPolicy] Failed to read login user info:',
-        error instanceof SyntaxError ? 'Invalid JSON' : 'File read failed',
-      );
+      const reason = error instanceof SyntaxError ? 'invalid-json' : 'read-failed';
+      console.warn(`[OutboundHeaderPolicy] Failed to read login user info reason=${reason}`);
     }
   }
 
@@ -269,6 +313,7 @@ export const updateOutboundHeaderUserInfoCache = (
 export const publishOutboundHeaderUserInfoCache = (
   userInfo: Readonly<Record<string, unknown>>,
   sourceKeys: readonly string[] = collectOutboundHeaderSourceKeys(cachedOutboundHeaderPolicyConfig.groups),
+  { cookieRefreshed = false }: { cookieRefreshed?: boolean } = {},
 ): Readonly<Record<string, string>> => {
   cachedOutboundHeaderValues = Object.freeze(
     Object.fromEntries(
@@ -278,6 +323,19 @@ export const publishOutboundHeaderUserInfoCache = (
       ]),
     ),
   );
+  if (cookieRefreshed || sourceKeys.includes('X-Cookie')) {
+    const binding = getOutboundCookieBinding(userInfo);
+    if (binding !== cachedCookieBinding) cookieRefreshStatus = OutboundCookieRefreshStatus.Unconfirmed;
+    cachedCookieBinding = binding;
+    if (cookieRefreshed && binding) cookieRefreshStatus = OutboundCookieRefreshStatus.Confirmed;
+  }
+  outboundHeaderValuesRevision += 1;
+  console.info(`[OutboundHeaderPolicy] User info cache published ${JSON.stringify({
+    revision: outboundHeaderValuesRevision,
+    renewalValueAvailable: !!cachedOutboundHeaderValues['X-Cookie'] &&
+      HTTP_HEADER_VALUE_PATTERN.test(cachedOutboundHeaderValues['X-Cookie']),
+  })}`);
+  notifyPolicyViewChanged();
   return cachedOutboundHeaderValues;
 };
 
@@ -309,3 +367,5 @@ export const getOutboundHeaderUserInfo = (
 /** Reads the published runtime values without initializing the cache from disk. */
 export const getCachedOutboundHeaderUserInfo = (): Readonly<Record<string, string>> | null =>
   cachedOutboundHeaderValues;
+
+export const getOutboundHeaderValuesRevision = (): number => outboundHeaderValuesRevision;

@@ -641,6 +641,11 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke(NetworkIpc.CancelFetch, requestId),
     getOutboundHeaderPolicy: (): Promise<OutboundHeaderPolicyView> =>
       ipcRenderer.invoke(NetworkIpc.GetOutboundHeaderPolicy),
+    onOutboundHeaderPolicyChanged: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on(NetworkIpc.OutboundHeaderPolicyChanged, handler);
+      return () => ipcRenderer.removeListener(NetworkIpc.OutboundHeaderPolicyChanged, handler);
+    },
   },
   ipcRenderer: {
     send: (channel: string, ...args: unknown[]) => {

@@ -146,14 +146,25 @@ SDK 确认会话失效时可调用 `expireSession(lease)`；队列执行时会�
 ### Main 自动续期
 
 SDK 确认登录或恢复会话，且已保存 Cookie 并提供 `refreshCredentials` 时，Main 使用 `src/config/loginStorage.ts` 中的
-`cookieRefreshIntervalMs` 固定周期续期，默认半小时。启动时 SDK 返回 `true` 后立即补查一次，
-返回 `recovered` 并完成提交后从正常间隔开始。续期结果包含非空的
-`headerValues['X-Cookie']` 即可，Cookie 字符串可以与上次相同。
+`cookieRefreshIntervalMs` 安排续期，默认在登录完成或上次续期提交后半小时发起下一次尝试。启动时 SDK 返回 `true` 后
+立即补查一次，返回 `recovered` 并完成提交后从正常间隔开始。系统唤醒时按当前时间补查，系统时钟回拨时
+沿用单调时钟计算的期限。SDK 耗时、提交等待或失败退避可以拉长两次成功提交之间的间隔。
 
-系统唤醒时按当前时间核对计划。账号切换和退出会取消旧请求，退出清理失败后恢复原账号的调度，应用销毁时停止。
-请求使用 15 秒取消信号，适配器需响应取消并结束请求。同一会话一次只发一个续期请求，失败从 5 秒退避，最长 5 分钟。
-续期失败时保留上次已提交的 Cookie 值。续期成功后写入登录文件，再直接发布已提交的请求头值。
-SDK 未确认的手工导入会话仅恢复显示，应用不自行获取 Cookie。
+请求在 15 秒超时后由 Main 取消并结束等待。适配器仍须响应取消并停止请求，迟到结果无法提交。
+同一会话只跟踪一个当前续期请求，失败从 5 秒退避，最长 5 分钟。账号切换、退出和应用销毁会取消旧请求，
+退出清理失败后恢复原账号的调度。
+
+续期返回的 `headerValues['X-Cookie']` 必须非空并满足出站 HTTP 请求头字符校验。允许 SDK 返回与上次相同的
+Cookie。SDK 失败、非法值或写入失败时保留上次已提交值。通过校验后先原子写入登录文件，再发布请求头值。
+SDK 未确认的手工导入会话仅恢复显示。
+
+出站策略弹窗使用 Cookie 的缓存发布和续期结果显示状态。自动续期失败后，保留上次提交的值并撤下对号。
+当前 Cookie 经 SDK 提交并发布后恢复对号，模型 JWT 同步单独结算。
+
+Main 单行日志 `[LoginService] Cookie renewal` 记录两个时钟中较早到期的超期毫秒数 `timerLateMs`、SDK 耗时
+`sdkDurationMs`、结果及存在时的 `retryDelayMs`。进入提交队列后，`[LoginService] Credential update`
+还记录排队耗时 `queueWaitMs` 和提交耗时 `commitDurationMs`。如果同时轮换 mtoken，提交耗时也包括模型认证同步。
+目标服务的响应按[出站请求头诊断](../network/outbound-headers.md#7-并发与诊断)核对。
 
 ## 手工凭据联调
 

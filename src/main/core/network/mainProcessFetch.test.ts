@@ -11,9 +11,9 @@ vi.mock('./outboundHeaderPolicyConfig', () => ({
 }));
 vi.mock('./outboundHeaderProxy', () => ({
   applyOutboundHeaders: vi.fn(),
+  resolveOutboundHeaderEntriesForRequest: vi.fn(),
+  resolveOutboundHeaderEntryValues: vi.fn(),
   resolveOutboundHeaderProxyConfig: vi.fn(),
-  resolveOutboundHeaderValuesForRequest: vi.fn(),
-  shouldApplyOutboundHeadersForRequest: vi.fn(),
 }));
 
 import { mainProcessFetch } from './mainProcessFetch';

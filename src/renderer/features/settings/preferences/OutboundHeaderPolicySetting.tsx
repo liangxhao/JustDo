@@ -9,7 +9,7 @@ import {
   MinusIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
-import type { OutboundHeaderPolicyView } from '@shared/network/network';
+import { OutboundCookieRefreshStatus, type OutboundHeaderPolicyView } from '@shared/network/network';
 import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
@@ -17,7 +17,23 @@ import { i18nService } from '@/services/i18n';
 import Modal from '@/shared/components/ui/Modal';
 import { useDialogFocusTrap } from '@/shared/hooks/useDialogFocusTrap';
 
-function PolicyTarget({ url, headers }: OutboundHeaderPolicyView['targets'][number]) {
+const headerIndicators = {
+  injected: { Icon: CheckIcon, label: 'outboundHeaderPolicyInjected', color: 'bg-success/10 text-success' },
+  missing: { Icon: MinusIcon, label: 'outboundHeaderPolicyNotInjected', color: 'bg-surface-raised text-secondary' },
+  [OutboundCookieRefreshStatus.Confirmed]: {
+    Icon: CheckIcon, label: 'outboundHeaderPolicyCookieConfirmed', color: 'bg-success/10 text-success',
+  },
+  [OutboundCookieRefreshStatus.Unconfirmed]: {
+    Icon: MinusIcon, label: 'outboundHeaderPolicyCookieUnconfirmed', color: 'bg-surface-raised text-secondary',
+  },
+  [OutboundCookieRefreshStatus.Failed]: {
+    Icon: XMarkIcon, label: 'outboundHeaderPolicyCookieRefreshFailed', color: 'bg-danger/10 text-danger',
+  },
+} as const;
+
+function PolicyTarget({
+  url, headers, checking,
+}: OutboundHeaderPolicyView['targets'][number] & { checking: boolean }) {
   const addressId = useId();
 
   return (
@@ -32,18 +48,25 @@ function PolicyTarget({ url, headers }: OutboundHeaderPolicyView['targets'][numb
           </div>
         </th>
       </tr>
-      {headers.map(({ name, sourceField, value }) => {
+      {headers.map(({ name, sourceField, value, cookieRefreshStatus }) => {
         const source = sourceField ?? i18nService.t('outboundHeaderPolicyFixedValue');
-        const injected = value !== null;
-        const state = i18nService.t(injected ? 'outboundHeaderPolicyInjected' : 'outboundHeaderPolicyNotInjected');
-        const StateIcon = injected ? CheckIcon : MinusIcon;
+        const hasValue = value !== null;
+        const status = cookieRefreshStatus ?? (hasValue ? 'injected' : 'missing');
+        const indicator = checking && status === OutboundCookieRefreshStatus.Confirmed
+          ? OutboundCookieRefreshStatus.Unconfirmed
+          : status;
+        const { Icon: StateIcon, label, color } = headerIndicators[indicator];
+        const state = i18nService.t(label);
+        const detail = indicator === OutboundCookieRefreshStatus.Failed && value
+          ? i18nService.t('outboundHeaderPolicyCookieRefreshFailedCached')
+          : state;
         return (
           <tr key={name} className="align-middle [&>*]:border-b [&>*]:border-border-subtle">
             <th scope="row" className="bg-transparent px-2.5 py-1 font-normal opacity-100 sm:px-3.5">
               <code title={name} className="block truncate select-text font-semibold text-foreground">{name}</code>
             </th>
             <td className="px-2.5 py-1 sm:px-3.5">
-              {injected && (
+              {hasValue && (
                 <code
                   tabIndex={value ? 0 : undefined}
                   className="block min-h-5 overflow-x-auto overflow-y-hidden whitespace-pre rounded bg-surface-inset px-1.5 py-0.5 leading-4 text-foreground select-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
@@ -59,10 +82,8 @@ function PolicyTarget({ url, headers }: OutboundHeaderPolicyView['targets'][numb
               <span
                 role="img"
                 aria-label={state}
-                title={state}
-                className={`inline-grid size-5 place-items-center rounded-full align-middle ${
-                  injected ? 'bg-success/10 text-success' : 'bg-surface-raised text-secondary'
-                }`}
+                title={detail}
+                className={`inline-grid size-5 place-items-center rounded-full align-middle ${color}`}
               >
                 <StateIcon className="size-3.5" aria-hidden="true" />
               </span>
@@ -76,7 +97,7 @@ function PolicyTarget({ url, headers }: OutboundHeaderPolicyView['targets'][numb
 
 function OutboundHeaderPolicyDialog({ onClose }: { onClose: () => void }) {
   const [policy, setPolicy] = useState<OutboundHeaderPolicyView | null>(null);
-  const [failed, setFailed] = useState(false);
+  const [checking, setChecking] = useState(true);
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -85,17 +106,25 @@ function OutboundHeaderPolicyDialog({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     let active = true;
+    let latestRead = 0;
     const readPolicy = async () => {
+      const read = ++latestRead;
+      setChecking(true);
+      let result: OutboundHeaderPolicyView | null;
       try {
-        const result = await window.electron.api.getOutboundHeaderPolicy();
-        if (active) setPolicy(result);
+        result = await window.electron.api.getOutboundHeaderPolicy();
       } catch {
-        if (active) setFailed(true);
+        result = null;
       }
+      if (!active || read !== latestRead) return;
+      setPolicy(result);
+      setChecking(false);
     };
+    const unsubscribe = window.electron.api.onOutboundHeaderPolicyChanged(() => { void readPolicy(); });
     void readPolicy();
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 
@@ -176,12 +205,12 @@ function OutboundHeaderPolicyDialog({ onClose }: { onClose: () => void }) {
                   </th>
                 </tr>
               </thead>
-              {policy.targets.map(target => <PolicyTarget key={target.url} {...target} />)}
+              {policy.targets.map(target => <PolicyTarget key={target.url} {...target} checking={checking} />)}
             </table>
           </div>
         ) : (
           <div className="min-h-0 overflow-y-auto bg-background px-4 py-10 text-center sm:px-6">
-            {failed ? (
+            {!policy && !checking ? (
               <div role="alert" className="space-y-2 text-danger">
                 <ExclamationCircleIcon className="mx-auto size-7" aria-hidden="true" />
                 <p className="text-sm">{i18nService.t('outboundHeaderPolicyReadFailed')}</p>

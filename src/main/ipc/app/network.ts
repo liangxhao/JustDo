@@ -23,6 +23,7 @@ import {
   applyMainProcessOutboundHeaderPolicy,
   MainProcessOutboundHeaderSource,
 } from '../../core/network/mainProcessFetch';
+import { onOutboundHeaderPolicyChanged } from '../../core/network/outboundHeaderPolicyConfig';
 import { getOutboundHeaderPolicyView } from '../../core/network/outboundHeaderProxy';
 import { getBuiltinModelAuthErrorCode } from '../../providers/builtinModelAuthDiagnostics';
 import {
@@ -39,6 +40,7 @@ interface PendingFetch {
 }
 
 const pendingFetches = new Map<string, PendingFetch>();
+let unsubscribeOutboundHeaderPolicy: (() => void) | undefined;
 const getPendingFetchKey = (event: IpcMainInvokeEvent, requestId: string): string =>
   `${event.sender.id}:${requestId}`;
 const cancelPendingFetch = (key: string): void => {
@@ -261,6 +263,13 @@ export const registerNetworkHandlers = ({ getMainWindow, hasBuiltinModel, renewB
     }
 
     return getOutboundHeaderPolicyView();
+  });
+  unsubscribeOutboundHeaderPolicy?.();
+  unsubscribeOutboundHeaderPolicy = onOutboundHeaderPolicyChanged(() => {
+    const window = getMainWindow();
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+    const frame = window.webContents.mainFrame;
+    if (frame && !frame.detached) frame.send(NetworkIpc.OutboundHeaderPolicyChanged);
   });
 
   ipcMain.handle(NetworkIpc.CancelFetch, (event, requestId: string) => {
