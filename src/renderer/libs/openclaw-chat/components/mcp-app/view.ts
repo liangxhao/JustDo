@@ -32,7 +32,8 @@ import { createMcpAppBridge } from './bridge';
 import { prepareMcpAppDownload } from './download';
 import { MCP_APP_ICON_STYLE, renderMcpAppIcon } from './icon';
 import { resolveMcpAppIcons } from './icons';
-import { connectAppContent, restrictRecoveredAppPayload } from './plugin-content';
+import { MCP_APP_LOADING_STYLE, renderMcpAppLoading } from './loading';
+import { connectAppContent, isRecoveredAppPreview, readRecoveredAppContent } from './plugin-content';
 import { McpAppFrameTransport } from './transport';
 
 export type ManagedMcpAppOpen = McpAppManagedFile & { takeWorkspace: () => void };
@@ -104,8 +105,8 @@ const STYLE = `
   :host{position:relative;display:block;box-sizing:border-box;width:100%;min-width:0;margin:12px auto;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:12px;overflow:hidden;color:var(${TOKEN_CONTRACT['text-primary']},inherit);background:var(${TOKEN_CONTRACT.background},transparent)}
   *{box-sizing:border-box}header{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 10px;border-bottom:1px solid var(${TOKEN_CONTRACT['border-subtle']},#ddd);font-size:13px}header .title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}svg{display:block;width:16px;height:16px;flex-shrink:0}.app-icon{color:var(${TOKEN_CONTRACT['text-muted']},#888)}
   button{font:inherit;color:inherit;background:transparent;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:7px;padding:6px 10px;cursor:pointer;transition:background .15s}button:hover{background:var(${TOKEN_CONTRACT.surface},#f4f4f5)}button:focus-visible{outline:2px solid var(${TOKEN_CONTRACT.primary},#666);outline-offset:2px}button:disabled{opacity:.5;cursor:default}.icon-button{display:grid;place-items:center;width:30px;height:30px;padding:0;border:0;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}.primary{background:var(${TOKEN_CONTRACT.primary},#333);color:var(${TOKEN_CONTRACT['primary-foreground']},#fff);border-color:transparent}.primary:hover{background:var(${TOKEN_CONTRACT['primary-hover']},#555)}
-  iframe{display:block;width:100%;border:0;min-height:160px}.status,.notice,.confirmation{padding:12px 14px;font-size:13px;overflow-wrap:anywhere}.status{display:flex;align-items:center;gap:10px}.status span{flex:1}.notice{font-size:12px;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}.confirmation{border-bottom:1px solid var(${TOKEN_CONTRACT.border},#ddd);background:var(${TOKEN_CONTRACT.surface},#fafafa)}.confirmation p{max-height:180px;overflow:auto;white-space:pre-wrap;margin:10px 0}.actions{display:flex;gap:8px}.spinner{width:14px;height:14px;border:2px solid var(${TOKEN_CONTRACT.border},#ddd);border-top-color:currentColor;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.spinner{animation:none}button{transition:none}}
-  .status .spinner{flex:0 0 14px}
+  iframe{display:block;width:100%;border:0;min-height:160px}.status,.notice,.confirmation{padding:12px 14px;font-size:13px;overflow-wrap:anywhere}.status{display:flex;align-items:center;gap:10px}.status>span{flex:1}.notice{font-size:12px;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}.confirmation{border-bottom:1px solid var(${TOKEN_CONTRACT.border},#ddd);background:var(${TOKEN_CONTRACT.surface},#fafafa)}.confirmation p{max-height:180px;overflow:auto;white-space:pre-wrap;margin:10px 0}.actions{display:flex;gap:8px}@media(prefers-reduced-motion:reduce){button{transition:none}}
+  ${MCP_APP_LOADING_STYLE}
   header[hidden]{display:none}header .notice{padding:0;flex-shrink:0;white-space:nowrap}
   .branding{display:flex;align-items:center;gap:8px;flex:1;min-width:0}.app-icon{display:flex;flex-shrink:0;width:16px;height:16px}
   .host-actions{display:flex;align-items:center;gap:4px;flex-shrink:0}.app-header-space{display:none}
@@ -157,6 +158,7 @@ export class McpAppView extends LitElement {
   private lastSession?: McpAppSessionView;
   private viewRecoveryUnavailable = false;
   private reopening?: AbortController;
+  private retryFocusContext?: McpAppViewContext;
   private expansionFocus?: HTMLElement;
   private waitingApps?: McpAppSession;
   private stopWaiting?: () => void;
@@ -203,6 +205,7 @@ export class McpAppView extends LitElement {
         this.stopWaiting = undefined;
         this.waitingApps = undefined;
         this.waitingForBinding = false;
+        this.retryFocusContext = undefined;
         this.clear();
       }
     });
@@ -251,6 +254,23 @@ export class McpAppView extends LitElement {
 
   protected updated(): void {
     this.resources?.update?.();
+    if (!this.loading && this.retryFocusContext) {
+      const context = this.retryFocusContext;
+      this.retryFocusContext = undefined;
+      const doc = this.ownerDocument;
+      if (
+        this.error &&
+        this.context === context &&
+        context.isCurrent() &&
+        doc.hasFocus() &&
+        !this.shadowRoot?.activeElement &&
+        (doc.activeElement === doc.body || doc.activeElement === this)
+      ) {
+        this.shadowRoot
+          ?.querySelector<HTMLButtonElement>('[data-action="retry"]')
+          ?.focus({ preventScroll: true });
+      }
+    }
     this.dispatchEvent(
       new CustomEvent(McpAppEvent.PresentationChanged, { bubbles: true, composed: true }),
     );
@@ -461,10 +481,13 @@ export class McpAppView extends LitElement {
     const current = () => this.current(resources, version);
     this.loading = true;
     try {
-      const payload = restrictRecoveredAppPayload(
-        preview,
-        resources.session,
-        await resources.session.view(resources.controller.signal, readNativeMcpAppIdentity(preview)),
+      const recovered = isRecoveredAppPreview(preview);
+      if (recovered && !readRecoveredAppContent(preview, resources.session))
+        throw new Error('Recovered MCP App binding changed');
+      const payload = await resources.session.view(
+        resources.controller.signal,
+        readNativeMcpAppIdentity(preview),
+        recovered,
       );
       if (!current()) return;
       if (
@@ -813,6 +836,7 @@ export class McpAppView extends LitElement {
   closeApp(): Promise<void> {
     if (this.closing) return this.closing;
     const resources = this.resources;
+    this.retryFocusContext = undefined;
     this.contextCleanupUnconfirmed = false;
     this.cancelReopen();
     this.closed = true;
@@ -907,7 +931,9 @@ export class McpAppView extends LitElement {
         return;
       }
       const reopened = opened ?? (context?.reopen ? await context.reopen(opening.signal) : undefined);
-      const refreshed = reopened?.context ?? (context?.refresh ? await context.refresh() : context);
+      let refreshed = reopened?.context ?? context;
+      if (!reopened && context?.refresh && (!context.isCurrent() || !context.apps.ready))
+        refreshed = await context.refresh();
       if (!current() || this.version !== version || opening.signal.aborted || !refreshed?.isCurrent()) return;
       if (reopened && !isNativeMcpAppPreview(reopened.preview)) return;
       this.context = refreshed;
@@ -923,7 +949,7 @@ export class McpAppView extends LitElement {
     } finally {
       if (this.reopening === opening) {
         this.reopening = undefined;
-        if (current()) this.loading = false;
+        this.loading = false;
       }
       if (blank && this.isConnected && this.preview === preview) this.requestUpdate();
     }
@@ -1057,15 +1083,18 @@ export class McpAppView extends LitElement {
           : nothing
       }
       ${this.inactive && !this.closed && this.fillContainer && !this.resources?.ownsReadOnlyNotice ? html`<div class="notice">${t('mcpAppsReadOnly')}</div>` : nothing}
-      ${this.loading ? html`<div class="status" role="status"><span class="spinner" aria-hidden="true"></span>${t('mcpAppsLoading')}</div>` : nothing}
+      ${this.loading ? html`<div class="status" role="status">${renderMcpAppLoading(t('mcpAppsLoading'))}</div>` : nothing}
       ${
-        this.error
+        this.error && !this.loading
           ? html`<div class="status" role="status">
               <span>${blankReopenStatus === 'unknown' ? t('mcpAppsOperationUnknown') : this.error}</span>
               ${
                 !this.closed
                   ? html`<button
-                      @click=${() => {
+                      data-action="retry"
+                      @click=${(event: Event) => {
+                        if (this.shadowRoot?.activeElement === event.currentTarget)
+                          this.retryFocusContext = this.context;
                         void this.reload();
                       }}
                     >

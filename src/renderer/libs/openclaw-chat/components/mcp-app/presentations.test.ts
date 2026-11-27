@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+import { i18nService } from '@/services/i18n';
+
 import { McpAppSession } from '../../gateway/mcp-app/mcp-app-session';
 import { decodeMcpAppLaunch } from '../../pipeline/native-mcp-app';
+import { McpAppAnchor } from './anchor';
 import { getMcpAppPresentations, type McpAppPresentationAnchor } from './presentations';
 import { McpAppView, type McpAppViewContext } from './view';
 
@@ -108,6 +111,60 @@ test('same admitted view shares one presentation; pin and unpin never close or l
   expect(close).not.toHaveBeenCalled();
   expect(f.request.mock.calls.every(args => args[0] === 'mcp.app.view')).toBe(true);
   stop();
+});
+
+test('a failed desktop App carrier shows progress while its explicit retry is pending', async () => {
+  const f = fixture();
+  const carrier = document.createElement('iframe');
+  document.body.append(carrier);
+  Object.defineProperty(carrier.contentWindow, 'ResizeObserver', { value: ResizeObserver });
+  const doc = carrier.contentDocument!;
+  const grant = {
+    id: 'replacement-surface',
+    url: `${location.origin}/workspace.html?surface=replacement`,
+    frameName: 'replacement-surface',
+  };
+  Object.defineProperty(doc, 'URL', { value: grant.url });
+  const root = doc.createElement('div');
+  root.id = 'workspace-root';
+  doc.body.append(root);
+  let finish!: (value: typeof grant) => void;
+  const prepareSurface = vi.fn()
+    .mockRejectedValueOnce(new Error('Carrier unavailable'))
+    .mockImplementationOnce(
+      () => new Promise(resolve => { finish = resolve; }),
+    );
+  vi.stubGlobal('electron', {
+    workspaceWindow: {
+      prepareSurface,
+      onSurfaceInvalidated: () => () => undefined,
+      updateSurface: vi.fn(),
+      closeSurface: vi.fn(),
+    },
+  });
+  vi.spyOn(window, 'open').mockReturnValue(carrier.contentWindow);
+  const anchor = new McpAppAnchor();
+  anchor.preview = f.preview();
+  anchor.context = f.context();
+  document.body.append(anchor);
+  await vi.waitFor(() =>
+    expect(anchor.shadowRoot?.textContent).toContain(i18nService.t('mcpAppsUnavailable')),
+  );
+  expect(anchor.shadowRoot!.querySelector('.app-loading-indicator')).toBeNull();
+
+  anchor.shadowRoot!.querySelector('button')!.click();
+  await anchor.updateComplete;
+  expect(anchor.shadowRoot!.querySelector('[role="status"]')?.textContent).toContain(
+    i18nService.t('mcpAppsLoading'),
+  );
+  expect(anchor.shadowRoot!.querySelector('[role="status"] .app-loading-indicator')).not.toBeNull();
+  expect(f.request).not.toHaveBeenCalled();
+
+  finish(grant);
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledOnce());
+  expect(anchor.shadowRoot!.querySelector('.app-loading-indicator')).toBeNull();
+  expect(root.querySelector('mcp-app-view')).toBe(f.manager.entries[0].view);
+  expect(prepareSurface).toHaveBeenCalledTimes(2);
 });
 
 test('a navigation-only canvas is released once its exact run retention ends', async () => {

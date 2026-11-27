@@ -33,20 +33,8 @@ export function readRecoveredAppContent(preview: McpAppPreview, binding: McpAppS
     : undefined;
 }
 
-export function restrictRecoveredAppPayload(
-  preview: McpAppPreview,
-  binding: McpAppSessionView,
-  payload: McpAppViewPayload,
-): McpAppViewPayload {
-  if (!readRecoveredAppContent(preview, binding)) return payload;
-  return {
-    ...payload,
-    messageSupported: false,
-    updateModelContextSupported: false,
-    richModelContextSupported: false,
-    fileResourcesSupported: false,
-    openFilesSupported: false,
-  };
+export function isRecoveredAppPreview(preview: McpAppPreview): boolean {
+  return recovered.has(preview);
 }
 
 /** Connect only the adapter chosen for the authenticated view during preparation. */

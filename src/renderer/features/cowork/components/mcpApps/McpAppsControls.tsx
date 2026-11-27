@@ -31,6 +31,7 @@ import type { ComposerFeatureItem } from '../composer/ComposerFeatureMenu';
 import { decodeFileAppLaunch, findFileApp, openManagedFileApp, type OpenMcpAppFile } from './fileApps';
 import { withManualAppReopen } from './manualAppReopen';
 import { McpAppIcon } from './McpAppIcon';
+import { McpAppLoadingStatus } from './McpAppLoadingStatus';
 import { type AppSettings, appSettingsSchema, McpAppSettings } from './McpAppSettings';
 import { APP_BUTTON, APP_ICON_BUTTON, APP_INPUT } from './mcpAppStyles';
 import { NativeAppQuestions } from './NativeAppQuestions';
@@ -531,9 +532,8 @@ export function McpAppsControls({
                   ) : (
                     <>
                       {!catalog && busy && (
-                        <div className="flex min-h-24 items-center justify-center gap-2 text-secondary">
-                          <ArrowPathIcon className="h-4 w-4 animate-spin" aria-hidden="true" />
-                          <span>{t('mcpAppsLoading')}</span>
+                        <div className="flex min-h-24 items-center justify-center">
+                          <McpAppLoadingStatus />
                         </div>
                       )}
                       {catalog && !catalog.servers.length && !catalog.onboarding?.length && (

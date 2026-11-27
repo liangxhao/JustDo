@@ -16,7 +16,6 @@ import { decodeMcpAppLaunch } from '../../pipeline/native-mcp-app';
 import {
   readRecoveredAppContent,
   restoreAppReference,
-  restrictRecoveredAppPayload,
 } from './plugin-content';
 import { getMcpAppPresentations, type McpAppPresentationAnchor } from './presentations';
 import type { McpAppViewContext } from './view';
@@ -82,7 +81,7 @@ function fixture() {
       toolResult: { structuredContent: { id: source.contentId } },
     },
   });
-  const request = vi.fn(async (method: string) => {
+  const request = vi.fn(async (method: string): Promise<unknown> => {
     if (method === EDITOR_RESTORE) return launch('mcp-app-recovered');
     return new Promise<never>(() => {});
   });
@@ -142,28 +141,29 @@ test('two historical operations share one authenticated recovery and keep the or
   expect(isNativeAppReference({ ...first })).toBe(false);
 });
 
-test('recovery aliases never restore old message/file/context capabilities or cross connection generations', async () => {
+test('an authenticated recovery alias mounts without live editor admission', async () => {
   const f = fixture(),
     reference = f.reference('first');
   const preview = await restoreAppReference(reference, f.context());
-  const payload = restrictRecoveredAppPayload(preview, f.apps.bind(), {
-    html: '',
-    sandboxUrl: '',
-    sandboxPort: 1,
+  f.request.mockResolvedValueOnce({
+    html: '<p>Recovered diagram</p>',
+    sandboxUrl: '/mcp-app-sandbox',
+    sandboxPort: 18790,
     messageSupported: true,
     fileResourcesSupported: true,
     openFilesSupported: true,
     richModelContextSupported: true,
     updateModelContextSupported: true,
+    toolResult: { structuredContent: { id: f.source.contentId } },
   });
-  for (const key of [
-    'messageSupported',
-    'fileResourcesSupported',
-    'openFilesSupported',
-    'richModelContextSupported',
-    'updateModelContextSupported',
-  ] as const)
-    expect(payload[key]).toBe(false);
+  const entry = f.manager.acquire(f.anchor(), preview, f.context())!;
+
+  await vi.waitFor(() => expect(entry.view.inactive).toBe(true));
+  expect(f.request.mock.calls.map(([method]) => method)).toEqual([EDITOR_RESTORE, 'mcp.app.view']);
+
   f.client.generation++;
   expect(readRecoveredAppContent(preview, f.apps.bind())).toBeUndefined();
+  const stale = f.manager.acquire(f.anchor(), preview, f.context())!;
+  await vi.waitFor(() => expect(stale.view.error).not.toBe(''));
+  expect(f.request).toHaveBeenCalledTimes(2);
 });

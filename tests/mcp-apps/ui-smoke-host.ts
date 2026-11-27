@@ -8,9 +8,18 @@ const fixture = window as unknown as {
   fixtureCalls: Array<{ method: string; params: unknown }>;
   fixtureReady: boolean;
   fixtureView: McpAppView;
+  fixtureReleaseViewRead: () => boolean;
   fixtureSwitchSession: (active: boolean) => void;
 };
 fixture.fixtureCalls = [];
+let releaseViewRead: (() => void) | undefined;
+fixture.fixtureReleaseViewRead = () => {
+  if (!releaseViewRead) return false;
+  const release = releaseViewRead;
+  releaseViewRead = undefined;
+  release();
+  return true;
+};
 const identity = {
   viewId: 'mcp-app-fixture',
   serverName: 'fixture',
@@ -24,13 +33,17 @@ const client = {
   subscribeEvents: () => () => undefined,
   request: async (method: string, params: unknown) => {
     fixture.fixtureCalls.push({ method, params });
-    if (method === McpAppMethod.View)
+    if (method === McpAppMethod.View) {
+      await new Promise<void>(resolve => {
+        releaseViewRead = resolve;
+      });
       return {
         ...fixture.fixturePayload,
         messageSupported: true,
         toolInput: {},
         toolResult: { content: [{ type: 'text', text: 'initial' }] },
       };
+    }
     if (method === McpAppMethod.CallTool)
       return { content: [{ type: 'text', text: 'echo:clicked' }] };
     return {};

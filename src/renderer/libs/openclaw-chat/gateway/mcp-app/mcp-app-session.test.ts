@@ -561,14 +561,23 @@ describe('MCP App native session authority', () => {
     }), expect.anything());
   });
 
-  it('restores only an expired enhanced view and routes subsequent operations through its fresh native view', async () => {
+  it('restores the expired editor directly from its authenticated history payload', async () => {
     const { apps, request } = fixture();
+    const payload = {
+      html: 'recovered editor',
+      toolResult: { structuredContent: { id: 'document-one' } },
+      messageSupported: false,
+    };
     request
       .mockRejectedValueOnce(expired())
-      .mockResolvedValueOnce({ viewId: 'mcp-app-fresh', payload: { html: 'editor' } })
-      .mockResolvedValue({});
+      .mockResolvedValueOnce({ viewId: 'mcp-app-fresh', payload })
+      .mockResolvedValue({ ...payload, messageSupported: true, openFilesSupported: true,
+        workspaceFile: { uri: 'file', name: 'old', writable: true },
+        hostContext: { 'openai/modelContext': { updateId: 'old' } },
+      });
     const view = apps.bind(original.viewId);
-    expect(await view.view(undefined, original)).toEqual({ html: 'editor' });
+    expect(await view.view(undefined, original)).toMatchObject(payload);
+    expect(request.mock.calls.map(([method]) => method)).toEqual([McpAppMethod.View, EDITOR_RESTORE]);
     expect(request.mock.calls[1]).toEqual([
       EDITOR_RESTORE,
       {
@@ -579,19 +588,47 @@ describe('MCP App native session authority', () => {
       },
       expect.anything(),
     ]);
-    await view.request(McpAppMethod.ListResources);
+    const reread = await view.view(undefined, original);
     expect(request).toHaveBeenLastCalledWith(
-      McpAppMethod.ListResources,
+      McpAppMethod.View,
       expect.objectContaining({ viewId: 'mcp-app-fresh' }),
       expect.anything(),
     );
-    apps.reportContext(original.viewId, 'Diagram', { updateId: 'selection' });
-    await apps.removeContext(original.viewId, 'selection');
-    expect(request).toHaveBeenLastCalledWith(
-      McpAppMethod.RemoveModelContext,
-      expect.objectContaining({ viewId: 'mcp-app-fresh', updateId: 'selection' }),
-      expect.anything(),
-    );
+    expect(reread).toMatchObject({
+      ...payload,
+      openFilesSupported: false,
+      fileResourcesSupported: false,
+      richModelContextSupported: false,
+      updateModelContextSupported: false,
+    });
+    expect(reread.workspaceFile).toBeUndefined();
+    expect(reread.hostContext?.['openai/modelContext']).toBeUndefined();
+  });
+
+  it('ends a stalled adapter preparation read without replaying the app tool', async () => {
+    vi.useFakeTimers();
+    try {
+      const { apps, request } = fixture();
+      request.mockResolvedValueOnce({
+        html: 'editor',
+        messageSupported: true,
+        toolResult: { structuredContent: { id: 'document-one' } },
+      }).mockImplementationOnce((_method, _params, options) => new Promise((_, reject) => {
+        const signal = options!.signal!;
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }));
+      const view = apps.bind(original.viewId);
+      const loaded = view.view(undefined, original);
+      const outcome = loaded.catch(error => error);
+      await vi.advanceTimersByTimeAsync(30_000);
+      const signal = request.mock.calls[1][2]?.signal;
+      expect(signal?.aborted).toBe(true);
+      await expect(outcome).resolves.toMatchObject({ name: 'TimeoutError' });
+      expect(request.mock.calls.map(([method]) => method)).toEqual([McpAppMethod.View, EDITOR_ADMIT]);
+      view.detach();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each(['network', 'session', 'view'])(

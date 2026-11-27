@@ -1,10 +1,10 @@
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 
 import { McpAppView, type McpAppViewContext } from '@/libs/openclaw-chat/components/mcp-app/view';
 import { isNativeMcpAppPreview } from '@/libs/openclaw-chat/pipeline/native-mcp-app';
 import { i18nService } from '@/services/i18n';
 
+import { McpAppLoadingStatus } from '../../mcpApps/McpAppLoadingStatus';
 import { APP_BUTTON } from '../../mcpApps/mcpAppStyles';
 import {
   isWorkspaceAppEntry,
@@ -329,10 +329,7 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
               hidden={entry.sessionId !== sessionId || entry.id !== activeId}
               className="absolute inset-0 z-20 bg-background"
             >
-              <div
-                className="flex h-full items-center justify-center gap-3 p-4 text-xs text-secondary"
-                aria-busy={!entry.failed}
-              >
+              <div className="flex h-full items-center justify-center gap-3 p-4 text-xs text-secondary">
                 {entry.failed ? (
                   <>
                     <span role="alert">
@@ -349,12 +346,7 @@ export function useMcpAppTabs(sessionId: string, select: (id: string) => void, o
                     )}
                   </>
                 ) : (
-                  <span role="status" aria-label={i18nService.t('mcpAppsLoading')}>
-                    <ArrowPathIcon
-                      className="h-4 w-4 animate-spin motion-reduce:animate-none"
-                      aria-hidden="true"
-                    />
-                  </span>
+                  <McpAppLoadingStatus />
                 )}
               </div>
             </div>

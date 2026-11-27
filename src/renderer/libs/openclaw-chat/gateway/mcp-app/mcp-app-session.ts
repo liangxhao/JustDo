@@ -43,6 +43,8 @@ const canvasSessions = new Set<McpAppSession>();
 const VIEW_KEEPALIVE_INTERVAL_MS = 60_000;
 const VIEW_KEEPALIVE_BACKOFF_MS = 2 * VIEW_KEEPALIVE_INTERVAL_MS;
 const VIEW_KEEPALIVE_BACKOFF_AFTER_FAILURES = 3;
+const VIEW_RECOVERY_TIMEOUT_MS = 30_000;
+const VIEW_PREPARATION_TIMEOUT_MS = 30_000;
 const SEND_PREPARATION_TIMEOUT_MS = 12_000;
 type RetainCanvasRun = (runId: string) => (() => void) | void;
 type ReadyCanvas = McpAppPreparedCanvas & {
@@ -614,11 +616,14 @@ export class McpAppSessionView {
     };
     const request: McpAppAdapterRequest = async (method, input, signal) => {
       assertMethod(method);
-      return this.dispatch(method, input, signal, true);
+      return this.dispatch(method, input, signal, { includeIncarnation: true });
     };
     const retainedRequest: McpAppAdapterRequest = async (method, input, signal) => {
       assertMethod(method);
-      return this.dispatch(method, input, signal, true, true);
+      return this.dispatch(method, input, signal, {
+        includeIncarnation: true,
+        retainedOperation: true,
+      });
     };
     const release = async (method: string, input: Record<string, unknown>) => {
       assertMethod(method);
@@ -680,7 +685,7 @@ export class McpAppSessionView {
       adapter.restoreMethod,
       adapter.restoreReferenceParams(content.contentId, reference.operationId),
       undefined,
-      true,
+      { includeIncarnation: true, timeoutMs: VIEW_RECOVERY_TIMEOUT_MS },
     );
   }
 
@@ -696,7 +701,7 @@ export class McpAppSessionView {
       `${MCP_APP_FILE_RESOURCE_METHOD_PREFIX}${this.fileServer}`,
       { ...input, action },
       signal,
-      true,
+      { includeIncarnation: true },
     );
   }
 
@@ -835,7 +840,7 @@ export class McpAppSessionView {
       if (!this.binding.sessionId) throw new Error('MCP App session identity is required');
       const method = `${MCP_APP_FILE_OPEN_METHOD_PREFIX}${input.serverName}`;
       try {
-        return await this.dispatch(method, { ...input }, signal, true);
+        return await this.dispatch(method, { ...input }, signal, { includeIncarnation: true });
       } catch (error) {
         // Only the native router's exact non-admission permits a fallback. Unknown
         // completion, denied access and transport failures must never replay work.
@@ -861,9 +866,13 @@ export class McpAppSessionView {
     method: string,
     input: Record<string, unknown>,
     signal?: AbortSignal,
-    includeIncarnation = false,
-    retainedOperation = false,
+    options: { includeIncarnation?: boolean; retainedOperation?: boolean; timeoutMs?: number } = {},
   ): Promise<T> {
+    const {
+      includeIncarnation,
+      retainedOperation,
+      timeoutMs = method === McpAppMethod.View ? 10_000 : null,
+    } = options;
     const isCurrent = () => (retainedOperation ? this.isRetainedEditorCurrent() : this.isCurrent());
     if (!isCurrent()) throw new Error('MCP App binding expired');
     const binding = this.binding;
@@ -887,7 +896,7 @@ export class McpAppSessionView {
         { ...params, ...scope },
         {
           signal: combined,
-          timeoutMs: method === McpAppMethod.View ? 10_000 : null,
+          timeoutMs,
         },
       );
       if (
@@ -912,6 +921,7 @@ export class McpAppSessionView {
   async view(
     signal?: AbortSignal,
     descriptor?: McpAppDescriptor | null,
+    recoveredReference = false,
   ): Promise<McpAppViewPayload> {
     if (!this.viewId) return Promise.reject(new Error('MCP App view identity is required'));
     const binding = this.binding;
@@ -953,7 +963,7 @@ export class McpAppSessionView {
             agentId: this.binding.agentId,
             viewId: this.viewId,
           },
-          { signal: combined, timeoutMs: 30_000 },
+          { signal: combined, timeoutMs: VIEW_RECOVERY_TIMEOUT_MS },
         );
         if (
           !this.isCurrent() ||
@@ -988,6 +998,9 @@ export class McpAppSessionView {
     this.keepAliveFailures = 0;
     this.keepAliveStopped = false;
     this.scheduleKeepAlive();
+    // Both forms of authenticated recovery already contain the saved snapshot.
+    // Reading their view must not establish a new live editor admission.
+    const recovered = recoveredReference || this.restoredViewId !== undefined;
     if (adapter && descriptor) {
       const source = Object.freeze({
         serverName: descriptor.serverName,
@@ -996,24 +1009,50 @@ export class McpAppSessionView {
         originSessionKey: binding.sessionKey,
       });
       this.attachedAdapter = Object.freeze({ adapter, source });
-      const transport = this.editorTransport(adapter);
-      result = await adapter.prepareView({
-        source,
-        payload: result,
-        request: (method, input) => transport.request(method, input, signal),
-        releaseOnClose: transport.releaseOnClose,
-      });
-      if (!this.isCurrent() || this.binding !== binding || this.revision !== revision || signal?.aborted)
-        throw new Error('MCP App response superseded');
+      if (!recovered) {
+        const transport = this.editorTransport(adapter);
+        const preparation = new AbortController();
+        const deadline = setTimeout(
+          () => preparation.abort(
+            new DOMException('MCP App view preparation timed out', 'TimeoutError'),
+          ),
+          VIEW_PREPARATION_TIMEOUT_MS,
+        );
+        const scope = signal ? AbortSignal.any([signal, preparation.signal]) : preparation.signal;
+        try {
+          result = await adapter.prepareView({
+            source,
+            payload: result,
+            request: (method, input, requestSignal) =>
+              transport.request(
+                method,
+                input,
+                requestSignal ? AbortSignal.any([scope, requestSignal]) : scope,
+              ),
+            releaseOnClose: transport.releaseOnClose,
+          });
+          scope.throwIfAborted();
+          if (!this.isCurrent() || this.binding !== binding || this.revision !== revision)
+            throw new Error('MCP App response superseded');
+        } finally {
+          clearTimeout(deadline);
+        }
+      }
     }
-    if (this.historicalSourceViewId)
+    if (recovered) {
+      const hostContext = result.hostContext ? { ...result.hostContext } : undefined;
+      if (hostContext) delete hostContext['openai/modelContext'];
       return {
         ...result,
+        hostContext,
+        workspaceFile: undefined,
         messageSupported: false,
         updateModelContextSupported: false,
+        richModelContextSupported: false,
         fileResourcesSupported: false,
         openFilesSupported: false,
       };
+    }
     const link = (result.hostContext?.['openai/deepLink'] as { url?: string } | undefined)?.url;
     if (
       result.messageSupported === true &&
@@ -1028,7 +1067,7 @@ export class McpAppSessionView {
           method,
           { action: 'describe' },
           signal,
-          true,
+          { includeIncarnation: true },
         );
         if (
           file.uri !== `app-file://${link!.slice('/workspace-file/'.length)}` ||

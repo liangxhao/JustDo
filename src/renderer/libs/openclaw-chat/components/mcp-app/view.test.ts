@@ -101,6 +101,86 @@ test('a removed waiting App never resumes on a later binding notification', asyn
   expect(f.request).not.toHaveBeenCalled();
 });
 
+test('reloading a message App reads the current view even when chat mutation is unavailable', async () => {
+  const f = waitingFixture();
+  const context = f.view.context!;
+  context.canDraft = () => false;
+  context.refresh = vi.fn(async () => {
+    throw new Error('Chat mutation is unavailable');
+  });
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+
+  f.view.shadowRoot!.querySelector<HTMLButtonElement>('.status button')!.click();
+
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledTimes(2));
+  expect(f.request).toHaveBeenLastCalledWith(
+    'mcp.app.view',
+    expect.objectContaining({ viewId: f.view.preview!.viewId }),
+    expect.anything(),
+  );
+  expect(context.refresh).not.toHaveBeenCalled();
+});
+
+test.each([
+  { title: 'returns focus to retry', moveFocus: false, action: 'retry' },
+  { title: 'keeps focus on another control in the card', moveFocus: true, action: 'dismiss' },
+])('a failed read $title', async ({ moveFocus, action }) => {
+  const f = waitingFixture();
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+  let rejectRead!: (reason: Error) => void;
+  f.request.mockImplementationOnce(
+    () => new Promise<never>((_, reject) => {
+      rejectRead = reject;
+    }),
+  );
+  const root = f.view.shadowRoot!;
+  const retry = root.querySelector<HTMLButtonElement>('[data-action="retry"]')!;
+  retry.focus();
+  retry.click();
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledTimes(2));
+  if (moveFocus) root.querySelector<HTMLButtonElement>('[data-action="dismiss"]')!.focus();
+
+  rejectRead(new Error('View unavailable'));
+
+  await vi.waitFor(() => {
+    expect(root.querySelector('[data-action="retry"]')).not.toBeNull();
+    expect(root.activeElement?.getAttribute('data-action')).toBe(action);
+  });
+});
+
+test('changing the captured context during reload discards its response and leaves retry available', async () => {
+  const f = waitingFixture();
+  f.finishBinding();
+  await vi.waitFor(() => expect(f.view.error).not.toBe(''));
+  const original = f.view.context!;
+  let finish!: (context: typeof original) => void;
+  original.isCurrent = () => false;
+  original.refresh = vi.fn(
+    () =>
+      new Promise(resolve => {
+        finish = resolve;
+      }),
+  );
+
+  f.view.shadowRoot!.querySelector<HTMLButtonElement>('.status button')!.click();
+  await vi.waitFor(() => expect(original.refresh).toHaveBeenCalledOnce());
+  expect(f.view.shadowRoot!.querySelector('[role="status"]')?.textContent).toContain(
+    i18nService.t('mcpAppsLoading'),
+  );
+  expect(f.view.shadowRoot!.querySelector('[role="status"] .app-loading-indicator')).not.toBeNull();
+  const replacement = { ...original, isCurrent: () => true };
+  f.view.context = replacement;
+  finish({ ...replacement });
+
+  await vi.waitFor(() => expect(f.view.loading).toBe(false));
+  expect(f.view.context).toBe(replacement);
+  expect(f.request).toHaveBeenCalledOnce();
+  f.view.shadowRoot!.querySelector<HTMLButtonElement>('.status button')!.click();
+  await vi.waitFor(() => expect(f.request).toHaveBeenCalledTimes(2));
+});
+
 test('the user can reopen an unavailable file using a fresh admitted view', async () => {
   const f = waitingFixture();
   f.finishBinding();

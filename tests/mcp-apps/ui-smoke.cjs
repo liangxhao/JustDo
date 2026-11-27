@@ -161,6 +161,10 @@ if (!process.versions.electron) {
           host.address().port +
           (process.argv.includes('--workspace') ? '/?workspace=1' : '/'),
       );
+      win.webContents.debugger.attach('1.3');
+      await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+      });
       const until = async operation => {
         for (let attempt = 0; attempt < 150; attempt++) {
           const value = await operation();
@@ -173,6 +177,20 @@ if (!process.versions.electron) {
         throw new Error('UI probe timed out: ' + state + ': ' + JSON.stringify(errors));
       };
       await until(() => win.webContents.executeJavaScript('Boolean(window.fixtureReady)'));
+      const verifyLoadingAnimation = async () => {
+        await until(() =>
+          win.webContents.executeJavaScript(`(() => {
+            const view = window.fixtureView;
+            const status = view.shadowRoot.querySelector('[role="status"]');
+            const indicator = status?.querySelector('.app-loading-indicator');
+            return view.loading && Boolean(status?.textContent?.trim()) &&
+              view.ownerDocument.defaultView.matchMedia('(prefers-reduced-motion: reduce)').matches &&
+              indicator?.getAnimations().some(animation => animation.playState === 'running');
+          })()`),
+        );
+        await until(() => win.webContents.executeJavaScript('window.fixtureReleaseViewRead()'));
+      };
+      await verifyLoadingAnimation();
       const inner = await until(async () => {
         for (const frame of win.webContents.mainFrame.framesInSubtree) {
           try {
@@ -186,6 +204,11 @@ if (!process.versions.electron) {
         }
       });
       await until(() => inner.executeJavaScript('document.body.dataset.seed === "received"'));
+      await until(() =>
+        win.webContents.executeJavaScript(
+          '!window.fixtureView.shadowRoot.querySelector(".app-loading-indicator")',
+        ),
+      );
       await until(() =>
         inner.executeJavaScript(
           'document.body.dataset.theme === "dark" && document.body.dataset.background === "#123456"',
@@ -276,6 +299,7 @@ if (!process.versions.electron) {
       await win.webContents.executeJavaScript(
         'window.fixtureView.shadowRoot.querySelector("[data-action=reopen]").click();true',
       );
+      await verifyLoadingAnimation();
       await until(() =>
         win.webContents.executeJavaScript(
           '!window.fixtureView.closed && !window.fixtureView.loading && !window.fixtureView.error && Boolean(window.fixtureView.shadowRoot.querySelector("iframe"))',
@@ -382,6 +406,7 @@ if (!process.versions.electron) {
         JSON.stringify(
           {
             sdkHandshake: true,
+            initialAndReopenedViewsAnimateUnderReducedMotion: true,
             initialResult: true,
             toolCalls: 1,
             sameDocumentExpansionRetainedDraft: retained,
@@ -403,7 +428,7 @@ if (!process.versions.electron) {
         ),
       );
       console.log(
-        'MCP Apps Chromium smoke passed: handshake, initial result, tool call, retained draft, native lifecycle',
+        'MCP Apps Chromium smoke passed: loading animation, handshake, tool call, retained draft, native lifecycle',
       );
       finish(0);
     })

@@ -7,11 +7,14 @@ import {
 } from '@/libs/openclaw-chat/components/mcp-app/presentations';
 import { i18nService } from '@/services/i18n';
 
+import { McpAppLoadingStatus } from '../../mcpApps/McpAppLoadingStatus';
 import type { CoworkDisplayTab } from '../CoworkDisplayPanel';
 import { McpAppTabIcon } from './McpAppTabIcon';
 
 function ReferencePanel({ entry }: { entry: McpAppPresentation }) {
   const mount = useRef<HTMLDivElement>(null);
+  const current = entry.view.context?.isCurrent();
+  const surface = entry.surface;
   useLayoutEffect(() => {
     const manager = getMcpAppPresentations();
     const target = mount.current!;
@@ -26,12 +29,12 @@ function ReferencePanel({ entry }: { entry: McpAppPresentation }) {
   }, [entry]);
   return (
     <div ref={mount} className="absolute inset-0 bg-background">
-      {!entry.view.context?.isCurrent() && (
+      {!current && (
         <div role="status" className="p-4 text-sm text-secondary">
           {i18nService.t('mcpAppsUnavailable')}
         </div>
       )}
-      {entry.surface?.failed && entry.view.context?.isCurrent() && (
+      {current && surface?.failed && (
         <div role="status" className="p-4 text-sm text-secondary">
           {i18nService.t('mcpAppsUnavailable')}
           <button
@@ -41,6 +44,11 @@ function ReferencePanel({ entry }: { entry: McpAppPresentation }) {
           >
             {i18nService.t('mcpAppsRetry')}
           </button>
+        </div>
+      )}
+      {current && surface && !surface.ready && !surface.failed && (
+        <div className="p-4 text-sm">
+          <McpAppLoadingStatus />
         </div>
       )}
     </div>

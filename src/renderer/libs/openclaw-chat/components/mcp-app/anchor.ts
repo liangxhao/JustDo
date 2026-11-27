@@ -10,6 +10,7 @@ import { isNativeAppReference } from '../../pipeline/native-app-reference';
 import { isNativeMcpAppPreview, readNativeMcpAppIdentity } from '../../pipeline/native-mcp-app';
 import { MCP_APP_ICON_STYLE, renderMcpAppIcon } from './icon';
 import { resolveMcpAppIcons } from './icons';
+import { MCP_APP_LOADING_STYLE, renderMcpAppLoading } from './loading';
 import { restoreAppReference } from './plugin-content';
 import { getMcpAppPresentations, type McpAppPresentation } from './presentations';
 import { findMcpAppContentView, type McpAppViewContext } from './view';
@@ -53,6 +54,7 @@ export class McpAppAnchor extends LitElement {
       .reference{box-sizing:border-box;display:flex;align-items:center;gap:10px;min-height:52px;padding:8px 12px;border:1px solid var(${TOKEN_CONTRACT.border},#ddd);border-radius:12px;background:var(${TOKEN_CONTRACT.background},transparent);font:inherit;font-size:13px}
       .app-icon{--app-icon-size:18px;display:flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;border-radius:7px;background:var(${TOKEN_CONTRACT.surface},#f4f4f5)}
       ${MCP_APP_ICON_STYLE}
+      ${MCP_APP_LOADING_STYLE}
       .title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;font-weight:500}
       .status{display:flex;align-items:center;gap:4px;flex-shrink:0;padding:3px 7px;border-radius:6px;background:var(${TOKEN_CONTRACT.surface},#f4f4f5);font-size:11px;white-space:nowrap;color:var(${TOKEN_CONTRACT['text-secondary']},#666)}
       .status svg,button svg{width:13px;height:13px;flex-shrink:0}
@@ -175,13 +177,12 @@ export class McpAppAnchor extends LitElement {
     const manager = getMcpAppPresentations(this.ownerDocument);
     const view = this.target();
     const entry = view ? manager.find(view) : undefined;
-    const failed = entry?.surface?.failed;
-    const inline = this.entry && this.entry.primary === this && !this.entry.pinned && !failed;
-    if (inline) {
-      this.style.height = `${this.entry!.height}px`;
-      return nothing;
-    }
-    this.style.height = '';
+    const surface = entry?.surface;
+    const failed = surface?.failed;
+    const waitingForSurface = surface && !surface.ready && !surface.failed;
+    const inline = this.entry?.primary === this && !this.entry.pinned && !failed;
+    this.style.height = inline ? `${this.entry!.height}px` : '';
+    if (inline && !waitingForSurface) return nothing;
     const title = entry
       ? manager.title(entry)
       : (this.reference?.title ?? this.preview?.title ?? i18nService.t('mcpAppsTitle'));
@@ -192,16 +193,21 @@ export class McpAppAnchor extends LitElement {
     const icons = identity
       ? resolveMcpAppIcons((view?.context ?? this.context)?.apps.iconCatalog, identity)
       : undefined;
+    const loading =
+      !failed && (waitingForSurface || this.loading || (!view && !reference && !this.error));
     const status = failed
       ? t('mcpAppsUnavailable')
-      : pinned
-        ? `${reference ? `${t('mcpAppsUpdated')} · ` : ''}${t('mcpAppsPinned')}`
-        : reference
-          ? t('mcpAppsUpdated')
-          : t('mcpAppsLoading');
+      : loading
+        ? t('mcpAppsLoading')
+        : pinned
+          ? `${reference ? `${t('mcpAppsUpdated')} · ` : ''}${t('mcpAppsPinned')}`
+          : reference
+            ? t('mcpAppsUpdated')
+            : t('mcpAppsLoading');
     const label = t(
       failed ? 'mcpAppsRetry' : pinned || (view && !entry) ? 'mcpAppsViewReference' : 'mcpAppsPin',
     );
+    const canOpen = this.context?.isCurrent() && this.context.apps.ready;
     return html`<div class="reference">
         <span class="app-icon" aria-hidden="true">
           ${renderMcpAppIcon(icons, this.failedIcons, src => {
@@ -210,23 +216,25 @@ export class McpAppAnchor extends LitElement {
           })}
         </span>
         <span class="title" title=${title}>${title}</span>
-        <div class="status">
+        <div class="status" role="status">
           ${
-            pinned
+            pinned && !loading
               ? svg`<svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="M12.5 3.5v13"/></svg>`
               : nothing
           }
-          <span>${status}</span>
+          ${loading ? renderMcpAppLoading(status) : html`<span>${status}</span>`}
         </div>
-        <button
-          ?disabled=${this.loading || !this.context?.isCurrent() || Boolean(!failed && entry && !entry.pinned && !view?.canReference)}
-          title=${`${label}: ${title}`}
-          aria-label=${`${label}: ${title}`}
-          @click=${() => void this.open()}
-        >
-          ${label}
-          ${svg`<svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg>`}
-        </button>
+        ${waitingForSurface
+          ? nothing
+          : html`<button
+              ?disabled=${this.loading || !canOpen || Boolean(!failed && entry && !entry.pinned && !view?.canReference)}
+              title=${`${label}: ${title}`}
+              aria-label=${`${label}: ${title}`}
+              @click=${() => void this.open()}
+            >
+              ${label}
+              ${svg`<svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg>`}
+            </button>`}
       </div>
       ${this.error ? html`<div class="error" role="status">${this.error}</div>` : nothing}`;
   }
