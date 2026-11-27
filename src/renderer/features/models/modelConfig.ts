@@ -8,7 +8,7 @@ export const getEnabledProviderModels = (providers: AppConfig['providers']): Mod
   Object.entries(providers ?? {}).flatMap(([providerName, providerConfig]) =>
     providerConfig.enabled
       ? (providerConfig.models ?? [])
-          .filter(model => model.enabled !== false)
+          .filter(model => model?.id && model.enabled !== false)
           .map(model => ({
             id: model.id,
             name: model.name,

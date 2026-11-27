@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { configureStore } from '@reduxjs/toolkit';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
@@ -37,7 +37,8 @@ describe('ModelSelector', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: '原模型不可用，请重新选择' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Replacement' }));
+    const builtin = screen.getByRole('group', { name: '内置模型' });
+    fireEvent.click(within(builtin).getByRole('button', { name: 'Replacement' }));
 
     expect(onChange).toHaveBeenCalledWith(replacement);
   });
@@ -72,39 +73,65 @@ describe('ModelSelector', () => {
 
       fireEvent.click(screen.getByRole('button', { name: 'Ready model' }));
 
-      const unavailableButton = screen.getByText('Unavailable model').closest('button');
-      expect(unavailableButton?.getAttribute('aria-disabled')).toBeNull();
-      expect(unavailableButton?.getAttribute('title')).toBeNull();
-      expect(unavailableButton?.textContent).toBe('Acme/Unavailable model');
-      fireEvent.click(unavailableButton!);
+      const group = screen.getByRole('group', { name: 'Acme' });
+      const unavailableButton = within(group).getByRole('button', { name: 'Unavailable model' });
+      expect(unavailableButton.getAttribute('aria-disabled')).toBeNull();
+      expect(unavailableButton.getAttribute('title')).toBeNull();
+      fireEvent.click(unavailableButton);
       expect(onChange).toHaveBeenCalledWith(models[1]);
       expect(onOpen).toHaveBeenCalledOnce();
     },
   );
 
-  test('renders the configured provider and complete model display name on one line', () => {
+  test('groups by provider identity and selects the correct model across groups', () => {
     const models: Model[] = [
-      { id: 'current', name: 'Current model', providerKey: 'custom_0', provider: 'Acme' },
+      { id: 'shared', name: 'Shared model', providerKey: 'acme', provider: 'Acme' },
+      { id: 'shared', name: 'Shared model', providerKey: 'acme-backup', provider: 'Acme' },
       {
         id: 'next',
         name: 'team/Next model',
-        providerKey: 'custom_0',
-        provider: 'Acme AI',
-        contextLength: 128_000,
-        reasoning: true,
-        supportsTools: false,
+        providerKey: 'acme',
+        provider: 'Acme',
         supportsImage: true,
       },
     ];
     const { onChange } = renderSelector(models);
-    fireEvent.click(screen.getByRole('button', { name: 'Current model' }));
+    const trigger = screen.getByRole('button', { name: 'Shared model' });
+    fireEvent.click(trigger);
 
-    const nextButton = screen.getByText('team/Next model').closest('button');
-    expect(nextButton?.textContent).toBe('Acme AI/team/Next model');
-    expect(screen.getByTitle('Acme AI/team/Next model')).toBeTruthy();
-    expect(screen.getByLabelText('图像')).toBeTruthy();
-    fireEvent.click(nextButton!);
+    const [firstGroup, secondGroup] = screen.getAllByRole('group', { name: 'Acme' });
+    const firstOptions = within(firstGroup).getAllByRole('button');
+    const secondOption = within(secondGroup).getByRole('button', { name: 'Shared model' });
+    expect(firstOptions.map(option => option.textContent)).toEqual([
+      'Shared model',
+      'team/Next model',
+    ]);
+    expect(firstOptions[0].getAttribute('aria-current')).toBe('true');
+    expect(secondOption.getAttribute('aria-current')).toBeNull();
+    expect(within(firstOptions[1]).getByTitle('team/Next model')).toBeTruthy();
+    expect(within(firstOptions[1]).getByRole('img', { name: '图像' })).toBeTruthy();
+
+    fireEvent.click(secondOption);
 
     expect(onChange).toHaveBeenCalledWith(models[1]);
+    expect(screen.queryByRole('group')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  test('closes the menu and restores focus on Escape', () => {
+    const models = [{ id: 'model', name: 'Example model', provider: 'Acme', providerKey: 'acme' }];
+    const { onChange } = renderSelector(models);
+    const trigger = screen.getByRole('button', { name: 'Example model' });
+    fireEvent.click(trigger);
+
+    const option = within(screen.getByRole('group', { name: 'Acme' })).getByRole('button', {
+      name: 'Example model',
+    });
+    option.focus();
+    fireEvent.keyDown(option, { key: 'Escape' });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole('group')).toBeNull();
+    expect(document.activeElement).toBe(trigger);
   });
 });

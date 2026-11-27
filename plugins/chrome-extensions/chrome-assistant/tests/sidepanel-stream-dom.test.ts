@@ -279,12 +279,24 @@ describe('extension streaming DOM', () => {
     expect(prompt.value).toBe('');
   });
 
-  it('loads the standard model catalog and renders only the optional rich lane once', async () => {
+  it('groups the standard model catalog across pages and renders only the optional rich lane once', async () => {
     const { thread, respond, emit } = await mountThread();
     mock.request.mockImplementation(async (method: string, params: Record<string, unknown>) => {
-      if (method === 'model/list') return params.cursor
-        ? { data: [{ id: 'p/second', displayName: 'Second catalog model' }], nextCursor: null }
-        : { data: [{ id: 'p/m', displayName: 'Canonical catalog model' }], nextCursor: 'next-models' };
+      if (method === 'model/list') {
+        if (params.cursor) {
+          return {
+            data: [{ id: 'p/team/second', displayName: 'p/team/Second catalog model' }],
+            nextCursor: null,
+          };
+        }
+        return {
+          data: [
+            { id: 'p/m', displayName: 'p/Canonical catalog model' },
+            { id: 'backup/m', displayName: 'backup/Canonical catalog model' },
+          ],
+          nextCursor: 'next-models',
+        };
+      }
       if (method === 'chrome/composer/options')
         return { modelRef: 'p/m', permissionMode: 'ask', models: [{ id: 'ignored', name: 'Old composer catalog' }] };
       if (method === 'thread/resume') return { thread: {
@@ -295,9 +307,26 @@ describe('extension streaming DOM', () => {
       return respond(method);
     });
     document.getElementById('refresh')!.click();
-    await vi.waitFor(() => expect((document.getElementById('model') as HTMLSelectElement).options.length).toBe(2));
-    expect(document.getElementById('model')?.textContent).toContain('Canonical catalog model');
-    expect(document.getElementById('model')?.textContent).not.toContain('Old composer catalog');
+    const modelSelect = document.getElementById('model') as HTMLSelectElement;
+    await vi.waitFor(() => expect(modelSelect.options).toHaveLength(3));
+    const groups = Array.from(modelSelect.querySelectorAll('optgroup'), group => ({
+      label: group.label,
+      options: Array.from(group.querySelectorAll('option'), option => [
+        option.value,
+        option.textContent,
+      ]),
+    }));
+    expect(groups).toEqual([
+      {
+        label: 'p',
+        options: [
+          ['p/m', 'Canonical catalog model'],
+          ['p/team/second', 'team/Second catalog model'],
+        ],
+      },
+      { label: 'backup', options: [['backup/m', 'Canonical catalog model']] },
+    ]);
+    expect(modelSelect.value).toBe('p/m');
     expect(mock.request).toHaveBeenCalledWith('model/list', { limit: 200, cursor: 'next-models' });
     expect(document.getElementById('messages')?.textContent).not.toContain('Core history is not another');
     mock.notify('chrome/thread/updated', { threadId: 'one', display: { id: 'other', turns: [{ id: 'foreign', items: [{ type: 'agentMessage', text: 'Different conversation' }] }] } });

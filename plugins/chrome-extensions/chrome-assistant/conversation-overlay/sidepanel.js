@@ -572,12 +572,24 @@ async function refreshComposerOptions(threadId, generation) {
     placeholder.disabled = models.length > 0;
     modelSelect.append(placeholder);
   }
+  const providerGroups = new Map();
   for (const entry of models) {
+    const [provider] = entry.id.split('/', 1);
+    const prefix = `${provider}/`;
+    let group = providerGroups.get(provider);
+    if (!group) {
+      group = document.createElement('optgroup');
+      group.label = provider;
+      providerGroups.set(provider, group);
+      modelSelect.append(group);
+    }
+
     const option = document.createElement('option');
+    const label = entry.displayName || entry.id;
     option.value = entry.id;
-    option.textContent = entry.displayName || entry.id;
+    option.textContent = label.startsWith(prefix) ? label.slice(prefix.length) : label;
     option.title = entry.id;
-    modelSelect.append(option);
+    group.append(option);
   }
   modelSelect.value =
     localModel && models.some(entry => entry.id === localModel)

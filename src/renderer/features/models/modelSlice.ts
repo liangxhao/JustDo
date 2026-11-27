@@ -1,6 +1,8 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
-import { defaultConfig, getProviderDisplayName } from '@/app/config';
+import { defaultConfig } from '@/app/config';
+
+import { getEnabledProviderModels } from './modelConfig';
 
 export interface Model {
   id: string;
@@ -44,36 +46,8 @@ export function isSameModelIdentity(
   return true;
 }
 
-// 从 providers 配置中构建初始可用模型列表
-function buildInitialModels(): Model[] {
-  const models: Model[] = [];
-  if (defaultConfig.providers) {
-    Object.entries(defaultConfig.providers).forEach(([providerName, config]) => {
-      if (config.enabled && config.models) {
-        config.models.forEach(model => {
-          if (!model?.id || model.enabled === false) {
-            return;
-          }
-          models.push({
-            id: model.id,
-            name: model.name,
-            provider: getProviderDisplayName(providerName, config),
-            providerKey: providerName,
-            supportsImage: model.supportsImage ?? false,
-            contextLength: model.contextLength,
-            maxTokens: model.maxTokens,
-          });
-        });
-      }
-    });
-  }
-  return models.length > 0
-    ? models
-    : defaultConfig.model.availableModels.filter(model => model?.id);
-}
-
 // 初始可用模型列表（会在运行时更新）
-export let availableModels: Model[] = buildInitialModels();
+export let availableModels: Model[] = getEnabledProviderModels(defaultConfig.providers);
 const defaultModelProvider = defaultConfig.model.defaultModelProvider;
 
 interface ModelState {

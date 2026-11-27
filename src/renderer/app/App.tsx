@@ -214,58 +214,15 @@ const InitializedApp: React.FC = () => {
         setStartupActivity(RendererStartupActivity.Models);
         console.info('[App] initializeApp: configService.getConfig');
         const config = await configService.getConfig();
+        const { defaultModel, defaultModelProvider } = config.model;
 
-        // 从 providers 配置中加载可用模型列表到 Redux
-        const providerModels: {
-          id: string;
-          name: string;
-          provider?: string;
-          providerKey?: string;
-          supportsImage?: boolean;
-          contextLength?: number;
-          maxTokens?: number;
-        }[] = [];
-        if (config.providers) {
-          Object.entries(config.providers).forEach(([providerName, providerConfig]) => {
-            if (providerConfig.enabled && providerConfig.models) {
-              providerConfig.models.forEach(
-                (model: {
-                  id: string;
-                  name: string;
-                  enabled?: boolean;
-                  supportsImage?: boolean;
-                  contextLength?: number;
-                  maxTokens?: number;
-                }) => {
-                  if (!model?.id || model.enabled === false) {
-                    return;
-                  }
-                  providerModels.push({
-                    id: model.id,
-                    name: model.name,
-                    provider: getProviderDisplayName(providerName, providerConfig),
-                    providerKey: providerName,
-                    supportsImage: model.supportsImage ?? false,
-                    contextLength: model.contextLength,
-                    maxTokens: model.maxTokens,
-                  });
-                },
-              );
-            }
-          });
-        }
-        const fallbackModels = config.model.availableModels
-          .filter(model => model?.id)
-          .map(model => ({
-            id: model.id,
-            name: model.name,
-            providerKey: undefined,
-            supportsImage: model.supportsImage ?? false,
-            contextLength: model.contextLength,
-            maxTokens: model.maxTokens,
-          }));
-        const resolvedModels = providerModels.length > 0 ? providerModels : fallbackModels;
-        dispatch(setConfiguredModels({ models: resolvedModels, ...config.model }));
+        dispatch(
+          setConfiguredModels({
+            models: getEnabledProviderModels(config.providers),
+            defaultModel,
+            defaultModelProvider,
+          }),
+        );
 
         setIsInitialized(true);
         console.info('[App] initializeApp: shell ready');
