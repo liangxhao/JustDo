@@ -71,7 +71,7 @@ export function createWebLaunchBackground({
   const restoredRequests = new Set();
   const abandonedLaunches = new Map();
   const cancelled = new Set();
-  const pendingClicks = new Set();
+  const pendingClicks = new Map();
   const preparing = new Set();
   const revising = new Map();
   const retirements = new Map();
@@ -841,6 +841,32 @@ export function createWebLaunchBackground({
       record => holdsComposer(record.response?.receipt) &&
         (record.launchId || !record.missingPrepareUntil),
     );
+  function hasWebsitePanelWork(tabId) {
+    return [...pendingClicks.values()].includes(tabId) || connections.isOpeningPanel(tabId) ||
+      Object.values(state?.requests ?? {}).some(record =>
+        record.source.tabId === tabId && !terminal(record.response?.receipt) &&
+        record.source.windowInstanceId === state.windows[String(record.source.windowId)],
+      ) || state?.queue.some(item => item.source.tabId === tabId && !item.error) ||
+      Object.values(state?.connections ?? {}).some(pending =>
+        pending.source.tabId === tabId && pending.expiresAt > Date.now(),
+      );
+  }
+
+  async function readContextualPanelProtection() {
+    const contexts = await chromeApi.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] });
+    const liveDocuments = new Map();
+    for (const context of contexts) {
+      const tabId = tabIdFromSidePanelUrl(context.documentUrl, chromeApi);
+      if (tabId !== null) liveDocuments.set(tabId, context.documentId);
+    }
+    return transaction(() => tabId => {
+      if (hasWebsitePanelWork(tabId)) return true;
+      if (!liveDocuments.has(tabId)) return false;
+      const panel = panels.get(tabId) ?? state.panels[String(tabId)];
+      return !panel || (panel.documentId ?? panel.contextDocumentId) !== liveDocuments.get(tabId) ||
+        panel.busy || panel.scopeBusy;
+    });
+  }
   async function reconcileWindowWork(windowId) {
     await refreshObservations();
     if (advancing.has(windowId)) return;
@@ -903,6 +929,7 @@ export function createWebLaunchBackground({
         id: message.panelInstanceId,
         ...(validIdentifier(sender.documentId) ? { documentId: sender.documentId } : {}),
         busy: message.composerBusy === true,
+        scopeBusy: message.scopeBusy === true,
         windowId: message.windowId,
       };
       const records = await transaction(async () => {
@@ -944,6 +971,7 @@ export function createWebLaunchBackground({
     if (message.type === 'web-launch:panel:state') {
       const panel = registeredPanel(message, sender);
       panel.busy = message.composerBusy === true;
+      panel.scopeBusy = message.scopeBusy === true;
       panel.replaceableDraftLaunchId = validIdentifier(message.replaceableDraftLaunchId)
         ? message.replaceableDraftLaunchId
         : undefined;
@@ -1422,7 +1450,7 @@ export function createWebLaunchBackground({
         reply({ ok: false, code: 'CAPACITY_EXCEEDED' });
         return false;
       }
-      pendingClicks.add(pendingKey);
+      pendingClicks.set(pendingKey, sender.tab.id);
       const opened = continuation ? Promise.resolve() : openTabSidePanel(chromeApi, sender.tab.id);
       return done(
         enqueueLaunch(message, sender, opened, continuation)
@@ -1547,5 +1575,8 @@ export function createWebLaunchBackground({
         });
     }
   });
-  return { handleMessage, handleExternalMessage: connections.handleExternalMessage, client };
+  return {
+    handleMessage, handleExternalMessage: connections.handleExternalMessage,
+    readContextualPanelProtection, hasWebsitePanelWork, client,
+  };
 }

@@ -82,7 +82,7 @@ export function createWebLaunchConnections({
   reconcileWindowWork,
   now = () => Date.now(),
 }) {
-  const provisional = new Set();
+  const provisional = new Map();
   const tabEpoch = new Map();
   const retired = new Set();
   const refreshes = new Map();
@@ -537,7 +537,7 @@ export function createWebLaunchConnections({
       reply(competingConnection(message.connectionWaitStatus));
       return false;
     }
-    provisional.add(sender.tab.windowId);
+    provisional.set(sender.tab.windowId, sender.tab.id);
     const epoch = tabEpoch.get(sender.tab.id) ?? 0;
     let opened;
     try {
@@ -670,5 +670,8 @@ export function createWebLaunchConnections({
   chromeApi.permissions.onAdded?.addListener(() => {
     void resumeGrants().catch(() => {});
   });
-  return { handleExternalMessage, decide, current, consume, invalidateTab, refresh, resumeGrants };
+  return {
+    handleExternalMessage, decide, current, consume, invalidateTab, refresh, resumeGrants,
+    isOpeningPanel: tabId => [...provisional.values()].includes(tabId),
+  };
 }

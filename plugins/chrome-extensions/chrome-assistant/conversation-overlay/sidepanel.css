@@ -82,12 +82,11 @@ select {
 header {
   position: relative;
   z-index: 2;
-  min-height: 54px;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 100px;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  padding: 9px 12px;
+  padding: 4px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--chat-border) 55%, transparent);
   background: var(--chat-bg);
 }
@@ -259,6 +258,15 @@ header {
 .icon[aria-pressed='true'] {
   color: var(--chat-link);
   background: var(--chat-surface);
+}
+#panelScope[hidden],
+#panelScope[aria-pressed='false'] .global-scope-icon,
+#panelScope[aria-pressed='true'] .tab-scope-icon {
+  display: none;
+}
+#panelScope:disabled {
+  opacity: .55;
+  cursor: default;
 }
 main {
   flex: 1;

@@ -1,6 +1,11 @@
 import { initializeAppearance } from './modules/appearance.js';
 import { AppServerClient } from './modules/conversation-client.js';
-import { tabIdFromSidePanelUrl } from './modules/tab-side-panel.js';
+import {
+  GLOBAL_SIDE_PANEL_PATH,
+  SidePanelMessage,
+  supportsGlobalSidePanel,
+  tabIdFromSidePanelUrl,
+} from './modules/tab-side-panel.js';
 import { createWebLaunchPanel } from './modules/web-launch-panel.js';
 import {
   chromeDisplayThread,
@@ -26,7 +31,9 @@ void initializeAppearance();
 localizeSidePanel(document);
 
 const boundTabId = tabIdFromSidePanelUrl(document.URL, globalThis.chrome);
+const globalPanel = document.URL === globalThis.chrome?.runtime?.getURL?.(GLOBAL_SIDE_PANEL_PATH);
 const contextTabs = globalThis.chrome?.tabs;
+const scopeButton = document.getElementById('panelScope');
 const sessionSelect = document.getElementById('session');
 const messages = document.getElementById('messages');
 const prompt = document.getElementById('prompt');
@@ -100,6 +107,11 @@ let questionGeneration = 0;
 let questionsReady = false;
 let refreshingQuestions = false;
 let pageContextGeneration = 0;
+let panelWindowId;
+let activePanelTabId = boundTabId;
+let switchingScope = false;
+let scopeSelection;
+let lastGlobalDraftState;
 
 const questions = createQuestionPanel(document.getElementById('questions'), {
   respond: async (threadId, requestId, response) => {
@@ -138,6 +150,7 @@ const approvalPending = () => !approvalRoot.classList.contains('hidden');
 const questionPending = () => (questionsReady || refreshingQuestions) && questions.hasPending;
 
 function syncQuestionVisibility() {
+  publishGlobalDraftState();
   void webLaunchPanel?.publishState();
   const hasApproval = approvalPending();
   const hasQuestion = questionPending();
@@ -411,10 +424,12 @@ function updateActivity() {
 
 function updateComposerDisabledState() {
   const currentThreadRunning = isCurrentThreadRunning(activeThreadId, sessionSelect.value);
+  const inputLocked = sending || switchingScope;
   const pending =
     pendingSubmissions.get(sessionSelect.value)?.uncertain === true ||
     knownTurns.get(sessionSelect.value)?.uncertain === true;
-  sessionSelect.disabled = sending || choosingWorkspace;
+  sessionSelect.disabled = inputLocked || choosingWorkspace;
+  prompt.readOnly = switchingScope;
   const externalInput = webLaunchPanel?.inputAssociated() === true;
   const webAction = selectedWebAction();
   const stopping = webAction ? webAction.type === 'stop' : currentThreadRunning;
@@ -423,16 +438,16 @@ function updateComposerDisabledState() {
   send.setAttribute('aria-label', send.title);
   workspace.update({
     threadId: sessionSelect.value, draftId, cwd: currentCwd, recentCwds,
-    disabled: !composerReady || !transportReady || sending || pending || externalInput ||
+    disabled: !composerReady || !transportReady || inputLocked || pending || externalInput ||
       currentThreadRunning || Boolean(stoppingThreadId && stoppingThreadId === sessionSelect.value),
   });
-  attachButton.disabled = externalInput || sending || pending || attachmentReadsInFlight > 0;
+  attachButton.disabled = externalInput || inputLocked || pending || attachmentReadsInFlight > 0;
   addMenu.update();
-  fileInput.disabled = externalInput || sending || pending || attachmentReadsInFlight > 0;
-  includePage.disabled = externalInput || sending || pending;
-  permissionSelect.disabled = !composerReady || sending || pending;
-  modelSelect.disabled = !composerReady || sending || pending;
-  send.disabled = webAction ? webAction.disabled : (
+  fileInput.disabled = externalInput || inputLocked || pending || attachmentReadsInFlight > 0;
+  includePage.disabled = externalInput || inputLocked || pending;
+  permissionSelect.disabled = !composerReady || inputLocked || pending;
+  modelSelect.disabled = !composerReady || inputLocked || pending;
+  send.disabled = switchingScope || (webAction ? webAction.disabled : (
     choosingWorkspace ||
     sending ||
     !transportReady ||
@@ -441,7 +456,8 @@ function updateComposerDisabledState() {
     (stoppingThreadId === sessionSelect.value && Boolean(stoppingThreadId)) ||
     attachmentReadsInFlight > 0 ||
     (!currentThreadRunning && (!composerReady || (!prompt.value.trim() && pendingAttachments.length === 0)))
-  );
+  ));
+  publishGlobalDraftState();
   void webLaunchPanel?.publishState();
 }
 
@@ -488,9 +504,11 @@ function clearPendingUserMessage() {
 
 async function refreshSessions(preferredSessionId, generation) {
   const previousSelection = sessionSelect.value;
-  const current = preferredSessionId ?? sessionSelect.value;
   const result = await client.request('thread/list', { chrome: { excludePendingFirstSend: true } });
+  const restoredSelection = scopeSelection ? await scopeSelection : undefined;
   if (generation !== refreshGeneration) return false;
+  const current = preferredSessionId ?? (previousSelection || restoredSelection || '');
+  scopeSelection = undefined;
   const conversations = result.data ?? [];
   const selectedThread = conversations.find(entry => entry.id === current);
   const draftOption = sessionSelect.querySelector('option[hidden]');
@@ -818,23 +836,27 @@ async function addAttachments(files) {
 }
 
 function invalidatePageContext(tabId) {
-  if (tabId === boundTabId) pageContextGeneration += 1;
+  if (tabId === activePanelTabId) pageContextGeneration += 1;
 }
 
-function onBoundTabUpdated(tabId, change) {
+function onPageTabUpdated(tabId, change) {
   if (change.status === 'loading' || typeof change.url === 'string') invalidatePageContext(tabId);
 }
 
-async function readBoundTab(generation, previousTab) {
-  if (boundTabId === null || generation !== pageContextGeneration) return undefined;
+async function readPageTab(generation, previousTab) {
+  if (generation !== pageContextGeneration) return undefined;
   try {
-    const tab = await contextTabs.get(boundTabId);
+    const tab = boundTabId !== null
+      ? await contextTabs.get(boundTabId)
+      : (await contextTabs.query({ active: true, windowId: panelWindowId }))[0];
     if (
       generation === pageContextGeneration &&
-      tab?.id === boundTabId &&
+      tab?.id === activePanelTabId &&
+      (boundTabId !== null || tab.windowId === panelWindowId) &&
       !tab.pendingUrl &&
       (!previousTab ||
-        (tab.windowId === previousTab.windowId && (!previousTab.url || tab.url === previousTab.url)))
+        (tab.id === previousTab.id && tab.windowId === previousTab.windowId &&
+          (!previousTab.url || tab.url === previousTab.url)))
     ) {
       return tab;
     }
@@ -845,22 +867,22 @@ async function readBoundTab(generation, previousTab) {
 }
 
 async function collectPageContext(generation) {
-  if (boundTabId === null) return undefined;
+  if (activePanelTabId === null || (globalPanel && panelWindowId === undefined)) return undefined;
   // Start the identity read without delaying the permission prompt past the click gesture.
-  const tabBeforePermission = readBoundTab(generation);
+  const tabBeforePermission = readPageTab(generation);
   try {
     await chrome.permissions.request({ origins: ['http://*/*', 'https://*/*'] });
   } catch {
     // The title and URL remain available if the user declines page-text access.
   }
   const previousTab = await tabBeforePermission;
-  const tab = previousTab && (await readBoundTab(generation, previousTab));
+  const tab = previousTab && (await readPageTab(generation, previousTab));
   if (!tab) return undefined;
   let snapshot;
   let documentId;
   try {
     const [result] = await chrome.scripting.executeScript({
-      target: { tabId: boundTabId },
+      target: { tabId: tab.id },
       func: () => ({
         title: document.title,
         url: globalThis.location.href,
@@ -893,12 +915,12 @@ async function collectPageContext(generation) {
 }
 
 async function pageContextForTurn(generation, snapshot) {
-  if (!(await readBoundTab(generation, snapshot.tab))) return undefined;
+  if (!(await readPageTab(generation, snapshot.tab))) return undefined;
   if (snapshot.documentId) {
     try {
       // Recheck the active document of this tab even when it reloads to the same URL.
       const [current] = await chrome.scripting.executeScript({
-        target: { tabId: boundTabId },
+        target: { tabId: snapshot.tab.id },
         injectImmediately: true,
         func: () => globalThis.location.href,
       });
@@ -912,7 +934,7 @@ async function pageContextForTurn(generation, snapshot) {
 }
 
 async function submit() {
-  if (decisionDialog.open) return;
+  if (decisionDialog.open || switchingScope) return;
   if (webLaunchPanel?.inputAssociated()) {
     await webLaunchPanel.submit('confirmed');
     return;
@@ -1139,6 +1161,7 @@ permissionSelect.addEventListener('change', () => {
   lastPermissionMode = permissionSelect.value;
   if (!webLaunchPanel?.inputAssociated())
     draftPermissionSelection = { threadId: sessionSelect.value, draftId, mode: permissionSelect.value };
+  updateComposerDisabledState();
   webLaunchPanel?.edit();
 });
 modelSelect.addEventListener('change', () => {
@@ -1153,7 +1176,7 @@ fileInput.addEventListener('change', () => {
     });
 });
 send.addEventListener('click', () => {
-  if (decisionDialog.open) return;
+  if (decisionDialog.open || switchingScope) return;
   const webAction = selectedWebAction();
   if (webAction?.type === 'stop')
     void webLaunchPanel.stop(activeThreadId === sessionSelect.value ? activeTurnId : '');
@@ -1177,19 +1200,134 @@ prompt.addEventListener('input', event => {
 });
 refreshButton.addEventListener('click', () => void refreshAll());
 settingsButton.addEventListener('click', () => chrome.runtime.openOptionsPage());
+
+function onPanelTabActivated({ tabId, windowId }) {
+  if (!globalPanel || windowId !== panelWindowId) return;
+  pageContextGeneration += 1;
+  activePanelTabId = tabId;
+  scopeButton.disabled = switchingScope;
+}
+
+function onPanelTabReplaced(addedTabId, removedTabId) {
+  if (!globalPanel || activePanelTabId !== removedTabId) return;
+  pageContextGeneration += 1;
+  activePanelTabId = addedTabId;
+}
+
+function onPanelTabAttached(tabId, { newWindowId }) {
+  if (tabId !== boundTabId) return;
+  panelWindowId = newWindowId;
+  scopeButton.disabled = switchingScope;
+}
+
+function onPanelTabDetached(tabId) {
+  invalidatePageContext(tabId);
+  if (tabId !== boundTabId) return;
+  panelWindowId = undefined;
+  scopeButton.disabled = true;
+}
+
+function composerWorkPending() {
+  return sending || Boolean(stoppingThreadId) || pendingSubmissions.size > 0 || choosingWorkspace ||
+    [...knownTurns.values()].some(turn => turn.uncertain);
+}
+
+function scopeHasUnfinishedWork() {
+  return composerWorkPending() || approvalPending() || questionPending() ||
+    attachmentReadsInFlight > 0 || pendingAttachments.length > 0 || Boolean(prompt.value.trim()) ||
+    hasDraftSettings();
+}
+
+function hasDraftSettings() {
+  return Boolean(draftWorkspaceSelection || selectedDraftPermission(sessionSelect.value));
+}
+
+function publishGlobalDraftState() {
+  if (!globalPanel || panelWindowId === undefined) return;
+  const busy = scopeHasUnfinishedWork();
+  if (busy === lastGlobalDraftState) return;
+  lastGlobalDraftState = busy;
+  void chrome.runtime.sendMessage({ type: SidePanelMessage.GlobalDraftState, windowId: panelWindowId, busy })
+    .then(result => {
+      if (!result?.ok && lastGlobalDraftState === busy) lastGlobalDraftState = undefined;
+    }, () => {
+      if (lastGlobalDraftState === busy) lastGlobalDraftState = undefined;
+    });
+}
+
+function initializePanelScope() {
+  if ((!globalPanel && boundTabId === null) || !supportsGlobalSidePanel(globalThis.chrome)) return;
+  scopeButton.hidden = false;
+  scopeButton.setAttribute('aria-pressed', String(globalPanel));
+  scopeButton.title = t(globalPanel ? 'panelScopeGlobal' : 'panelScopeTab');
+  scopeButton.addEventListener('click', async () => {
+    if (switchingScope || activePanelTabId === null || panelWindowId === undefined) return;
+    if (scopeHasUnfinishedWork() || webLaunchPanel?.inputAssociated()) {
+      showError(t('panelScopeBusy'));
+      return;
+    }
+    switchingScope = true;
+    scopeButton.disabled = true;
+    updateComposerDisabledState();
+    try {
+      const result = await chrome.runtime.sendMessage({
+        type: SidePanelMessage.SwitchScope,
+        windowId: panelWindowId,
+        tabId: activePanelTabId,
+        selection: sessionSelect.value,
+      });
+      if (!result?.ok) {
+        showError(t(result?.otherWindowBusy ? 'panelScopeOtherWindowBusy'
+          : result?.panelBusy ? 'panelScopeBusy' : 'panelScopeFailed'));
+      }
+    } catch {
+      showError(t('panelScopeFailed'));
+    } finally {
+      switchingScope = false;
+      scopeButton.disabled = panelWindowId === undefined;
+      updateComposerDisabledState();
+    }
+  });
+  scopeSelection = (async () => {
+    if (globalPanel) {
+      panelWindowId = (await chrome.windows.getCurrent()).id;
+      const [tab] = await contextTabs.query({ active: true, windowId: panelWindowId });
+      activePanelTabId ??= tab?.id ?? null;
+    } else {
+      const tab = await contextTabs.get(boundTabId);
+      panelWindowId = tab.windowId;
+    }
+    if (panelWindowId === undefined) return undefined;
+    scopeButton.disabled = activePanelTabId === null;
+    publishGlobalDraftState();
+    const result = await chrome.runtime.sendMessage({
+      type: SidePanelMessage.RestoreSelection,
+      windowId: panelWindowId,
+      tabId: boundTabId,
+    });
+    return result?.selection;
+  })().catch(() => undefined);
+}
+
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshAll();
 });
-if (boundTabId !== null) {
-  contextTabs?.onUpdated?.addListener(onBoundTabUpdated);
-  contextTabs?.onDetached?.addListener(invalidatePageContext);
+if (boundTabId !== null || globalPanel) {
+  contextTabs?.onUpdated?.addListener(onPageTabUpdated);
+  contextTabs?.onDetached?.addListener(onPanelTabDetached);
+  contextTabs?.onAttached?.addListener(onPanelTabAttached);
+  contextTabs?.onActivated?.addListener(onPanelTabActivated);
+  contextTabs?.onReplaced?.addListener(onPanelTabReplaced);
   contextTabs?.onRemoved?.addListener(invalidatePageContext);
 }
 window.addEventListener('unload', () => {
-  if (boundTabId !== null) {
-    invalidatePageContext(boundTabId);
-    contextTabs?.onUpdated?.removeListener(onBoundTabUpdated);
-    contextTabs?.onDetached?.removeListener(invalidatePageContext);
+  if (boundTabId !== null || globalPanel) {
+    pageContextGeneration += 1;
+    contextTabs?.onUpdated?.removeListener(onPageTabUpdated);
+    contextTabs?.onDetached?.removeListener(onPanelTabDetached);
+    contextTabs?.onAttached?.removeListener(onPanelTabAttached);
+    contextTabs?.onActivated?.removeListener(onPanelTabActivated);
+    contextTabs?.onReplaced?.removeListener(onPanelTabReplaced);
     contextTabs?.onRemoved?.removeListener(invalidatePageContext);
   }
   addMenu.dispose();
@@ -1217,6 +1355,7 @@ webLaunchPanel = createWebLaunchPanel({
     attachmentReads: attachmentReadsInFlight,
     ready: composerReady && transportReady,
     busy: sending || approvalPending() || questionPending(),
+    scopeBusy: composerWorkPending() || hasDraftSettings(),
   }),
   installComposer: input => {
     if (input.threadId !== undefined && input.threadId !== sessionSelect.value) {
@@ -1320,4 +1459,5 @@ webLaunchPanel = createWebLaunchPanel({
   onClearError: clearError,
   isTurnSettled: (threadId, turnId) => settledTurns.has(`${threadId}/${turnId}`),
 });
+initializePanelScope();
 void refreshAll();

@@ -506,6 +506,83 @@ describe('side panel interactions', () => {
     })));
   });
 
+  it.each(['stay', 'switch'] as const)('uses the global panel’s own window and %s during capture', async action => {
+    const tab = { id: 31, windowId: 4, title: 'Orders', url: 'https://orders.invalid/' };
+    const sibling = { id: 32, windowId: 4, title: 'Private', url: 'https://private.invalid/' };
+    let activeTab = tab;
+    let activate: (info: { tabId: number; windowId: number }) => void = () => {};
+    const permission = deferred<boolean>();
+    const query = vi.fn(async (_filter: { active: boolean; windowId: number }) => [activeTab]);
+    const snapshot = { title: tab.title, url: tab.url, selectedText: '', pageText: 'Order 31' };
+    const executeScript = vi.fn()
+      .mockResolvedValueOnce([{ documentId: 'document', result: snapshot }])
+      .mockResolvedValueOnce([{ documentId: 'document', result: tab.url }]);
+    vi.spyOn(document, 'URL', 'get').mockReturnValue(extensionUrl('sidepanel.html'));
+    vi.stubGlobal('chrome', {
+      runtime: { getURL: extensionUrl, sendMessage: vi.fn().mockResolvedValue({ ok: true, selection: 'one' }) },
+      sidePanel: { close: vi.fn(), onClosed: { addListener: vi.fn() } },
+      windows: { getCurrent: vi.fn().mockResolvedValue({ id: 4 }) },
+      permissions: { request: vi.fn(() => permission.promise) },
+      scripting: { executeScript },
+      tabs: {
+        query,
+        onActivated: {
+          addListener: (listener: typeof activate) => { activate = listener; },
+          removeListener: vi.fn(),
+        },
+      },
+    });
+
+    await mount();
+    expect(element<HTMLSelectElement>('session').value).toBe('one');
+    expect(element<HTMLButtonElement>('panelScope').getAttribute('aria-pressed')).toBe('true');
+    sendPromptWithPageContext();
+    activate({ tabId: 100, windowId: 8 });
+    if (action === 'switch') {
+      activeTab = sibling;
+      activate({ tabId: sibling.id, windowId: sibling.windowId });
+    }
+    permission.resolve(true);
+
+    const sent = () => mock.request.mock.calls.find(([method]) => method === 'turn/start')?.[1];
+    await vi.waitFor(() => expect(sent()).toMatchObject({ threadId: 'one' }));
+    expect(query.mock.calls.every(([filter]) =>
+      Object.keys(filter).length === 2 && filter.active && filter.windowId === tab.windowId,
+    )).toBe(true);
+    if (action === 'switch') {
+      expect(sent().chrome).not.toHaveProperty('pageContext');
+      expect(executeScript).not.toHaveBeenCalled();
+    } else {
+      expect(sent().chrome.pageContext).toEqual(snapshot);
+      expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: tab.id } }));
+    }
+  });
+
+  it('keeps an explicit lower approval mode in an otherwise empty draft when switching scope', async () => {
+    const browserRequest = vi.fn(async (_message: { type: string }) => ({ ok: true }));
+    vi.spyOn(document, 'URL', 'get').mockReturnValue(extensionUrl('sidepanel.html?tabId=31'));
+    vi.stubGlobal('chrome', {
+      runtime: { getURL: extensionUrl, sendMessage: browserRequest },
+      sidePanel: { close: vi.fn(), onClosed: { addListener: vi.fn() } },
+      tabs: { get: vi.fn().mockResolvedValue({ id: 31, windowId: 4 }) },
+    });
+    await mount();
+    const permission = element<HTMLSelectElement>('permission');
+    const toggle = element<HTMLButtonElement>('panelScope');
+    expect(toggle.disabled).toBe(false);
+    permission.value = 'ask';
+    permission.dispatchEvent(new Event('change'));
+
+    toggle.click();
+
+    expect(permission.value).toBe('ask');
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    expect(browserRequest).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'side-panel:switch-scope' }),
+    );
+    expect(element('error').classList.contains('hidden')).toBe(false);
+  });
+
   it('shows an attachment-only user bubble before a new chat is created', async () => {
     await mount();
     const attachment = {

@@ -390,6 +390,7 @@ export function createWebLaunchPanel({
           actionPending ||
           inputAssociated(),
         ),
+        ...(composer.scopeBusy ? { scopeBusy: true } : {}),
         ...(canReplace ? { replaceableDraftLaunchId: current.launchId } : {}),
         ...(current
           ? { launchId: current.launchId, composeRevision: current.composeRevision }
@@ -806,6 +807,7 @@ export function createWebLaunchPanel({
           composer.attachmentReads ||
           composer.busy,
         ),
+        ...(composer.scopeBusy ? { scopeBusy: true } : {}),
       });
       // The tab can move to another window while registration is in flight.
       const registeredTab = disposed ? undefined : await chrome.tabs.get(tabId);

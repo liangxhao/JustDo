@@ -161,8 +161,8 @@ function applyBackgroundOverlay(value) {
       'import { initializeTabSidePanel } from "./modules/tab-side-panel.js";\n' +
       'import { createWebLaunchBackground } from "./modules/web-launch-background.js";\n' +
       'import { trustedExtensionPage } from "./modules/web-launch-security.js";\n' +
-      'initializeTabSidePanel(chrome);\n' +
-      'const webLaunchBackground = createWebLaunchBackground();',
+      'const webLaunchBackground = createWebLaunchBackground();\n' +
+      'const handleSidePanelMessage = initializeTabSidePanel(chrome, webLaunchBackground);',
     'background import',
   );
   result = replaceIntegrationAnchor(
@@ -189,6 +189,7 @@ function applyBackgroundOverlay(value) {
     'chrome.runtime.onMessage.addListener(\n' +
       '  (msg, sender, reply) => {\n' +
       '    if (msg?.type === "web-launch:panel:event") return false;\n' +
+      '    if (handleSidePanelMessage(msg, sender, reply)) return true;\n' +
       '    if (webLaunchBackground.handleMessage(msg, sender, reply)) return true;\n' +
       '    if (!trustedExtensionPage(sender)) { reply({ ok: false, code: "FORBIDDEN" }); return false; }\n' +
       '    return handleAppServerMessage(msg, reply) || handlePopupMessage(msg, reply);\n' +
