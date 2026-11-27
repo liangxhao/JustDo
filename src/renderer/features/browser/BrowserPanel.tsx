@@ -73,6 +73,7 @@ import { i18nService } from '@/services/i18n';
 import Tooltip from '@/shared/components/ui/Tooltip';
 import { isDomElement, useOwnerDocument, useOwnerWindow } from '@/shared/dom/ownerDocument';
 
+import BrowserAddressBar from './BrowserAddressBar';
 import { type BrowserLoadError, formatBrowserLoadError } from './browserLoadError';
 import { BrowserLoadErrorPage } from './BrowserLoadErrorPage';
 import { type BrowserPanelFocusBinding, retainBrowserPanelFocus } from './browserPanelFocus';
@@ -399,7 +400,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     return tabs;
   });
   const [urlDraft, setUrlDraft] = useState('');
-  const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [loadingTargets, setLoadingTargets] = useState<Set<string>>(() => new Set());
   const [agentBusyTargets, setAgentBusyTargets] = useState<Set<string>>(() => new Set());
   const [interventionBlocked, setInterventionBlocked] = useState(false);
@@ -480,8 +480,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const panelRef = useRef<HTMLElement>(null);
   const addressInputRef = useRef<HTMLInputElement>(null);
   const addressDirtyRef = useRef(false);
-  const showCompactAddress = !isAddressFocused && !addressDirtyRef.current;
-  const displayedAddress = showCompactAddress ? getBrowserAddressDisplay(urlDraft) : urlDraft;
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const webviewsRef = useRef(new Map<string, LiveWebview>());
@@ -520,11 +518,6 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
   const findInputRef = useRef<HTMLInputElement>(null);
   const addressSubmissionSequenceRef = useRef(0);
   const addressLoadsRef = useRef(new WeakMap<LiveWebview, number>());
-
-  useLayoutEffect(() => {
-    // Select after React has replaced the compact domain with the full address.
-    if (isAddressFocused) addressInputRef.current?.select();
-  }, [isAddressFocused]);
 
   const activeTab = tabs.find(tab => tab.targetId === activeTargetId) ?? tabs[0] ?? null;
   activeTargetRef.current = activeTab?.targetId ?? null;
@@ -1929,6 +1922,11 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
     }
   };
 
+  const submitAddress = (address?: string) => {
+    void submitUrl(address);
+    addressInputRef.current?.blur();
+  };
+
   const addAnnotation = async () => {
     const comment = commentDraft.trim();
     const targetId = activeTargetRef.current;
@@ -2603,8 +2601,7 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
           className="flex h-[35px] shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2"
           onSubmit={event => {
             event.preventDefault();
-            void submitUrl();
-            addressInputRef.current?.blur();
+            submitAddress();
           }}
         >
           <Tooltip
@@ -2655,35 +2652,21 @@ const BrowserPanel = forwardRef<BrowserPanelHandle, BrowserPanelProps>(function 
               <ArrowPathIcon className="h-4 w-4" />
             </button>
           </Tooltip>
-          <input
-            ref={addressInputRef}
-            value={displayedAddress}
-            onChange={event => {
+          <BrowserAddressBar
+            inputRef={addressInputRef}
+            address={urlDraft}
+            compactAddress={addressDirtyRef.current ? null : getBrowserAddressDisplay(urlDraft)}
+            view={browserViewRef.current}
+            onEdit={value => {
               addressDirtyRef.current = true;
-              setUrlDraft(event.target.value);
+              setUrlDraft(value);
             }}
-            onFocus={() => setIsAddressFocused(true)}
-            onBlur={() => setIsAddressFocused(false)}
-            onMouseDown={event => {
-              if (event.button !== 0 || event.currentTarget === ownerDocument.activeElement) return;
-              // Keep the initial click from collapsing the full-address selection.
-              event.preventDefault();
-              event.currentTarget.focus();
-            }}
-            onKeyDown={event => {
-              if (event.key !== 'Escape' || event.nativeEvent.isComposing) return;
-              event.preventDefault();
+            onCancel={() => {
               addressDirtyRef.current = false;
               setUrlDraft(getBrowserTabAddress(activeTab));
-              event.currentTarget.blur();
             }}
-            className={`h-7 min-w-28 flex-1 rounded-full border border-transparent bg-surface-raised px-3 text-xs text-foreground outline-none transition-colors hover:border-border focus:border-primary ${showCompactAddress ? 'truncate text-center' : 'text-left'}`}
-            title={urlDraft || undefined}
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            aria-label={i18nService.t('browserPanelAddress')}
-            placeholder={i18nService.t('browserPanelAddressPlaceholder')}
+            onSubmit={submitAddress}
+            onClipboardError={() => showError(i18nService.t('browserAddressClipboardFailed'))}
           />
           {showPageTools && (
             <>

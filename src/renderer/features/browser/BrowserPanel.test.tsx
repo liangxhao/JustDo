@@ -689,7 +689,10 @@ describe('BrowserPanel embedded webview', () => {
     });
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
+      value: {
+        readText: vi.fn().mockResolvedValue(''),
+        writeText: vi.fn().mockResolvedValue(undefined),
+      },
     });
   });
 
@@ -1799,6 +1802,72 @@ describe('BrowserPanel embedded webview', () => {
 
     await waitFor(() => expect(loadUrl).toHaveBeenCalledWith('https://example.com/path'));
     expect(loadUrl.mock.instances[0]).toBe(webview);
+  });
+
+  it('copies the full address and edits only the selected text from the address menu', async () => {
+    const url = 'https://example.com/docs';
+    render(<BrowserPanelHarness draftKey="address-menu-edit" initialTabs={[{ ...pageTab, url }]} />);
+    const address = screen.getByRole('textbox', { name: 'Browser address' }) as HTMLInputElement;
+    expect(address.value).toBe('example.com');
+
+    fireEvent.contextMenu(address);
+    await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Copy' })));
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(url);
+    expect(document.activeElement).toBe(address);
+
+    address.setSelectionRange(url.indexOf('docs'), url.length);
+    fireEvent.contextMenu(address);
+    await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Cut' })));
+    expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith('docs');
+    expect(address.value).toBe('https://example.com/');
+
+    vi.mocked(navigator.clipboard.readText).mockResolvedValue('guide');
+    fireEvent.contextMenu(address);
+    expect(screen.getByRole('menuitem', { name: 'Cut' })).toHaveProperty('disabled', true);
+    await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Paste', exact: true })));
+    expect(address.value).toBe('https://example.com/guide');
+    expect(address.selectionStart).toBe(address.value.length);
+    expect(loadUrl).not.toHaveBeenCalled();
+
+    fireEvent.input(address, { target: { value: url } });
+    expect(address.title).toBe(url);
+
+    fireEvent.keyDown(address, { key: 'F10', shiftKey: true });
+    const menu = screen.getByRole('menu', { name: 'Address bar menu' });
+    fireEvent.keyDown(menu, { key: 'End' });
+    const selectAll = screen.getByRole('menuitem', { name: 'Select All' });
+    expect(document.activeElement).toBe(selectAll);
+    fireEvent.click(selectAll);
+    expect(address.selectionStart).toBe(0);
+    expect(address.selectionEnd).toBe(address.value.length);
+  });
+
+  it('submits pasted search text through the current browser tab', async () => {
+    const { container } = render(<BrowserPanelHarness draftKey="address-menu-go" />);
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+    vi.mocked(navigator.clipboard.readText).mockResolvedValue('11');
+
+    fireEvent.contextMenu(address);
+    await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Paste and go' })));
+
+    expect(loadUrl).toHaveBeenCalledWith('https://www.baidu.com/s?wd=11');
+    expect(loadUrl.mock.instances[0]).toBe(container.querySelector('webview'));
+  });
+
+  it('ignores a clipboard read after another browser tab is selected', async () => {
+    const otherTab = { ...pageTab, id: 'address-menu-other', targetId: 'address-menu-other', url: 'https://other.example/' };
+    const { promise, resolve } = Promise.withResolvers<string>();
+    vi.mocked(navigator.clipboard.readText).mockReturnValue(promise);
+    render(<BrowserPanelHarness draftKey="address-menu-stale" initialTabs={[pageTab, otherTab]} />);
+    const address = screen.getByRole('textbox', { name: 'Browser address' });
+
+    fireEvent.contextMenu(address);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Paste and go' }));
+    fireEvent.click(screen.getAllByRole('tab')[1]!);
+    await act(async () => resolve('https://clipboard.example/'));
+
+    expect(loadUrl).not.toHaveBeenCalled();
+    expect(address).toHaveProperty('title', otherTab.url);
   });
 
   it.each([
