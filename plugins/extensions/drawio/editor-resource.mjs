@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
-import { randomBytes } from 'node:crypto';
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { createHash, randomBytes } from 'node:crypto';
+import { lstat, open, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { SaxesParser } from 'saxes';
 
@@ -8,6 +8,7 @@ const URI = 'ui://drawio/editor';
 const MIME = 'text/html;profile=mcp-app';
 const MAX_XML_BYTES = 1024 * 1024;
 const MAX_PORT_ATTEMPTS = 32;
+const MAX_ASSET_BYTES = 32 * 1024 * 1024;
 // An OS-assigned port can still be forbidden to the embedded browser (e.g. X11/6000).
 // Chromium net/base/port_util.cc plus WHATWG Fetch's additional blocked ports:
 // https://chromium.googlesource.com/chromium/src/+/refs/heads/main/net/base/port_util.cc
@@ -78,9 +79,35 @@ async function listenForBrowser(http) {
   throw new Error('Could not allocate a browser-safe port for offline diagram assets.');
 }
 
+async function createArchiveReader(directory) {
+  const root = await realpath(directory);
+  const archivePath = path.join(root, 'public.pack');
+  const [archiveInfo, content] = await Promise.all([
+    lstat(archivePath),
+    readFile(path.join(root, 'integrity.json'), 'utf8'),
+  ]);
+  const { publicFiles } = JSON.parse(content);
+  if (!archiveInfo.isFile() || !publicFiles || typeof publicFiles !== 'object' || Array.isArray(publicFiles))
+    throw new Error('Invalid offline diagram asset archive');
+  return async name => {
+    if (!Object.hasOwn(publicFiles, name)) return;
+    const { offset, size, sha256 } = publicFiles[name];
+    if (!Number.isSafeInteger(offset) || offset < 8 || !Number.isSafeInteger(size) ||
+      size < 0 || size > MAX_ASSET_BYTES || size > archiveInfo.size - offset ||
+      typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256)) return;
+    await using archive = await open(archivePath, 'r');
+    const current = await archive.stat();
+    if (!current.isFile() || current.dev !== archiveInfo.dev || current.ino !== archiveInfo.ino ||
+      current.size !== archiveInfo.size) return;
+    const bytes = Buffer.alloc(size);
+    const { bytesRead } = await archive.read(bytes, 0, size, offset);
+    if (bytesRead !== size || createHash('sha256').update(bytes).digest('hex') !== sha256) return;
+    return bytes;
+  };
+}
+
 /** Read-only, capability-scoped assets. Never exposes diagrams, config, or filesystem APIs. */
-export async function startAssets(root) {
-  const realRoot = await realpath(root);
+export async function startAssets(readAsset) {
   const token = randomBytes(24).toString('hex');
   let origin;
   const http = createServer(async (req, res) => {
@@ -98,14 +125,13 @@ export async function startAssets(root) {
       if (
         !relative ||
         relative.includes('\\') ||
-        relative.split('/').some(part => part === '..' || part.startsWith('.'))
+        relative.split('/').some(part => !part || part.startsWith('.'))
       )
         return deny(404);
-      const file = await realpath(path.resolve(realRoot, relative));
-      if (!file.startsWith(realRoot + path.sep) || !(await stat(file)).isFile()) return deny(404);
-      const data = await readFile(file);
+      const data = await readAsset(relative);
+      if (!data) return deny(404);
       res.writeHead(200, {
-        'Content-Type': `${types[path.extname(file)] ?? 'application/octet-stream'}; charset=utf-8`,
+        'Content-Type': `${types[path.extname(relative)] ?? 'application/octet-stream'}; charset=utf-8`,
         'Content-Length': data.byteLength,
         'Access-Control-Allow-Origin': '*', // Public immutable assets only; opaque MCP sandbox origin.
         'X-Content-Type-Options': 'nosniff',
@@ -154,7 +180,7 @@ export function validateDiagram(args) {
 }
 
 export async function createEditorResource(directory) {
-  const assets = await startAssets(path.join(directory, 'public'));
+  const assets = await startAssets(await createArchiveReader(directory));
   try {
     const appScript = await readFile(path.join(directory, 'app.js'), 'utf8');
     const css = await readFile(path.join(directory, 'app.css'), 'utf8');

@@ -5,12 +5,16 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { findPackageJSON } = require('node:module');
 const { pathToFileURL } = require('node:url');
+const asar = require('@electron/asar');
 const tar = require('tar');
 const { build } = require('esbuild');
 const extension = path.resolve(__dirname, '..');
 const packageUrl = pathToFileURL(path.join(extension, 'package.json'));
 const { devDependencies } = require('../package.json');
 const upstream = require('../upstream.json');
+// Keep the archive visible as a normal file in Electron's patched fs.
+const PUBLIC_ARCHIVE = 'public.pack';
+const MAX_PUBLIC_ASSET_BYTES = 32 * 1024 * 1024;
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const sourceHash = () =>
   hash(
@@ -44,6 +48,60 @@ const filesIn = directory =>
     return entry.isDirectory() ? filesIn(file) : [file];
   });
 
+function readPublicArchiveEntries(file) {
+  const { header, headerSize } = asar.getRawHeader(file);
+  const contentStart = 8 + headerSize;
+  const walk = (directory, prefix) =>
+    Object.entries(directory.files).flatMap(([name, entry]) => {
+      const relative = prefix + name;
+      if (entry.unpacked || 'link' in entry) {
+        throw new Error('Unsupported diagram archive entry: ' + relative);
+      }
+      if ('files' in entry) return walk(entry, relative + '/');
+      const offset = contentStart + Number(entry.offset);
+      if (!Number.isSafeInteger(offset) || offset < contentStart ||
+          !Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > MAX_PUBLIC_ASSET_BYTES) {
+        throw new Error('Invalid diagram archive entry: ' + relative);
+      }
+      return [[relative, { offset, size: entry.size }]];
+    });
+  return walk(header, '');
+}
+
+async function packPublicAssets(source, destination) {
+  const filenames = filesIn(source).sort();
+  const digests = new Map(filenames.map(file => [
+    path.relative(source, file).replaceAll('\\', '/'), hash(fs.readFileSync(file)),
+  ]));
+  await asar.createPackageFromFiles(source, destination, filenames);
+  return Object.fromEntries(readPublicArchiveEntries(destination).map(([name, location]) => [
+    name, { ...location, sha256: digests.get(name) },
+  ]));
+}
+
+function verifyPublicArchive(file, publicFiles) {
+  const entries = readPublicArchiveEntries(file);
+  if (!publicFiles || entries.length !== Object.keys(publicFiles).length) {
+    throw new Error('Diagram archive member inventory does not match the asset manifest');
+  }
+  const fd = fs.openSync(file, 'r');
+  try {
+    const archiveSize = fs.fstatSync(fd).size;
+    for (const [name, { offset, size }] of entries) {
+      const expected = Object.hasOwn(publicFiles, name) ? publicFiles[name] : undefined;
+      if (!expected || expected.offset !== offset || expected.size !== size || size > archiveSize - offset) {
+        throw new Error('Diagram archive member integrity mismatch: ' + name);
+      }
+      const bytes = Buffer.alloc(size);
+      if (fs.readSync(fd, bytes, 0, size, offset) !== size || hash(bytes) !== expected.sha256) {
+        throw new Error('Diagram archive member integrity mismatch: ' + name);
+      }
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 function verifyDrawioAssets(directory = path.join(extension, 'assets'), checkSources = true) {
   if (!fs.existsSync(path.join(directory, 'integrity.json')))
     throw new Error(
@@ -65,11 +123,14 @@ function verifyDrawioAssets(directory = path.join(extension, 'assets'), checkSou
     'editor-resource.cjs',
     'app.js',
     'app.css',
-    'public/editor/index.html',
-    'public/editor/js/app.min.js',
+    PUBLIC_ARCHIVE,
     'LICENSE',
   ])
     if (!manifest.files[required]) throw new Error(`Incomplete draw.io bundle: ${required}`);
+  for (const required of ['editor/index.html', 'editor/js/app.min.js']) {
+    if (!manifest.publicFiles?.[required]) throw new Error('Incomplete draw.io bundle: ' + required);
+  }
+  verifyPublicArchive(path.join(directory, PUBLIC_ARCHIVE), manifest.publicFiles);
   return manifest;
 }
 
@@ -121,8 +182,9 @@ async function bundleAssets(staging) {
   // Fixed absolute target under this extension; never remove caller-provided paths.
   if (path.dirname(output) !== extension) throw new Error('Invalid draw.io output path');
   fs.rmSync(output, { recursive: true, force: true });
-  fs.mkdirSync(path.join(output, 'public'), { recursive: true });
-  fs.cpSync(path.join(staging, sourceName, 'src/main/webapp'), path.join(output, 'public/editor'), {
+  fs.mkdirSync(output, { recursive: true });
+  const publicSource = path.join(staging, 'public');
+  fs.cpSync(path.join(staging, sourceName, 'src/main/webapp'), path.join(publicSource, 'editor'), {
     recursive: true,
     filter: file =>
       includeEditorAsset(path.relative(path.join(staging, sourceName, 'src/main/webapp'), file)),
@@ -130,10 +192,10 @@ async function bundleAssets(staging) {
   fs.copyFileSync(path.join(staging, sourceName, 'LICENSE'), path.join(output, 'LICENSE'));
   fs.copyFileSync(path.join(extension, 'app.css'), path.join(output, 'app.css'));
   fs.appendFileSync(
-    path.join(output, 'public/editor/js/app.min.js'),
+    path.join(publicSource, 'editor/js/app.min.js'),
     '\n' + fs.readFileSync(path.join(extension, 'editor-bridge.js'), 'utf8'),
   );
-  const indexPath = path.join(output, 'public/editor/index.html');
+  const indexPath = path.join(publicSource, 'editor/index.html');
   fs.writeFileSync(
     indexPath,
     fs
@@ -145,9 +207,10 @@ async function bundleAssets(staging) {
   );
   // Configure the real draw.io web editor for local assets only. CSP also blocks all egress.
   fs.writeFileSync(
-    path.join(output, 'public/editor/js/PreConfig.js'),
+    path.join(publicSource, 'editor/js/PreConfig.js'),
     `window.DRAWIO_CONFIG={defaultFonts:["Arial","Helvetica","Verdana","Times New Roman","Courier New"],fontCss:'',enableCustomFonts:false};\nwindow.EXPORT_URL='';window.PLANT_URL='';window.DRAWIO_GOOGLE_APP_ID='';window.DRAWIO_GOOGLE_CLIENT_ID='';\n`,
   );
+  const publicFiles = await packPublicAssets(publicSource, path.join(output, PUBLIC_ARCHIVE));
   const serverBuild = await build({
     absWorkingDir: extension,
     entryPoints: [path.join(extension, 'server.mjs')],
@@ -243,7 +306,7 @@ async function bundleAssets(staging) {
   );
   fs.writeFileSync(
     path.join(output, 'integrity.json'),
-    JSON.stringify({ commit: upstream.commit, sourceHash: sourceHash(), files }),
+    JSON.stringify({ commit: upstream.commit, sourceHash: sourceHash(), files, publicFiles }),
   );
   verifyDrawioAssets(output);
   console.log(`[DiagramEditor] Prepared ${Object.keys(files).length} verified offline files`);
@@ -303,6 +366,7 @@ if (require.main === module) {
 module.exports = {
   extractDrawioSource,
   includeEditorAsset,
+  packPublicAssets,
   verifyDrawioAssets,
   verifyBundledAssets: verifyDrawioAssets,
 };

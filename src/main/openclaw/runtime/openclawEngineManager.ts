@@ -566,8 +566,9 @@ export class OpenClawEngineManager extends EventEmitter {
     generation: number,
     timeoutMs?: number,
     verifySourceAcceptance?: () => Promise<boolean>,
+    requireVerifiedSource = false,
   ): Promise<boolean> {
-    return this.gatewayConfigReloadMonitor.waitForReloadAfter(generation, timeoutMs, verifySourceAcceptance);
+    return this.gatewayConfigReloadMonitor.waitForReloadAfter(generation, timeoutMs, verifySourceAcceptance, requireVerifiedSource);
   }
 
   getGatewayLifecycleGeneration(): number {

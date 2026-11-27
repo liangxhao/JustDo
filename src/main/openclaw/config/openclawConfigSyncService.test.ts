@@ -17,6 +17,7 @@ import type { NativeMcpDataBinding } from '../../plugins/data/nativeMcpData';
 import { nativeMcpDataDirectory } from '../../plugins/data/nativeMcpData';
 import { ensureExecutionReady } from '../runtime/executionReadiness';
 import { GatewayConfigReloadMonitor } from '../runtime/gatewayConfigReloadMonitor';
+import type { OpenClawConfigSyncResult } from './configVerification';
 import { resolveManagedCredentialReloadTimeoutMs } from './models/credentialTimeouts';
 import {
   MODEL_DEFAULTS_HOT_RELOAD_TIMEOUT_MS,
@@ -342,6 +343,7 @@ describe('OpenClawConfigSyncService', () => {
       getConfiguredGatewayPort: vi.fn(() => 18789),
       waitForGatewayConfigReload: vi.fn(async (
         _generation: number, _timeoutMs?: number, _verifySourceAcceptance?: () => Promise<boolean>,
+        _requireVerifiedSource?: boolean,
       ) => options.waitForReload ?? true),
       getGatewayLaunchEnvVars: vi.fn(() => options.previousSecrets ?? {}),
       setGatewayLaunchEnvVars: vi.fn(),
@@ -496,6 +498,7 @@ describe('OpenClawConfigSyncService', () => {
         isCurrent: vi.fn(() => true),
         matchesRuntimeConfig: vi.fn(() => true),
       })),
+      syncModelCatalogAdditions: vi.fn((): OpenClawConfigSyncResult | undefined => undefined),
       sync: vi.fn(() =>
         options.syncError
           ? { ok: false, error: options.syncError }
@@ -703,6 +706,128 @@ describe('OpenClawConfigSyncService', () => {
     expect(harness.configSync.sync).not.toHaveBeenCalled();
     expect(discovery).not.toHaveBeenCalled();
     expect(harness.stopGateway).not.toHaveBeenCalled();
+  });
+
+  it('applies the first model settings save after a logged-out startup without retiring the builtin provider', async () => {
+    const harness = createHarness({ phase: 'ready', getModelAuthSessionId: () => null });
+    await harness.service.syncConfig({ reason: 'startup' });
+    await harness.service.startGatewayWithExecutionPolicy();
+    harness.requestGateway.mockClear();
+
+    await expect(harness.service.syncConfig({ reason: 'app-config-change' })).resolves.toMatchObject({
+      success: true,
+      configSynced: true,
+    });
+
+    expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledOnce();
+    expect(harness.requestGateway.mock.calls.map(([method]) => method)).not.toContain('models.authLogout');
+    expect(harness.engineManager.restartGateway).not.toHaveBeenCalled();
+  });
+
+  it('confirms a model save before waiting for auth cleanup after a real provider withdrawal', async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-auth-maintenance-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(configPath, '{}');
+    const harness = createHarness({ phase: 'ready', configPath, getModelAuthSessionId: () => null });
+    const projection: OpenClawConfigSyncResult = {
+      ok: true, changed: true, configChanged: true, configPath,
+      secretsChanged: false, builtinProviderWithdrawn: true,
+    };
+    harness.configSync.sync.mockReturnValueOnce(projection);
+    const cleanup = Promise.withResolvers<{ removedProfiles: string[] }>();
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation((method, params, options) => method === 'models.authLogout'
+      ? cleanup.promise : request(method, params, options));
+
+    try {
+      await harness.service.syncConfig({ reason: 'startup' });
+      await harness.service.startGatewayWithExecutionPolicy();
+      await expect(harness.service.syncConfig({ reason: 'app-config-change' })).resolves.toMatchObject({
+        success: true,
+        configSynced: true,
+      });
+
+      await vi.waitFor(() => expect(harness.requestGateway).toHaveBeenCalledWith('models.authLogout', {
+        provider: 'builtin_models', agentId: 'main',
+      }));
+    } finally {
+      cleanup.resolve({ removedProfiles: ['builtin_models:default'] });
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { models: { providers: { restored: {} } } },
+    { $include: 'providers.json' },
+    { models: { $include: 'providers.json' } },
+    { models: { providers: { $include: 'providers.json' } } },
+  ])('preserves a provider that the native source may have restored (%j)', async source => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-auth-restored-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(configPath, JSON.stringify(source));
+    const harness = createHarness({ configPath, getModelAuthSessionId: () => 'active-login' });
+
+    try {
+      await expect(harness.service.syncConfig({
+        reason: 'app-config-change', retiredProviderIds: ['restored'],
+      })).resolves.toMatchObject({ success: true });
+      await vi.waitFor(() => expect(harness.requestGateway).toHaveBeenCalledWith('models.authStatus', { agentId: 'main' }));
+      expect(harness.requestGateway.mock.calls.map(([method]) => method)).not.toContain('models.authLogout');
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])('confirms a catalog append without an unrelated scan on the fast path (credential expires=%s)', async expires => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'catalog-append-'));
+    const configPath = path.join(directory, 'openclaw.json');
+    fs.writeFileSync(configPath, '{}');
+    const getNativeMcpDataBindings = vi.fn(async () => []);
+    let authSessionId: string | null = 'builtin-session';
+    const harness = createHarness({
+      phase: 'ready', configPath, getNativeMcpDataBindings,
+      getModelAuthSessionId: () => authSessionId,
+      getModelAuthSessionOwnerId: () => 'same-login-owner',
+    });
+    await harness.service.startGatewayWithExecutionPolicy();
+    const request = harness.requestGateway.getMockImplementation()!;
+    harness.requestGateway.mockImplementation(async (method, params, options) => {
+      if (method === 'config.get') return { ...await request(method, params, options), hash: 'source-hash' };
+      if (method === 'config.patch') return { ok: true, noop: true, path: configPath, changedPaths: [] };
+      return request(method, params, options);
+    });
+    const publication = { path: configPath, isCurrent: () => true };
+    harness.configSync.syncModelCatalogAdditions.mockReturnValueOnce({
+      ok: true, changed: true, configChanged: true, configPath: publication.path, publication,
+    });
+    const monitor = new GatewayConfigReloadMonitor();
+    harness.engineManager.getGatewayConfigReloadGeneration.mockImplementation(() => monitor.getGeneration());
+    harness.engineManager.waitForGatewayConfigReload.mockImplementationOnce((...args) => monitor.waitForReloadAfter(...args));
+    const committed = vi.fn();
+    const save = harness.service.syncConfig({
+      reason: 'app-config-change',
+      modelCatalogAdditions: [{ providerKey: 'custom', modelIds: ['next-model'] }],
+    }).then(committed);
+    try {
+      await vi.waitFor(() => expect(harness.engineManager.waitForGatewayConfigReload).toHaveBeenCalledWith(
+        0, undefined, expect.any(Function), true,
+      ));
+      monitor.observeLine('[reload] config change detected; evaluating reload (models.providers.custom.models)');
+      monitor.observeLine('[reload] config hot reload applied (models.providers.custom.models)');
+      await Promise.resolve();
+      expect(committed).not.toHaveBeenCalled();
+      expect(harness.requestGateway.mock.calls.filter(([method]) => method === 'config.patch')).toHaveLength(1);
+      expect(getNativeMcpDataBindings).not.toHaveBeenCalled();
+      expect(harness.configSync.prepareWorkspaceExtensionInventory).not.toHaveBeenCalled();
+      expect(harness.configSync.sync).not.toHaveBeenCalled();
+    } finally {
+      if (expires) authSessionId = null;
+      monitor.observeLine('[reload] config source revision 2 accepted (file)');
+      await save;
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
+    expect(committed).toHaveBeenCalledWith(expect.objectContaining({ success: true, configSynced: true }));
+    expect(getNativeMcpDataBindings).toHaveBeenCalledTimes(expires ? 1 : 0);
   });
 
   it('serializes concurrent cold starts and initializes the approval floor only once', async () => {

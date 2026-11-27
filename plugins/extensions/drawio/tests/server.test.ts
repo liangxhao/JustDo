@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -6,6 +6,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 
+import { createEditorResource } from '../editor-resource.mjs';
+
+const { packPublicAssets } = require('../scripts/prepare.cjs');
 let server: typeof import('../server.mjs');
 beforeAll(async () => {
   process.env.DIAGRAM_SERVER_TEST = '1';
@@ -100,26 +103,49 @@ describe('offline diagram MCP service', () => {
       expect(() => server.validateDiagram({ xml: invalid })).toThrow();
     }
   });
-  it('serves only immutable files under a loopback capability URL with local-only CSP', async () => {
+  it('serves verified archive members under a loopback capability URL with local-only CSP', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'diagram-assets-'));
-    await mkdir(path.join(directory, 'public'));
-    await writeFile(path.join(directory, 'private.txt'), 'private');
-    await writeFile(path.join(directory, 'public', 'index.html'), '<html>offline</html>');
-    const assets = await server.startAssets(path.join(directory, 'public'));
+    const content = '<html>offline</html>';
+    const archivePath = path.join(directory, 'public.pack');
+    let resource: Awaited<ReturnType<typeof createEditorResource>> | undefined;
     try {
-      const response = await fetch(assets.base + 'index.html');
+      const publicSource = path.join(directory, 'public-source');
+      await mkdir(publicSource);
+      await writeFile(path.join(directory, 'private.txt'), 'private');
+      await writeFile(path.join(publicSource, '启动.html'), content);
+      const publicFiles = await packPublicAssets(publicSource, archivePath);
+      await rm(publicSource, { recursive: true });
+      await Promise.all([
+        writeFile(path.join(directory, 'app.css'), ''),
+        writeFile(path.join(directory, 'app.js'), ''),
+        writeFile(path.join(directory, 'integrity.json'), JSON.stringify({ publicFiles })),
+      ]);
+
+      resource = await createEditorResource(directory);
+      const html = (await resource.read()).contents[0].text;
+      const base = JSON.parse(html.match(/window\.DIAGRAM_ASSET_BASE=("[^"]+");/)![1]) as string;
+      const assetUrl = base + encodeURIComponent('启动.html');
+      const response = await fetch(assetUrl);
       expect(response.status).toBe(200);
-      expect(await response.text()).toBe('<html>offline</html>');
+      expect(await response.text()).toBe(content);
+      const head = await fetch(assetUrl, { method: 'HEAD' });
+      expect(head.status).toBe(200);
+      expect(head.headers.get('Content-Length')).toBe(String(Buffer.byteLength(content)));
+      expect(await head.text()).toBe('');
       const csp = response.headers.get('Content-Security-Policy')!;
       expect(csp).toContain("connect-src 'self'");
       expect(csp).toContain("form-action 'none'");
       expect(csp).not.toContain('https:');
-      expect((await fetch(assets.origin + '/index.html')).status).toBe(404);
-      expect((await fetch(assets.base + '%2e%2e%2fprivate.txt')).status).toBe(404);
-      expect((await fetch(assets.base + 'index.html', { method: 'POST' })).status).toBe(403);
+      expect((await fetch(new URL('/启动.html', base))).status).toBe(404);
+      expect((await fetch(base + '%2e%2e%2fprivate.txt')).status).toBe(404);
+      expect((await fetch(base + 'public.pack')).status).toBe(404);
+      expect((await fetch(assetUrl, { method: 'POST' })).status).toBe(403);
+
+      await using archive = await open(archivePath, 'r+');
+      await archive.write(Buffer.from('!'), 0, 1, publicFiles['启动.html'].offset);
+      expect((await fetch(assetUrl)).status).toBe(404);
     } finally {
-      assets.http.closeAllConnections();
-      await new Promise<void>(resolve => assets.http.close(() => resolve()));
+      resource?.close();
       await rm(directory, { recursive: true, force: true });
     }
   });

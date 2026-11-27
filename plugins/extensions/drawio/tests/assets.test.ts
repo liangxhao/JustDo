@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 
-const { includeEditorAsset, verifyDrawioAssets } = require('../scripts/prepare.cjs');
+const { includeEditorAsset, packPublicAssets, verifyDrawioAssets } = require('../scripts/prepare.cjs');
 const upstream = require('../upstream.json');
 
 it('filters Java-server files and source maps before closing the editor asset manifest', () => {
@@ -13,15 +13,15 @@ it('filters Java-server files and source maps before closing the editor asset ma
   for (const file of ['', 'index.html', 'js/app.min.js', 'math4/es5/drawio-mathjax.min.js', 'README.md', 'licenses/LICENSE'])
     expect(includeEditorAsset(file), file).toBe(true);
 });
-it('rejects missing, changed, extra and unpinned packaged diagram assets', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'diagram-integrity-'));
+it('rejects missing, changed, extra and unpinned packaged diagram assets', async () => {
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), 'diagram-integrity-'));
+  const directory = path.join(staging, 'assets');
+  const publicSource = path.join(staging, 'public');
   const names = [
     'server.cjs',
     'editor-resource.cjs',
     'app.js',
     'app.css',
-    'public/editor/index.html',
-    'public/editor/js/app.min.js',
     'LICENSE',
   ];
   const files: Record<string, string> = {};
@@ -32,11 +32,27 @@ it('rejects missing, changed, extra and unpinned packaged diagram assets', () =>
       fs.writeFileSync(file, 'fixture');
       files[name] = createHash('sha256').update('fixture').digest('hex');
     }
-    fs.writeFileSync(
-      path.join(directory, 'integrity.json'),
-      JSON.stringify({ commit: upstream.commit, files }),
-    );
+    for (const name of ['editor/index.html', 'editor/js/app.min.js']) {
+      const file = path.join(publicSource, name);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, 'fixture');
+    }
+    const archive = path.join(directory, 'public.pack');
+    const publicFiles = await packPublicAssets(publicSource, archive);
+    files['public.pack'] = createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
+    const writeManifest = (commit = upstream.commit) =>
+      fs.writeFileSync(
+        path.join(directory, 'integrity.json'),
+        JSON.stringify({ commit, files, publicFiles }),
+      );
+    writeManifest();
     expect(() => verifyDrawioAssets(directory, false)).not.toThrow();
+    const index = publicFiles['editor/index.html'];
+    publicFiles['editor/index.html'] = { ...index, offset: index.offset + 1 };
+    writeManifest();
+    expect(() => verifyDrawioAssets(directory, false)).toThrow('archive member integrity mismatch');
+    publicFiles['editor/index.html'] = index;
+    writeManifest();
     fs.writeFileSync(path.join(directory, 'app.js'), 'changed');
     expect(() => verifyDrawioAssets(directory, false)).toThrow('integrity mismatch');
     fs.writeFileSync(path.join(directory, 'app.js'), 'fixture');
@@ -45,12 +61,9 @@ it('rejects missing, changed, extra and unpinned packaged diagram assets', () =>
     fs.unlinkSync(path.join(directory, 'extra.js'));
     fs.unlinkSync(path.join(directory, 'LICENSE'));
     expect(() => verifyDrawioAssets(directory, false)).toThrow('Missing');
-    fs.writeFileSync(
-      path.join(directory, 'integrity.json'),
-      JSON.stringify({ commit: 'unknown', files }),
-    );
+    writeManifest('unknown');
     expect(() => verifyDrawioAssets(directory, false)).toThrow('stale');
   } finally {
-    fs.rmSync(directory, { recursive: true, force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
   }
 });

@@ -56,10 +56,10 @@ describe('GatewayConfigReloadMonitor', () => {
     expect(monitor.getSettledGeneration()).toBe(generation + 1);
   });
 
-  it('verifies a source-only acknowledgement before settling a speech reload', async () => {
+  it.each([false, true])('verifies a source-only acknowledgement before settling the reload (strict=%s)', async strict => {
     const monitor = new GatewayConfigReloadMonitor();
     const verify = vi.fn(async () => true);
-    const awaiting = monitor.waitForReloadAfter(monitor.getGeneration(), 1000, verify);
+    const awaiting = monitor.waitForReloadAfter(monitor.getGeneration(), 1000, verify, strict);
     monitor.observeLine('[reload] config change detected; evaluating reload (tts.providers.tts-local-cli.command)');
     expect(verify).not.toHaveBeenCalled();
 
@@ -68,6 +68,25 @@ describe('GatewayConfigReloadMonitor', () => {
     expect(monitor.getSettledGeneration()).toBeUndefined();
     await expect(awaiting).resolves.toBe(true);
     expect(monitor.getSettledGeneration()).toBe(1);
+  });
+
+  it.each([false, true])('requires exact verification even after a hot completion (proof=%s)', async applied => {
+    const monitor = new GatewayConfigReloadMonitor();
+    const generation = monitor.getGeneration();
+    monitor.observeLine('[reload] config change detected; evaluating reload (models.providers.custom.models)');
+    monitor.observeLine('[reload] config hot reload applied (models.providers.custom.models)');
+    const verify = vi.fn(async () => applied);
+    const awaiting = monitor.waitForReloadAfter(generation, 1000, verify, true);
+    const settled = vi.fn();
+    void awaiting.then(settled);
+
+    await Promise.resolve();
+    expect(verify).not.toHaveBeenCalled();
+    expect(settled).not.toHaveBeenCalled();
+
+    monitor.observeLine('[reload] config source revision 2 accepted (file)');
+    await expect(awaiting).resolves.toBe(applied);
+    expect(verify).toHaveBeenCalledOnce();
   });
 
   it('does not settle an accepted source with an unconfirmed native revision', async () => {

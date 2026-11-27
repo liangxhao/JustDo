@@ -105,7 +105,7 @@ const createConfigurationFixture = (
   temporaryDirectories.push(stateDir);
   const configPath = path.join(stateDir, 'openclaw.json');
   if (existing) fs.writeFileSync(configPath, JSON.stringify(existing));
-  setStoreGetter(() => ({ get: () => configured ? {
+  const appConfig = {
     model: { defaultModel: 'internal-model', defaultModelProvider: 'internal' },
     providers: { internal: {
       enabled: true,
@@ -114,7 +114,8 @@ const createConfigurationFixture = (
       apiFormat: 'openai',
       models: [{ id: 'internal-model' }],
     } },
-  } : {} }) as never);
+  };
+  setStoreGetter(() => ({ get: () => configured ? appConfig : {} }) as never);
   const sync = new OpenClawConfigSync({
     getAppPluginDefaults: externalIds => Object.fromEntries(
       Object.entries(appNativePolicies).filter(([id]) =>
@@ -136,7 +137,7 @@ const createConfigurationFixture = (
     getAgents: () => [],
     getNativeMcpDataBindings: () => bindings,
   } as never);
-  return { configPath, stateDir, sync, read: () => JSON.parse(fs.readFileSync(configPath, 'utf8')) };
+  return { appConfig, configPath, stateDir, sync, read: () => JSON.parse(fs.readFileSync(configPath, 'utf8')) };
 };
 
 test.each([
@@ -425,6 +426,90 @@ test('keeps Gateway listener configuration stable when the first custom model is
   expect(fixture.sync.sync('app-config-change').ok).toBe(true);
   expect(fixture.read().gateway).toEqual(initialGateway);
   expect(fixture.sync.sync('app-config-change')).toMatchObject({ ok: true, configChanged: false });
+});
+
+describe('language model catalog publication', () => {
+  const addedModel = { id: 'deployment/model-b', name: 'Second Model', supportsImage: true };
+  const additions = [{ providerKey: 'internal', modelIds: [addedModel.id] }];
+
+  const prepareAddition = () => {
+    const fixture = createConfigurationFixture(true);
+    expect(fixture.sync.sync('startup')).toMatchObject({ ok: true });
+    const existing = fixture.appConfig.providers.internal;
+    const next = {
+      ...fixture.appConfig,
+      providers: { internal: { ...existing, models: [...existing.models, addedModel] } },
+    };
+    setStoreGetter(() => ({ get: () => next }) as never);
+    return fixture;
+  };
+
+  test('appends the projected model while preserving all other config and credentials', () => {
+    const fixture = prepareAddition();
+    const source = fs.readFileSync(fixture.configPath, 'utf8');
+    const before = fixture.read();
+    const beforeProvider = before.models.providers.internal;
+    const secretsPath = path.join(fixture.stateDir, 'model-provider-secrets.json');
+    const credentials = fs.readFileSync(secretsPath, 'utf8');
+
+    const result = fixture.sync.syncModelCatalogAdditions(additions, source);
+
+    expect(result).toMatchObject({ ok: true, configChanged: true });
+    expect(result?.publication?.isCurrent()).toBe(true);
+    expect(fixture.read()).toEqual({
+      ...before,
+      models: {
+        ...before.models,
+        providers: {
+          ...before.models.providers,
+          internal: {
+            ...beforeProvider,
+            models: [
+              ...beforeProvider.models,
+              expect.objectContaining({ id: addedModel.id, name: addedModel.name, input: ['text', 'image'] }),
+            ],
+          },
+        },
+      },
+    });
+    expect(fs.readFileSync(secretsPath, 'utf8')).toBe(credentials);
+  });
+
+  test.each(['route drift', 'missing secret'] as const)('leaves the native file unchanged on %s', problem => {
+    const fixture = prepareAddition();
+    const secretsPath = path.join(fixture.stateDir, 'model-provider-secrets.json');
+    if (problem === 'route drift') {
+      const config = fixture.read();
+      config.models.providers.internal.baseUrl = 'http://other.example.test/v1';
+      fs.writeFileSync(fixture.configPath, JSON.stringify(config));
+    } else {
+      fs.unlinkSync(secretsPath);
+    }
+    const existing = fs.readFileSync(fixture.configPath, 'utf8');
+
+    const result = fixture.sync.syncModelCatalogAdditions(additions, existing);
+
+    expect(result).toBeUndefined();
+    expect(fs.readFileSync(fixture.configPath, 'utf8')).toBe(existing);
+    expect(fs.existsSync(secretsPath)).toBe(problem !== 'missing secret');
+  });
+
+  test('preserves a concurrent native edit made while staging the model append', () => {
+    const fixture = prepareAddition();
+    const source = fs.readFileSync(fixture.configPath, 'utf8');
+    const existing = fixture.read();
+    const concurrentEdit = JSON.stringify({ ...existing, worktreeRoot: 'updated-worktree-root' });
+    const restrict = providerSecretFile.restrictCredentialFile;
+    vi.spyOn(providerSecretFile, 'restrictCredentialFile').mockImplementationOnce(file => {
+      restrict(file);
+      fs.writeFileSync(fixture.configPath, concurrentEdit);
+    });
+
+    const result = fixture.sync.syncModelCatalogAdditions(additions, source);
+
+    expect(result).toBeUndefined();
+    expect(fs.readFileSync(fixture.configPath, 'utf8')).toBe(concurrentEdit);
+  });
 });
 
 test.each(['full', 'minimal'])(
@@ -1230,6 +1315,16 @@ test('withdraws expired built-in access without failing sync for the custom prov
   expect(after.agents.defaults.model.primary).toBe('custom-provider/custom-model');
   expect(after.secrets.providers).not.toHaveProperty('justdo_login');
   expect(fs.existsSync(snapshotPath)).toBe(false);
+});
+
+test.each([true, false])('reports an actual built-in provider withdrawal during startup (configured=%s)', configured => {
+  const { sync, configPath } = createConfigurationFixture(configured, 'local', {
+    models: { providers: { builtin_models: { models: [{ id: 'old-model' }] } } },
+  });
+
+  expect(sync.sync('startup')).toMatchObject({ ok: true, builtinProviderWithdrawn: true });
+  expect(JSON.parse(fs.readFileSync(configPath, 'utf8')).models?.providers ?? {}).not.toHaveProperty('builtin_models');
+  expect(sync.sync('startup')).not.toHaveProperty('builtinProviderWithdrawn');
 });
 
 test.each([true, false])(

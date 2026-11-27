@@ -59,6 +59,7 @@ export type OpenClawConfigSyncResult = {
   error?: string;
   secretsChanged?: boolean;
   builtinCredentialSessionId?: string;
+  builtinProviderWithdrawn?: true;
   publication?: OpenClawConfigPublication;
 };
 

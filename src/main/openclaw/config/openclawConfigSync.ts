@@ -55,6 +55,7 @@ import {
 } from './agents/agentProjection';
 import { resolveManagedAgentWorkspace, resolveManagedAgentWorkspaceRoot } from './agents/agentWorkspace';
 import { seedMainRoleFiles } from './agents/mainRoleFiles';
+import type { LanguageModelCatalogAddition } from './appConfigSignature';
 import {
   buildManagedOpenClawSurfaces,
   buildOpenClawConfigMeta,
@@ -86,12 +87,13 @@ import {
 } from './models/nativeVideoModelConfig';
 import {
   buildBuiltinMemorySearchConfig,
+  buildConfiguredProviderModel,
   buildManagedOpenClawModelCatalogConfig,
   buildProviderSelection,
   type OpenClawProviderSelection,
   withMemorySearch,
 } from './models/providerProjection';
-import { restrictCredentialFile, syncProviderSecretFile } from './models/providerSecretFile';
+import { matchesProviderSecretFile, restrictCredentialFile, syncProviderSecretFile } from './models/providerSecretFile';
 import {
   collectWorkspaceExtensionInventory,
   inspectConfiguredPluginPaths,
@@ -509,6 +511,72 @@ export class OpenClawConfigSync {
     }
   }
 
+  /** Append model entries to verified managed routes without reprojecting other native settings. */
+  syncModelCatalogAdditions(
+    additions: readonly LanguageModelCatalogAddition[],
+    content: string,
+  ): OpenClawConfigSyncResult | undefined {
+    const configPath = this.engineManager.getConfigPath();
+    try {
+      const current: unknown = JSON.parse(content);
+      if (!isRecord(current) || !validateConfiguredOpenClawProviderNames().ok) return;
+      const models = configRecord(current.models);
+      if (models.mode !== 'replace' || configRecord(models.catalogRefresh).enabled !== false) return;
+      const providers = configRecord(models.providers);
+      if (Object.hasOwn(providers, OpenClawProviderId.BuiltinModels)) {
+        const binding = getActiveBuiltinModelCredentialBinding();
+        const source = configRecord(configRecord(current.secrets).providers)[BUILTIN_SECRET_SOURCE];
+        if (!binding || configRecord(configRecord(source).env)[MODEL_AUTH_SESSION_ENV] !== binding.authSessionId) return;
+      }
+      const resolution = resolveRawApiConfig();
+      if (!resolution.config) return;
+      const { apiKey, baseURL, model, apiType } = resolution.config;
+      const { primaryModel } = buildProviderSelection({ apiKey, baseURL, modelId: model, apiType,
+        providerName: resolution.providerMetadata?.providerName ?? '',
+        displayName: resolution.providerMetadata?.displayName });
+      const defaults = configRecord(configRecord(current.agents).defaults);
+      if (configRecord(defaults.model).primary !== primaryModel) return;
+
+      const configured = resolveAllEnabledProviderConfigs();
+      const nextProviders = { ...providers };
+      const addedRefs = new Set<string>();
+      for (const addition of additions) {
+        const provider = configured.find(entry => entry.providerName === addition.providerKey);
+        if (!provider) return;
+        const addedIds = new Set(addition.modelIds);
+        const selections = [...provider.models, ...provider.embeddingModels].map(entry =>
+          buildConfiguredProviderModel(provider, entry));
+        const first = selections[0];
+        const nativeModels = selections.flatMap(entry => entry.providerConfig.models);
+        if (!first || new Set(nativeModels.map(entry => entry.id)).size !== nativeModels.length ||
+            addition.modelIds.some(id => !nativeModels.some(entry => entry.id === id))) return;
+        const previousModels = nativeModels.filter(entry => !addedIds.has(entry.id));
+        const expected = { ...first.providerConfig, models: previousModels };
+        if (!previousModels.length || !isDeepStrictEqual(providers[first.providerId], expected)) return;
+        nextProviders[first.providerId] = { ...expected, models: nativeModels };
+        for (const id of addedIds) addedRefs.add(`${first.providerId}/${id}`);
+      }
+      // The full projection can restore a previously unavailable explicit assistant model.
+      if ((this.getAgents?.() ?? []).some(agent => {
+        const entry = buildAgentEntry(agent, primaryModel);
+        const selected = configRecord(entry.model).primary;
+        return typeof selected === 'string' && addedRefs.has(selected);
+      })) return;
+      if (!matchesProviderSecretFile(current, this.engineManager.getStateDir(), resolveAllProviderSecrets())) return;
+
+      const next = { ...current, models: { ...models, providers: nextProviders } };
+      const published = this.withStagedConfig(configPath, `${JSON.stringify(next, null, 2)}\n`, commit => {
+        if (fs.readFileSync(configPath, 'utf8') !== content) return false;
+        commit();
+        return true;
+      });
+      if (!published) return;
+      return buildVerifiedConfigSyncResult(configPath, next, true, true);
+    } catch {
+      return;
+    }
+  }
+
   /** Plan only the managed data keys and keep the old bytes until the owning caller publishes. */
   planNativeMcpDataPublication(
     configPath: string,
@@ -748,19 +816,7 @@ export class OpenClawConfigSync {
     const memorySearchConfig = buildBuiltinMemorySearchConfig(enabledProviders);
     for (const p of enabledProviders) {
       for (const m of [...p.models, ...p.embeddingModels]) {
-        const sel = buildProviderSelection({
-          apiKey: p.apiKey,
-          baseURL: p.baseURL,
-          modelId: m.id,
-          apiType: p.apiType,
-          providerName: p.providerName,
-          supportsImage: m.supportsImage,
-          modelName: m.name,
-          displayName: p.displayName,
-          contextLength: m.contextLength,
-          maxTokens: m.maxTokens,
-          headers: p.headers,
-        });
+        const sel = buildConfiguredProviderModel(p, m);
         if (!allProvidersMap[sel.providerId]) {
           allProvidersMap[sel.providerId] = { ...sel.providerConfig, models: [] };
         }
@@ -1202,10 +1258,17 @@ export class OpenClawConfigSync {
         error: error instanceof Error ? error.message : String(error),
       };
     }
-    return buildVerifiedConfigSyncResult(
+    const result = buildVerifiedConfigSyncResult(
       configPath, expectedConfig, changed,
       trackPublication || (changed && hasSpeechToolConfigChanged(previousConfig, expectedConfig)),
     );
+    const builtin = OpenClawProviderId.BuiltinModels;
+    const previousProviders = configRecord(configRecord(configRecord(previousConfig).models).providers);
+    const nextProviders = configRecord(configRecord(expectedConfig.models).providers);
+    if (result.ok && changed && Object.hasOwn(previousProviders, builtin) && !Object.hasOwn(nextProviders, builtin)) {
+      return { ...result, builtinProviderWithdrawn: true };
+    }
+    return result;
   }
 
   /**

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
 export const MANAGED_PROVIDER_SECRET_SOURCE = 'justdo-model-providers';
 const SECRET_FILE_NAME = 'model-provider-secrets.json';
@@ -93,12 +94,11 @@ export type ManagedProviderSecretValues = Record<
   { apiKey: string; headers: Record<string, string> }
 >;
 
-/** Publish credentials before the config that references them; never put values in config. */
-export function syncProviderSecretFile(
+function projectProviderSecretFile(
   config: Record<string, unknown>,
   stateDir: string,
   secretValues: ManagedProviderSecretValues,
-): { config: Record<string, unknown>; secretsChanged: boolean } {
+) {
   const next = structuredClone(config);
   const providers = isRecord(next.models) && isRecord(next.models.providers)
     ? next.models.providers : {};
@@ -143,8 +143,26 @@ export function syncProviderSecretFile(
     };
   }
   const content = `${JSON.stringify(Object.fromEntries(Object.entries(keys).sort(([a], [b]) => a.localeCompare(b))), null, 2)}\n`;
-  if (!Object.keys(keys).length && !fs.existsSync(filePath)) return { config: next, secretsChanged: false };
-  if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf8') === content) {
+  const exists = fs.existsSync(filePath);
+  const current = exists ? fs.readFileSync(filePath, 'utf8') === content : !Object.keys(keys).length;
+  return { next, filePath, content, current };
+}
+
+export function matchesProviderSecretFile(
+  config: Record<string, unknown>, stateDir: string, secretValues: ManagedProviderSecretValues,
+): boolean {
+  const projection = projectProviderSecretFile(config, stateDir, secretValues);
+  return projection.current && isDeepStrictEqual(config, projection.next);
+}
+
+/** Publish credentials before the config that references them; never put values in config. */
+export function syncProviderSecretFile(
+  config: Record<string, unknown>,
+  stateDir: string,
+  secretValues: ManagedProviderSecretValues,
+): { config: Record<string, unknown>; secretsChanged: boolean } {
+  const { next, filePath, content, current } = projectProviderSecretFile(config, stateDir, secretValues);
+  if (current) {
     return { config: next, secretsChanged: false };
   }
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });

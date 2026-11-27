@@ -263,6 +263,23 @@ export const buildProviderSelection = (options: {
   };
 };
 
+export const buildConfiguredProviderModel = (
+  provider: ProviderRawConfig,
+  model: ProviderRawConfig['models'][number],
+): OpenClawProviderSelection => buildProviderSelection({
+  apiKey: provider.apiKey,
+  baseURL: provider.baseURL,
+  modelId: model.id,
+  apiType: provider.apiType,
+  providerName: provider.providerName,
+  supportsImage: model.supportsImage,
+  modelName: model.name,
+  displayName: provider.displayName,
+  contextLength: model.contextLength,
+  maxTokens: model.maxTokens,
+  headers: provider.headers,
+});
+
 export type ManagedMemorySearchConfig =
   | {
       enabled: true;

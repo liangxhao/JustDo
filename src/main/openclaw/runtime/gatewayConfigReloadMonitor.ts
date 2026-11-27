@@ -211,7 +211,7 @@ export class GatewayConfigReloadMonitor {
     if (CONFIG_SOURCE_ACCEPTED_LINE_PATTERN.test(line)) {
       const record = this.records.at(-1);
       if (record && record.generation > this.configGenerationAtReady &&
-        record.outcome === null && !record.restartAccepted && !this.gatewayRestartPending) {
+        record.outcome !== 'failed' && !record.restartAccepted && !this.gatewayRestartPending) {
         // Native snapshot-only updates can omit the hot reload completion line.
         // Source acceptance also covers unapplied writes, so request verification.
         record.sourceAccepted = true;
@@ -236,24 +236,30 @@ export class GatewayConfigReloadMonitor {
     generation: number,
     timeoutMs = 30_000,
     verifySourceAcceptance?: () => Promise<boolean>,
+    requireVerifiedSource = false,
   ): Promise<boolean> {
-    const getCurrentRecord = (): ReloadRecord | undefined =>
-      this.records.find(candidate => candidate.generation > generation);
+    // A hot-completion line can precede native acceptance of the persisted source.
+    const getCurrentRecord = (): ReloadRecord | undefined => {
+      if (!requireVerifiedSource) return this.records.find(candidate => candidate.generation > generation);
+      const latest = this.records.at(-1);
+      return latest && latest.generation > generation ? latest : undefined;
+    };
     const resolveCurrent = (): boolean | null => {
       const outcome = getCurrentRecord()?.outcome;
       return outcome ? outcome === 'applied' : null;
     };
 
     const current = resolveCurrent();
-    if (current !== null) {
+    if (current === false || (current === true && !requireVerifiedSource)) {
       return Promise.resolve(current);
     }
 
     return new Promise(resolve => {
+      const initialLifecycle = this.gatewayLifecycleGeneration;
       let settled = false;
       let usingCompletionTimeout = false;
       let usingRestartTimeout = false;
-      let verifyingSource = false;
+      let verifyingSourceGeneration: number | undefined;
       let timer: ReturnType<typeof setTimeout>;
       const finish = (result: boolean) => {
         if (settled) return;
@@ -268,8 +274,14 @@ export class GatewayConfigReloadMonitor {
         timer.unref?.();
       };
       const onChange = () => {
+        const record = getCurrentRecord();
+        if (requireVerifiedSource && (initialLifecycle !== this.gatewayLifecycleGeneration ||
+            record?.restartAccepted || this.gatewayRestartPending)) {
+          finish(false);
+          return;
+        }
         const result = resolveCurrent();
-        if (result !== null) {
+        if (result === false || (result === true && !requireVerifiedSource)) {
           finish(result);
           return;
         }
@@ -283,18 +295,20 @@ export class GatewayConfigReloadMonitor {
           usingCompletionTimeout = true;
           armTimer(timeoutMs);
         }
-        const record = getCurrentRecord();
-        if (!verifyingSource && verifySourceAcceptance && record?.sourceAccepted &&
+        if (verifySourceAcceptance && record?.sourceAccepted && verifyingSourceGeneration !== record.generation &&
           record.generation === this.generation && !record.restartAccepted && !this.gatewayRestartPending) {
-          verifyingSource = true;
+          verifyingSourceGeneration = record.generation;
           const lifecycle = this.gatewayLifecycleGeneration;
-          void verifySourceAcceptance().then(applied => {
-            if (!applied || settled || record.outcome !== null || record.restartAccepted ||
+          void verifySourceAcceptance().catch(() => false).then(applied => {
+            if (settled || record.outcome === 'failed' || record.restartAccepted ||
               this.gatewayRestartPending || record.generation !== this.generation ||
               lifecycle !== this.gatewayLifecycleGeneration) return;
-            record.outcome = 'applied';
-            this.notify();
-          }).catch(() => {});
+            if (requireVerifiedSource) finish(applied);
+            if (applied && record.outcome === null) {
+              record.outcome = 'applied';
+              this.notify();
+            }
+          });
         }
       };
       armTimer(timeoutMs);

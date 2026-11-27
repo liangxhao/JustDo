@@ -44,6 +44,7 @@
     "node": ">=24 <25"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@modelcontextprotocol/ext-apps": "2.0.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "esbuild": "0.28.1",

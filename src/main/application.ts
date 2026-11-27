@@ -277,7 +277,7 @@ import { registerStorageDirectoryHandlers } from './ipc/storage/storageDirectory
 import { registerStorageRelocationHandlers } from './ipc/storage/storageRelocation';
 import { removeLegacyWorkspaceSetupFile } from './openclaw/config/agents/legacyWorkspaceSetupCleanup';
 import { NativeAssistantCreation } from './openclaw/config/agents/nativeAssistantCreation';
-import { getOpenClawAppConfigSignature } from './openclaw/config/appConfigSignature';
+import { getLanguageModelCatalogAdditions, getOpenClawAppConfigSignature } from './openclaw/config/appConfigSignature';
 import {
   publishBuiltinCredentialFile,
   revokeBuiltinCredentialFile,
@@ -285,7 +285,7 @@ import {
 import { isDecisionModelManaged } from './openclaw/config/models/decisionModelConfig';
 import { resolveNativeVideoSelection } from './openclaw/config/models/nativeVideoModelConfig';
 import { buildProviderSelection } from './openclaw/config/models/providerProjection';
-import { OpenClawConfigSyncService } from './openclaw/config/openclawConfigSyncService';
+import { OpenClawConfigSyncService, type SyncOpenClawConfigOptions } from './openclaw/config/openclawConfigSyncService';
 import { listInstalledOpenClawExtensionIds } from './openclaw/config/plugins/extensionInventory';
 import { listManagedOpenClawPluginIds } from './openclaw/config/plugins/pluginProjection';
 import {
@@ -1023,12 +1023,7 @@ const getOpenClawConfigSyncService = (): OpenClawConfigSyncService => {
 };
 
 const syncOpenClawConfig = (
-  options: {
-    reason: string;
-    restartGatewayIfRunning?: boolean;
-    discoverExternalMcpServers?: boolean;
-    retiredProviderIds?: readonly string[];
-  } = { reason: 'unknown' },
+  options: SyncOpenClawConfigOptions = { reason: 'unknown' },
 ) => getOpenClawConfigSyncService().syncConfig(options);
 
 const getLocalSpeechModelService = (): LocalSpeechModelService => {
@@ -1705,6 +1700,7 @@ if (agentBridgeArgv) {
       const syncResult = await syncOpenClawConfig({
         reason: 'app-config-change',
         ...(context?.rollback ? { restoreDecisionModelSnapshot: true } : {}),
+        modelCatalogAdditions: context?.rollback ? undefined : getLanguageModelCatalogAdditions(previousConfig, nextConfig),
         retiredProviderIds: listRetiredOpenClawProviderIds(
           (previousConfig as AppConfigSettings | undefined)?.providers,
           (nextConfig as AppConfigSettings | undefined)?.providers,

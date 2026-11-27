@@ -1,5 +1,4 @@
 import { EventEmitter } from 'node:events';
-import os from 'node:os';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +6,7 @@ import { startAssets } from '../editor-resource.mjs';
 
 const httpMock = vi.hoisted(() => ({ createServer: vi.fn() }));
 vi.mock('node:http', () => ({ createServer: httpMock.createServer }));
+const readUnusedAsset = async () => undefined;
 
 type Allocation = number | string | null | Error;
 
@@ -90,7 +90,7 @@ describe('draw.io browser-safe asset ports', () => {
   it('discards an allocated X11 port before advertising the resource origin', async () => {
     fixture.allocations = [6000, 43127];
 
-    const assets = await startAssets(os.tmpdir());
+    const assets = await startAssets(readUnusedAsset);
 
     expect(assets.origin).toBe('http://127.0.0.1:43127');
     expect(assets.base).toMatch(/^http:\/\/127\.0\.0\.1:43127\/[0-9a-f]{48}\/$/);
@@ -103,7 +103,7 @@ describe('draw.io browser-safe asset ports', () => {
   it.each(blockedPorts)('never exposes browser-restricted port %i', async port => {
     fixture.allocations = [port, 49152];
 
-    const assets = await startAssets(os.tmpdir());
+    const assets = await startAssets(readUnusedAsset);
 
     expect(assets.origin).toBe('http://127.0.0.1:49152');
     expect(fixture.listens).toBe(2);
@@ -115,7 +115,7 @@ describe('draw.io browser-safe asset ports', () => {
     fixture.allocations = [6000, 43127];
     fixture.deferClose = true;
     let published = false;
-    const pending = startAssets(os.tmpdir()).then(assets => {
+    const pending = startAssets(readUnusedAsset).then(assets => {
       published = true;
       return assets;
     });
@@ -135,7 +135,7 @@ describe('draw.io browser-safe asset ports', () => {
   it('fails with every rejected listener closed when bounded allocation attempts are exhausted', async () => {
     fixture.allocations = Array<Allocation>(128).fill(6000);
 
-    await expect(startAssets(os.tmpdir())).rejects.toThrow();
+    await expect(startAssets(readUnusedAsset)).rejects.toThrow();
 
     expect(fixture.listens).toBeGreaterThan(1);
     expect(fixture.listens).toBeLessThanOrEqual(64);
@@ -147,7 +147,7 @@ describe('draw.io browser-safe asset ports', () => {
     const failure = new Error('listen EADDRINUSE');
     fixture.allocations = [failure, 43127];
 
-    await expect(startAssets(os.tmpdir())).rejects.toBe(failure);
+    await expect(startAssets(readUnusedAsset)).rejects.toBe(failure);
 
     expect(fixture.listens).toBe(1);
     expect(fixture.servers.every(server => !server.listening)).toBe(true);
@@ -157,7 +157,7 @@ describe('draw.io browser-safe asset ports', () => {
   it.each([null, 'named-pipe'])('does not publish an invalid TCP address %s', async address => {
     fixture.allocations = [address];
 
-    await expect(startAssets(os.tmpdir())).rejects.toThrow();
+    await expect(startAssets(readUnusedAsset)).rejects.toThrow();
 
     expect(fixture.servers.every(server => !server.listening)).toBe(true);
   });
@@ -167,7 +167,7 @@ describe('draw.io browser-safe asset ports', () => {
     async port => {
       fixture.allocations = [port];
 
-      const assets = await startAssets(os.tmpdir());
+      const assets = await startAssets(readUnusedAsset);
 
       expect(assets.origin).toBe(`http://127.0.0.1:${port}`);
       expect(fixture.listens).toBe(1);
