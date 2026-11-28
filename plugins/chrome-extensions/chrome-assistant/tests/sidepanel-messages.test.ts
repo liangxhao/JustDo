@@ -986,13 +986,12 @@ describe('side panel process presentation matches the desktop', () => {
     });
     try {
       localized.render([process('one')], language);
-      expect(button.title).toBe(expand);
       expect(button.getAttribute('aria-label')).toBe(expand);
       expect(button.getAttribute('aria-pressed')).toBe('false');
       button.click();
-      expect(button.title).toBe(collapse);
       expect(button.getAttribute('aria-label')).toBe(collapse);
       expect(button.getAttribute('aria-pressed')).toBe('true');
+      expect(button.hasAttribute('title')).toBe(false);
     } finally {
       localized.dispose();
       languageGetter.mockRestore();

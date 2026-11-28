@@ -8,6 +8,8 @@ import { describe, expect, test, vi } from 'vitest';
 
 import {
   GLOBAL_SIDE_PANEL_PATH,
+  PANEL_SCOPE_PREFERENCE,
+  PanelScopeError,
   SidePanelMessage,
   initializeTabSidePanel,
   openTabSidePanel,
@@ -240,7 +242,7 @@ describe('Chrome extension preparation', () => {
       expect(second.productName).toBe(projectProductName);
       expect(manifest).toMatchObject({
         name: projectProductName,
-        version: '2.4.1',
+        version: '2.5.0',
         action: { default_title: projectProductName },
       });
       expect(manifest.description).toContain(projectProductName);
@@ -338,12 +340,12 @@ describe('Chrome extension preparation', () => {
     onStartup.mock.calls[0][0]();
     onCreated.mock.calls[0][0]({ id: 5 });
     onReplaced.mock.calls[0][0](6, 4);
-    await Promise.resolve();
-    expect(setOptions.mock.calls.map(([options]) => options)).toEqual([
+    await vi.waitFor(() => expect(setOptions).toHaveBeenCalledTimes(3));
+    expect(setOptions.mock.calls.map(([options]) => options)).toEqual(expect.arrayContaining([
       { tabId: 5, path: 'sidepanel.html?tabId=5', enabled: true },
       { tabId: 6, path: 'sidepanel.html?tabId=6', enabled: true },
       { tabId: 4, path: 'sidepanel.html?tabId=4', enabled: true },
-    ]);
+    ]));
     expect(open).not.toHaveBeenCalled();
 
     let finishSettingOptions!: () => void;
@@ -366,35 +368,44 @@ describe('Chrome extension preparation', () => {
     finishSettingOptions();
   });
 
-  test('switches native panel scope within the current window and hands off the selected conversation', async () => {
+  test('hands off each scope to its exact destination before releasing the global panel', async () => {
     const event = () => ({ addListener: vi.fn() });
+    const getURL = (file: string) => `chrome-extension://installed/${file}`;
+    const contextual = { id: 'installed', url: getURL('sidepanel.html?tabId=4') };
+    const otherContextual = { id: 'installed', url: getURL('sidepanel.html?tabId=6') };
+    const global = { id: 'installed', url: getURL(GLOBAL_SIDE_PANEL_PATH), documentId: 'global' };
+    let liveContexts = [
+      { documentUrl: contextual.url, documentId: 'contextual' },
+      { documentUrl: getURL('sidepanel.html?tabId=5'), documentId: 'other-contextual' },
+    ];
     const runtime = {
       id: 'installed',
-      getURL: (file: string) => `chrome-extension://installed/${file}`,
-      getContexts: (_filter: unknown, callback: (contexts: { documentId: string }[]) => void) =>
-        callback([{ documentId: 'other-global-panel' }]),
+      getURL,
+      sendMessage: vi.fn(async (_message: unknown) => ({ canRelease: true })),
+      getContexts: async ({ documentUrls }: { documentUrls?: string[] }) =>
+        liveContexts.filter(context => !documentUrls || documentUrls.includes(context.documentUrl)),
       onInstalled: event(),
       onStartup: event(),
     };
     const setOptions = vi.fn(async (_options: unknown) => {});
     const open = vi.fn(async (_options: unknown) => {});
     const close = vi.fn(async (_options: unknown) => {});
-    let activeTabId = 4;
+    const onOpened = event();
+    const storageSet = vi.fn(async (_changes: Record<string, unknown>) => {});
     let openingWebsitePanel = false;
     const chromeApi = {
       runtime,
-      storage: { session: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) } },
+      storage: { session: { get: vi.fn(async () => ({})), set: storageSet } },
       tabs: {
-        query: vi.fn(async () => [{ id: 4, windowId: 2 }, { id: 5, windowId: 2 }, { id: 6, windowId: 3 }]),
-        get: (id: number, callback: (tab: { active: boolean; windowId: number }) => void) =>
-          callback({ active: id === activeTabId, windowId: 2 }),
+        query: vi.fn(async () => [{ id: 4 }, { id: 5 }, { id: 6 }, { id: 7 }]),
+        get: async (id: number) => ({ active: id === 4 || id === 6, windowId: id === 6 ? 3 : 2 }),
         onCreated: event(),
         onReplaced: event(),
       },
       windows: { onRemoved: event() },
       action: { onClicked: event() },
       sidePanel: {
-        open, close, setOptions, onClosed: event(), setPanelBehavior: vi.fn(async () => {}),
+        open, close, setOptions, onOpened, onClosed: event(), setPanelBehavior: vi.fn(async () => {}),
         getOptions: vi.fn(async ({ tabId }: { tabId: number }) => {
           if (tabId === 6) openingWebsitePanel = true;
           return { enabled: true, path: `sidepanel.html?tabId=${tabId}` };
@@ -404,52 +415,89 @@ describe('Chrome extension preparation', () => {
     const handle = initializeTabSidePanel(chromeApi, {
       readContextualPanelProtection: async () => tabId => tabId === 6 && openingWebsitePanel,
     });
-    const contextual = { id: runtime.id, url: runtime.getURL('sidepanel.html?tabId=4') };
-    const global = { id: runtime.id, url: runtime.getURL(GLOBAL_SIDE_PANEL_PATH) };
-    const send = (sender: typeof contextual, type: string, tabId: number | null) =>
-      new Promise(resolve => handle({ type, windowId: 2, tabId, selection: 'conversation' }, sender, resolve));
+    const send = (sender: typeof contextual, preference: boolean, tabId = 4, windowId = 2) => new Promise(resolve =>
+      handle({ type: SidePanelMessage.SwitchScope, windowId, tabId, global: preference,
+        selection: windowId === 2 ? 'existing-thread' : 'other-thread', includePage: windowId === 2 }, sender, resolve));
+    const take = (sender: typeof contextual, windowId: number, tabId?: number) => new Promise(resolve =>
+      handle({ type: SidePanelMessage.TakeContinuation, windowId, tabId }, sender, resolve));
+    const panelOpened = (windowId: number, tabId: number) =>
+      onOpened.addListener.mock.calls[0][0]({ windowId, tabId });
 
-    const switchGlobal = send(contextual, SidePanelMessage.SwitchScope, 4);
+    storageSet.mockRejectedValueOnce(new Error('Storage temporarily unavailable'));
+    await expect(send(contextual, true)).resolves.toEqual({ ok: false });
+    expect(setOptions.mock.calls).toEqual([
+      [{ path: GLOBAL_SIDE_PANEL_PATH, enabled: true }], [{ enabled: false }],
+    ]);
+    setOptions.mockClear();
 
-    expect(open).toHaveBeenLastCalledWith({ windowId: 2 });
+    await expect(send(contextual, true)).resolves.toEqual({ ok: true });
+    expect(storageSet).toHaveBeenCalledWith({
+      [PANEL_SCOPE_PREFERENCE]: {
+        global: true, continuations: [{ windowId: 2, selection: 'existing-thread', includePage: true }],
+      },
+      sidePanelGlobalMode: true,
+    });
     expect(setOptions.mock.calls).toEqual([
       [{ path: GLOBAL_SIDE_PANEL_PATH, enabled: true }],
-      [{ tabId: 4, enabled: false }],
+      [{ tabId: 7, enabled: false }],
     ]);
-    expect(setOptions.mock.invocationCallOrder[1]).toBeLessThan(open.mock.invocationCallOrder[0]);
-    await expect(switchGlobal).resolves.toEqual({ ok: true });
-    expect(chromeApi.tabs.query).toHaveBeenCalledWith({});
-    expect(setOptions).toHaveBeenLastCalledWith({ tabId: 5, enabled: false });
-    expect(setOptions).not.toHaveBeenCalledWith({ tabId: 6, enabled: false });
-    await expect(send(global, SidePanelMessage.RestoreSelection, null)).resolves.toEqual({
-      ok: true, selection: 'conversation',
+    chromeApi.tabs.onCreated.addListener.mock.calls[0][0]({ id: 8, windowId: 2 });
+    await expect(send(otherContextual, true, 6, 3)).resolves.toEqual({ ok: true });
+    await expect(take(contextual, 2)).resolves.toEqual({ ok: false });
+    await expect(take(global, 9)).resolves.toEqual({ ok: true, continuation: undefined });
+    await expect(take(global, 2)).resolves.toEqual({
+      ok: true, continuation: { selection: 'existing-thread', includePage: true },
     });
-    await expect(send(global, SidePanelMessage.RestoreSelection, null)).resolves.toEqual({ ok: true });
-
-    const setOtherDraft = (busy: boolean) => new Promise(resolve => handle(
-      { type: SidePanelMessage.GlobalDraftState, windowId: 3, busy },
-      { ...global, documentId: 'other-global-panel' },
-      resolve,
-    ));
-    await setOtherDraft(true);
-    await expect(send(global, SidePanelMessage.SwitchScope, 4)).resolves.toEqual({
-      ok: false, otherWindowBusy: true,
+    await expect(take(global, 2)).resolves.toEqual({ ok: true, continuation: undefined });
+    await expect(take(global, 3)).resolves.toEqual({
+      ok: true, continuation: { selection: 'other-thread', includePage: false },
     });
-    expect(open).toHaveBeenCalledTimes(1);
-    await setOtherDraft(false);
+    expect(setOptions).toHaveBeenCalledTimes(2);
 
-    activeTabId = 5;
-    await expect(send(global, SidePanelMessage.SwitchScope, 4)).resolves.toEqual({ ok: false });
-    expect(open).toHaveBeenCalledTimes(1);
-    activeTabId = 4;
+    liveContexts = [
+      { documentUrl: global.url, documentId: global.documentId },
+      { documentUrl: global.url, documentId: 'other-global' },
+    ];
+    await expect(send(global, false, 5)).resolves.toEqual({ ok: false });
+    await expect(send(global, false)).resolves.toEqual({ ok: false, code: PanelScopeError.OtherWindow });
+    expect(setOptions).toHaveBeenCalledTimes(2);
 
-    const switchContext = send(global, SidePanelMessage.SwitchScope, 4);
-    expect(open).toHaveBeenLastCalledWith({ tabId: 4, windowId: 2 });
-    await expect(switchContext).resolves.toEqual({ ok: true });
-    expect(setOptions).toHaveBeenCalledWith({ enabled: false });
-    await expect(send(contextual, SidePanelMessage.RestoreSelection, 4)).resolves.toEqual({
-      ok: true, selection: 'conversation',
+    liveContexts = [{ documentUrl: global.url, documentId: global.documentId }];
+    await expect(send(global, false)).resolves.toEqual({ ok: true, followSwitchId: expect.any(String) });
+    const continuation = take(contextual, 2, 4);
+    panelOpened(3, 4);
+    panelOpened(2, 5);
+    await expect(take(global, 2)).resolves.toEqual({ ok: true, continuation: undefined });
+    expect(setOptions).toHaveBeenCalledTimes(2);
+
+    liveContexts.push({ documentUrl: contextual.url, documentId: 'new-contextual' });
+    panelOpened(2, 4);
+    await expect(continuation).resolves.toEqual({
+      ok: true, continuation: { selection: 'existing-thread', includePage: true },
     });
+    await expect(take(contextual, 2, 4)).resolves.toEqual({ ok: true, continuation: undefined });
+    expect(setOptions.mock.calls[2]).toEqual([{ enabled: false }]);
+    expect(setOptions).toHaveBeenCalledWith({ tabId: 4, path: 'sidepanel.html?tabId=4', enabled: true });
+
+    liveContexts = [{ documentUrl: contextual.url, documentId: 'new-contextual' }];
+    await expect(send(contextual, true)).resolves.toEqual({ ok: true });
+    liveContexts.push({ documentUrl: global.url, documentId: 'cached-global' });
+    runtime.sendMessage.mockResolvedValueOnce({ canRelease: false });
+    setOptions.mockClear();
+    await expect(send(contextual, false)).resolves.toEqual({ ok: false, code: PanelScopeError.CachedGlobalBusy });
+    expect(setOptions).not.toHaveBeenCalled();
+    await expect(send(contextual, false)).resolves.toEqual({ ok: true });
+    expect(runtime.sendMessage).toHaveBeenCalledWith({
+      type: SidePanelMessage.ReserveCachedGlobal, windowId: 2,
+      releaseId: expect.any(String), expiresAt: expect.any(Number),
+    });
+    const reservation = runtime.sendMessage.mock.calls[1][0] as { releaseId: string };
+    expect(runtime.sendMessage).toHaveBeenCalledWith({
+      type: SidePanelMessage.ReleaseCachedGlobal, windowId: 2, releaseId: reservation.releaseId,
+    });
+    expect(setOptions.mock.calls[0]).toEqual([{ enabled: false }]);
+    expect(open).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
   });
 
   test('rejects malformed panel identities and invalid tab targets', async () => {
@@ -623,7 +671,7 @@ describe('Chrome extension preparation', () => {
       prepareChromeExtension({ repoRoot });
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
       expect(manifest).toEqual(initialManifest);
-      expect(manifest).toMatchObject({ version: '2.4.1' });
+      expect(manifest).toMatchObject({ version: '2.5.0' });
       expect(manifest).not.toHaveProperty('version_name');
       const versions = fs.readFileSync(versionsPath, 'utf8');
       expect(versions).toContain(JSON.stringify(nextVersion));

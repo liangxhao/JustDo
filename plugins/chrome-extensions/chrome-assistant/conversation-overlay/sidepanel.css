@@ -223,6 +223,7 @@ header {
   }
 }
 .header-actions {
+  position: relative;
   justify-content: flex-end;
   gap: 2px;
 }
@@ -280,6 +281,36 @@ header {
 .header-actions .icon:hover {
   background: var(--chat-hover);
 }
+.header-actions .icon[aria-label]::after {
+  content: attr(aria-label) / '';
+  position: absolute;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-end: 0;
+  inline-size: max-content;
+  max-inline-size: calc(100vw - 24px);
+  padding: 5px 8px;
+  border: 1px solid var(--chat-border);
+  border-radius: 6px;
+  background: var(--chat-surface);
+  color: var(--chat-text);
+  box-shadow: 0 4px 12px #0002;
+  font-size: 12px;
+  text-align: start;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  visibility: hidden;
+  transition: visibility 0s;
+}
+.header-actions .icon[aria-description]::after {
+  content: attr(aria-description) / '';
+}
+.header-actions .icon[aria-label]:hover::after {
+  visibility: visible;
+  transition-delay: 300ms;
+}
+.header-actions:not(:has(.icon:hover)) .icon[aria-label]:focus-visible::after {
+  visibility: visible;
+}
 #panelScope[aria-pressed='true'] {
   color: light-dark(#4d6b9e, #a8bfdf);
 }
@@ -289,8 +320,10 @@ header {
   display: none;
 }
 #panelScope:disabled {
-  opacity: .55;
   cursor: default;
+}
+#panelScope:disabled svg {
+  opacity: .55;
 }
 main {
   flex: 1;

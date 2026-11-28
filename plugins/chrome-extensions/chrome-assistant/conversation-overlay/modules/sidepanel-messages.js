@@ -76,7 +76,6 @@ export function createMessageRenderer(
     const label = t(
       processSummariesExpanded ? 'collapseAllProcessDetails' : 'expandAllProcessDetails',
     );
-    processDetailsButton.title = label;
     processDetailsButton.setAttribute('aria-label', label);
     processDetailsButton.setAttribute('aria-pressed', String(processSummariesExpanded));
   }

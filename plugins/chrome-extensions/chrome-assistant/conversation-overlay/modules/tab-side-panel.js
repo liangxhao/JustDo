@@ -1,13 +1,22 @@
 export const GLOBAL_SIDE_PANEL_PATH = 'sidepanel.html';
+export const PANEL_SCOPE_PREFERENCE = 'sidePanelScopePreference';
 export const SidePanelMessage = Object.freeze({
-  RestoreSelection: 'side-panel:restore-selection',
   SwitchScope: 'side-panel:switch-scope',
-  GlobalDraftState: 'side-panel:global-draft-state',
+  TakeContinuation: 'side-panel:take-continuation',
+  WaitFollowSwitch: 'side-panel:wait-follow-switch',
+  CancelFollowSwitch: 'side-panel:cancel-follow-switch',
+  ReserveCachedGlobal: 'side-panel:reserve-cached-global',
+  ReleaseCachedGlobal: 'side-panel:release-cached-global',
 });
+export const PanelScopeError = Object.freeze({
+  OtherWindow: 'OTHER_GLOBAL_PANEL',
+  TargetBusy: 'TARGET_PANEL_BUSY',
+  CachedGlobalBusy: 'CACHED_GLOBAL_PANEL_BUSY',
+});
+export const PANEL_SCOPE_TIMEOUT_MS = 10_000;
 const GLOBAL_MODE_KEY = 'sidePanelGlobalMode';
 const OPEN_GLOBAL_WINDOWS_KEY = 'sidePanelOpenGlobalWindows';
-const BUSY_GLOBAL_WINDOWS_KEY = 'sidePanelBusyGlobalWindows';
-const MODE_KEYS = [GLOBAL_MODE_KEY, OPEN_GLOBAL_WINDOWS_KEY, BUSY_GLOBAL_WINDOWS_KEY];
+const MODE_KEYS = [GLOBAL_MODE_KEY, OPEN_GLOBAL_WINDOWS_KEY, PANEL_SCOPE_PREFERENCE];
 const sidePanelPath = tabId => `${GLOBAL_SIDE_PANEL_PATH}?tabId=${tabId}`;
 const isTabId = tabId => Number.isSafeInteger(tabId) && tabId >= 0;
 
@@ -43,38 +52,42 @@ export function initializeTabSidePanel(chromeApi, {
 } = {}) {
   const globalSupported = supportsGlobalSidePanel(chromeApi);
   const openGlobalWindows = new Set();
-  const busyGlobalWindows = new Map();
-  const handoffs = new Map();
   let globalMode = false;
-  let transition;
+  let preference;
+  let followSwitch;
   let modeLoaded = !globalSupported;
   const ready = globalSupported
     ? chromeApi.storage.session.get(MODE_KEYS).then(saved => {
       globalMode = saved[GLOBAL_MODE_KEY] === true;
+      preference = saved[PANEL_SCOPE_PREFERENCE];
       for (const windowId of saved[OPEN_GLOBAL_WINDOWS_KEY] ?? []) openGlobalWindows.add(windowId);
-      for (const [windowId, documentId] of saved[BUSY_GLOBAL_WINDOWS_KEY] ?? []) {
-        busyGlobalWindows.set(windowId, documentId);
-      }
     }).catch(() => {}).finally(() => { modeLoaded = true; })
     : Promise.resolve();
+  let scopeUpdates = ready;
+  const updateScope = operation => {
+    const updated = scopeUpdates.then(operation);
+    scopeUpdates = updated.catch(() => {});
+    return updated;
+  };
   const whenReady = action => modeLoaded ? action() : ready.then(action);
   const provision = tabId => {
-    if (transition) return transition.catch(() => {}).then(() => provision(tabId));
     if (!isTabId(tabId) || globalMode) return;
     return configureTabSidePanel(chromeApi, tabId);
   };
-  const provisionExisting = () => {
-    void whenReady(() => chromeApi.tabs.query({}))
-      .then(tabs => Promise.allSettled(tabs.map(tab => provision(tab.id)))).catch(() => {});
-  };
+  const provisionExisting = () => void updateScope(async () => {
+    if (globalSupported) await applyPreferredScope();
+    if (globalMode) return;
+    const tabs = await chromeApi.tabs.query({});
+    await Promise.allSettled(tabs.map(tab => provision(tab.id)));
+  }).catch(() => {});
 
   chromeApi.runtime.onInstalled.addListener(provisionExisting);
   chromeApi.runtime.onStartup.addListener(provisionExisting);
   chromeApi.tabs.onCreated.addListener(tab => {
-    void Promise.resolve(whenReady(() => provision(tab.id))).catch(() => {});
+    void updateScope(() => provision(tab.id)).catch(() => {});
   });
   chromeApi.tabs.onReplaced.addListener(tabId => {
-    void Promise.resolve(whenReady(() => provision(tabId))).catch(() => {});
+    void updateScope(() => provision(tabId)).catch(() => {});
   });
   // Chrome normally handles the toggle itself. A tab without options yet falls through here.
   chromeApi.action.onClicked.addListener(tab => {
@@ -99,7 +112,6 @@ export function initializeTabSidePanel(chromeApi, {
   if (!globalSupported) return () => false;
 
   const saveOpenWindows = () => chromeApi.storage.session.set({ [OPEN_GLOBAL_WINDOWS_KEY]: [...openGlobalWindows] });
-  const saveBusyWindows = () => chromeApi.storage.session.set({ [BUSY_GLOBAL_WINDOWS_KEY]: [...busyGlobalWindows] });
   const updateGlobalVisibility = (windowId, open) => {
     void whenReady(() => {
       if (open) openGlobalWindows.add(windowId);
@@ -108,158 +120,250 @@ export function initializeTabSidePanel(chromeApi, {
     }).catch(() => {});
   };
   chromeApi.windows.onRemoved.addListener(windowId => {
-    handoffs.delete(windowId);
     updateGlobalVisibility(windowId, false);
-    void Promise.resolve(whenReady(() => {
-      if (busyGlobalWindows.delete(windowId)) return saveBusyWindows();
-    })).catch(() => {});
+    if (followSwitch?.windowId === windowId) finishFollowSwitch(followSwitch, { ok: false });
+    void updateScope(async () => {
+      await takeContinuation(windowId, null);
+      await applyPreferredScope();
+    }).catch(() => {});
   });
-  chromeApi.sidePanel.onOpened?.addListener(({ windowId, tabId, path }) => {
-    if (tabId === undefined && path === GLOBAL_SIDE_PANEL_PATH) updateGlobalVisibility(windowId, true);
+  chromeApi.sidePanel.onOpened?.addListener(({ windowId, tabId }) => {
+    if (tabId === undefined) updateGlobalVisibility(windowId, true);
+    const request = followSwitch;
+    if (request && !request.opened && request.windowId === windowId && request.tabId === tabId) {
+      request.opened = true;
+      clearTimeout(request.timer);
+      void updateScope(() => completeFollowSwitch(request)).then(
+        result => finishFollowSwitch(request, result), () => finishFollowSwitch(request, { ok: false }),
+      );
+    }
+    void updateScope(() => applyPreferredScope()).catch(() => {});
   });
   chromeApi.sidePanel.onClosed?.addListener(({ windowId, tabId }) => {
     if (tabId === undefined) updateGlobalVisibility(windowId, false);
+    void updateScope(() => applyPreferredScope(tabId)).catch(() => {});
   });
 
-  async function retireContextualPanel(tabId, isProtected) {
-    const options = await chromeApi.sidePanel.getOptions({ tabId });
-    if (options.enabled && options.path === sidePanelPath(tabId) && !isProtected(tabId)) {
-      await chromeApi.sidePanel.setOptions({ tabId, enabled: false });
-    }
+  async function retireContextualPanels(tabIds) {
+    const options = await Promise.allSettled(tabIds.map(tabId => chromeApi.sidePanel.getOptions({ tabId })));
+    const isProtected = await readContextualPanelProtection();
+    const contexts = await chromeApi.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] });
+    const liveTabs = new Set(contexts.map(context => tabIdFromSidePanelUrl(context.documentUrl, chromeApi)));
+    await Promise.allSettled(tabIds.map((tabId, index) => {
+      const found = options[index];
+      if (found.status === 'fulfilled' && found.value.enabled && found.value.path === sidePanelPath(tabId) &&
+          !liveTabs.has(tabId) && !isProtected(tabId)) {
+        return chromeApi.sidePanel.setOptions({ tabId, enabled: false });
+      }
+    }));
   }
 
-  async function switchScope(tabId, windowId, toGlobal) {
-    if (toGlobal) {
-      // Deregister the current contextual panel before opening the window entry.
-      // Chrome checks the user gesture on open, before any asynchronous follow-up.
-      const configured = chromeApi.sidePanel.setOptions({ path: GLOBAL_SIDE_PANEL_PATH, enabled: true });
-      const disabled = chromeApi.sidePanel.setOptions({ tabId, enabled: false });
-      const opened = chromeApi.sidePanel.open({ windowId });
+  async function applyPreferredScope(closedTabId) {
+    if (followSwitch) return;
+    if (preference && preference.global !== globalMode) await setPreferredScope(preference);
+    else if (globalMode && isTabId(closedTabId)) await retireContextualPanels([closedTabId]);
+  }
+
+  const configureDefaultScope = global => chromeApi.sidePanel.setOptions(global
+    ? { path: GLOBAL_SIDE_PANEL_PATH, enabled: true }
+    : { enabled: false });
+
+  const globalPanelUrl = chromeApi.runtime.getURL(GLOBAL_SIDE_PANEL_PATH);
+  const readPanelContexts = documentUrls => chromeApi.runtime.getContexts({
+    contextTypes: ['SIDE_PANEL'], documentUrls,
+  });
+
+  async function setPreferredScope(next, sourceTabId, { replacedDocumentId, activeTabWindowId, expiresAt } = {}) {
+    let apply = next.global !== globalMode;
+    if (apply && !next.global) {
+      // A contextual view can replace the global panel while Chrome still retains its document.
+      const contexts = await readPanelContexts([globalPanelUrl]);
+      apply = contexts.every(context => replacedDocumentId && context.documentId === replacedDocumentId);
+      if (replacedDocumentId !== undefined && !apply) return { ok: false, code: PanelScopeError.OtherWindow };
+      if (activeTabWindowId !== undefined) {
+        const tab = await chromeApi.tabs.get(sourceTabId);
+        if (!tab?.active || tab.windowId !== activeTabWindowId || Date.now() >= expiresAt) return { ok: false };
+      }
+    }
+    // With the same extension entry registered globally, Chrome keeps the current contextual
+    // document and can select the global entry itself when another tab becomes active.
+    if (apply) await configureDefaultScope(next.global);
+    if (apply || next !== preference) {
       try {
-        await Promise.all([configured, disabled, opened]);
+        await chromeApi.storage.session.set({
+          [PANEL_SCOPE_PREFERENCE]: next,
+          ...(apply ? { [GLOBAL_MODE_KEY]: next.global } : {}),
+        });
       } catch (error) {
-        await ready;
-        if (!globalMode) await chromeApi.sidePanel.setOptions({ enabled: false }).catch(() => {});
-        await configureTabSidePanel(chromeApi, tabId).catch(() => {});
+        if (apply) await configureDefaultScope(globalMode).catch(() => { globalMode = next.global; });
         throw error;
       }
-    } else {
-      await openTabSidePanel(chromeApi, tabId, windowId);
-      // A registered global entry makes Chromium select panels with the same key on tab changes.
-      await chromeApi.sidePanel.setOptions({ enabled: false });
+      preference = next;
     }
-    await ready;
-    const modeChanged = globalMode !== toGlobal;
-    globalMode = toGlobal;
-    if (!modeChanged) return;
-    await chromeApi.storage.session.set({ [GLOBAL_MODE_KEY]: globalMode });
-    const tabs = await chromeApi.tabs.query({});
-    const isProtected = toGlobal ? await readContextualPanelProtection() : undefined;
-    await Promise.allSettled(tabs.filter(tab => isTabId(tab.id) && tab.id !== tabId).map(tab =>
-      isProtected
-        ? retireContextualPanel(tab.id, isProtected)
-        : configureTabSidePanel(chromeApi, tab.id),
-    ));
+    if (apply) {
+      globalMode = next.global;
+      await reconcileTabScopes(sourceTabId).catch(() => {});
+    }
+    return { ok: true };
   }
 
-  function startSwitch(message, fromGlobal, otherBusy, reply) {
+  async function reconcileTabScopes(sourceTabId) {
+    const tabs = (await chromeApi.tabs.query({})).map(tab => tab.id).filter(isTabId);
+    if (globalMode) await retireContextualPanels(tabs.filter(tabId => tabId !== sourceTabId));
+    else await Promise.allSettled(tabs.map(tabId => configureTabSidePanel(chromeApi, tabId)));
+  }
+
+  async function takeContinuation(windowId, tabId) {
+    const pending = preference?.continuations ?? [];
+    const matches = entry => entry.windowId === windowId && (tabId === null || entry.tabId === tabId);
+    const continuation = pending.find(matches);
+    if (!continuation) return undefined;
+    const remaining = pending.filter(entry => !matches(entry));
+    const next = { global: preference.global, ...(remaining.length > 0 && { continuations: remaining }) };
+    await chromeApi.storage.session.set({ [PANEL_SCOPE_PREFERENCE]: next });
+    preference = next;
+    return { selection: continuation.selection, includePage: continuation.includePage };
+  }
+
+  async function prepareFollowSwitch(message, sender) {
     const { windowId, tabId } = message;
-    if (fromGlobal && otherBusy) {
-      reply({ ok: false, otherWindowBusy: true });
-      return;
+    if (!globalMode || followSwitch) return { ok: false };
+    const targetUrl = chromeApi.runtime.getURL(sidePanelPath(tabId));
+    const isProtected = await readContextualPanelProtection();
+    const contexts = await readPanelContexts([globalPanelUrl, targetUrl]);
+    const globals = contexts.filter(context => context.documentUrl === globalPanelUrl);
+    if (globals.length > 1) return { ok: false, code: PanelScopeError.OtherWindow };
+    const sourceDocumentId = globals[0]?.documentId;
+    if (!sourceDocumentId || (sender.documentId && sender.documentId !== sourceDocumentId)) return { ok: false };
+    if (isProtected(tabId) || contexts.some(context => context.documentUrl === targetUrl)) {
+      return { ok: false, code: PanelScopeError.TargetBusy };
     }
-    if (!isTabId(tabId) || transition) {
-      reply({ ok: false });
-      return;
-    }
-    // The Chrome API callback retains the click's activation while checking the current tab.
-    chromeApi.tabs.get(tabId, tab => {
-      if (chromeApi.runtime.lastError || !tab?.active || tab.windowId !== windowId || transition) {
-        reply({ ok: false });
-        return;
-      }
-      if (!fromGlobal && hasWebsitePanelWork(tabId)) {
-        reply({ ok: false, panelBusy: true });
-        return;
-      }
-      const handoff = {
-        tabId: fromGlobal ? tabId : null,
-        selection: typeof message.selection === 'string' ? message.selection : '',
-        expiresAt: Date.now() + 10_000,
-      };
-      handoffs.set(windowId, handoff);
-      setTimeout(() => {
-        if (handoffs.get(windowId) === handoff) handoffs.delete(windowId);
-      }, 10_000);
-      transition = switchScope(tabId, windowId, !fromGlobal);
-      void transition.then(() => {
-        transition = undefined;
-        reply({ ok: true });
-      }, () => {
-        transition = undefined;
-        if (handoffs.get(windowId) === handoff) handoffs.delete(windowId);
-        reply({ ok: false });
-      });
-    });
+    const { promise, resolve } = Promise.withResolvers();
+    const request = {
+      id: crypto.randomUUID(), windowId, tabId, targetUrl, sourceDocumentId,
+      selection: typeof message.selection === 'string' ? message.selection : '',
+      includePage: message.includePage === true,
+      completion: promise, resolve,
+    };
+    request.timer = setTimeout(() => cancelFollowSwitch(request), PANEL_SCOPE_TIMEOUT_MS);
+    followSwitch = request;
+    return { ok: true, followSwitchId: request.id };
   }
 
-  function checkOtherGlobalDrafts(message, entries, reply) {
-    const otherDocuments = new Set(entries.filter(([windowId]) => windowId !== message.windowId)
-      .map(([, documentId]) => documentId));
-    if (!otherDocuments.size) {
-      startSwitch(message, true, false, reply);
-      return;
+  async function followFromContextualPanel(windowId, tabId) {
+    const contexts = await readPanelContexts([globalPanelUrl]);
+    if (contexts.length === 0) return setPreferredScope({ global: false }, tabId, { replacedDocumentId: null });
+    if (contexts.length > 1 || !contexts[0].documentId) return { ok: false, code: PanelScopeError.OtherWindow };
+
+    // Returning to an original tab can leave the global document cached in this window.
+    const releaseId = crypto.randomUUID();
+    const expiresAt = Date.now() + PANEL_SCOPE_TIMEOUT_MS;
+    const cached = await chromeApi.runtime.sendMessage({
+      type: SidePanelMessage.ReserveCachedGlobal, windowId, releaseId, expiresAt,
+    }).catch(() => undefined);
+    if (!cached) return { ok: false, code: PanelScopeError.OtherWindow };
+    if (!cached.canRelease) return { ok: false, code: PanelScopeError.CachedGlobalBusy };
+    try {
+      return await setPreferredScope({ global: false }, tabId, {
+        replacedDocumentId: contexts[0].documentId, activeTabWindowId: windowId, expiresAt,
+      });
+    } finally {
+      void chromeApi.runtime.sendMessage({
+        type: SidePanelMessage.ReleaseCachedGlobal, windowId, releaseId,
+      }).catch(() => {});
     }
-    // A website panel can temporarily replace a global view while Chrome retains its document.
-    chromeApi.runtime.getContexts({
-      contextTypes: ['SIDE_PANEL'],
-      documentUrls: [chromeApi.runtime.getURL(GLOBAL_SIDE_PANEL_PATH)],
-    }, contexts => {
-      if (chromeApi.runtime.lastError) reply({ ok: false });
-      else startSwitch(message, true, contexts.some(context => otherDocuments.has(context.documentId)), reply);
-    });
   }
+
+  function finishFollowSwitch(request, result) {
+    if (followSwitch !== request) return;
+    followSwitch = undefined;
+    clearTimeout(request.timer);
+    request.resolve(result);
+  }
+
+  function cancelFollowSwitch(request) {
+    if (followSwitch !== request || request.opened) return;
+    finishFollowSwitch(request, { ok: false });
+    // Registration can succeed even when Chrome rejects the native open.
+    void updateScope(async () => {
+      if (globalMode) await retireContextualPanels([request.tabId]);
+    }).catch(() => {});
+  }
+
+  async function completeFollowSwitch(request) {
+    const { windowId, tabId, targetUrl, sourceDocumentId, selection, includePage } = request;
+    const tab = await chromeApi.tabs.get(tabId);
+    const contexts = await readPanelContexts([targetUrl]);
+    if (followSwitch !== request || tab?.windowId !== windowId ||
+        !contexts.some(context => context.documentUrl === targetUrl)) return { ok: false };
+    if (hasWebsitePanelWork(tabId)) return { ok: false, code: PanelScopeError.TargetBusy };
+    return setPreferredScope({
+      global: false, continuations: [{ windowId, tabId, selection, includePage }],
+    }, tabId, { replacedDocumentId: sourceDocumentId });
+  }
+
+  void updateScope(() => applyPreferredScope()).catch(() => {});
 
   return (message, sender, reply) => {
-    if (message?.type !== SidePanelMessage.RestoreSelection && message?.type !== SidePanelMessage.SwitchScope &&
-        message?.type !== SidePanelMessage.GlobalDraftState) return false;
+    if (message?.type !== SidePanelMessage.SwitchScope &&
+        message?.type !== SidePanelMessage.TakeContinuation &&
+        message?.type !== SidePanelMessage.WaitFollowSwitch &&
+        message?.type !== SidePanelMessage.CancelFollowSwitch) return false;
     const boundTabId = tabIdFromSidePanelUrl(sender.url, chromeApi);
     const fromGlobal = sender.url === chromeApi.runtime.getURL(GLOBAL_SIDE_PANEL_PATH);
     const { windowId, tabId } = message;
-    if (sender.id !== chromeApi.runtime.id || sender.tab || !isTabId(windowId) ||
-        (!fromGlobal && (boundTabId === null || boundTabId !== tabId))) {
+    if (sender.id !== chromeApi.runtime.id || sender.tab || !isTabId(windowId)) {
       reply({ ok: false });
       return true;
     }
-    if (message.type === SidePanelMessage.RestoreSelection) {
-      const handoff = handoffs.get(windowId);
-      const matches = handoff?.tabId === (fromGlobal ? null : boundTabId);
-      if (matches) handoffs.delete(windowId);
-      reply({ ok: true, selection: matches && Date.now() < handoff.expiresAt ? handoff.selection : undefined });
-      return true;
-    }
-    if (message.type === SidePanelMessage.GlobalDraftState) {
-      if (!fromGlobal || typeof sender.documentId !== 'string') {
+    if (message.type === SidePanelMessage.TakeContinuation) {
+      if (fromGlobal ? tabId !== undefined : boundTabId === null || boundTabId !== tabId) {
         reply({ ok: false });
         return true;
       }
-      void whenReady(() => {
-        if (message.busy === true) busyGlobalWindows.set(windowId, sender.documentId);
-        else if (busyGlobalWindows.get(windowId) === sender.documentId) busyGlobalWindows.delete(windowId);
-        return saveBusyWindows();
-      }).then(() => reply({ ok: true }), () => reply({ ok: false }));
+      const request = followSwitch;
+      const pending = request && request.windowId === windowId && request.tabId === tabId ? request.completion : undefined;
+      void (async () => {
+        const result = await pending;
+        if (result && !result.ok) return result;
+        return { ok: true, continuation: await updateScope(() => takeContinuation(windowId, tabId)) };
+      })().then(reply, () => reply({ ok: false }));
       return true;
     }
-    if (!fromGlobal) {
-      startSwitch(message, false, false, reply);
-    } else if (modeLoaded) {
-      checkOtherGlobalDrafts(message, [...busyGlobalWindows], reply);
-    } else {
-      chromeApi.storage.session.get(BUSY_GLOBAL_WINDOWS_KEY, saved => {
-        if (chromeApi.runtime.lastError) reply({ ok: false });
-        else checkOtherGlobalDrafts(message, saved[BUSY_GLOBAL_WINDOWS_KEY] ?? [], reply);
-      });
+    if (message.type === SidePanelMessage.WaitFollowSwitch || message.type === SidePanelMessage.CancelFollowSwitch) {
+      const request = followSwitch;
+      if (!fromGlobal || !request || request.id !== message.followSwitchId ||
+          request.windowId !== windowId || request.tabId !== tabId) reply({ ok: false });
+      else if (message.type === SidePanelMessage.WaitFollowSwitch) void request.completion.then(reply);
+      else {
+        cancelFollowSwitch(request);
+        reply({ ok: true });
+      }
+      return true;
     }
+    if (!isTabId(tabId) || typeof message.global !== 'boolean' || (!fromGlobal && boundTabId !== tabId)) {
+      reply({ ok: false });
+      return true;
+    }
+    void updateScope(async () => {
+      if (followSwitch) return { ok: false };
+      const tab = await chromeApi.tabs.get(tabId);
+      if (!tab || tab.windowId !== windowId || (!tab.active && (fromGlobal || !message.global))) {
+        return { ok: false };
+      }
+      if (fromGlobal && !message.global) return prepareFollowSwitch(message, sender);
+      if (!message.global && globalMode) return followFromContextualPanel(windowId, tabId);
+      const next = { global: message.global };
+      if (message.global) {
+        const pending = preference?.continuations ?? [];
+        const continuations = pending.filter(entry => entry.windowId !== windowId);
+        if (!fromGlobal && typeof message.selection === 'string') {
+          continuations.push({ windowId, selection: message.selection, includePage: message.includePage === true });
+        }
+        if (continuations.length > 0) next.continuations = continuations;
+      }
+      return setPreferredScope(next, tabId);
+    }).then(reply, () => reply({ ok: false }));
     return true;
   };
 }
