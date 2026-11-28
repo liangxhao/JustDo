@@ -1,48 +1,16 @@
 /* Execution feedback remains animated even when Windows requests reduced motion. */
-.completed-process__trigger,
-.process-summary {
+.completed-process__trigger {
   border: 1px solid color-mix(in srgb, var(--justdo-chat-border, #94a3b8) 35%, transparent);
   border-radius: 10px;
+  min-height: 38px;
   padding: 7px 11px;
   background: color-mix(in srgb, var(--justdo-chat-muted, #64748b) 4%, transparent);
+  font-weight: 550;
   transition:
     color 200ms ease,
     border-color 200ms ease,
     background-color 200ms ease,
     box-shadow 200ms ease;
-}
-.process-summary {
-  border-radius: 6px;
-  padding: 2px 7px;
-  border-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 26%, transparent);
-  background-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 6%, transparent);
-  color: var(--justdo-chat-text, #1e293b);
-  font-weight: 550;
-}
-.process-summary__metrics {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 8px;
-}
-.process-summary__metric {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.process-summary__metric + .process-summary__metric {
-  border-inline-start: 1px solid var(--justdo-chat-border, #cbd5e1);
-  padding-inline-start: 8px;
-}
-.process-summary__count {
-  color: var(--justdo-chat-accent, #2563eb);
-  font-size: 11px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-.completed-process__trigger {
-  min-height: 38px;
-  font-weight: 550;
 }
 .completed-process__icon {
   box-sizing: content-box;
@@ -58,11 +26,6 @@
   border-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 28%, transparent);
   background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 7%, transparent);
   color: var(--justdo-chat-accent, #2563eb);
-}
-.process-summary:is(:hover, :focus-visible, [aria-expanded='true']) {
-  border-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 44%, transparent);
-  background-color: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 11%, transparent);
-  color: var(--justdo-chat-text, #1e293b);
 }
 .completed-process[open] > summary .completed-process__icon {
   background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 12%, transparent);

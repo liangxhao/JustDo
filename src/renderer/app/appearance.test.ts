@@ -127,7 +127,6 @@ describe('appearance configuration', () => {
     expect(properties.get('--justdo-assistant-leading-avatar-position')).toBe('absolute');
     expect(properties.get('--justdo-assistant-leading-content-margin-left')).toBe('44px');
     expect(properties.get('--justdo-active-turn-footer-margin-top')).toBe('6px');
-    expect(properties.get('--justdo-process-summary-padding')).toBe('0 9px 0 0');
     expect(properties.get('--justdo-code-white-space')).toBe('pre-wrap');
   });
 
@@ -154,7 +153,6 @@ describe('appearance configuration', () => {
     expect(properties.get('--justdo-assistant-leading-avatar-position')).toBe('static');
     expect(properties.get('--justdo-assistant-leading-content-margin-left')).toBe('0px');
     expect(properties.get('--justdo-active-turn-footer-margin-top')).toBe('8px');
-    expect(properties.get('--justdo-process-summary-padding')).toBe('6px 9px');
   });
 
   test('drops retired maximum-width and avatar fields from stored appearance values', () => {

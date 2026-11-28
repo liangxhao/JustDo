@@ -226,10 +226,6 @@ export const applyAppearanceConfig = (
     usesDocumentLayout ? `${DOCUMENT_FOOTER_GAPS[appearance.messageDensity]}px` : '8px',
   );
   root.style.setProperty(
-    '--justdo-process-summary-padding',
-    usesDocumentLayout ? '0 9px 0 0' : '6px 9px',
-  );
-  root.style.setProperty(
     '--justdo-code-white-space',
     appearance.wrapCodeBlocks ? 'pre-wrap' : 'pre',
   );

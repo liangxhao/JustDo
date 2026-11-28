@@ -2973,35 +2973,55 @@ export const chatStyles = [
     }
     .process-summary {
       display: flex;
+      box-sizing: border-box;
       width: fit-content;
       max-width: 100%;
+      min-height: 28px;
       align-items: center;
-      gap: 7px;
+      gap: 8px;
       border: 0;
-      border-radius: 8px;
-      padding: var(--justdo-process-summary-padding, 6px 9px);
-      background: transparent;
+      border-radius: 6px;
+      padding: 3px 8px;
+      background: color-mix(in srgb, var(--justdo-chat-text, #1e293b) 4%, transparent);
       color: var(--justdo-chat-muted, #64748b);
       font: inherit;
-      font-size: 13px;
-      font-weight: 500;
+      font-size: var(--justdo-chat-font-size, 14px);
+      font-weight: 400;
+      line-height: 1.5;
       cursor: pointer;
+      transition: color 180ms ease, background-color 180ms ease;
     }
-    .process-summary:hover,
-    .process-summary:focus-visible {
-      background: color-mix(in srgb, var(--justdo-chat-accent, #2563eb) 8%, transparent);
-      color: var(--justdo-chat-accent, #2563eb);
-      outline: none;
+    .process-summary:is(:hover, :focus-visible, [aria-expanded='true']) {
+      background-color: color-mix(in srgb, var(--justdo-chat-text, #1e293b) 7%, transparent);
+      color: color-mix(in srgb, var(--justdo-chat-muted, #64748b) 75%, var(--justdo-chat-text, #1e293b));
     }
     .process-summary:focus-visible {
       outline: 2px solid var(--justdo-chat-accent, #2563eb);
       outline-offset: 2px;
     }
+    .process-summary__metrics,
+    .process-summary__metric {
+      display: inline-flex;
+      align-items: center;
+    }
+    .process-summary__metrics {
+      min-width: 0;
+      gap: 8px;
+    }
+    .process-summary__metric {
+      gap: 5px;
+    }
+    .process-summary__metric + .process-summary__metric {
+      border-inline-start: 1px solid var(--justdo-chat-border, #cbd5e1);
+      padding-inline-start: 8px;
+    }
+    .process-summary__count {
+      font-variant-numeric: tabular-nums;
+    }
     .process-summary__chevron {
-      margin-left: 2px;
-      font-size: 18px;
+      flex: 0 0 auto;
+      font-size: 1.15em;
       line-height: 1;
-      transition: transform 120ms ease;
     }
     .process-summary[aria-expanded='true'] .process-summary__chevron {
       transform: rotate(90deg);
