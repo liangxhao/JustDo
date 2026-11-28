@@ -265,22 +265,20 @@ describe('HistorySearchIndex', () => {
     expect(index.find(failed, 'Visible selected answer', true)).toEqual([]);
   });
 
-  test('indexes only the visible progress receipt current step, not its plan envelope', () => {
+  test('indexes the progress receipt and the tool details', () => {
     const index = new HistorySearchIndex();
     const receipt = { ...tool('progress', {
       plan: [
-        { step: 'Hidden completed step', status: 'completed' },
+        { step: 'Completed step', status: 'completed' },
         { step: 'Visible current step', status: 'in_progress' },
-        { step: 'Hidden pending step', status: 'pending' },
+        { step: 'Pending step', status: 'pending' },
       ],
-      markdown: 'Hidden markdown note',
-    }, 'Hidden raw output'), name: 'progress_card' };
+      markdown: 'Raw markdown note',
+    }, 'Raw tool output'), name: 'progress_card' };
     const rows = [row({ kind: 'progress-receipt', key: 'progress', item: receipt })];
-    expect(index.find(rows, 'Visible current step', true)).toHaveLength(1);
-    for (const query of ['Hidden', 'in_progress', 'markdown'])
-      expect(index.find(rows, query, true)).toEqual([]);
-    const waiting = [row({ kind: 'progress-receipt', key: 'progress', item: { ...receipt, status: 'running' } })];
-    expect(index.find(waiting, 'Visible current step', true)).toEqual([]);
+    expect(index.find(rows, 'Visible current step', true)).toHaveLength(2);
+    expect(index.find(rows, 'Raw markdown note', true)).toHaveLength(1);
+    expect(index.find(rows, 'Raw tool output', true)).toHaveLength(1);
   });
 
   test('does not index the plan preview button or its unopened native document', () => {

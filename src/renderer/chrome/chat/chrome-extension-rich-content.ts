@@ -180,6 +180,7 @@ export function renderRichContent(
   }
   if (entry.role === 'progress-receipt' && entry.item) {
     const presentation = projectProgressReceipt(entry.item);
+    if (!presentation) return;
     const section = document.createElement('section');
     section.className = 'progress-card-receipt';
     if (entry.item.id) section.dataset.progressReceiptId = entry.item.id;

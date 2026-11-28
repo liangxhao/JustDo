@@ -1,5 +1,6 @@
 /** Shared display text for native progress_card receipts, independent of execution ownership. */
-export function projectProgressReceipt(tool: { input?: unknown; status?: string }) {
+export function projectProgressReceipt(tool: { input?: unknown; status?: string; isError?: boolean }) {
+  if (tool.status === 'failed' || tool.isError === true) return null;
   const input =
     tool.input && typeof tool.input === 'object' && !Array.isArray(tool.input)
       ? (tool.input as Record<string, unknown>)
@@ -24,17 +25,15 @@ export function projectProgressReceipt(tool: { input?: unknown; status?: string 
   const key =
     tool.status === 'running' || tool.status === 'inProgress'
       ? 'coworkProgressReceiptUpdating'
-      : tool.status === 'failed'
-        ? 'coworkProgressReceiptFailed'
-        : tool.status === 'cancelled' || tool.status === 'interrupted'
-          ? 'coworkProgressReceiptInterrupted'
-          : steps.length > 0
-            ? 'coworkProgressReceiptUpdated'
-            : markdown
-              ? 'coworkProgressReceiptNoteUpdated'
-              : input
-                ? 'coworkProgressReceiptCleared'
-                : 'coworkProgressReceiptChanged';
+      : tool.status === 'cancelled' || tool.status === 'interrupted'
+        ? 'coworkProgressReceiptInterrupted'
+        : steps.length > 0
+          ? 'coworkProgressReceiptUpdated'
+          : markdown
+            ? 'coworkProgressReceiptNoteUpdated'
+            : input
+              ? 'coworkProgressReceiptCleared'
+              : 'coworkProgressReceiptChanged';
   return {
     key,
     values: {

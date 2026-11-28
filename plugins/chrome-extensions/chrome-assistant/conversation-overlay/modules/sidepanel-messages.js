@@ -9,7 +9,7 @@ import {
 } from './sidepanel-rich-content.js';
 import { createCopyController } from './sidepanel-copy.js';
 import { sidePanelText as t } from './sidepanel-i18n.js';
-import { toolDisplayTitle, toolInputSummary } from './sidepanel-state.js';
+import { formatSidePanelValue, toolDisplayTitle, toolInputSummary } from './sidepanel-state.js';
 
 const THINKING_PREVIEW_LINES = 10;
 let nextThinkingBodyId = 0;
@@ -483,10 +483,11 @@ export function createMessageRenderer(
     const progress = tool.querySelector('.process-tool-progress');
     progress.textContent = normalizedStatus === 'running' ? process.progressText || '' : '';
     progress.hidden = !progress.textContent;
-    for (const [name, heading, value] of [
+    for (const [name, heading, rawValue] of [
       ['input', processLabels.toolInput, process.input],
       ['output', processLabels.toolResult, process.output],
     ]) {
+      const value = formatSidePanelValue(rawValue);
       const section = tool.querySelector(`[data-section="${name}"]`);
       section.hidden = !value;
       section.firstElementChild.textContent = heading;
@@ -756,7 +757,7 @@ export function createMessageRenderer(
     else if (entry.role === 'process') patchProcessSummary(node, entry, key);
     else if (entry.role === 'user') patchUserMessage(node, entry);
     else if (entry.role === 'assistant') patchAssistantMessage(node, entry, showAnswerCopy);
-    else if (entry.role === 'live-process') {
+    else if (entry.role === 'live-process' || entry.role === 'progress-receipt') {
       node.className = `message process-live process-live-${entry.item.type}`;
       let list = node.firstElementChild;
       if (!list) {
@@ -765,6 +766,16 @@ export function createMessageRenderer(
         node.append(list);
       }
       reconcileChildren(list, [renderProcessRow(entry.item, key, 0)]);
+      if (entry.role === 'progress-receipt') {
+        const signature = JSON.stringify(entry);
+        if (signature !== node.renderSignature) {
+          list.nextElementSibling?.remove();
+          const receipt = document.createElement('div');
+          renderContent(receipt, entry);
+          if (receipt.firstElementChild) node.append(receipt);
+          node.renderSignature = signature;
+        }
+      }
     } else {
       node.className = `message ${entry.role} markdown-content`;
       const signature = JSON.stringify(entry);
@@ -788,7 +799,8 @@ export function createMessageRenderer(
         retainKeys(entry.items, entryKeys, itemKeys, `${key}/`);
       else if (entry.role === 'process')
         entry.items.forEach((item, itemIndex) => itemKeys.add(processKey(item, key, itemIndex)));
-      else if (entry.role === 'live-process') itemKeys.add(processKey(entry.item, key));
+      else if (entry.role === 'live-process' || entry.role === 'progress-receipt')
+        itemKeys.add(processKey(entry.item, key));
     });
   }
 
@@ -796,9 +808,10 @@ export function createMessageRenderer(
     for (const [index, entry] of entries.entries()) {
       const key = entryKey(entry, `${prefix}${index}`);
       if (
-        entry.role === 'process' &&
-        entry.items.some((item, itemIndex) => processKey(item, key, itemIndex) === itemKey)
-      ) return collapsedTrigger ?? entryNodes.get(key)?.firstElementChild;
+        (entry.role === 'process' &&
+          entry.items.some((item, itemIndex) => processKey(item, key, itemIndex) === itemKey)) ||
+        (entry.role === 'progress-receipt' && processKey(entry.item, key) === itemKey)
+      ) return collapsedTrigger ?? entryNodes.get(key)?.querySelector('summary');
       if (entry.role !== 'completed-process') continue;
       const details = entryNodes.get(key);
       // A closed history wrapper may never have mounted its inner disclosures.

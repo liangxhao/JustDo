@@ -504,7 +504,7 @@ describe('active turn timeline', () => {
     );
   });
 
-  test('renders progress_card as a compact receipt without duplicating the card body', () => {
+  test('renders the compact progress receipt beside the expandable Tool', () => {
     const receipt = {
       kind: 'progress-receipt' as const,
       key: 'progress:tool-progress',
@@ -519,6 +519,7 @@ describe('active turn timeline', () => {
         status: 'completed' as const,
         toolCallId: 'call-progress',
         name: 'progress_card',
+        output: 'Progress card updated',
         input: {
           markdown: 'Starting the implementation',
           plan: [
@@ -534,10 +535,7 @@ describe('active turn timeline', () => {
     expect(rendered).toContain('data-progress-receipt-id');
     expect(rendered).toContain('chat-group--progress-receipt');
     expect(rendered).toContain('进度已更新 · 1/3 · Build the timeline card');
-    expect(rendered).not.toContain('Starting the implementation');
-    expect(rendered).not.toContain('Inspect existing code');
-    expect(rendered).not.toContain('Run validation');
-    expect(rendered).not.toContain('<details');
+    expect(rendered).toContain('data-tool-identity');
   });
 
   test('does not claim a progress card was cleared when history omitted the Tool input', () => {

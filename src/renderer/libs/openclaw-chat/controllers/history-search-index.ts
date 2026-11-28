@@ -207,7 +207,8 @@ export class HistorySearchIndex {
       add(questionText(item.item), item.item.id);
     } else if (item.kind === 'progress-receipt') {
       const receipt = projectProgressReceipt(item.item);
-      if (receipt.key === 'coworkProgressReceiptUpdated') add(receipt.values.current, item.item.id);
+      if (receipt?.key === 'coworkProgressReceiptUpdated') add(receipt.values.current);
+      this.collectProcess(item.item, path);
     } else if (item.kind === 'terminal') {
       add(item.item.message);
     } else if (item.kind === 'phase-boundary') {

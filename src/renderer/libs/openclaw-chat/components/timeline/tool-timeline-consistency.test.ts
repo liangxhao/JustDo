@@ -225,6 +225,36 @@ describe('Tool timeline consistency', () => {
     }
   });
 
+  test('keeps the failed progress card tool and its details after a history refresh', () => {
+    const input = { markdown: 'Checking the results' };
+    const output = 'Unable to save the card';
+    const [item] = projectPersistedTimeline([
+      {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'progress-call', name: 'progress_card', arguments: input }],
+      },
+      {
+        role: 'toolResult',
+        toolCallId: 'progress-call',
+        toolName: 'progress_card',
+        isError: true,
+        content: output,
+      },
+    ]);
+    if (item.kind !== 'progress-receipt') throw new Error('Missing progress card tool');
+    const view = document.createElement('div');
+    render(renderTimelineItem(item), view);
+
+    expect(view.querySelector('.progress-card-receipt')).toBeNull();
+    const details = view.querySelector<HTMLDetailsElement>('details[data-tool-identity]')!;
+    const heading = details.querySelector('summary')!;
+    expect(heading.querySelector('strong')?.textContent).toBe('Progress Card');
+    heading.click();
+    const [inputReader, outputReader] = details.querySelectorAll<ToolOutput>('justdo-tool-output');
+    expect(JSON.parse(inputReader.text)).toEqual(input);
+    expect(outputReader.text).toBe(output);
+  });
+
   test('defers Read output while the live Tool row waits for Content', async () => {
     const row = incrementalToolRow(false, { path: 'report.txt' }, 'read');
     const view = document.createElement('div');

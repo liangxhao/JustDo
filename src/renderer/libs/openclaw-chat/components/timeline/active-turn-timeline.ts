@@ -550,37 +550,28 @@ function toolStateLabel(tool: ToolItem): string {
   return i18nService.t(stateKey);
 }
 
-function renderProgressReceipt(
-  tool: ToolItem,
-  showAvatar: boolean,
-  assistantAvatar?: TemplateResult,
-): TemplateResult {
+function renderProgressReceipt(tool: ToolItem): TemplateResult | typeof nothing {
   const presentation = projectProgressReceipt(tool);
+  if (!presentation) return nothing;
   const label = Object.entries(presentation.values).reduce(
     (text, [key, value]) => text.replace(`{${key}}`, value),
     i18nService.t(presentation.key),
   );
-  return renderAssistantTimelineRow(
-    html`
-      <section
-        class="progress-card-receipt"
-        data-progress-receipt-id=${tool.id}
-        role=${tool.status === 'running' ? 'status' : nothing}
-      >
-        <span class="progress-card-receipt__icon" aria-hidden="true">
-          <svg viewBox="0 0 16 16" fill="none">
-            <path d="M4.25 4.25h7.5M4.25 8h7.5M4.25 11.75h4.5" />
-            <path d="m2 4.25.55.55L3.6 3.7M2 8l.55.55L3.6 7.45M2 11.75l.55.55 1.05-1.1" />
-          </svg>
-        </span>
-        <span>${label}</span>
-      </section>
-    `,
-    showAvatar,
-    'chat-group--progress-receipt',
-    'assistant',
-    assistantAvatar,
-  );
+  return html`
+    <section
+      class="progress-card-receipt"
+      data-progress-receipt-id=${tool.id}
+      role=${tool.status === 'running' ? 'status' : nothing}
+    >
+      <span class="progress-card-receipt__icon" aria-hidden="true">
+        <svg viewBox="0 0 16 16" fill="none">
+          <path d="M4.25 4.25h7.5M4.25 8h7.5M4.25 11.75h4.5" />
+          <path d="m2 4.25.55.55L3.6 3.7M2 8l.55.55L3.6 7.45M2 11.75l.55.55 1.05-1.1" />
+        </svg>
+      </span>
+      <span>${label}</span>
+    </section>
+  `;
 }
 
 function renderPlanPresentation(
@@ -947,9 +938,6 @@ export function renderTimelineItem(
     });
   }
   if (item.kind === 'waiting-status') return renderWaitingStatus(item.status);
-  if (item.kind === 'progress-receipt') {
-    return renderProgressReceipt(item.item, showAvatar, assistantAvatar);
-  }
   if (item.kind === 'question-presentation') {
     const result =
       item.item.status === 'completed' ? item.item.presentation?.questionResult : undefined;
@@ -975,7 +963,7 @@ export function renderTimelineItem(
   if (item.kind === 'plan-presentation') {
     return renderPlanPresentation(item.item, showAvatar, assistantAvatar);
   }
-  if (item.kind === 'live-process') {
+  if (item.kind === 'live-process' || item.kind === 'progress-receipt') {
     if (item.item.type === 'thinking') {
       return renderStreamingThinkingGroup(item.item.text, {
         processId: item.item.id,
@@ -991,9 +979,10 @@ export function renderTimelineItem(
       html`
         <section
           class=${`process-live process-live--tool${preview ? ' process-live--preview' : ''}`}
-          style=${toolNestingStyle(item.toolDepth)}
+          style=${toolNestingStyle(item.kind === 'live-process' ? item.toolDepth : undefined)}
           data-live-process-id=${tool.id}
         >
+          ${item.kind === 'progress-receipt' ? renderProgressReceipt(tool) : nothing}
           ${renderToolRow(tool, preview, {
             editDiffMode: editDiffModes.get(tool.id) ?? 'unified',
             onEditDiffModeChange,
@@ -1004,7 +993,7 @@ export function renderTimelineItem(
         </section>
       `,
       showAvatar,
-      '',
+      item.kind === 'progress-receipt' ? 'chat-group--progress-receipt' : '',
       'assistant',
       assistantAvatar,
     );

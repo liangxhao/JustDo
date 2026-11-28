@@ -697,30 +697,40 @@ describe('side panel process presentation matches the desktop', () => {
     expect(reader.textContent).toContain('Preserved native decisions and constraints');
   });
 
-  it('renders structured native progress receipts using the same visible plan counts and current step as the App', () => {
+  it.each(['completed', 'failed'])('keeps progress tool details when the update is %s', status => {
+    const input = {
+      plan: [
+        { step: 'Inspect files', status: 'completed' },
+        { step: 'Check results', status: 'in_progress' },
+      ],
+    };
+    const output = status === 'failed' ? 'Unable to save the card' : 'Progress card updated';
     const entry = {
       role: 'progress-receipt',
       key: 'progress-one',
       item: {
-        id: 'progress-one',
+        ...tool('progress-one', status, output),
         name: 'progress_card',
-        status: 'completed',
-        input: {
-          plan: [
-            { step: 'Inspect files', status: 'completed' },
-            { step: 'Check results', status: 'in_progress' },
-          ],
-        },
+        title: 'Progress Card',
+        input,
       },
     };
     renderer.render([completed('history', [entry]), answer('final', 'Final')], 'one');
     expect(messages.querySelector('.progress-card-receipt')).toBeNull();
     history().querySelector<HTMLElement>('summary')!.click();
-    const receipt = messages.querySelector('.progress-card-receipt')!;
-    expect(receipt.textContent).toContain('1/2');
-    expect(receipt.textContent).toContain('Check results');
-    expect(receipt.textContent).not.toContain('[object Object]');
-    expect(messages.querySelector('.process-tool')).toBeNull();
+    const receipt = messages.querySelector('.progress-card-receipt');
+    if (status === 'completed') {
+      expect(receipt?.textContent).toContain('1/2');
+      expect(receipt?.textContent).toContain('Check results');
+    } else {
+      expect(receipt).toBeNull();
+    }
+    const reader = messages.querySelector<HTMLDetailsElement>('.process-tool')!;
+    expect(reader.querySelector('summary strong')?.textContent).toBe('Progress Card');
+    reader.querySelector('summary')!.click();
+    expect(reader.open).toBe(true);
+    expect(JSON.parse(reader.querySelector('[data-section="input"] pre')!.textContent!)).toEqual(input);
+    expect(reader.querySelector('[data-section="output"] pre')?.textContent).toBe(output);
   });
 
   it('preserves an expanded and locally collapsed summary through real native source metadata takeover and settlement', () => {

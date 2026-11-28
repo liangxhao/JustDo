@@ -111,7 +111,7 @@ function isRunErrorMessage(item) {
     (item.display?.stopReason === 'error' || item.display?.nativeFailure === true);
 }
 
-function formatSidePanelValue(value) {
+export function formatSidePanelValue(value) {
   if (value === null || value === undefined || value === '') return '';
   if (typeof value === 'string') return value;
   try {

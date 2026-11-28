@@ -122,6 +122,22 @@ test('navigates indexed tool input and output instead of duplicate summary text'
   expect(highlightedSource(chat).output).toBe(false);
 });
 
+test('navigates to the progress receipt and the matching raw input separately', async () => {
+  const input = { plan: [{ step: 'needle', status: 'in_progress' }] };
+  const chat = await toolHistory(input, 'Progress card updated', 'progress_card');
+  chat.searchQuery = 'needle';
+  await chat.updateComplete;
+
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 2 });
+  expect(chat.shadowRoot!.querySelector('.progress-card-receipt .chat-search-mark')?.textContent)
+    .toBe('needle');
+  expect(chat.navigateSearch(1)).toEqual({ index: 1, total: 2 });
+  expect(highlightedSource(chat)).toMatchObject({ output: false, text: JSON.stringify(input, null, 2) });
+  expect(chat.navigateSearch(1)).toEqual({ index: 0, total: 2 });
+  expect(chat.shadowRoot!.querySelector('.progress-card-receipt .chat-search-mark')?.textContent)
+    .toBe('needle');
+});
+
 test('finds Exec command and output in the collapsed row and opens only for a raw-only argument', async () => {
   const chat = await toolHistory({ command: 'echo needle', cwd: 'native-needle-workdir' }, '\u001b[32mneedle\u001b[0m', 'exec');
   chat.searchQuery = 'needle';
