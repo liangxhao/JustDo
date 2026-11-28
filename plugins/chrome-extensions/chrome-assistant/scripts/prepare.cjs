@@ -8,6 +8,7 @@ const esbuild = require('esbuild');
 const ICON_SIZES = [16, 32, 48, 128];
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const PRODUCT_NAME_TOKEN = '__PRODUCT_NAME__';
+const DESKTOP_VERSION_TOKEN = '__BUNDLED_DESKTOP_VERSION__';
 const CHROME_EXTENSION_VERSION = '2.4.1';
 const CHROME_EXTENSION_ID = 'jboajogplelmaahjbomgflnfngpolgcb';
 const CHROME_EXTENSION_PUBLIC_KEY =
@@ -56,6 +57,7 @@ const CONVERSATION_OVERLAY_FILES = [
   'modules/appearance.js',
   'modules/appearance-settings.js',
   'modules/options-i18n.js',
+  'modules/connection-versions.js',
   'modules/app-server-background.js',
   'modules/relay-bootstrap.js',
   'modules/conversation-client.js',
@@ -103,14 +105,13 @@ function listRelativeFiles(directory, prefix = '') {
   });
 }
 
-function resolveProductName(repoRoot, explicitProductName) {
-  const productName =
-    explicitProductName ??
-    JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).productName;
+function resolveProductMetadata(repoRoot, explicitProductName) {
+  const metadata = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+  const productName = explicitProductName ?? metadata.productName;
   if (typeof productName !== 'string' || !/^[A-Za-z]{1,64}$/.test(productName)) {
     throw new Error('Chrome extension productName must contain 1-64 ASCII letters.');
   }
-  return productName;
+  return { productName, desktopVersion: metadata.version };
 }
 
 function renderProductName(value, productName) {
@@ -227,7 +228,7 @@ function applyManifestOverlay(value) {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-function buildExpectedExtensionFiles(repoRoot, productName) {
+function buildExpectedExtensionFiles(repoRoot, { productName, desktopVersion }) {
   const sourceRoot = path.join(repoRoot, 'plugins', 'chrome-extensions', 'chrome-assistant');
   const openClawDir = path.join(sourceRoot, 'openclaw');
   const overlayDir = path.join(sourceRoot, 'conversation-overlay');
@@ -244,6 +245,13 @@ function buildExpectedExtensionFiles(repoRoot, productName) {
     const content = normalizedFileContent(path.join(overlayDir, relativePath), relativePath);
     files.set(relativePath, content);
   }
+  const versionsModule = 'modules/connection-versions.js';
+  files.set(
+    versionsModule,
+    Buffer.from(files.get(versionsModule).toString('utf8').replaceAll(
+      DESKTOP_VERSION_TOKEN, () => JSON.stringify(desktopVersion ?? null),
+    )),
+  );
   const contractPath = path.join(sourceRoot, 'contracts', 'webLaunch.ts');
   files.set(
     'modules/web-launch-contract.js',
@@ -346,8 +354,8 @@ function writeExpectedExtensionFiles(outputDir, files) {
 
 function verifyChromeExtension(extensionDir, options = {}) {
   const repoRoot = path.resolve(options.repoRoot || path.join(__dirname, '../../../..'));
-  const productName = resolveProductName(repoRoot, options.productName);
-  const expected = buildExpectedExtensionFiles(repoRoot, productName);
+  const { productName, desktopVersion } = resolveProductMetadata(repoRoot, options.productName);
+  const expected = buildExpectedExtensionFiles(repoRoot, { productName, desktopVersion });
   const manifestPath = path.join(extensionDir, 'manifest.json');
   if (!fs.existsSync(manifestPath)) {
     throw new Error(`Chrome extension manifest is missing: ${manifestPath}`);
@@ -468,8 +476,8 @@ function prepareChromeExtension(options = {}) {
   if (!relativeOutput || relativeOutput.startsWith('..') || path.isAbsolute(relativeOutput)) {
     throw new Error(`Chrome extension output must be inside ${allowedOutputRoot}.`);
   }
-  const productName = resolveProductName(repoRoot, options.productName);
-  const expected = buildExpectedExtensionFiles(repoRoot, productName);
+  const { productName, desktopVersion } = resolveProductMetadata(repoRoot, options.productName);
+  const expected = buildExpectedExtensionFiles(repoRoot, { productName, desktopVersion });
 
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });

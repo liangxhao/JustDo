@@ -11,7 +11,7 @@ Chrome Assistant 随桌面应用交付。用户可在 Chrome 侧栏对话、授�
 
 网页 SDK 与 `manifest.json` 位于同一子目录。Windows 安装版的路径为 `<安装目录>/resources/chrome-extension/chrome-extension/chrome-assistant.js`。复制脚本和绑定业务按钮的步骤见[网页 SDK 接入](website-sdk.md)。
 
-桌面应用显示随应用附带的扩展版本。Chrome 当前加载的版本在扩展管理页的 **详情 → 版本** 中查看。升级后若无法连接，先重启桌面应用并在 Chrome 中重新加载扩展。仍无法连接时，移除旧扩展，再从当前应用附带的目录安装。
+桌面应用显示随应用附带的扩展版本。扩展「连接设置」和侧栏连接错误会显示 Chrome 当前加载的扩展版本，以及组装扩展时配套的桌面端版本，便于离线核对。配套桌面端版本来自该扩展包的构建信息，连接仍依据原有的协议与鉴权规则。升级后若无法连接，先重启桌面应用并在 Chrome 中重新加载扩展。仍无法连接时，移除旧扩展，再从当前应用附带的目录安装。
 
 <a id="conversations-media-and-approvals"></a>
 

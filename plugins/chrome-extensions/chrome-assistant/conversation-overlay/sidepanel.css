@@ -83,10 +83,10 @@ header {
   position: relative;
   z-index: 2;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  padding: 4px 12px;
+  padding: 5px 12px;
   border-bottom: 1px solid color-mix(in srgb, var(--chat-border) 55%, transparent);
   background: var(--chat-bg);
 }
@@ -102,8 +102,11 @@ header {
   align-items: center;
 }
 .brand img {
-  width: 21px;
-  height: 21px;
+  width: 18px;
+  height: 18px;
+  padding: 1px;
+  border-radius: 50%;
+  background: light-dark(#fff, #e9edf5);
 }
 .conversation-picker {
   position: relative;
@@ -117,15 +120,16 @@ header {
   field-sizing: content;
   max-width: 100%;
   min-width: 0;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--chat-border) 40%, transparent);
-  border-radius: 9px;
+  height: 30px;
+  border: 0;
+  border-radius: 5px;
   padding-block: 0;
-  padding-inline: 9px 28px;
+  padding-inline: 5px 22px;
   color: var(--chat-text);
-  background: var(--chat-surface);
-  font-size: 14px;
-  font-weight: 600;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
   text-align: start;
   white-space: nowrap;
   overflow: hidden;
@@ -144,9 +148,9 @@ header {
 #session:disabled { cursor: default; }
 .conversation-chevron {
   position: absolute;
-  inset-inline-end: 8px;
-  width: 14px;
-  height: 14px;
+  inset-inline-end: 6px;
+  width: 12px;
+  height: 12px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.6;
@@ -258,6 +262,26 @@ header {
 .icon[aria-pressed='true'] {
   color: var(--chat-link);
   background: var(--chat-surface);
+}
+.header-actions .icon {
+  border-radius: 7px;
+}
+.header-actions .icon svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.7;
+}
+.header-actions #processDetails svg {
+  stroke-width: 1.8;
+}
+.header-actions .icon[aria-pressed='true'] {
+  background: transparent;
+}
+.header-actions .icon:hover {
+  background: var(--chat-hover);
+}
+#panelScope[aria-pressed='true'] {
+  color: light-dark(#4d6b9e, #a8bfdf);
 }
 #panelScope[hidden],
 #panelScope[aria-pressed='false'] .global-scope-icon,
@@ -1291,9 +1315,11 @@ footer {
     background-position: -120% 0;
   }
 }
+@media (max-width: 380px) {
+  header { gap: 6px; padding-inline: 9px; }
+}
 @media (max-width: 360px) {
   :root { --chat-reading-gutter: 14px; --chat-turn-gap: 22px; }
-  header { gap: 6px; padding-inline: 10px; }
   .model-control select { font-size: 11px; }
   .user-message { margin-bottom: 22px; }
 }
@@ -1497,6 +1523,10 @@ button.chrome-delivery-card[aria-busy='true'] {
 }
 .web-launch-waiting {
   margin: 0;
+}
+.web-launch-input-sharing {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .web-launch-context-trigger {
   width: fit-content;

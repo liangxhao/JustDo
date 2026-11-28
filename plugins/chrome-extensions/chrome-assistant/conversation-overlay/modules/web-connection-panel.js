@@ -1,4 +1,4 @@
-import { sidePanelText as t } from './sidepanel-i18n.js';
+import { sidePanelText as t, sidePanelWebConnectionError } from './sidepanel-i18n.js';
 
 export const WebConnectionMessage = {
   Decide: 'web-launch:connection:decide',
@@ -50,11 +50,7 @@ export function createWebConnectionPanel({ document, chrome, request, onNotice }
   const deny = make('button', 'webConnectionDeny', actions);
   deny.type = 'button';
   const active = () => pending && ACTIVE.has(pending.status) && Date.now() < pending.expiresAt;
-  const errorText = code => {
-    const key = `webConnectionError_${code}`;
-    const text = t(key);
-    return text === key ? t('webConnectionError_GENERIC') : text;
-  };
+  const errorText = code => sidePanelWebConnectionError('webConnectionError', code);
   const current = (snapshot, operation) =>
     !disposed &&
     action === operation &&

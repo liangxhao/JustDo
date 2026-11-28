@@ -809,18 +809,33 @@ describe('webpage owned sender and exact results', () => {
     const policy = f.service.writeSite({ expectedRevision: 1, origin: source.origin, enabled: true, allowSend: true, allowResult: false });
     const prepared = f.prepare();
     expect(() => f.submit(prepared)).toThrow('CONFIRMATION_REQUIRED');
-    f.submit(prepared, { submission: 'confirmed' });
+    const edited = { prompt: '  已编辑的草稿\n保留换行。  ', context: { text: 'Private edited context' }, permissionMode: 'full' };
+    const revised = f.service.revise({ launchId: prepared.receipt.launchId, composeRevision: prepared.internal.composeRevision, input: edited });
+    expect((await f.service.read(f.ref(prepared))).receipt.input).toBeUndefined();
+    expect(f.submit(revised, { submission: 'confirmed', shareInput: true, input: edited }).receipt.input).toBeUndefined();
     await tick();
     expect(f.wire).toHaveBeenCalledOnce();
     expect(f.service.sites()).toEqual(policy);
+    const accepted = await f.service.read(f.ref(prepared));
+    expect(accepted.receipt).toMatchObject({
+      request: { status: 'submitted' },
+      input: { text: edited.prompt.trim() },
+      output: { status: 'pending' },
+    });
+    expect(f.chat.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ message: accepted.receipt.input?.text }), expect.anything());
+    await expect(f.service.read(f.ref(prepared, { ...source, documentId: 'other-doc' }))).rejects.toThrow('EXPIRED');
     f.finish(undefined, undefined, undefined, ['/private/final-report.pdf']);
     const result = await f.service.read(f.ref(prepared));
     expect(result.receipt.execution).toEqual({ status: 'completed', executionSettled: true });
+    expect(result.receipt.input).toEqual(accepted.receipt.input);
     expect(result.receipt.output).toEqual({
       status: 'available', text: 'SYNTHETIC_FINAL', format: 'text',
       artifacts: [{ name: 'final-report.pdf', kind: 'document', mimeType: 'application/pdf' }],
     });
     expect(JSON.stringify(result.receipt)).not.toContain('/private/');
+    expect(JSON.stringify(result.receipt)).not.toContain('Private edited context');
+    expect(JSON.stringify(f.state())).not.toContain('已编辑的草稿');
+    expect(JSON.stringify(await f.service.observations())).not.toContain('已编辑的草稿');
     expect(JSON.stringify(f.state())).not.toContain('SYNTHETIC_FINAL');
     expect(JSON.stringify(f.state())).not.toContain('final-report.pdf');
     expect(JSON.stringify(await f.service.observations())).not.toContain('SYNTHETIC_FINAL');
@@ -840,22 +855,26 @@ describe('webpage owned sender and exact results', () => {
       trusted.onNativeAccepted?.(accepted);
       return { sessionId: value.sessionId, runId: value.clientTurnId, nativeRunId: accepted.nativeRunId };
     });
-    f.submit(prepared); await tick();
+    f.submit(prepared, { submission: 'confirmed', shareInput: true }); await tick();
     f.finish('SYNTHETIC_EARLY_FINAL', 'completed', accepted); await tick();
     const before = await f.service.read(f.ref(prepared));
     expect(before.receipt.execution.executionSettled).toBe(false);
+    expect(before.receipt.input).toBeUndefined();
     expect(before.receipt.output.text).toBeUndefined();
     acknowledge(); await tick();
-    expect((await f.service.read(f.ref(prepared))).receipt.output.text).toBe('SYNTHETIC_EARLY_FINAL');
+    const after = await f.service.read(f.ref(prepared));
+    expect(after.receipt.input).toEqual({ text: input.prompt });
+    expect(after.receipt.output.text).toBe('SYNTHETIC_EARLY_FINAL');
   });
 
   it('rechecks result permission after native message read and withholds a raced revocation', async () => {
     const f = fixture(); const prepared = f.prepare();
-    f.submit(prepared); await tick(); f.finish();
+    f.submit(prepared, { submission: 'confirmed', shareInput: true }); await tick(); f.finish();
     f.beforeMessageRead = async () => {
       f.service.writeSite({ expectedRevision: 1, origin: source.origin, enabled: true, allowSend: true, allowResult: false });
     };
     const result = await f.service.read(f.ref(prepared));
+    expect(result.receipt.input).toBeUndefined();
     expect(result.receipt.output.status).toBe('withheld');
     expect(result.receipt.output.text).toBeUndefined();
     expect(result.receipt.execution.status).toBe('completed');
@@ -889,9 +908,10 @@ describe('webpage owned sender and exact results', () => {
   it('keeps the exact result of a long run when another click arrives before the first read', async () => {
     const f = fixture();
     const prepared = f.prepare();
-    f.submit(prepared);
+    f.submit(prepared, { submission: 'confirmed', shareInput: true });
     await tick();
     f.advance(31 * 60_000);
+    expect((await f.service.read(f.ref(prepared))).receipt.input).toEqual({ text: input.prompt });
     f.finish('LONG_RUN_FINAL');
     await tick();
 
@@ -899,14 +919,20 @@ describe('webpage owned sender and exact results', () => {
     const { receipt } = await f.service.read(f.ref(prepared));
 
     expect(receipt.execution).toEqual({ status: 'completed', executionSettled: true });
+    expect(receipt.input).toEqual({ text: input.prompt });
     expect(receipt.output.text).toBe('LONG_RUN_FINAL');
+
+    f.advance(16 * 60_000);
+    expect((await f.service.read(f.ref(prepared))).receipt.input).toBeUndefined();
   });
 
   it('never reads reply bodies for result:none and preserves failed execution independently', async () => {
     const f = fixture(); const prepared = f.prepare({ input: { ...input, result: 'none' } });
-    f.submit(prepared, { shareResult: false }); await tick(); f.finish('NATIVE_ERROR_BODY', 'failed');
+    expect(() => f.submit(prepared, { submission: 'confirmed', shareResult: false, shareInput: true })).toThrow('RESULT_CONSENT_REQUIRED');
+    f.submit(prepared, { submission: 'confirmed', shareResult: false }); await tick(); f.finish('NATIVE_ERROR_BODY', 'failed');
     const result = await f.service.read(f.ref(prepared));
     expect(result.receipt.execution).toEqual({ status: 'failed', executionSettled: true });
+    expect(result.receipt.input).toBeUndefined();
     expect(result.receipt.output).toEqual({ status: 'not-requested' });
     expect(f.runtime.fetchSessionHistoryByKey).not.toHaveBeenCalled();
     expect(f.request.mock.calls.some(([method]) => method === 'chat.message.get')).toBe(false);

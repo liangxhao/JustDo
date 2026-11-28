@@ -611,16 +611,23 @@ describe('Chrome extension preparation', () => {
       const prepared = prepareChromeExtension({ repoRoot });
       const packagePath = path.join(repoRoot, 'package.json');
       const metadata = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      const manifestPath = path.join(prepared.outputDir, 'manifest.json');
+      const initialManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      const versionsPath = path.join(prepared.outputDir, 'modules/connection-versions.js');
+      expect(fs.readFileSync(versionsPath, 'utf8')).toContain(JSON.stringify(metadata.version));
+
       const nextVersion = `${metadata.version}.1`;
       fs.writeFileSync(packagePath, JSON.stringify({ ...metadata, version: nextVersion }));
 
-      expect(() => verifyChromeExtension(prepared.outputDir, { repoRoot })).not.toThrow();
-      const rebuilt = prepareChromeExtension({ repoRoot });
-      const manifest = JSON.parse(
-        fs.readFileSync(path.join(rebuilt.outputDir, 'manifest.json'), 'utf8'),
-      );
+      expect(() => verifyChromeExtension(prepared.outputDir, { repoRoot })).toThrow('modules/connection-versions.js');
+      prepareChromeExtension({ repoRoot });
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      expect(manifest).toEqual(initialManifest);
       expect(manifest).toMatchObject({ version: '2.4.1' });
       expect(manifest).not.toHaveProperty('version_name');
+      const versions = fs.readFileSync(versionsPath, 'utf8');
+      expect(versions).toContain(JSON.stringify(nextVersion));
+      expect(versions).not.toContain('__BUNDLED_DESKTOP_VERSION__');
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }

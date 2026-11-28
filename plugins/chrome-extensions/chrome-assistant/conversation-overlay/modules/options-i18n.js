@@ -23,6 +23,8 @@ const translations = {
     title: '__PRODUCT_NAME__ 浏览器设置',
     subtitle: '管理浏览器连接、标签页授权和对话背景。',
     sharedConnection: '两种方式管理同一个连接，关闭后停止自动重连。',
+    connectionVersions: 'Chrome 扩展版本 {extensionVersion} · 配套桌面端版本 {desktopVersion}',
+    versionUnavailable: '未知',
     automaticTitle: '自动连接 / 关闭',
     automaticHint: '自动发现本机 __PRODUCT_NAME__，并保持连接。',
     manualTitle: '手动连接 / 关闭',
@@ -85,6 +87,8 @@ const translations = {
     title: '__PRODUCT_NAME__ Chrome Settings',
     subtitle: 'Manage browser connections, tab access, and chat backgrounds.',
     sharedConnection: 'Automatic local setup or manual pairing.',
+    connectionVersions: 'Chrome extension {extensionVersion} · Bundled with desktop version {desktopVersion}',
+    versionUnavailable: 'unknown',
     automaticTitle: 'Automatic connection',
     automaticHint: 'Use automatic local setup to connect to __PRODUCT_NAME__.',
     manualTitle: 'Manual connection',
@@ -125,7 +129,8 @@ const translations = {
 
 // Product settings intentionally use English regardless of the browser locale.
 export const language = 'en';
-export const t = key => translations[language][key];
+export const t = (key, values = {}) =>
+  translations[language][key]?.replace(/\{(\w+)\}/g, (match, name) => values[name] ?? match);
 
 export function localizeOptions() {
   document.documentElement.lang = language;

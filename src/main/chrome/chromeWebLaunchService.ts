@@ -59,6 +59,7 @@ interface Owner {
   closedReason?: string;
   prepared?: CoworkNativeSendBinding;
   binding?: WebLaunchNativeBinding;
+  submittedInput?: { text: string; expiresAt: number; expiry: ReturnType<typeof setTimeout> };
   runtime?: OpenClawRuntimeAdapter;
   client?: GatewayClientLike;
   candidates: Map<string, WebLaunchResultCandidate>;
@@ -66,6 +67,8 @@ interface Owner {
   candidateExpiry?: ReturnType<typeof setTimeout>;
 }
 const settled = (receipt: WebLaunchStoredReceipt) => receipt.executionSettled;
+const receiptRetentionEnd = (receipt: WebLaunchStoredReceipt): number =>
+  Math.max(receipt.deadlineAt, receipt.terminal?.endedAt ?? receipt.deadlineAt) + WebLaunchLimits.confirmationMs;
 const closedRequestStatuses = new Set<WebLaunchStoredReceipt['requestStatus']>([
   'cancelled', 'expired', 'rejected',
 ]);
@@ -200,11 +203,12 @@ export class ChromeWebLaunchService {
     const session = this.deps.getStore().getSession(receipt.threadId);
     return session?.id === receipt.threadId && session.source === CoworkSessionSource.ChromeExtension;
   }
-  private metadata(receipt: WebLaunchStoredReceipt, output?: WebLaunchFinalOutput): WebLaunchResponse {
+  private metadata(receipt: WebLaunchStoredReceipt, output?: WebLaunchFinalOutput, submittedText?: string): WebLaunchResponse {
     const receiptValue: WebLaunchReceipt = {
       requestId: receipt.requestId, launchId: receipt.launchId, receiptRevision: receipt.receiptRevision,
       request: { status: receipt.requestStatus },
       execution: { status: receipt.executionStatus, executionSettled: receipt.executionSettled },
+      ...(submittedText !== undefined ? { input: { text: submittedText } } : {}),
       output: {
         status: receipt.outputStatus,
         ...(output?.text !== undefined ? { text: output.text, format: 'text' as const } : {}),
@@ -220,6 +224,7 @@ export class ChromeWebLaunchService {
       permissionMode: receipt.permissionMode ?? PermissionMode.Ask,
       requiresSendConfirmation: !receipt.autoAllowed,
       requiresResultConsent: receipt.result === 'final' && !receipt.shareResult,
+      supportsInputSharing: true,
       requiresUnknownConfirmation: receipt.requiresUnknownConfirmation,
       ...(receipt.clientTurnId ? { clientTurnId: receipt.clientTurnId } : {}),
       ...(receipt.nativeBinding ? { nativeRunId: receipt.nativeBinding.nativeRunId } : {}),
@@ -265,6 +270,7 @@ export class ChromeWebLaunchService {
     for (const [id, owner] of this.owners) {
       const receipt = this.store.read().receipts[id];
       if (receipt?.source.origin === origin) {
+        this.clearSubmittedInput(owner);
         owner.candidates.clear();
         clearTimeout(owner.candidateExpiry);
         if (!owner.dispatched) this.closeUnsent(id, 'SITE_NOT_ALLOWED');
@@ -292,8 +298,7 @@ export class ChromeWebLaunchService {
         this.bump(receipt);
       }
       // The admission deadline must not consume a long run's result retention.
-      const retentionStart = Math.max(receipt.deadlineAt, receipt.terminal?.endedAt ?? receipt.deadlineAt);
-      if ((settled(receipt) || receipt.notSent) && this.now() > retentionStart + WebLaunchLimits.confirmationMs) delete state.receipts[id];
+      if ((settled(receipt) || receipt.notSent) && this.now() > receiptRetentionEnd(receipt)) delete state.receipts[id];
     }
     const used = new Set(Object.values(state.receipts).map(receipt => receipt.leaseId));
     for (const [id, lease] of Object.entries(state.leases)) if ((!lease.active || lease.expiresAt <= this.now()) && !used.has(id)) delete state.leases[id];
@@ -304,6 +309,7 @@ export class ChromeWebLaunchService {
     for (const [id, owner] of this.owners) if (!Object.hasOwn(receipts, id)) {
       owner.active = false;
       owner.dispose?.();
+      this.clearSubmittedInput(owner);
       owner.candidates.clear();
       clearTimeout(owner.candidateExpiry);
       this.owners.delete(id);
@@ -311,6 +317,21 @@ export class ChromeWebLaunchService {
       this.resultReads.delete(id);
       this.refreshing.delete(id);
     }
+  }
+
+  private clearSubmittedInput(owner: Owner | undefined): void {
+    if (!owner?.submittedInput) return;
+    clearTimeout(owner.submittedInput.expiry);
+    owner.submittedInput = undefined;
+  }
+
+  private retainSubmittedInput(owner: Owner, text: string, expiresAt: number): void {
+    this.clearSubmittedInput(owner);
+    const remaining = expiresAt - this.now();
+    if (remaining <= 0) return;
+    const expiry = setTimeout(() => { owner.submittedInput = undefined; }, remaining);
+    expiry.unref?.();
+    owner.submittedInput = { text, expiresAt, expiry };
   }
 
   prepare(raw: unknown): WebLaunchResponse {
@@ -464,6 +485,7 @@ export class ChromeWebLaunchService {
       if (value.submission === 'automatic' && (!item.autoAllowed || item.mode !== WebLaunchSendMode.Direct || item.grantRevision !== policy.revision
         || !policy.allowSend || value.rememberSend || value.rememberResult || input.modelRef || input.permissionMode !== (item.permissionMode ?? PermissionMode.Ask))) return failWebLaunch('CONFIRMATION_REQUIRED');
       if (value.shareResult && item.result !== 'final') return failWebLaunch('RESULT_CONSENT_REQUIRED');
+      if (value.shareInput && (value.submission !== 'confirmed' || !value.shareResult)) return failWebLaunch('RESULT_CONSENT_REQUIRED');
       if (value.submission === 'automatic' && value.shareResult && !policy.allowResult) return failWebLaunch('RESULT_CONSENT_REQUIRED');
       if (value.submission === 'confirmed' && (value.rememberSend || value.rememberResult)) {
         if (value.rememberResult && !value.shareResult) return failWebLaunch('RESULT_CONSENT_REQUIRED');
@@ -493,7 +515,7 @@ export class ChromeWebLaunchService {
     });
     this.owners.set(value.launchId, owner);
     this.changed();
-    void this.dispatch(receipt.launchId, owner, input, context);
+    void this.dispatch(receipt.launchId, owner, input, context, value.shareInput === true);
     return this.metadata(receipt);
   }
 
@@ -511,7 +533,7 @@ export class ChromeWebLaunchService {
     return receipt;
   }
 
-  private async dispatch(launchId: string, owner: Owner, input: WebLaunchActualInput & { permissionMode: WebLaunchPermissionMode }, untrustedContext?: string): Promise<void> {
+  private async dispatch(launchId: string, owner: Owner, input: WebLaunchActualInput & { permissionMode: WebLaunchPermissionMode }, untrustedContext: string | undefined, shareInput: boolean): Promise<void> {
     try {
       this.assertOwner(launchId, owner);
       const receipt = this.get(this.store.read(), launchId);
@@ -521,9 +543,10 @@ export class ChromeWebLaunchService {
       owner.dispose = dispose;
       this.assertOwner(launchId, owner);
       owner.delegated = true;
+      const message = input.prompt.trim();
       await this.deps.chat.sendMessage({
         sessionId: receipt.threadId, clientTurnId: receipt.clientTurnId,
-        message: input.prompt, permissionMode: input.permissionMode,
+        message, permissionMode: input.permissionMode,
         ...(input.modelRef ? { modelRef: input.modelRef } : {}),
       }, {
         assertCurrent: () => { this.assertOwner(launchId, owner); },
@@ -550,7 +573,7 @@ export class ChromeWebLaunchService {
           if (!owner.prepared || binding.sessionKey !== owner.prepared.sessionKey || binding.nativeSessionId !== owner.prepared.nativeSessionId
             || binding.lifecycleRevision !== owner.prepared.lifecycleRevision || binding.clientGeneration !== owner.prepared.clientGeneration) return;
           owner.binding = binding;
-          this.store.mutate(state => {
+          const inputExpiresAt = this.store.mutate(state => {
             const item = this.get(state, launchId);
             item.nativeBinding = binding;
             item.requestStatus = 'submitted';
@@ -558,7 +581,11 @@ export class ChromeWebLaunchService {
             if (item.errorCode === 'UNKNOWN_EXECUTION') item.errorCode = undefined;
             clearResolvedUnknownOrigin(state, item.source.origin);
             this.bump(item);
+            const lease = state.leases[item.leaseId];
+            if (shareInput && item.shareResult && !item.shareRevoked && !item.deliveryRevoked && lease?.active
+              && state.sites.find(site => site.origin === item.source.origin)?.revision === item.grantRevision) return lease.expiresAt;
           });
+          if (inputExpiresAt !== undefined && this.bindingCurrent(owner, binding)) this.retainSubmittedInput(owner, message, inputExpiresAt);
           if (owner.stopIntent) void this.abortBound(launchId, owner).catch(() => {});
           void this.refresh(launchId).catch(() => {});
           this.changed();
@@ -690,6 +717,7 @@ export class ChromeWebLaunchService {
       changed = true;
     });
     const owner = this.owners.get(launchId);
+    this.clearSubmittedInput(owner);
     owner?.candidates.clear();
     clearTimeout(owner?.candidateExpiry);
     if (changed) this.changed();
@@ -729,7 +757,7 @@ export class ChromeWebLaunchService {
     }
     const latest = owner.runtime.getRunTerminalReceipt(binding.nativeRunId);
     if (!latest || latest.agentSeq !== terminal.agentSeq || latest.sessionId !== terminal.sessionId) return;
-    this.store.mutate(state => {
+    const retentionEnd = this.store.mutate(state => {
       const item = state.receipts[launchId];
       if (!item || item.clientTurnId !== binding.clientTurnId || item.nativeBinding?.nativeRunId !== binding.nativeRunId) return;
       item.executionStatus = terminal.status;
@@ -742,7 +770,12 @@ export class ChromeWebLaunchService {
       }
       this.bump(item);
       clearResolvedUnknownOrigin(state, item.source.origin);
+      return receiptRetentionEnd(item);
     });
+    const input = owner.submittedInput;
+    if (input && retentionEnd !== undefined && retentionEnd < input.expiresAt) {
+      this.retainSubmittedInput(owner, input.text, retentionEnd);
+    }
     owner.dispose?.();
     this.changed();
   }
@@ -775,19 +808,21 @@ export class ChromeWebLaunchService {
     this.reference(raw); // Recheck source/channel/grant after every awaited read.
     const state = this.store.read();
     receipt = this.get(state, receipt.launchId);
-    // This synchronous block is the result release boundary. Inner readers
+    // This synchronous block is the body release boundary. Inner readers
     // cannot cover a revoke/cancel queued between their return and our await.
-    if (output !== undefined) {
+    const owner = this.owners.get(receipt.launchId);
+    if (owner?.submittedInput && owner.submittedInput.expiresAt <= this.now()) this.clearSubmittedInput(owner);
+    let submittedText: string | undefined;
+    if (output !== undefined || owner?.submittedInput) {
       const policy = state.sites.find(item => item.origin === receipt.source.origin);
-      const owner = this.owners.get(receipt.launchId);
       const native = owner?.binding;
       const lease = state.leases[receipt.leaseId];
-      const allowed = receipt.executionSettled && receipt.executionStatus === 'completed'
-        && receipt.result === 'final' && receipt.shareResult && !receipt.shareRevoked && !receipt.deliveryRevoked
+      const allowed = receipt.result === 'final' && receipt.shareResult && !receipt.shareRevoked && !receipt.deliveryRevoked
         && policy?.enabled && policy.revision === receipt.grantRevision && lease?.active && lease.expiresAt > this.now()
         && owner && native && native.clientTurnId === receipt.clientTurnId && native.nativeRunId === receipt.nativeBinding?.nativeRunId
         && this.bindingCurrent(owner, native) && this.ownsProduct(receipt);
-      if (!allowed) {
+      if (allowed && receipt.requestStatus === 'submitted') submittedText = owner.submittedInput?.text;
+      if (output !== undefined && (!allowed || !receipt.executionSettled || receipt.executionStatus !== 'completed')) {
         output = undefined;
         if (receipt.outputStatus === 'available') {
           this.store.mutate(next => {
@@ -799,7 +834,7 @@ export class ChromeWebLaunchService {
         }
       }
     }
-    return this.metadata(receipt, output);
+    return this.metadata(receipt, output, submittedText);
   }
 
   private readResult(launchId: string): Promise<WebLaunchFinalOutput | undefined> {
@@ -892,7 +927,9 @@ export class ChromeWebLaunchService {
       this.bump(item);
     });
     if (!tooLate) this.closeUnsent(receipt.launchId, 'CANCELLED');
-    this.owners.get(receipt.launchId)?.candidates.clear();
+    const owner = this.owners.get(receipt.launchId);
+    this.clearSubmittedInput(owner);
+    owner?.candidates.clear();
     this.changed();
     return this.metadata(this.get(this.store.read(), receipt.launchId));
   }
@@ -955,6 +992,7 @@ export class ChromeWebLaunchService {
       delete state.receipts[id]; // The click watermark still prevents re-creating this launch.
     });
     this.owners.delete(id);
+    this.clearSubmittedInput(owner);
     owner?.candidates.clear();
     clearTimeout(owner?.candidateExpiry);
     this.resultAttempts.delete(id);
@@ -987,6 +1025,7 @@ export class ChromeWebLaunchService {
     for (const id of ids) {
       this.closeUnsent(id, 'EXPIRED');
       const owner = this.owners.get(id);
+      this.clearSubmittedInput(owner);
       owner?.candidates.clear();
       clearTimeout(owner?.candidateExpiry);
     }
@@ -996,7 +1035,13 @@ export class ChromeWebLaunchService {
 
   close(): void {
     this.closed = true;
-    for (const owner of this.owners.values()) { owner.active = false; owner.dispose?.(); owner.candidates.clear(); clearTimeout(owner.candidateExpiry); }
+    for (const owner of this.owners.values()) {
+      owner.active = false;
+      owner.dispose?.();
+      this.clearSubmittedInput(owner);
+      owner.candidates.clear();
+      clearTimeout(owner.candidateExpiry);
+    }
     this.owners.clear();
     this.resultAttempts.clear();
     this.resultReads.clear();

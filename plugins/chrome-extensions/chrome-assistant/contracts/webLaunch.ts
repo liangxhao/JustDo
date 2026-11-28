@@ -118,6 +118,7 @@ export interface WebLaunchSubmit {
   input: WebLaunchActualInput;
   submission: 'automatic' | 'confirmed';
   shareResult: boolean;
+  shareInput?: boolean;
   rememberSend?: boolean;
   rememberResult?: boolean;
   confirmNewTask?: boolean;
@@ -145,6 +146,7 @@ export interface WebLaunchReceipt {
   receiptRevision: number;
   request: { status: WebLaunchRequestStatus };
   execution: { status: WebLaunchExecutionStatus; executionSettled: boolean };
+  input?: { text: string };
   output: { status: WebLaunchOutputStatus; text?: string; format?: 'text'; artifacts?: WebLaunchArtifact[] };
   delivery: { status: 'connected' | 'disconnected' | 'acknowledged' | 'revoked' };
   error?: { code: string; messageKey: string };
@@ -161,6 +163,7 @@ export interface WebLaunchInternal {
   permissionMode?: WebLaunchPermissionMode;
   requiresSendConfirmation: boolean;
   requiresResultConsent: boolean;
+  supportsInputSharing?: true;
   requiresUnknownConfirmation?: boolean;
   clientTurnId?: string;
   nativeRunId?: string;
@@ -190,6 +193,7 @@ export interface WebLaunchEnvelope {
   expiresAt: number;
   automaticSendAllowed: boolean;
   shareAllowed: boolean;
+  supportsInputSharing?: true;
   requiresUnknownConfirmation?: boolean;
   composeRevision: number;
   receipt: WebLaunchReceipt;

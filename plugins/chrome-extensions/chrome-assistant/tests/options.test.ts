@@ -72,6 +72,22 @@ describe('product browser settings', () => {
     expect(document.body.textContent).not.toMatch(/[\u3400-\u9fff]/);
   });
 
+  it('shows the extension and bundled desktop versions even when status cannot be read', async () => {
+    vi.stubGlobal('chrome', { runtime: { sendMessage, getManifest: () => ({ version: '2.4.1' }) } });
+    vi.stubGlobal('__BUNDLED_DESKTOP_VERSION__', 'v2026.11.23');
+    sendMessage.mockImplementation(async ({ type }) => {
+      if (type === 'getStatus') throw new Error('Unreachable');
+      return { ok: true };
+    });
+
+    await import('../conversation-overlay/options.js');
+
+    await vi.waitFor(() => expect(document.getElementById('connectionStatus')?.textContent).toContain('Could not read'));
+    expect(document.getElementById('connectionVersions')?.textContent).toBe(
+      'Chrome extension 2.4.1 · Bundled with desktop version v2026.11.23',
+    );
+  });
+
   it('enables native automatic setup and refreshes the connection state', async () => {
     status.paired = false;
     status.nativeBootstrap = { disabled: true, state: 'disabled' };

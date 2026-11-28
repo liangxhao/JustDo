@@ -260,6 +260,22 @@ describe('side panel interactions', () => {
     expect(mock.request.mock.calls.some(([method]) => method === 'chrome/questions/respond')).toBe(false);
   });
 
+  it('keeps the connection versions visible after a failed chat refresh', async () => {
+    await mount();
+    vi.stubGlobal('chrome', { runtime: { getManifest: () => ({ version: '2.4.1' }) } });
+    vi.stubGlobal('__BUNDLED_DESKTOP_VERSION__', 'v2026.11.23');
+    mock.request.mockImplementationOnce(async () => {
+      mock.notify('connection/failed', { code: 'APP_NOT_RUNNING' });
+      throw Object.assign(new Error('Underlying discovery error'), { code: 'APP_NOT_RUNNING', stage: 'discovery' });
+    });
+
+    element<HTMLButtonElement>('refresh').click();
+    await flush();
+
+    expect(element('error').textContent).toContain('Chrome extension 2.4.1 · Bundled with desktop version v2026.11.23');
+    expect(element('error').textContent).not.toContain('Underlying discovery error');
+  });
+
   it.each(['switch', 'disconnect'] as const)('cannot revive an old list after %s', async action => {
     await mount();
     await selectThread('one');

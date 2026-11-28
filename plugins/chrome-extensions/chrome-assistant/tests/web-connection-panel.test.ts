@@ -10,6 +10,7 @@ const panels: ReturnType<typeof createWebConnectionPanel>[] = [];
 afterEach(() => {
   for (const panel of panels.splice(0)) panel.dispose();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 const pending = (extra = {}) => ({
@@ -203,6 +204,8 @@ describe('website connection consent', () => {
 
   it('does not turn a connection failure or missing acknowledgement into success', async () => {
     const { request, onNotice } = mount();
+    vi.stubGlobal('chrome', { runtime: { getManifest: () => ({ version: '2.4.1' }) } });
+    vi.stubGlobal('__BUNDLED_DESKTOP_VERSION__', 'v2026.11.23');
     request.mockRejectedValue(
       Object.assign(new Error('secret=private'), { code: 'APP_NOT_RUNNING' }),
     );
@@ -211,6 +214,9 @@ describe('website connection consent', () => {
       expect(document.body.textContent).toContain('Open the desktop application'),
     );
     expect(card().classList.contains('hidden')).toBe(false);
+    expect(card().querySelector('[role="alert"]')?.textContent).toContain(
+      'Chrome extension 2.4.1 · Bundled with desktop version v2026.11.23',
+    );
     expect(document.body.textContent).not.toContain('private');
     request.mockResolvedValue({ ok: true });
     button('Allow connection').click();

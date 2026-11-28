@@ -284,6 +284,15 @@ export function publicReceipt(value, allowResult = false) {
     output,
     delivery: { status: value.delivery.status },
   };
+  if (
+    allowResult &&
+    value.request.status === 'submitted' &&
+    value.delivery.status === 'connected' &&
+    !['not-requested', 'awaiting-consent', 'withheld'].includes(output.status) &&
+    typeof value.input?.text === 'string' &&
+    value.input.text.length <= WebLaunchLimits.promptCharacters &&
+    value.input.text.trim()
+  ) result.input = { text: value.input.text };
   if (PUBLIC_ERROR_CODES.has(value.error?.code))
     result.error = { code: value.error.code, messageKey: `webLaunchError${value.error.code}` };
   return result;

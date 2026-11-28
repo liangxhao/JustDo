@@ -13,7 +13,8 @@ const copy = navigator.language.startsWith('zh')
         send: '请用一行以 B 开头的文字回答待处理订单数。',
       },
       draft: 'A · 打开草稿',
-      draftHelp: '在侧栏点击发送，最终文本会显示在这里。',
+      draftHelp: '修改草稿后在侧栏发送。这里会显示你发送的正文和最终结果。',
+      submitted: '已发送正文',
       send: 'B · 自动发送',
       sendHelp: 'A 发起后可用。扩展发送方式设为「跟随网页」时，B 会直接发送。',
       ready: '可以点击按钮。',
@@ -42,7 +43,8 @@ const copy = navigator.language.startsWith('zh')
         send: 'Answer with one line starting with B and give the number of pending orders.',
       },
       draft: 'A · Open a draft',
-      draftHelp: 'Send the draft in the side panel. The final text will appear here.',
+      draftHelp: 'Edit and send the draft in the side panel. The message you sent and the final result will appear here.',
+      submitted: 'Sent message',
       send: 'B · Send automatically',
       sendHelp: 'Available after A starts. With Follow website selected, B sends directly.',
       ready: 'Ready to click.',
@@ -77,6 +79,10 @@ async function bindExample(section, onReceipt) {
     row.label.textContent = [copy.receipt(receipt), receipt.error?.message].filter(Boolean).join(' · ');
     if (receipt.error) row.label.textContent += ` · ${copy.inspectTask}`;
     if (receipt.requestId === latestRequestId) status.textContent = '';
+    if (receipt.input) {
+      row.input.textContent = `${copy.submitted}\n${receipt.input.text}`;
+      row.input.hidden = false;
+    }
     const available =
       receipt.execution.executionSettled === true &&
       receipt.execution.status === 'completed' &&
@@ -111,12 +117,14 @@ async function bindExample(section, onReceipt) {
           status.textContent = '';
           const entry = document.createElement('li');
           const label = document.createElement('span');
+          const input = document.createElement('pre');
           const result = document.createElement('pre');
           label.textContent = copy.preparing;
+          input.hidden = true;
           result.hidden = true;
-          entry.append(label, result);
+          entry.append(label, input, result);
           list.append(entry);
-          requests.set(request.requestId, { label, result, revision: -1 });
+          requests.set(request.requestId, { label, input, result, revision: -1 });
         },
         onQueue(queue) {
           const row = requests.get(queue.requestId);

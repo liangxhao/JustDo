@@ -220,11 +220,13 @@ describe('webpage button bridge', () => {
     expect(launchCount).toBe(1);
   });
 
-  it('delivers an artifact-only exact result through the existing onResult callback', async () => {
+  it('delivers the confirmed input before execution settles and alongside the final result', async () => {
     const onRequest = vi.fn();
+    const onStatus = vi.fn();
     const onResult = vi.fn();
     const original = runtime.sendMessage.getMockImplementation()!;
     const artifacts = [{ name: 'report.pdf', kind: 'document', mimeType: 'application/pdf' }];
+    let finished = false;
     runtime.sendMessage.mockImplementation(async message => {
       if (!message.type.endsWith('read')) return original(message);
       return {
@@ -232,10 +234,11 @@ describe('webpage button bridge', () => {
         receipt: {
           requestId: message.requestId,
           launchId: 'launch-1',
-          receiptRevision: 2,
+          receiptRevision: finished ? 3 : 2,
           request: { status: 'submitted' },
-          execution: { status: 'completed', executionSettled: true },
-          output: { status: 'available', artifacts },
+          execution: { status: finished ? 'completed' : 'running', executionSettled: finished },
+          input: { text: 'Create a weekly report' },
+          output: finished ? { status: 'available', artifacts } : { status: 'pending' },
           delivery: { status: 'connected' },
         },
       };
@@ -244,15 +247,22 @@ describe('webpage button bridge', () => {
     await sdk.bind(
       document.getElementById('business'),
       { prompt: 'Create a report' },
-      { onRequest, onResult },
+      { onRequest, onStatus, onResult },
     );
     click();
     await vi.waitFor(() => expect(onRequest).toHaveBeenCalledOnce());
+    const handle = onRequest.mock.calls[0][0];
+    const running = await handle.read();
+    expect(running.receipt.input).toEqual({ text: 'Create a weekly report' });
+    expect(onStatus).toHaveBeenLastCalledWith(running.receipt);
+    expect(onResult).not.toHaveBeenCalled();
+    finished = true;
     poll();
     await vi.waitFor(() => expect(onResult).toHaveBeenCalledOnce());
     expect(onResult).toHaveBeenCalledWith(
       expect.objectContaining({
-        requestId: onRequest.mock.calls[0][0].requestId,
+        requestId: handle.requestId,
+        input: { text: 'Create a weekly report' },
         output: { status: 'available', artifacts },
       }),
     );

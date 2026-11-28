@@ -76,6 +76,7 @@ describe('web launch trust boundaries', () => {
       receiptRevision: 3,
       request: { status: 'submitted', threadId: 'private' },
       execution: { status: 'completed', executionSettled: true, nativeRunId: 'private' },
+      input: { text: 'edited prompt', context: { text: 'private' } },
       output: { status: 'available', text: 'answer', format: 'html', token: 'secret' },
       delivery: { status: 'connected' },
       error: { code: 'INVALID_REQUEST', messageKey: 'ws://127.0.0.1/token', stack: 'private' },
@@ -87,11 +88,17 @@ describe('web launch trust boundaries', () => {
       receiptRevision: 3,
       request: { status: 'submitted' },
       execution: { status: 'completed', executionSettled: true },
+      input: { text: 'edited prompt' },
       output: { status: 'available', text: 'answer', format: 'text' },
       delivery: { status: 'connected' },
       error: { code: 'INVALID_REQUEST', messageKey: 'webLaunchErrorINVALID_REQUEST' },
     });
     expect(publicReceipt(source, false)?.output).toEqual({ status: 'available' });
+    expect(publicReceipt(source, false)?.input).toBeUndefined();
+    expect(publicReceipt({ ...source, input: { text: 'x'.repeat(16_001) } }, true)?.input).toBeUndefined();
+    expect(publicReceipt({ ...source, output: { status: 'withheld' } }, true)?.input).toBeUndefined();
+    expect(publicReceipt({ ...source, request: { status: 'submitting' } }, true)?.input).toBeUndefined();
+    expect(publicReceipt({ ...source, delivery: { status: 'revoked' } }, true)?.input).toBeUndefined();
     expect(
       publicReceipt({ ...source, execution: { status: 'running', executionSettled: false } }, true)
         ?.output,

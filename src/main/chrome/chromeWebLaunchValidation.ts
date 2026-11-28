@@ -128,12 +128,13 @@ export function parseWebLaunchPrepare(raw: unknown): WebLaunchPrepare {
 
 export function parseWebLaunchSubmit(raw: unknown): WebLaunchSubmit {
   const value = webLaunchRecord(raw);
-  assertWebLaunchKeys(value, ['launchId', 'composeRevision', 'input', 'submission', 'shareResult', 'rememberSend', 'rememberResult', 'confirmNewTask']);
+  assertWebLaunchKeys(value, ['launchId', 'composeRevision', 'input', 'submission', 'shareResult', 'shareInput', 'rememberSend', 'rememberResult', 'confirmNewTask']);
   if (value.submission !== 'automatic' && value.submission !== 'confirmed') return failWebLaunch('INVALID_REQUEST');
   return {
     launchId: webLaunchString(value.launchId), composeRevision: webLaunchInteger(value.composeRevision),
     input: parseWebLaunchActualInput(value.input), submission: value.submission,
     shareResult: webLaunchBoolean(value.shareResult),
+    ...(value.shareInput !== undefined ? { shareInput: webLaunchBoolean(value.shareInput) } : {}),
     ...(value.rememberSend !== undefined ? { rememberSend: webLaunchBoolean(value.rememberSend) } : {}),
     ...(value.rememberResult !== undefined ? { rememberResult: webLaunchBoolean(value.rememberResult) } : {}),
     ...(value.confirmNewTask !== undefined ? { confirmNewTask: webLaunchBoolean(value.confirmNewTask) } : {}),

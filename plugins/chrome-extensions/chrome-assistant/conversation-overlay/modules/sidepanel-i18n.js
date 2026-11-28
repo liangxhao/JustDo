@@ -1,3 +1,5 @@
+import { connectionVersions } from './connection-versions.js';
+
 const translations = {
   en: {
     messageTime: 'Message time',
@@ -8,6 +10,9 @@ const translations = {
     copied: 'Copied',
     copyFailed: 'Copy failed. Select the text to copy it.',
     webConnectionTitle: 'Allow this website to connect?',
+    connectionVersions: 'Chrome extension {extensionVersion} · Bundled with desktop version {desktopVersion}',
+    versionUnavailable: 'unknown',
+    webLaunchInputSharing: 'When you send this draft, {origin} can receive the message text and the result.',
     webConnectionHint:
       'This request opens as a draft for you to send. Website requests use Full access by default. On later clicks, the default is to follow this website’s choice of opening a draft or sending directly. The website can receive the result it requests. You can change the sending mode or revoke access in settings.',
     webConnectionAllow: 'Allow connection',
@@ -229,6 +234,9 @@ const translations = {
     copied: '已复制',
     copyFailed: '复制失败，请选中文字后复制。',
     webConnectionTitle: '允许此网站连接？',
+    connectionVersions: 'Chrome 扩展版本 {extensionVersion} · 配套桌面端版本 {desktopVersion}',
+    versionUnavailable: '未知',
+    webLaunchInputSharing: '发送此草稿后，{origin} 可以收到你发送的正文和本轮结果。',
     webConnectionHint:
       '本次请求将打开草稿，由你点击发送。网页请求默认使用完全访问权限。之后点击时，默认由网站决定先填入草稿还是直接发送。网站可以接收它请求的本轮结果。你可以在设置中更改发送方式或撤销连接。',
     webConnectionAllow: '允许连接',
@@ -420,12 +428,34 @@ export function sidePanelText(key, values = {}) {
   return template.replace(/\{(\w+)\}/g, (match, name) => values[name] ?? match);
 }
 
+const webDesktopConnectionErrors = new Set([
+  'APP_NOT_RUNNING', 'NATIVE_UNAVAILABLE', 'NATIVE_HOST_UNAVAILABLE', 'NATIVE_HOST_TIMEOUT',
+  'CONNECTION_UNAVAILABLE', 'INCOMPATIBLE_VERSION',
+]);
+
+export function withSidePanelConnectionVersions(message) {
+  const { extensionVersion, desktopVersion } = connectionVersions();
+  if (!extensionVersion && !desktopVersion) return message;
+  const unknown = sidePanelText('versionUnavailable');
+  return `${message} ${sidePanelText('connectionVersions', {
+    extensionVersion: extensionVersion ?? unknown,
+    desktopVersion: desktopVersion ?? unknown,
+  })}`;
+}
+
+export function sidePanelWebConnectionError(keyPrefix, code) {
+  const key = `${keyPrefix}_${code}`;
+  const translated = sidePanelText(key);
+  const message = translated === key ? sidePanelText(`${keyPrefix}_GENERIC`) : translated;
+  return webDesktopConnectionErrors.has(code) ? withSidePanelConnectionVersions(message) : message;
+}
+
 export function sidePanelConnectionError(code) {
-  return sidePanelText(
+  return withSidePanelConnectionVersions(sidePanelText(
     typeof code === 'string' && /^[A-Z_]+$/.test(code) && Object.hasOwn(translations.en, code)
       ? code
       : 'SOCKET_ERROR',
-  );
+  ));
 }
 
 export function localizeSidePanel(document) {

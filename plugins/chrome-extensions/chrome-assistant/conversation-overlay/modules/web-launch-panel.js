@@ -1,4 +1,4 @@
-import { sidePanelText as t } from './sidepanel-i18n.js';
+import { sidePanelText as t, sidePanelWebConnectionError } from './sidepanel-i18n.js';
 import { createWebConnectionPanel } from './web-connection-panel.js';
 import { createWebLaunchContext } from './web-launch-context.js';
 import { WebLaunchLimits } from '../../contracts/webLaunch.ts';
@@ -103,6 +103,8 @@ export function createWebLaunchPanel({
   const waiting = make('p', 'webLaunchWaitingComposer');
   waiting.className = 'web-launch-waiting';
   waiting.setAttribute('role', 'status');
+  const inputSharing = make('p');
+  inputSharing.className = 'web-launch-input-sharing';
   const actions = make('div');
   actions.className = 'web-launch-actions';
   const button = (key, action) => {
@@ -114,6 +116,7 @@ export function createWebLaunchPanel({
   const ordinaryButton = button('webLaunchOrdinary', recoverDraft);
   const abandonButton = button('webLaunchAbandon', abandon);
   const inputAssociated = () => Boolean(current && !inputReleased);
+  const canShareInput = () => current?.supportsInputSharing === true && current.result === 'final';
   const closed = () => CLOSED.has(receipt?.request?.status);
   const draftUnavailable = () => closed() || Date.now() >= current.expiresAt;
   const ownsThread = threadId =>
@@ -173,11 +176,7 @@ export function createWebLaunchPanel({
   };
   const fail = (code, launchId = current?.launchId) => {
     if (disposed || (launchId && (launchId !== current?.launchId || !selected()))) return;
-    onError(
-      t(`webLaunchError_${code}`) === `webLaunchError_${code}`
-        ? t('webLaunchError_GENERIC')
-        : t(`webLaunchError_${code}`),
-    );
+    onError(sidePanelWebConnectionError('webLaunchError', code));
   };
   const request = async (type, params = {}) => {
     const result = await chrome.runtime.sendMessage({
@@ -208,9 +207,14 @@ export function createWebLaunchPanel({
     if (launch !== visibleLaunch) context.close();
     visibleLaunch = launch;
     const notice = editable ? submissionNotice : '';
+    const showInputSharing = editable && canShareInput();
     waiting.textContent = notice || t('webLaunchWaitingComposer');
     waiting.hidden = !(deferredDraft || notice);
-    root.hidden = !(showContext || canRecover || canAbandon || deferredDraft || notice);
+    inputSharing.hidden = !showInputSharing;
+    inputSharing.textContent = showInputSharing
+      ? t('webLaunchInputSharing').replace('{origin}', () => current.origin)
+      : '';
+    root.hidden = !(showContext || canRecover || canAbandon || deferredDraft || notice || showInputSharing);
     context.setAvailable(showContext);
     actions.hidden = !(canRecover || canAbandon);
     ordinaryButton.hidden = !canRecover;
@@ -594,6 +598,7 @@ export function createWebLaunchPanel({
         input,
         submission,
         shareResult: current.result === 'final',
+        ...(submission === 'confirmed' && canShareInput() ? { shareInput: true } : {}),
         confirmNewTask: submission === 'confirmed',
       });
       if (current?.launchId !== launchId || disposed) return;

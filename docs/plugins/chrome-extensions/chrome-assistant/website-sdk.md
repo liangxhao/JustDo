@@ -1,6 +1,6 @@
 # 第三方网页调用 Chrome 扩展
 
-把 `chrome-assistant.js` 放到业务网站，再用 `window.chromeAssistant.bind()` 绑定一个按钮。扩展默认根据按钮的配置准备草稿或直接发送，并将本轮最终答复返回原网页。
+把 `chrome-assistant.js` 放到业务网站，再用 `window.chromeAssistant.bind()` 绑定一个按钮。扩展默认根据按钮的配置准备草稿或直接发送。请求结果回传时，原网页可收到本轮最终答复，以及用户手动确认发送的正文。
 
 ## 1. 获取网页 SDK
 
@@ -28,7 +28,7 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 
 在扩展设置的 **Website message sending mode** 保留 **Follow website (default)**，按下面的顺序验证连续发起任务。
 
-1. 点击 **A · 打开草稿**（`draft + final`）。首次使用时在侧栏允许连接，再发送草稿。
+1. 点击 **A · 打开草稿**（`draft + final`）。首次使用时在侧栏允许连接。修改草稿后点击发送，核对示例网页显示的正文与实际提交一致。
 2. A 发送后保持侧栏打开，连续点击两次 **B · 自动发送**（`send + final`）。每次点击都会获得新的任务编号，侧栏依次切到对应的新对话。A 仍在执行时也可以发起 B。
 3. 等各笔请求在原网页显示自己的结果。可以在运行期间关闭侧栏，再用 Chrome 工具栏中的扩展图标打开查看。整个过程无需刷新网页。
 
@@ -41,6 +41,7 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 ```html
 <button id="ask-assistant" type="button" disabled>生成摘要</button>
 <p id="assistant-status" role="status"></p>
+<pre id="assistant-input" aria-label="已发送正文"></pre>
 <pre id="assistant-result"></pre>
 <script defer src="/assets/chrome-assistant.js"></script>
 <script defer src="/assets/assistant-entry.js"></script>
@@ -52,7 +53,9 @@ node docs/plugins/chrome-extensions/chrome-assistant/examples/website-sdk/serve.
 async function bindAssistant() {
   const button = document.querySelector('#ask-assistant');
   const status = document.querySelector('#assistant-status');
+  const input = document.querySelector('#assistant-input');
   const output = document.querySelector('#assistant-result');
+  let currentRequestId;
 
   try {
     await window.chromeAssistant.bind(
@@ -63,20 +66,29 @@ async function bindAssistant() {
         mode: 'draft',
       },
       {
-        onRequest() {
+        onRequest(handle) {
+          currentRequestId = handle.requestId;
+          status.textContent = '';
+          input.textContent = '';
           output.textContent = '';
         },
         onConnection(state) {
           status.textContent = state.message ?? '';
         },
         onQueue(state) {
-          status.textContent = state.message;
+          if (state.requestId === currentRequestId) status.textContent = state.message;
         },
         onActionRequired(action) {
-          status.textContent = action.message;
+          if (!action.requestId || action.requestId === currentRequestId) status.textContent = action.message;
+        },
+        onStatus(receipt) {
+          if (receipt.requestId === currentRequestId && receipt.input) {
+            input.textContent = receipt.input.text;
+          }
         },
         onResult(receipt) {
           if (
+            receipt.requestId === currentRequestId &&
             receipt.execution.executionSettled &&
             receipt.execution.status === 'completed' &&
             receipt.output.status === 'available'
@@ -107,7 +119,7 @@ void bindAssistant();
 1. 用户在业务网页点击 **生成摘要** 等按钮。首次使用时，Chrome 在发起请求的标签页打开侧栏，弹出 **允许此网站连接？**，下方列出网站地址。处理弹窗前，侧栏输入区暂停操作。
 2. 用户核对网站地址和授权范围后，点击 **允许连接**。此授权涵盖后续请求的直接发送和结果回传。如果 Chrome 随后询问是否允许扩展访问该网站，按提示确认。
 3. 授权完成后，刚才那次点击的消息进入侧栏输入框，默认使用「完全访问」。用户可以核对或编辑草稿，也可以在发送前切换权限模式。
-4. 点击输入区右侧的发送按钮。需要回传时，扩展会向发起请求的网站返回本轮结果。
+4. 点击输入区右侧的发送按钮。请求结果回传时，侧栏会在发送前显示接收网站。发送获确认后，原网页可读取实际提交的正文，执行结束后可读取最终结果。
 
 触发授权的这条消息始终需要用户确认发送。后续请求默认按 [`mode` 和 `result` 的组合](#4-参数与四种组合)处理。用户可在侧栏点击 **连接设置**，为所有已连接网站选择[网页消息发送方式](website-launch.md#后续使用与撤销)，也可在 **Connected websites** 中查看或撤销单个网站的连接。站点授权按协议、主机和端口生效。
 
@@ -122,7 +134,7 @@ void bindAssistant();
 | `prompt`  | 必填、非空字符串                    | 本次待发送文字，最多 16,000 个字符；不接受以 `/` 开头的会话控制命令。 |
 | `context` | 可选 `{ text: string }`             | 显式业务快照，最多 24,000 个字符；会在侧栏单独展示。                  |
 | `mode`    | `'draft' \| 'send'`，默认 `'draft'` | 放入独立草稿，或请求直接发送。                                        |
-| `result`  | `'none' \| 'final'`，默认 `'final'` | 回传本轮最终结果。显式传入 `none` 时只接收状态。                      |
+| `result`  | `'none' \| 'final'`，默认 `'final'` | 回传本轮最终结果，手动确认发送时也回传正文。显式传入 `none` 时只接收状态。 |
 
 每次点击的请求 ID 由扩展分配。网页可提供消息和文本上下文，不能指定已有会话、模型、助手、工作目录、权限模式、附件或回调 URL。
 
@@ -131,7 +143,7 @@ void bindAssistant();
 | 组合            | 用户看到的行为                                           |
 | --------------- | -------------------------------------------------------- |
 | `draft + none`  | 打开独立草稿，用户编辑并发送；网页只收到状态。           |
-| `draft + final` | 打开独立草稿。用户点击发送，执行完成后回传本轮最终结果。 |
+| `draft + final` | 打开独立草稿。手动发送确认后回传正文，执行完成后回传本轮最终结果。 |
 | `send + none`   | 准入检查通过后自动发送，网页只收到状态。                 |
 | `send + final`  | 准入检查通过后自动发送，执行完成后回传本轮最终结果。     |
 
@@ -181,7 +193,7 @@ try {
 
 每次真实点击都会得到新句柄，包括连续点击同一个按钮。若侧栏正在等待手动发送同一网页发起的草稿，新请求可以替换它，原请求通过 `onStatus` 收到 `request.status: 'cancelled'`。侧栏有普通草稿或正在确认发送时，后续点击按顺序等待。上一笔消息确认发送后，侧栏可切到下一笔新对话，已发送的请求继续独立执行。排队请求有自己的 requestId，在获准创建对话时才获得 launchId。
 
-下面的回执同时包含最终文本和一个 Excel 交付件。
+下面是一次手动发送的回执，包含实际发送的正文、最终文本和一个 Excel 交付件。
 
 ```js
 {
@@ -190,6 +202,7 @@ try {
   receiptRevision: 7,
   request: { status: 'submitted' },
   execution: { status: 'completed', executionSettled: true },
+  input: { text: '请将这周的订单按状态汇总。' },
   output: {
     status: 'available',
     text: '已生成报表。',
@@ -212,13 +225,15 @@ try {
 | `onConnection(state)` | 首次连接的进度。包含 `status`、浏览器核验的 `origin`、操作提示 `message` 和可选 `code`。 |
 | `onRequest(handle)`   | 保存本次真实点击的句柄，关联业务记录。                                                 |
 | `onQueue(state)`      | 根据 `requestId` 更新等待状态。`reason` 可为 `composer`、`panel` 或 `connection`。 |
-| `onStatus(receipt)`   | 更新请求、执行、结果及投递状态。使用可选的 `receipt.error.message` 展示本地化说明。 |
+| `onStatus(receipt)`   | 更新请求、执行、结果及投递状态。发送获确认后，可读取 `receipt.input?.text`。使用可选的 `receipt.error.message` 展示本地化说明。 |
 | `onResult(receipt)`   | 执行已结算，且输出为 available / empty / unsupported / unavailable；参数仍是整份回执。 |
 | `onActionRequired({ code, message, requestId? })` | 用 `message` 显示下一步，用 `code` 做业务判断。有对应请求时按 `requestId` 更新。 |
 
 连接状态为 `waiting-for-window`、`waiting-for-connection`、`pending`、`granting`、`connected`、`rejected`、`expired`。`waiting-for-window` 表示先处理同窗口的输入或队列。收到 `waiting-for-connection` 时，用户应回到先前申请连接的标签页处理，然后再点击。`connected` 表示网站已连接。任务的发送与执行进度以对应请求的回执为准。
 
 `bind`、`update`、`unbind`、`read` 和 `cancel` 的 Promise 拒绝在调用处捕获。回执内的 `error` 也要单独处理。收到 `onResult` 后，只有 `execution.status === 'completed'`、`executionSettled === true` 且 `output.status === 'available'` 时才读取 `output.text` 和 `output.artifacts`。用 `textContent` 显示结果。
+
+`input.text` 是可选字段，表示实际手动发送的正文，沿用发送时的首尾空白处理。网页可以在收到含此字段的 `onStatus` 回调时按 `requestId` 记录，也可以通过句柄的 `read()` 或后续 `onResult` 读取。执行失败时，已确认发送的正文仍可回传。自动发送、`result: 'none'` 和旧版宿主或侧栏的回执会省略此字段。正文回传仅包括输入框文字。
 
 `output.artifacts` 为可选数组，最多包含 32 项。每项包含文件名 `name`、类别 `kind`（`image`、`audio`、`video` 或 `document`）和可选的 `mimeType`。数组只提供文件描述。本地路径、下载地址和文件内容均不会作为交付件字段提供。仅有交付件时，`output.text` 和 `output.format` 可以省略。
 

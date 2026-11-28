@@ -67,6 +67,10 @@ p {
 .connection-summary .muted {
   font-size: 12px;
 }
+#connectionVersions {
+  flex-basis: 100%;
+  margin: 0;
+}
 section {
   margin-top: 16px;
   padding: 22px 24px;

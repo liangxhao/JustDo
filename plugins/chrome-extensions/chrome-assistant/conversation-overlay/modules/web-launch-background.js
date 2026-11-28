@@ -71,6 +71,7 @@ export function createWebLaunchBackground({
   const restoredRequests = new Set();
   const abandonedLaunches = new Map();
   const cancelled = new Set();
+  const documentObservations = new Map();
   const pendingClicks = new Map();
   const preparing = new Set();
   const revising = new Map();
@@ -198,7 +199,8 @@ export function createWebLaunchBackground({
     for (const key of Object.keys(state.channels))
       if (!liveChannels.has(key)) delete state.channels[key];
     for (const key of Object.keys(state.cancelled)) {
-      if (pendingClicks.has(key) || preparing.has(key)) continue;
+      // A settled receipt can still be waiting for its final document check.
+      if (pendingClicks.has(key) || preparing.has(key) || documentObservations.has(key)) continue;
       const requestId = key.split('/').at(-1);
       const record = state.requests[requestId];
       if (record && !terminal(record.response?.receipt)) continue;
@@ -418,6 +420,7 @@ export function createWebLaunchBackground({
       deadlineAt: metadata.deadlineAt,
       automaticSendAllowed: !metadata.requiresSendConfirmation,
       shareAllowed: record.result === 'final' && !metadata.requiresResultConsent,
+      ...(metadata.supportsInputSharing === true ? { supportsInputSharing: true } : {}),
       requiresSendConfirmation: metadata.requiresSendConfirmation,
       requiresResultConsent: metadata.requiresResultConsent,
       requiresUnknownConfirmation: metadata.requiresUnknownConfirmation,
@@ -533,7 +536,7 @@ export function createWebLaunchBackground({
     if (status === 'permission-required') return { ok: false, code: 'PERMISSION_REQUIRED' };
     if (status === 'unavailable') return { ok: true, pending: true };
     if (abandonedLaunches.has(record.launchId)) return { ok: false, code: 'EXPIRED' };
-    const receipt = publicReceipt(response.receipt, record.result === 'final');
+    const receipt = publicReceipt(response.receipt, record.result === 'final' && !requestCancelled(record));
     if (!receipt || receipt.requestId !== record.requestId || receipt.launchId !== record.launchId)
       throw { code: 'INVALID_REQUEST' };
     return { ok: true, receipt };
@@ -1461,19 +1464,31 @@ export function createWebLaunchBackground({
           .finally(() => pendingClicks.delete(pendingKey)),
       );
     }
-    if (message.type === `${WEB_RUNTIME}cancel` && validIdentifier(message.requestId)) {
+    const cancelling = message.type === `${WEB_RUNTIME}cancel`;
+    if (message.type === `${WEB_RUNTIME}read` || cancelling) {
       const key = cancelKey(message, sender);
-      if (cancelled.size >= 256 && !cancelled.has(key)) {
+      const markCancelled = cancelling && validIdentifier(message.requestId);
+      if (markCancelled && cancelled.size >= 256 && !cancelled.has(key)) {
         reply({ ok: false, code: 'CAPACITY_EXCEEDED' });
         return false;
       }
-      cancelled.add(key);
-      void transaction(() => {
-        state.cancelled[key] = true;
-      });
+      documentObservations.set(key, (documentObservations.get(key) ?? 0) + 1);
+      if (markCancelled) {
+        cancelled.add(key);
+        void transaction(() => { state.cancelled[key] = true; }).catch(() => {});
+      }
+      return done(observe(message, sender).finally(() => {
+        const remaining = documentObservations.get(key) - 1;
+        if (remaining) {
+          documentObservations.set(key, remaining);
+          return;
+        }
+        documentObservations.delete(key);
+        const record = state?.requests[message.requestId];
+        if (cancelled.has(key) && (!record || terminal(record.response?.receipt)))
+          void transaction(() => {}).catch(() => {});
+      }));
     }
-    if ([`${WEB_RUNTIME}read`, `${WEB_RUNTIME}cancel`].includes(message.type))
-      return done(observe(message, sender));
     reply({ ok: false, code: 'INVALID_REQUEST' });
     return false;
   }

@@ -25,6 +25,7 @@ import {
   localizeSidePanel,
   sidePanelConnectionError,
   sidePanelText as t,
+  withSidePanelConnectionVersions,
 } from './modules/sidepanel-i18n.js';
 
 void initializeAppearance();
@@ -290,7 +291,7 @@ const client = new AppServerClient((method, params) => {
     refreshGeneration += 1;
     transportReady = false;
     setComposerReady(false);
-    errorLine.textContent = t('reconnecting');
+    errorLine.textContent = withSidePanelConnectionVersions(t('reconnecting'));
     errorLine.classList.remove('hidden');
     updateActivity();
   }
@@ -468,7 +469,9 @@ function setComposerReady(ready) {
 }
 
 function showError(error) {
-  errorLine.textContent = error instanceof Error ? error.message : String(error);
+  errorLine.textContent = ['discovery', 'socket', 'initialize'].includes(error?.stage)
+    ? sidePanelConnectionError(error.code)
+    : error instanceof Error ? error.message : String(error);
   errorLine.classList.remove('hidden');
 }
 

@@ -505,6 +505,7 @@ describe('website launch panel', () => {
       const { panel, sendMessage, onSubmitInput } = await mount({
         mode: 'send',
         result,
+        supportsInputSharing: true,
         automaticSendAllowed: true,
         shareAllowed: true,
       });
@@ -512,6 +513,7 @@ describe('website launch panel', () => {
       panel.ready();
       await panel.submit('confirmed');
       expect(calls(sendMessage, Message.Submit)).toHaveLength(1);
+      expect(calls(sendMessage, Message.Submit)[0]).not.toHaveProperty('shareInput');
       expect(onSubmitInput).toHaveBeenCalledExactlyOnceWith({
         launchId: 'launch-one',
         threadId: 'external-thread',
@@ -532,7 +534,7 @@ describe('website launch panel', () => {
     },
   );
 
-  it('returns the result from ordinary Send without a separate reminder or control', async () => {
+  it('can still confirm result sharing with a host that does not advertise input sharing', async () => {
     const { panel, sendMessage } = await mount({
       mode: 'send',
       result: 'final',
@@ -554,6 +556,26 @@ describe('website launch panel', () => {
     );
     expect(calls(sendMessage, Message.Submit)[0]).not.toHaveProperty('rememberSend');
     expect(calls(sendMessage, Message.Submit)[0]).not.toHaveProperty('rememberResult');
+    expect(calls(sendMessage, Message.Submit)[0]).not.toHaveProperty('shareInput');
+  });
+
+  it('names the recipient before sharing the manually submitted text', async () => {
+    const { panel, composer, input, sendMessage } = await mount({
+      result: 'final',
+      supportsInputSharing: true,
+      contextText: undefined,
+    });
+    const notice = document.querySelector<HTMLParagraphElement>('.web-launch-input-sharing')!;
+    expect(notice.hidden).toBe(false);
+    expect(notice.textContent).toContain(input.origin);
+    composer.prompt = 'Edited draft';
+    panel.edit('prompt');
+    await vi.waitFor(() => expect(panel.composerAction('external-thread')).toEqual({ type: 'send', disabled: false }));
+    await panel.submit('confirmed');
+    expect(calls(sendMessage, Message.Submit)[0]).toMatchObject({
+      submission: 'confirmed', shareInput: true, shareResult: true, input: { prompt: 'Edited draft' },
+    });
+    expect(notice.hidden).toBe(true);
   });
 
   it('keeps an edited Ask selection while waiting for the latest revision before sending', async () => {

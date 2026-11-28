@@ -666,7 +666,7 @@ describe('web launch background', () => {
     ).toHaveLength(1);
   });
 
-  it('drops an in-flight final result when permission is revoked before webpage delivery', async () => {
+  it('drops an in-flight input and result when permission is revoked before webpage delivery', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     await invoke(controller, launch);
     let release: (value: unknown) => void;
@@ -703,11 +703,65 @@ describe('web launch background', () => {
       ...reply,
       receipt: {
         ...reply.receipt,
+        request: { status: 'submitted' },
         execution: { status: 'completed', executionSettled: true },
+        input: { text: 'private edited prompt' },
         output: { status: 'available', text: 'private result' },
       },
     });
     expect(await pending).toEqual({ ok: false, code: 'LEASE_REVOKED' });
+  });
+
+  it('withholds a settled receipt body when the webpage cancels during the final document probe', async () => {
+    const controller = createWebLaunchBackground({ chromeApi: api, client });
+    await invoke(controller, launch);
+    const original = client.request.getMockImplementation()!;
+    let releaseProbe!: () => void;
+    let releaseCancel!: () => void;
+    const settled = {
+      ...reply.receipt,
+      receiptRevision: 2,
+      request: { status: 'submitted' },
+      execution: { status: 'completed', executionSettled: true },
+    };
+    client.request.mockImplementation(async method => {
+      if (method === WebLaunchMethod.Cancel)
+        return new Promise(resolve => {
+          releaseCancel = () => resolve({
+            ...reply,
+            receipt: { ...settled, receiptRevision: 3, output: { status: 'withheld' } },
+          });
+        });
+      if (method !== WebLaunchMethod.Read) return original(method);
+      api.tabs.sendMessage.mockImplementationOnce((_tab: number, message: { documentNonce: string }) =>
+        new Promise(resolve => {
+          releaseProbe = () => resolve({ active: true, documentNonce: message.documentNonce });
+        }),
+      );
+      return {
+        ...reply,
+        receipt: {
+          ...settled,
+          input: { text: 'confirmed text' },
+          output: { status: 'available', text: 'final response' },
+        },
+      };
+    });
+    const reference = { documentNonce: launch.documentNonce, requestId: launch.requestId, launchId: 'launch-1' };
+    const pendingRead = invoke(controller, { type: 'web-launch:document:read', ...reference });
+    await vi.waitFor(() => expect(releaseProbe).toBeTypeOf('function'));
+    const cancel = invoke(controller, { type: 'web-launch:document:cancel', ...reference });
+    await vi.waitFor(() => expect(releaseCancel).toBeTypeOf('function'));
+    releaseProbe();
+    try {
+      const response = await pendingRead;
+      expect(response.ok).toBe(true);
+      expect(response.receipt.input).toBeUndefined();
+      expect(response.receipt.output.text).toBeUndefined();
+    } finally {
+      releaseCancel();
+      await cancel;
+    }
   });
 
   it('lets trusted settings abandon a durable observation without requiring a local browser record', async () => {
@@ -1133,7 +1187,7 @@ describe('web launch background', () => {
     expect(restored.envelope.receipt.receiptRevision).toBe(2);
   });
 
-  it('never leaves a result body in session metadata when persistence fails', async () => {
+  it('delivers input and output to the document without storing them in session metadata', async () => {
     const controller = createWebLaunchBackground({ chromeApi: api, client });
     await invoke(controller, launch);
     const original = client.request.getMockImplementation()!;
@@ -1148,7 +1202,9 @@ describe('web launch background', () => {
         ...reply,
         receipt: {
           ...reply.receipt,
+          request: { status: 'submitted' },
           execution: { status: 'completed', executionSettled: true },
+          input: { text: 'input-must-never-persist' },
           output: { status: 'available', text: 'result-must-never-persist' },
         },
       };
@@ -1161,7 +1217,11 @@ describe('web launch background', () => {
       result: 'final',
     };
     expect((await invoke(controller, query)).ok).toBe(false);
-    expect((await invoke(controller, query)).ok).toBe(true);
+    expect(await invoke(controller, query)).toMatchObject({
+      ok: true,
+      receipt: { input: { text: 'input-must-never-persist' }, output: { text: 'result-must-never-persist' } },
+    });
+    expect(JSON.stringify(storage)).not.toContain('input-must-never-persist');
     expect(JSON.stringify(storage)).not.toContain('result-must-never-persist');
   });
 

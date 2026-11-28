@@ -1,7 +1,13 @@
+import { connectionVersions } from './modules/connection-versions.js';
 import { localizeOptions, t } from './modules/options-i18n.js';
 import { createWebLaunchOptions } from './modules/web-launch-options.js';
 
 localizeOptions();
+const { extensionVersion, desktopVersion } = connectionVersions();
+document.getElementById('connectionVersions').textContent = t('connectionVersions', {
+  extensionVersion: extensionVersion ?? t('versionUnavailable'),
+  desktopVersion: desktopVersion ?? t('versionUnavailable'),
+});
 const webLaunchOptions = createWebLaunchOptions({ document });
 const connectionStatus = document.getElementById('connectionStatus');
 const bootstrapStatus = document.getElementById('bootstrapStatus');
