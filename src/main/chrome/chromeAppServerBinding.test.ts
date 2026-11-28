@@ -507,6 +507,19 @@ describe('browser app-server observation lifecycle', () => {
     expect(f.api.subscribeThreadEvents).not.toHaveBeenCalled();
   });
 
+  it('advances retained display history on resume and keeps explicit reads on a full snapshot', async () => {
+    const { api, connect } = fixture();
+    vi.mocked(api.getTurnState).mockResolvedValue(null);
+    const { binding } = connect();
+    const params = { threadId: 'one', chrome: { includeDisplay: true } };
+
+    await binding.threads.resume!({ ...params, excludeTurns: true });
+    await binding.threads.read!({ ...params, includeTurns: false });
+
+    expect(api.getMessages).toHaveBeenNthCalledWith(1, 'one', { forceFullSnapshot: false });
+    expect(api.getMessages).toHaveBeenNthCalledWith(2, 'one', { forceFullSnapshot: true });
+  });
+
   it('returns loaded metadata after first resume and publishes the observed idle status after its response', async () => {
     const f = fixture();
     (await f.api.listSessions())[0].status = 'idle';

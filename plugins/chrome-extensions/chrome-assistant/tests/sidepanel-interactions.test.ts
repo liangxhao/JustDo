@@ -58,6 +58,7 @@ vi.mock('../conversation-overlay/modules/sidepanel-stream.js', () => ({
     cancelStart() {}
     bindRun() { return true; }
     finish() {}
+    finishCompleted() {}
   },
   foldChromeExtensionEntries: (entries: unknown) => entries,
   isChromeQuestionTool: () => false,

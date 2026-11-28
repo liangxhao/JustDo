@@ -1183,11 +1183,17 @@ describe('extension streaming DOM', () => {
     mock.request.mockImplementation((method: string) =>
       method === 'thread/resume' ? new Promise(resolve => reads.push(resolve)) : respond(method),
     );
+    mock.request.mockClear();
+    const prompt = document.getElementById('prompt') as HTMLTextAreaElement;
+    prompt.value = 'Keep writing';
+    prompt.dispatchEvent(new Event('input'));
     mock.notify('turn/completed', {
       threadId: 'one',
       turn: { id: 'run-1', status: 'completed', executionSettled: true, error: null },
     });
     await vi.waitFor(() => expect(reads.length).toBe(1));
+    expect(mock.request.mock.calls.map(([method]) => method)).toEqual(['thread/resume']);
+    expect((document.getElementById('send') as HTMLButtonElement).disabled).toBe(false);
     document.getElementById('refresh')!.click();
     await vi.waitFor(() => expect(reads.length).toBe(2));
     reads[1]({
@@ -1197,7 +1203,7 @@ describe('extension streaming DOM', () => {
           {
             id: 'history-1',
             items: [
-              ...thread.turns[0].items,
+              { ...thread.turns[0].items[0], inputRunId: 'run-1' },
               { type: 'agentMessage', text: 'Authoritative final reply' },
             ],
           },
@@ -1212,6 +1218,31 @@ describe('extension streaming DOM', () => {
     await new Promise(resolve => setTimeout(resolve, 0));
     expect(mock.request).not.toHaveBeenCalledWith('thread/unsubscribe', { threadId: 'one' });
     expect(document.querySelector('.assistant')?.textContent).toContain('Authoritative');
+  });
+
+  it('removes the previous conversation from view when the newly selected history fails', async () => {
+    const { respond } = await mountThread();
+    mock.request.mockImplementation((method: string, params: { threadId?: string }) => {
+      if (method === 'thread/list') return Promise.resolve({ data: [{ id: 'one' }, { id: 'two' }] });
+      if (method === 'thread/resume' && params.threadId === 'two') {
+        return Promise.reject(new Error('History unavailable'));
+      }
+      return respond(method);
+    });
+    document.getElementById('refresh')!.click();
+    const select = document.getElementById('session') as HTMLSelectElement;
+    await vi.waitFor(() => expect(select.options.length).toBe(3));
+
+    select.value = 'two';
+    select.dispatchEvent(new Event('change'));
+
+    await vi.waitFor(() => expect(document.getElementById('error')?.textContent).toContain('History unavailable'));
+    expect(select.value).toBe('two');
+    expect(document.querySelector('.message.user')).toBeNull();
+
+    select.value = 'one';
+    select.dispatchEvent(new Event('change'));
+    await vi.waitFor(() => expect(document.querySelector('.message.user')?.textContent).toContain('Question'));
   });
 
   it('retains partial text after stop even when its completion refresh is superseded', async () => {
@@ -1275,7 +1306,7 @@ describe('extension streaming DOM', () => {
                 {
                   id: 'history-1',
                   items: [
-                    ...thread.turns[0].items,
+                    { ...thread.turns[0].items[0], inputRunId: 'run-1' },
                     { type: 'agentMessage', text: 'Persisted final reply' },
                   ],
                 },
@@ -1290,6 +1321,51 @@ describe('extension streaming DOM', () => {
     );
     expect(document.querySelectorAll('.assistant')).toHaveLength(1);
   });
+
+  it.each(['before', 'after'] as const)(
+    'keeps the reply when the final history push arrives %s a successful stale resume',
+    async (order) => {
+      const { thread, respond, emit } = await mountThread();
+      const visibleText = () => document.getElementById('messages')?.textContent;
+      mock.notify('turn/started', { threadId: 'one', turn: { id: 'run-1', nativeRunId: 'run-1' } });
+      emit(1, 'assistant', { text: 'Streamed reply' });
+      await vi.waitFor(() => expect(visibleText()).toContain('Streamed reply'));
+
+      let resolveResume!: (result: { thread: typeof thread }) => void;
+      const stale = {
+        ...thread,
+        turns: [{ ...thread.turns[0], items: [{ ...thread.turns[0].items[0], inputRunId: 'run-1' },
+          { type: 'agentMessage', text: 'Before tool', phase: null },
+          { type: 'toolCall', toolUseId: 'tool-1', toolName: 'Read', status: 'completed' },
+        ] }],
+      };
+      mock.request.mockClear();
+      mock.request.mockImplementation((method: string) => method === 'thread/resume'
+        ? new Promise(resolve => { resolveResume = resolve; })
+        : respond(method));
+      mock.notify('chrome/thread/updated', {
+        threadId: 'one', activeTurn: { id: 'run-1', status: 'completed', executionSettled: true },
+      });
+      await vi.waitFor(() => expect(resolveResume).toBeTypeOf('function'));
+      const pushFinal = () => mock.notify('chrome/thread/updated', {
+        threadId: 'one',
+        thread: {
+          ...stale,
+          turns: [{ ...stale.turns[0], items: [...stale.turns[0].items,
+            { type: 'agentMessage', text: 'Durable edited reply', phase: 'final_answer' },
+          ] }],
+        },
+      });
+      if (order === 'before') pushFinal();
+      resolveResume({ thread: stale });
+      await vi.waitFor(() => expect(mock.request).toHaveBeenCalledWith('chrome/questions/list', { threadId: 'one' }));
+      expect(visibleText()).toContain(order === 'before' ? 'Durable edited reply' : 'Streamed reply');
+      if (order === 'after') pushFinal();
+
+      expect(visibleText()).toContain('Durable edited reply');
+      expect(visibleText()).not.toContain('Streamed reply');
+    },
+  );
 
   it.each([
     { text: '你好啊', count: 1 },

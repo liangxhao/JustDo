@@ -937,6 +937,24 @@ describe('extension live projection', () => {
     view.setHistory(history([{ type: 'agentMessage', text: 'Partial reply persisted' }]));
     expect(items(view)).toMatchObject([user, { text: 'Partial reply persisted' }]);
   });
+
+  it('keeps a completed live reply until a replacement belongs to its exact persisted input', () => {
+    const view = new ChromeExtensionStream('one');
+    const previous = history([{ type: 'agentMessage', text: 'Previous answer', phase: 'final_answer' }]);
+    view.setHistory(previous);
+    view.accept(agent(1, 'assistant', { text: 'Live current answer' }));
+
+    view.finishCompleted('input-1');
+
+    expect(items(view).map(item => item.text)).toContain('Live current answer');
+    view.setHistory({ ...previous, turns: [...previous.turns, { id: 'history-2', items: [
+      nativeUser, { type: 'agentMessage', text: 'Rewritten current answer', phase: 'final_answer' },
+    ] }] });
+    expect(items(view).filter(item => item.type === 'agentMessage').map(item => item.text)).toEqual([
+      'Previous answer', 'Rewritten current answer',
+    ]);
+  });
+
   it('shows growing text before history contains an assistant reply', () => {
     const view = new ChromeExtensionStream('one');
     view.setHistory(history());

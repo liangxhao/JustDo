@@ -378,6 +378,7 @@ export class ChromeExtensionStream {
   private completedRuns = new Set<string>();
   private failedLiveRunId: string | null = null;
   private settled = false;
+  private completedAwaitingHistory: string | null = null;
   private activeInput: OptimisticInput | null = null;
   private readonly optimisticInputs = new Map<string, OptimisticInput>();
   private readonly displayTurnIds = new Map<string, string>();
@@ -439,6 +440,7 @@ export class ChromeExtensionStream {
       retryAttempt < this.retryAttempt
     )
       return false;
+    if (this.completedAwaitingHistory) this.finish();
     const previous = this.boundRunId ?? this.state.activeTurn?.runId;
     if (retryAttempt > this.retryAttempt && previous) {
       if (previous === runId) return false;
@@ -706,6 +708,11 @@ export class ChromeExtensionStream {
     return { ...history, turns: this.projectOptimisticInputs(turns) };
   }
 
+  finishCompleted(turnId: string): void {
+    this.completedAwaitingHistory = turnId;
+    this.finish(true);
+  }
+
   finish(preserveUnpersisted = false): void {
     this.pendingRunEvents = null;
     this.pendingRunChars = 0;
@@ -720,17 +727,33 @@ export class ChromeExtensionStream {
     if (this.completedRuns.size > 24)
       this.completedRuns.delete(this.completedRuns.values().next().value!);
     if (preserveUnpersisted && this.state.activeTurn?.items.length) {
+      const completedTurnIndex = this.completedAwaitingHistory
+        ? this.history.turns.findIndex(turn => turn.items.some(item =>
+          !item.pendingInput && readInputRunId(item) === this.completedAwaitingHistory,
+        ))
+        : -1;
+      if (completedTurnIndex >= 0) this.anchor = completedTurnIndex;
       const historical =
         this.history.turns[this.anchor ?? Math.max(0, this.history.turns.length - 1)]?.items ?? [];
       const live = projectLiveItems(this.state.activeTurn, false);
       const { covered } = reconcileItems(historical, live);
-      if (!covered) {
+      // A rewritten final answer may differ from the live text. Use it only
+      // after anchoring to the exact persisted input and final tool segment.
+      const hasDurableAnswer = completedTurnIndex >= 0 && historical.reduce((hasAnswer, item) => {
+        if (item.type === 'toolCall' || item.type === 'phaseBoundary') return false;
+        return hasAnswer || (item.type === 'agentMessage' && !item.display?.nativeFailure &&
+          !item.display?.stopReason && !item.display?.sourceSegmentId &&
+          (item.phase === 'final_answer' || (item.phase !== 'commentary' && Boolean(itemText(item).trim()))));
+      }, false);
+      if (!covered && !hasDurableAnswer) {
         this.settled = true;
         if (this.failedLiveRunId !== this.state.activeTurn.runId) {
           for (const item of this.state.activeTurn.items) {
             if (item.type === 'tool' && item.status === 'running') item.status = 'interrupted';
             if (item.type === 'thinking' && item.status === 'running') item.status = 'interrupted';
-            if (item.type === 'content' && item.status === 'streaming') item.status = 'interrupted';
+            if (item.type === 'content' && item.status === 'streaming') {
+              item.status = this.completedAwaitingHistory ? 'completed' : 'interrupted';
+            }
           }
         }
         return;
@@ -770,6 +793,7 @@ export class ChromeExtensionStream {
     this.agentTextRun = null;
     this.anchor = null;
     this.settled = false;
+    this.completedAwaitingHistory = null;
     this.failedLiveRunId = null;
     this.activeInput = null;
   }

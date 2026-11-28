@@ -93,6 +93,8 @@ let composerReady = false;
 let lastPermissionMode = '';
 let refreshGeneration = 0;
 let currentEntries = [];
+let renderedThreadId = '';
+let lastPushedDisplay;
 let pendingUserMessage = null;
 let subscribedThreadId = '';
 const streamViews = new Map();
@@ -227,10 +229,6 @@ function projectThreadMessages(thread, threadId = thread.id) {
   });
 }
 
-function renderHistory(thread) {
-  renderDisplayHistory(chromeDisplayThread(thread));
-}
-
 function renderDisplayHistory(display) {
   if (!display || typeof display.id !== 'string' || !Array.isArray(display.turns)) return;
   const thread = display;
@@ -283,27 +281,21 @@ const client = new AppServerClient((method, params) => {
       }, 40);
     }
   }
-  if (method === 'connection/closed') {
+  if (method === 'connection/closed' || method === 'connection/failed') {
     clearQuestions();
     workspace.invalidate();
     draftWorkspaceSelection = null;
     approvals.cancelAll();
     refreshGeneration += 1;
+    subscribedThreadId = '';
+    lastPushedDisplay = undefined;
     transportReady = false;
     setComposerReady(false);
-    errorLine.textContent = withSidePanelConnectionVersions(t('reconnecting'));
+    errorLine.textContent = method === 'connection/closed'
+      ? withSidePanelConnectionVersions(t('reconnecting'))
+      : sidePanelConnectionError(params?.code);
     errorLine.classList.remove('hidden');
     updateActivity();
-  }
-  if (method === 'connection/failed') {
-    clearQuestions();
-    workspace.invalidate();
-    draftWorkspaceSelection = null;
-    approvals.cancelAll();
-    transportReady = false;
-    setComposerReady(false);
-    errorLine.textContent = sidePanelConnectionError(params?.code);
-    errorLine.classList.remove('hidden');
   }
   if (method === 'connection/reconnected') {
     // Completion may have happened while disconnected. Rehydrate from Gateway
@@ -325,8 +317,11 @@ const client = new AppServerClient((method, params) => {
     const expectedTurnId =
       pendingSubmissions.get(params.threadId)?.clientTurnId || knownTurns.get(params.threadId)?.id;
     const settled = applyTurnObservation(params.threadId, params.activeTurn, expectedTurnId);
-    if (params.display?.id === params.threadId) renderDisplayHistory(params.display);
-    if (settled) void refreshAll(params.threadId);
+    if (params.display?.id === params.threadId && Array.isArray(params.display.turns)) {
+      lastPushedDisplay = params.display;
+      renderDisplayHistory(params.display);
+    }
+    if (settled) void refreshCurrentHistory(params.threadId);
   }
   if (method === 'turn/completed') {
     if (!isSettledTurnNotification(params)) return;
@@ -338,7 +333,7 @@ const client = new AppServerClient((method, params) => {
       return;
     }
     recordTurnCompletion(params.threadId, params.turn);
-    if (params.threadId === sessionSelect.value) void refreshAll(params.threadId);
+    if (params.threadId === sessionSelect.value) void refreshCurrentHistory(params.threadId);
   }
 }, { requestHandler: (request, options) => approvals.request(request, options) });
 
@@ -485,11 +480,20 @@ function renderMessages(entries) {
 }
 
 function renderThreadMessages(entries, threadId = sessionSelect.value) {
+  if (threadId !== sessionSelect.value) return;
+  renderedThreadId = threadId;
   currentEntries = entries;
   renderMessages(pendingUserMessage?.threadId === threadId
     ? [...entries, pendingUserMessage.entry]
     : entries);
   updateActivity();
+}
+
+function renderSelectedThread() {
+  const threadId = sessionSelect.value;
+  if (renderedThreadId === threadId) return;
+  const view = streamViews.get(threadId);
+  renderThreadMessages(view ? projectThreadMessages(view.project()) : [], threadId);
 }
 
 function showPendingUserMessage(threadId, text, rawMessage) {
@@ -530,6 +534,7 @@ async function refreshSessions(preferredSessionId, generation) {
   }
   if (keepDraft) sessionSelect.append(draftOption);
   sessionSelect.value = selectedThread || keepDraft ? current : '';
+  renderSelectedThread();
   if (previousSelection !== sessionSelect.value) {
     draftPermissionSelection = null;
     approvals.cancelAll();
@@ -641,6 +646,7 @@ async function refreshMessages(threadId, generation) {
     pendingSubmissions.get(threadId)?.clientTurnId ||
     knownTurns.get(threadId)?.id ||
     (activeThreadId === threadId ? activeTurnId : '');
+  const displayBeforeRead = lastPushedDisplay;
   const result = await client.request('thread/resume', {
     excludeTurns: true,
     threadId,
@@ -671,12 +677,17 @@ async function refreshMessages(threadId, generation) {
   const completed = pendingCompletions.get(threadId);
   pendingCompletions.delete(threadId);
   const currentTurnId = knownTurns.get(threadId)?.id || pendingSubmissions.get(threadId)?.clientTurnId;
+  // A pushed display observed during the read must survive a late resume
+  // response. Still reconcile the response's exact turn and subscription.
+  const display = lastPushedDisplay !== displayBeforeRead && lastPushedDisplay?.id === threadId
+    ? lastPushedDisplay
+    : chromeDisplayThread(result.thread);
   if (completed && (!currentTurnId || currentTurnId === completed.id)) {
     const view = streamView(threadId);
-    const display = chromeDisplayThread(result.thread);
     if (completed.status === 'failed') view.markFailed(completed.nativeRunId);
     view.setHistory(display, true);
-    view.finish((completed.status === 'interrupted' || completed.status === 'failed') && !nextRun);
+    if (completed.status === 'completed' && !nextRun) view.finishCompleted(completed.id);
+    else view.finish(!nextRun);
     renderThreadMessages(projectThreadMessages(view.project()), threadId);
     const message = completed.error?.message;
     if (message) {
@@ -684,7 +695,7 @@ async function refreshMessages(threadId, generation) {
       else if (errorLine.textContent === message) clearError();
     }
   } else {
-    renderHistory(result.thread);
+    renderDisplayHistory(display);
   }
   if (nextRun) applyTurnObservation(threadId, observation, observedTurnId);
 }
@@ -722,15 +733,43 @@ function applyTurnObservation(threadId, observation, expectedTurnId) {
   return false;
 }
 
+function pendingTurnFailure(threadId) {
+  if (threadId !== sessionSelect.value) return undefined;
+  const completion = pendingCompletions.get(threadId);
+  return completion?.status === 'failed' ? completion.error?.message : undefined;
+}
+
+function showUncertainTurn(threadId) {
+  if (pendingSubmissions.get(threadId)?.uncertain) showError(t('unknownSend'));
+  else if (knownTurns.get(threadId)?.uncertain) showError(t('unknownExecution'));
+}
+
+async function refreshCurrentHistory(threadId) {
+  if (threadId !== sessionSelect.value) return;
+  // During a full refresh its replacement must also finish preparing the
+  // composer. A pre-terminal read must not consume a newly observed completion.
+  if (!transportReady || !composerReady || subscribedThreadId !== threadId) {
+    await refreshAll(threadId);
+    return;
+  }
+  const generation = ++refreshGeneration;
+  if (errorLine.textContent !== pendingTurnFailure(threadId)) clearError();
+  try {
+    await refreshMessages(threadId, generation);
+    if (generation === refreshGeneration && threadId === sessionSelect.value)
+      showUncertainTurn(threadId);
+  } catch (error) {
+    if (generation === refreshGeneration && threadId === sessionSelect.value)
+      showError(pendingTurnFailure(threadId) ?? error);
+  }
+}
+
 async function refreshAll(preferredSessionId) {
   const generation = ++refreshGeneration;
   setComposerReady(false);
-  const pendingFailure = () => {
-    if (preferredSessionId !== sessionSelect.value) return undefined;
-    const completion = pendingCompletions.get(preferredSessionId);
-    return completion?.status === 'failed' ? completion.error?.message : undefined;
-  };
-  if (errorLine.textContent !== pendingFailure()) clearError();
+  renderSelectedThread();
+  const currentTurnFailure = () => pendingTurnFailure(preferredSessionId ?? sessionSelect.value);
+  if (errorLine.textContent !== currentTurnFailure()) clearError();
   try {
     if (!(await refreshSessions(preferredSessionId, generation))) return false;
     const threadId = sessionSelect.value;
@@ -741,13 +780,12 @@ async function refreshAll(preferredSessionId) {
     if (generation === refreshGeneration && sessionSelect.value === threadId) {
       transportReady = true;
       setComposerReady(true);
-      if (pendingSubmissions.get(threadId)?.uncertain) showError(t('unknownSend'));
-      else if (knownTurns.get(threadId)?.uncertain) showError(t('unknownExecution'));
+      showUncertainTurn(threadId);
       updateActivity();
       return true;
     }
   } catch (error) {
-    if (generation === refreshGeneration) showError(pendingFailure() ?? error);
+    if (generation === refreshGeneration) showError(currentTurnFailure() ?? error);
   }
   return false;
 }
@@ -1451,7 +1489,7 @@ webLaunchPanel = createWebLaunchPanel({
     ) {
       recordTurnCompletion(threadId, { id: turnId, status: execution.status });
       if (response.isCurrentLaunch === false && threadId === sessionSelect.value)
-        void refreshAll(threadId);
+        void refreshCurrentHistory(threadId);
     }
   },
   onChange: () => {

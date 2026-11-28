@@ -9,7 +9,7 @@ import {
   mergeGatewayHistoryPages,
   SESSION_HISTORY_SNAPSHOT_CACHE_LIMIT,
 } from './runtimeAdapterSupport';
-import { fetchNativePendingHistory } from './runtimePendingHistory';
+import { fetchNativePendingHistory, type PendingHistoryFailure } from './runtimePendingHistory';
 import {
   parseChatHistoryCursorResultV2026_10_6,
   parseChatHistoryResultV2026_10_6,
@@ -25,6 +25,25 @@ export interface RuntimeHistoryContext {
 }
 export type RuntimeSessionHistory = ScheduledTaskSessionHistory & { pendingInputs?: NativePendingInput[] };
 
+type HistoryFailure = PendingHistoryFailure | {
+  stage: 'connection';
+  reason: 'gateway_unavailable' | 'gateway_changed';
+  attempts?: undefined;
+};
+const HISTORY_WARNING_INTERVAL_MS = 30_000;
+const lastHistoryWarning = new Map<string, number>();
+
+function warnPendingHistoryFailure(failure: HistoryFailure, forceFullSnapshot: boolean, startedAt: number): void {
+  const now = performance.now();
+  const category = `${failure.stage}/${failure.reason}`;
+  const last = lastHistoryWarning.get(category);
+  if (last !== undefined && now - last < HISTORY_WARNING_INTERVAL_MS) return;
+  lastHistoryWarning.set(category, now);
+  console.warn(`[OpenClawHistory] Pending history read failed ${JSON.stringify({
+    ...failure, forceFullSnapshot, elapsedMs: Math.round(now - startedAt),
+  })}`);
+}
+
 export async function fetchSessionHistoryByKey(
   this: RuntimeHistoryContext,
   sessionKey: string,
@@ -38,14 +57,30 @@ export async function fetchSessionHistoryByKey(
   } = {},
 ): Promise<RuntimeSessionHistory | null> {
   const client = this.gatewayClient;
-  if (!client) return null;
   if (options.includePendingInputs) {
+    const startedAt = performance.now();
+    const fullSnapshot = options.forceFullSnapshot === true;
+    if (!client) {
+      warnPendingHistoryFailure({ stage: 'connection', reason: 'gateway_unavailable' }, fullSnapshot, startedAt);
+      return null;
+    }
     try {
-      return await fetchNativePendingHistory(client, sessionKey,
-        options.forceFullSnapshot ? undefined : this.sessionHistorySnapshots.get(sessionKey),
-        (messages, cursor) => this.setSessionHistorySnapshot(sessionKey, messages, cursor));
-    } catch { return null; }
+      const history = await fetchNativePendingHistory(client, sessionKey,
+        fullSnapshot ? undefined : this.sessionHistorySnapshots.get(sessionKey),
+        (messages, cursor) => {
+          if (this.gatewayClient === client) this.setSessionHistorySnapshot(sessionKey, messages, cursor);
+        },
+        failure => {
+          if (this.gatewayClient === client) warnPendingHistoryFailure(failure, fullSnapshot, startedAt);
+        });
+      if (this.gatewayClient === client) return history;
+    } catch {
+      if (this.gatewayClient === client) return null;
+    }
+    warnPendingHistoryFailure({ stage: 'connection', reason: 'gateway_changed' }, fullSnapshot, startedAt);
+    return null;
   }
+  if (!client) return null;
   if (options.scheduledTaskRun) {
     const runMatch = /^agent:[^:]+:cron:[^:]+:run:([^:]+)$/.exec(sessionKey);
     if (runMatch) {

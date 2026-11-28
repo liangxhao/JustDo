@@ -21815,6 +21815,7 @@ var ChromeExtensionStream = class {
   completedRuns = /* @__PURE__ */ new Set();
   failedLiveRunId = null;
   settled = false;
+  completedAwaitingHistory = null;
   activeInput = null;
   optimisticInputs = /* @__PURE__ */ new Map();
   displayTurnIds = /* @__PURE__ */ new Map();
@@ -21863,6 +21864,7 @@ var ChromeExtensionStream = class {
   bindRun(runId, startedAt = Date.now(), retryAttempt = 0) {
     if (!runId.trim() || this.completedRuns.has(runId) || !Number.isSafeInteger(retryAttempt) || retryAttempt < this.retryAttempt)
       return false;
+    if (this.completedAwaitingHistory) this.finish();
     const previous = this.boundRunId ?? this.state.activeTurn?.runId;
     if (retryAttempt > this.retryAttempt && previous) {
       if (previous === runId) return false;
@@ -22078,6 +22080,10 @@ var ChromeExtensionStream = class {
     });
     return { ...history, turns: this.projectOptimisticInputs(turns) };
   }
+  finishCompleted(turnId) {
+    this.completedAwaitingHistory = turnId;
+    this.finish(true);
+  }
   finish(preserveUnpersisted = false) {
     this.pendingRunEvents = null;
     this.pendingRunChars = 0;
@@ -22092,16 +22098,26 @@ var ChromeExtensionStream = class {
     if (this.completedRuns.size > 24)
       this.completedRuns.delete(this.completedRuns.values().next().value);
     if (preserveUnpersisted && this.state.activeTurn?.items.length) {
+      const completedTurnIndex = this.completedAwaitingHistory ? this.history.turns.findIndex((turn) => turn.items.some(
+        (item) => !item.pendingInput && readInputRunId(item) === this.completedAwaitingHistory
+      )) : -1;
+      if (completedTurnIndex >= 0) this.anchor = completedTurnIndex;
       const historical = this.history.turns[this.anchor ?? Math.max(0, this.history.turns.length - 1)]?.items ?? [];
       const live = projectLiveItems(this.state.activeTurn, false);
       const { covered } = reconcileItems(historical, live);
-      if (!covered) {
+      const hasDurableAnswer = completedTurnIndex >= 0 && historical.reduce((hasAnswer, item) => {
+        if (item.type === "toolCall" || item.type === "phaseBoundary") return false;
+        return hasAnswer || item.type === "agentMessage" && !item.display?.nativeFailure && !item.display?.stopReason && !item.display?.sourceSegmentId && (item.phase === "final_answer" || item.phase !== "commentary" && Boolean(itemText(item).trim()));
+      }, false);
+      if (!covered && !hasDurableAnswer) {
         this.settled = true;
         if (this.failedLiveRunId !== this.state.activeTurn.runId) {
           for (const item of this.state.activeTurn.items) {
             if (item.type === "tool" && item.status === "running") item.status = "interrupted";
             if (item.type === "thinking" && item.status === "running") item.status = "interrupted";
-            if (item.type === "content" && item.status === "streaming") item.status = "interrupted";
+            if (item.type === "content" && item.status === "streaming") {
+              item.status = this.completedAwaitingHistory ? "completed" : "interrupted";
+            }
           }
         }
         return;
@@ -22135,6 +22151,7 @@ var ChromeExtensionStream = class {
     this.agentTextRun = null;
     this.anchor = null;
     this.settled = false;
+    this.completedAwaitingHistory = null;
     this.failedLiveRunId = null;
     this.activeInput = null;
   }

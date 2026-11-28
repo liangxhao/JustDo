@@ -28,13 +28,66 @@ test('reads all pending pages independently and never publishes pending bodies i
   expect(JSON.stringify(publish.mock.calls)).not.toContain('pending-');
 });
 
-test('normal polling preserves cached canonical history and does not walk old history offsets', async () => {
-  const request = vi.fn(async (_method: string, params: Record<string, unknown>) =>
-    params.cursor ? delta(params) : tail([pending(1)], { hasMore: true, nextOffset: 500, totalMessages: 1000 }));
+test('advances cached history with native delta envelopes and consumed receipts without paging old offsets', async () => {
+  const user = { role: 'user', content: 'accepted input', __openclaw: { id: 'event-1', seq: 2 } };
+  const assistant = { role: 'assistant', content: 'new reply', __openclaw: { id: 'event-2', seq: 3 } };
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) => params.cursor
+    ? delta(params, {
+      messages: [user, assistant].map(message => ({
+        messageId: message.__openclaw.id, messageSeq: message.__openclaw.seq, message,
+      })),
+      inputReceipts: [{ runId: 'run-1', state: 'consumed', consumedByEventId: 'event-1' }],
+    })
+    : tail([pending(1)], { hasMore: true, nextOffset: 500, totalMessages: 1000 }));
   const cached = { messages: [{ role: 'user', content: 'cached-history' }], deltaCursor: 'previous' };
   const result = await fetchNativePendingHistory({ request } as never, 'key', cached);
-  expect(result.messages[0]).toEqual(cached.messages[0]);
+  expect(result.messages).toEqual([...cached.messages, user, assistant]);
+  expect(result.pendingInputs).toEqual([]);
   expect(request.mock.calls.some(([, params]) => params.offset !== undefined)).toBe(false);
+  expect(request.mock.calls.filter(([, params]) => params.cursor)).toEqual([
+    ['chat.history', { sessionKey: 'key', cursor: 'previous', inputRunIds: ['run-1'] }],
+  ]);
+});
+
+test('rereads a full snapshot after the retained cursor resets without an identity', async () => {
+  const cached = { messages: [{ role: 'user', content: 'retired history' }], deltaCursor: 'previous' };
+  const request = vi.fn(async (_method: string, params: Record<string, unknown>) =>
+    params.cursor === 'previous' ? { kind: 'reset' } : params.cursor ? delta(params) : tail());
+
+  const result = await fetchNativePendingHistory({ request } as never, 'key', cached);
+
+  expect(result.messages).toEqual(tail().messages);
+  expect(request).toHaveBeenCalledWith('chat.history', { sessionKey: 'key', limit: 1000 });
+});
+
+test('confirms a complete cursorless history against the active leaf and never caches it', async () => {
+  const publish = vi.fn();
+  const sessionInfo = { activeLeafEntryId: 'leaf-2', lifecycleRevision: 'revision' };
+  const partialErrorTail = tail([pending(1)], {
+    deltaCursor: undefined,
+    sessionInfo,
+  });
+  const request = vi.fn().mockResolvedValueOnce({
+    ...partialErrorTail, sessionInfo: { ...sessionInfo, activeLeafEntryId: 'leaf-1' },
+  }).mockResolvedValue({ ...partialErrorTail, inputReceipts: [{ runId: 'run-1', state: 'pending' }] });
+
+  const result = await fetchNativePendingHistory({ request } as never, 'key', undefined, publish);
+
+  expect(result.messages).toEqual(partialErrorTail.messages);
+  expect(result.pendingInputs.map(input => input.id)).toEqual(['1']);
+  expect(request.mock.calls.filter(([, params]) => params.inputRunIds)).toHaveLength(2);
+  expect(publish).not.toHaveBeenCalled();
+});
+
+test('restarts a full snapshot when an older offset resets to the latest page', async () => {
+  const request = vi.fn().mockResolvedValueOnce(tail([], { hasMore: true, nextOffset: 1, totalMessages: 2 }))
+    .mockResolvedValueOnce(tail([], { windowReset: true, totalMessages: 2 }))
+    .mockImplementation(async (_method: string, params: Record<string, unknown>) =>
+      params.cursor ? delta(params) : tail([], { messages: [{ role: 'assistant', content: 'new projection' }] }));
+
+  const result = await fetchNativePendingHistory({ request } as never, 'key');
+
+  expect(result.messages).toEqual([{ role: 'assistant', content: 'new projection' }]);
 });
 
 test('rejects receipts from a reset physical session even when its delta cursor is valid', async () => {

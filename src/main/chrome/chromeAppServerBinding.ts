@@ -599,7 +599,7 @@ export class ChromeAppServerHub {
     }
   }
 
-  private async readThread(peer: ChromePeer, params: AppServerParams): Promise<AppServerResult> {
+  private async readThread(peer: ChromePeer, params: AppServerParams, forceFullSnapshot = true): Promise<AppServerResult> {
     const threadId = this.threadId(params);
     const thread = this.selectedThread(peer, await this.requireThread(threadId));
     this.assertPeerActive(peer);
@@ -607,7 +607,7 @@ export class ChromeAppServerHub {
     const chrome = this.chromeParams(params);
     const messages =
       optionalBoolean(chrome, 'includeDisplay') === true
-        ? await this.api.getMessages(threadId, { forceFullSnapshot: true })
+        ? await this.api.getMessages(threadId, { forceFullSnapshot })
         : undefined;
     this.assertPeerActive(peer);
     const turnId = optionalString(chrome, 'turnId');
@@ -690,9 +690,11 @@ export class ChromeAppServerHub {
       peer.models.set(threadId, model);
     }
     const result = await this.openResult(peer, thread);
+    // A retained Gateway cursor advances against the authenticated native history.
+    // A cache miss or native reset still falls back to a full snapshot.
     const read = await this.readThread(peer, {
       threadId, includeTurns: !(optionalBoolean(params, 'excludeTurns') ?? false), chrome: this.chromeParams(params),
-    });
+    }, false);
     result.thread = read.thread;
     const activeTurn = ((read.thread as AppServerResult).chrome as { activeTurn?: ChromeExtensionTurnState }).activeTurn;
     const needsPoll = activeTurn && !activeTurn.executionSettled;

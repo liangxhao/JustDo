@@ -501,6 +501,32 @@ test('a late cancelled cursor reply cannot populate the shared history snapshot'
   expect(request).toHaveBeenLastCalledWith('chat.history', { sessionKey: 'exact-key', limit: 1000 });
 });
 
+test('records a bounded pending-history failure without forwarding the native error or session key', async () => {
+  const { store } = createEmptyStore();
+  const adapter = new OpenClawRuntimeAdapter(store, {});
+  const request = vi.fn().mockRejectedValue(Object.assign(new Error('private native diagnostic\nsecond line'), {
+    code: 'CLIENT_TIMEOUT',
+  }));
+  (adapter as unknown as { gatewayClient: GatewayClientLike }).gatewayClient = { request } as unknown as GatewayClientLike;
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const read = () => adapter.fetchSessionHistoryByKey('private-session-key', undefined, { includePendingInputs: true });
+    await expect(read()).resolves.toBeNull();
+    await expect(read()).resolves.toBeNull();
+
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [line] = warn.mock.calls[0];
+    expect(line).toMatch(/^\[OpenClawHistory\] Pending history read failed /);
+    expect(JSON.parse(line.slice(line.indexOf('{')))).toMatchObject({
+      stage: 'initial', reason: 'gateway_timeout', attempts: 1,
+    });
+    expect(line).not.toMatch(/private|[\r\n]/);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
 test('removes a deleted child after a complete native session read', async () => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
