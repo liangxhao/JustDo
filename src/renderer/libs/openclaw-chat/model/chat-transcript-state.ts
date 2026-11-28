@@ -99,6 +99,8 @@ export interface AssistantTurn {
   lifecycleGeneration: string | null;
   sessionKey: string;
   status: TurnStatus;
+  /** Reply from the exact settled output-cutoff lifecycle. Null is an explicit empty or silent reply. */
+  outputCutoffReply?: string | null;
   lastAgentSeq: number;
   /** Recovery snapshots are sparse and must never advance the live event fence. */
   lastSnapshotAgentSeq?: number;

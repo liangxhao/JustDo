@@ -2033,6 +2033,8 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.compaction).toMatchObject({
       mode: 'safeguard',
       timeoutSeconds: 30 * 60,
+      keepRecentTokens: 8_000,
+      recentTurnsPreserve: 1,
       memoryFlush: {
         enabled: false,
       },
@@ -2040,7 +2042,6 @@ describe('OpenClaw auth logout config sync', () => {
         enabled: true,
       },
     });
-    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
     expect(config.agents.defaults.modelSelectionScope).toBe('session');
   });
 
@@ -2844,7 +2845,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.secrets.providers).not.toHaveProperty('justdo_login');
     expect(config.customFeature).toEqual(existing.customFeature);
     expect(config.models.catalogRefresh).toEqual({ enabled: false });
-    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
+    expect(config.agents.defaults.compaction).toMatchObject({ keepRecentTokens: 8_000, recentTurnsPreserve: 1 });
     expect(config.agents.defaults.modelSelectionScope).toBe('session');
     expect(config.agents.defaults.subagents).toMatchObject({
       allowAgents: ['worker'],
@@ -3240,7 +3241,7 @@ describe('OpenClaw auth logout config sync', () => {
     expect(config.agents.defaults.model.primary).toBe('custom-provider/custom-model');
     expect(config.agents.defaults).not.toHaveProperty('thinkingDefault');
     expect(config.agents.defaults.compaction.memoryFlush).toEqual({ enabled: false });
-    expect(config.agents.defaults.compaction).not.toHaveProperty('keepRecentTokens');
+    expect(config.agents.defaults.compaction).toMatchObject({ keepRecentTokens: 8_000, recentTurnsPreserve: 1 });
     expect(config.gateway).toEqual({ mode: 'local', bind: 'loopback', customSetting: 'keep-me', controlUi: { enabled: false, allowExternalEmbedUrls: true } });
     expect(config.customFeature).toEqual({ enabled: true });
 

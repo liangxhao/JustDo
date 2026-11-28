@@ -100,6 +100,12 @@ const EXPECTED_PATCH_FILES = [
   '040-plugin-recovery-missing-source.cjs',
   '041-mcp-app-view-keepalive.cjs',
   '042-subagent-settle-deduplication.cjs',
+  '043-empty-split-summary-recovery.cjs',
+  '044-midturn-hard-context-limit.cjs',
+  '045-midturn-truncation-progress.cjs',
+  '046-settled-finalization-provider-retry.cjs',
+  '047-settled-finalization-prepared-history.cjs',
+  '048-settled-finalization-output-cutoff.cjs',
 ] as const;
 
 const UPSTREAM_CONTRACTS = [

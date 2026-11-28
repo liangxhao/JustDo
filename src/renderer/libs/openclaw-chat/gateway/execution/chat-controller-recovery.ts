@@ -36,6 +36,7 @@ import {
   reduceAgentEvent,
   reduceChatEvent,
 } from '@/libs/openclaw-chat/model/turn/agent-event-reducer';
+import { rememberOutputCutoffReply } from '@/libs/openclaw-chat/model/turn/failed-run-message';
 import { isPresentPlanToolName } from '@/libs/openclaw-chat/model/turn/plan-preview';
 import {
   retainYieldedActivity,
@@ -1270,6 +1271,10 @@ export function handleTimelineEvent(
     const eventActiveTurn = eventTargetsBackgroundSession
       ? (cachedEventSession?.[1].transcript.activeTurn ?? null)
       : this.state.transcript.activeTurn;
+    // The separate chat.error can already have closed the display turn when
+    // this same-run lifecycle snapshot arrives. Record it before that fence.
+    const cutoffReplyChanged = rememberOutputCutoffReply(eventActiveTurn, normalized.event);
+    if (cutoffReplyChanged && !eventTargetsBackgroundSession && eventActiveTurn?.status === 'error') this.notify();
     if (
       isDormantAnnounceRun(normalized.event.runId, eventActiveTurn) &&
       readRunProgress(normalized.event.stream, normalized.event.data)

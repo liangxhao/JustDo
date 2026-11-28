@@ -252,16 +252,19 @@ export class GoalContinuationCoordinator {
     runId: string,
     nativeSessionId: string,
     nativeLifecycleRevision?: string | null,
+    currentPredecessorWithoutGoal = false,
   ): boolean {
     const sessionKey = this.sessionKeys.get(sessionId);
-    if (!runId || !nativeSessionId || this.stoppedSessionIds.has(sessionId)) return false;
+    if (!runId || !nativeSessionId || this.stoppedSessionIds.has(sessionId) ||
+      this.processedTerminalRuns.has(runId)) return false;
+    const current = this.snapshots.get(sessionId);
     // A chat with no observed Goal execution needs no Goal owner handoff.
     if (!sessionKey || !this.latestRunIds.has(sessionId)) {
-      return !this.snapshots.get(sessionId)?.goalId;
+      return !current?.goalId;
     }
-    if (
-      this.latestRunIds.get(sessionId) !== predecessorRunId ||
-      this.processedTerminalRuns.has(runId)) return false;
+    // A pre-start failure leaves the last observed lifecycle on the older turn.
+    if (this.latestRunIds.get(sessionId) !== predecessorRunId)
+      return currentPredecessorWithoutGoal && !current?.goalId;
     const target = this.continuationRuns.get(predecessorRunId) ??
       this.retryTargets.get(sessionId) ?? this.sessionTargets.get(sessionKey);
     if (target && (target.sessionId !== nativeSessionId ||
@@ -280,7 +283,6 @@ export class GoalContinuationCoordinator {
         : { lifecycleRevision: target.lifecycleRevision }),
     });
     this.latestRunIds.set(sessionId, runId);
-    const current = this.snapshots.get(sessionId);
     this.publish({
       sessionId,
       ...(current?.goalId ? { goalId: current.goalId } : {}),

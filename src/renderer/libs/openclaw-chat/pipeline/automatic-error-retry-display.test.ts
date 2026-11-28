@@ -1,3 +1,4 @@
+import { isKnownAutomaticRetryFailureCopy } from '@shared/openclaw/automaticErrorRetryDisplay';
 import { FAILED_RUN_MESSAGE_FLAG } from '@shared/openclaw/runFailureDisplay';
 import { describe, expect, it } from 'vitest';
 
@@ -28,8 +29,8 @@ describe('automatic error retry display projection', () => {
 
   it('filters active terminal copy without changing native status, valid content or tools', () => {
     const terminal = { type: 'terminal', status: 'error', message: 'terminal failure' };
-    const useful = { type: 'content', text: 'Useful partial reply' };
-    const echoed = { type: 'content', text: 'terminal failure' };
+    const useful = { type: 'content', runId: 'run', text: 'Useful partial reply' };
+    const echoed = { type: 'content', runId: 'run', text: 'terminal failure' };
     const tool = { type: 'tool', id: 'tool' };
     const turn = { runId: 'run', status: 'error', items: [useful, echoed, tool, terminal], toolById: new Map() } as unknown as AssistantTurn;
     const projected = projectRetryFailureTurn(turn, new Set(['run']))!;
@@ -59,6 +60,9 @@ describe('automatic error retry display projection', () => {
   it.each([
     'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.',
     'This conversation is too long for the model. Try /compact, or start a new conversation with /new.',
+    '⚠️ Auto-compaction failed before the next model request. Try again or run /compact. Completed tool actions were not replayed; verify their effects before retrying.',
+    'Your request couldn\'t be completed: Auto-compaction could not recover this turn. I kept this conversation mapped to the current session. Please try again, use /compact, or use /new to start a fresh session.' +
+      '\n\nTry starting a fresh session or using a model with a larger context window.',
     "⚠️ Agent couldn't generate a response. Please try again.",
     "Your request couldn't be completed: Agent couldn't generate a response. Please try again.",
   ])('hides native failure copy in public history while retaining partial text and media (%s)', failureCopy => {
@@ -81,5 +85,10 @@ describe('automatic error retry display projection', () => {
     expect(projected[2].content).toEqual([partial, copy, file]);
     expect(projected[3]).toBe(final);
     expect(projected[4]).toBe(conflicting);
+  });
+
+  it('leaves timeout diagnostics and longer authored text outside fixed retry copy', () => {
+    expect(isKnownAutomaticRetryFailureCopy('Auto-compaction timed out before the next model request. Try again or run /compact.')).toBe(false);
+    expect(isKnownAutomaticRetryFailureCopy("Agent couldn't generate a response. Please try again. This is an example.")).toBe(false);
   });
 });

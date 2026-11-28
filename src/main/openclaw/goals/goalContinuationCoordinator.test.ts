@@ -362,6 +362,31 @@ describe('independent execution policy composition', () => {
     expect(harness.coordinator.getSnapshot(sessionId)).toBeNull();
   });
 
+  it('does not let an older lifecycle block a verified pre-start failure in a chat without a Goal', async () => {
+    const harness = createHarness();
+    harness.setGoal(null);
+    await harness.coordinator.handleLifecycle({
+      runId: 'older-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'start',
+    });
+    await harness.coordinator.handleLifecycle({
+      runId: 'older-run', sessionKey, sessionId: nativeIdentity.sessionId, phase: 'end', executionSettled: true,
+    });
+    harness.coordinator.invalidateForUserTurn(sessionId);
+    const previous = harness.coordinator.getSnapshot(sessionId);
+
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'pre-start-failure', 'technical-run', nativeIdentity.sessionId, nativeIdentity.lifecycleRevision,
+    )).toBe(false);
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'pre-start-failure', 'technical-run', nativeIdentity.sessionId, nativeIdentity.lifecycleRevision, true,
+    )).toBe(true);
+    expect(harness.coordinator.getSnapshot(sessionId)).toBe(previous);
+    harness.coordinator.stop(sessionId);
+    expect(harness.coordinator.adoptTechnicalRun(
+      sessionId, 'pre-start-failure', 'technical-run', nativeIdentity.sessionId, nativeIdentity.lifecycleRevision, true,
+    )).toBe(false);
+  });
+
   it('returns a definitely unsent technical successor to the deferred predecessor', async () => {
     vi.useFakeTimers();
     const harness = createHarness();

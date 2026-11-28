@@ -1,9 +1,11 @@
 import { expect, test } from 'vitest';
 
 import type { AssistantTurn } from '../chat-transcript-state';
+import { projectPersistedMessagesForActiveTurn } from '../history/optimistic-history-tail';
 import {
   FAILED_RUN_MESSAGE_FLAG,
   isFailedRunMessage,
+  projectRecoveredOutputCutoffMessages,
   readFailedRunMessageText,
   readNativeFailureDetails,
   readUncoveredFailureDetail,
@@ -18,6 +20,89 @@ const nativeFailure = {
   errorMessage: detail,
   __openclaw: { id: 'message-1', runId: 'run-1' },
 };
+
+const cutoffNotice = {
+  role: 'system',
+  runId: 'run-1',
+  content: '⚠️ The model was cut off at its output token limit. Some work may be unfinished.',
+  [FAILED_RUN_MESSAGE_FLAG]: true,
+};
+const cutoffSummary = {
+  role: 'assistant',
+  content: [{ type: 'text', text: 'The saved file is ready.' }],
+  stopReason: 'stop',
+  __openclaw: { id: 'summary-entry', runId: 'run-1' },
+};
+const cutoffToolResult = {
+  role: 'toolResult',
+  content: [{ type: 'text', text: 'saved' }],
+  __openclaw: { id: 'tool-entry', runId: 'run-1' },
+};
+
+test('hides only the duplicate cutoff row when the same run has a visible native summary', () => {
+  const otherFailure = { ...cutoffNotice, content: 'The provider rejected the request.' };
+  const cutoffWithTools = { ...cutoffNotice, __justdoAttachedToolMessages: [cutoffToolResult] };
+  const original = [nativeFailure, cutoffToolResult, cutoffNotice, cutoffSummary, otherFailure, cutoffWithTools];
+
+  expect(projectRecoveredOutputCutoffMessages(original))
+    .toEqual([nativeFailure, cutoffToolResult, cutoffSummary, otherFailure, cutoffWithTools]);
+  expect(original).toContain(cutoffNotice);
+});
+
+test('keeps cutoff notices when a successful-looking summary cannot be used for the same run', () => {
+  for (const messages of [
+    [cutoffNotice],
+    [cutoffNotice, cutoffSummary],
+    [cutoffToolResult, cutoffNotice, { ...cutoffSummary, __openclaw: { id: 'other', runId: 'run-2' } }],
+    [cutoffToolResult, cutoffNotice, { runId: 'different-run', message: cutoffSummary }],
+    [cutoffToolResult, cutoffNotice, { run_id: 'different-run', message: cutoffSummary }],
+    [cutoffToolResult, cutoffNotice, { openclawStreamFallback: { source: 'segment' }, message: cutoffSummary }],
+    [cutoffToolResult, cutoffNotice, { ...cutoffSummary, endTurn: false }],
+    [cutoffToolResult, cutoffNotice, { ...cutoffSummary, content: [...cutoffSummary.content, { type: 'toolCall', id: 'next', name: 'read' }] }],
+    [cutoffToolResult, cutoffNotice, { ...cutoffSummary, content: 'NO_REPLY' }],
+    [cutoffToolResult, cutoffNotice, cutoffSummary, { ...cutoffSummary, stopReason: 'length' }],
+    [cutoffToolResult, cutoffNotice, cutoffSummary, { ...cutoffToolResult, __openclaw: { id: 'later-tool', runId: 'run-1' } }],
+  ]) {
+    expect(projectRecoveredOutputCutoffMessages(messages)).toContain(cutoffNotice);
+  }
+});
+
+test('leaves the active turn failed and removes only the separate notice after the summary is visible', () => {
+  const terminal = {
+    type: 'terminal', runId: 'run-1', status: 'error', message: cutoffNotice.content,
+  };
+  const content = {
+    type: 'content', runId: 'run-1', status: 'completed', text: cutoffSummary.content[0].text,
+  };
+  const turn = { runId: 'run-1', status: 'error', items: [content, terminal], toolById: new Map() } as AssistantTurn;
+  const history = [cutoffToolResult, cutoffSummary, { ...cutoffNotice, __openclaw: { id: 'notice', runId: 'run-1' } }];
+  const display = withFailureDetailsForDisplay(turn, history);
+
+  expect(display).toMatchObject({
+    status: 'error',
+    items: [content],
+  });
+  expect(turn.items).toContain(terminal);
+  expect(projectPersistedMessagesForActiveTurn(history, turn, null, display)).toEqual([]);
+  expect(withFailureDetailsForDisplay({ ...turn, items: [terminal] } as AssistantTurn, history)?.items)
+    .toEqual([terminal]);
+});
+
+test('replaces an interrupted summary preview without repeating or dropping earlier work', () => {
+  const reply = 'The saved file is ready.';
+  const preamble = { type: 'content', runId: 'run-1', status: 'completed', text: 'I will save the file.' };
+  const tool = { type: 'tool', runId: 'run-1', status: 'completed' };
+  const preview = { type: 'content', runId: 'run-1', status: 'interrupted', text: 'The saved file' };
+  const cutoff = { type: 'terminal', runId: 'run-1', status: 'error', message: cutoffNotice.content };
+  const turn = {
+    runId: 'run-1', status: 'error', outputCutoffReply: reply, items: [preamble, tool, preview, cutoff],
+  } as AssistantTurn;
+
+  expect(withFailureDetailsForDisplay(turn, [])?.items).toEqual([
+    preamble, tool, { ...preview, text: reply, status: 'completed', sourceMode: 'snapshot' },
+  ]);
+  expect(turn.items).toEqual([preamble, tool, preview, cutoff]);
+});
 
 test.each([false, true])(
   'recognizes native pre-reply failure receipts (enveloped=%s)',

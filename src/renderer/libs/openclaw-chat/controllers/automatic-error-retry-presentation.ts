@@ -5,7 +5,7 @@ import {
 } from '@shared/cowork/automaticErrorRetry';
 
 import type { AssistantTurn } from '../model/chat-transcript-state';
-import { isRetryFailureMessage, retryMessageRunId } from '../pipeline/automatic-error-retry-display';
+import { isRetryFailureMessage, isRetryFailurePreview, retryMessageRunId } from '../pipeline/automatic-error-retry-display';
 
 type Binding = { sessionKey: string; nativeSessionId: string | null };
 type RetryApi = {
@@ -72,7 +72,8 @@ export class AutomaticErrorRetryPresentationController {
     const hidden = new Set<string>();
     if (!binding.nativeSessionId) return hidden;
     const failedRuns = new Set(messages.filter(isRetryFailureMessage).map(retryMessageRunId));
-    if (turn?.status === 'error') failedRuns.add(turn.runId);
+    if (turn && (turn.status === 'error' || (turn.status === 'running' &&
+        turn.items.some(item => item.runId === turn.runId && isRetryFailurePreview(item))))) failedRuns.add(turn.runId);
     for (const snapshot of this.snapshots.values()) {
       for (const run of snapshot.runs) {
         if (run.sessionKey !== binding.sessionKey || run.nativeSessionId !== binding.nativeSessionId) continue;

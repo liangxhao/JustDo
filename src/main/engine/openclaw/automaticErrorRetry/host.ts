@@ -20,8 +20,10 @@ import {
   type AutomaticErrorRetryWaitReceipt,
 } from './coordinator';
 import { readAutomaticErrorRetryFailureCode } from './failureCode';
-import { SESSION_READER_RETRY_RULE_ID } from './rules';
+import { CONTEXT_OVERFLOW_ERROR_CODE, REPLY_GENERATION_EXHAUSTED_CODE, SESSION_READER_RETRY_RULE_ID } from './rules';
 import { logSessionReaderRecovery } from './sessionReaderRecoveryLog';
+
+const SUCCESSOR_ADMISSION_TIMEOUT_MS = 30_000;
 
 interface HostDependencies {
   store: CoworkStore;
@@ -34,9 +36,13 @@ interface HostDependencies {
   beforeSuccessor: (sessionId: string, predecessorRunId: string) => void;
   beginRun: (sessionId: string, binding: AutomaticErrorRetryBinding, runId: string) => void;
   confirmed: (sessionId: string, runId: string) => void;
+  finalResponseObserved: (sessionId: string, runId: string) => void;
   rejected: (sessionId: string, runId: string, predecessorRunId: string) => void;
   unknown: (sessionId: string, runId: string) => void;
-  adoptTechnicalRun: (sessionId: string, predecessorRunId: string, runId: string, nativeSessionId: string) => boolean;
+  adoptTechnicalRun: (
+    sessionId: string, predecessorRunId: string, runId: string, nativeSessionId: string,
+    currentPredecessorWithoutGoal: boolean,
+  ) => boolean;
   unclaimed: (receipt: AutomaticErrorRetrySettledReceipt) => void;
   isResponseError: (error: unknown) => boolean;
   onPresentation?: (presentation: AutomaticErrorRetryPresentation) => void;
@@ -57,6 +63,7 @@ export class AutomaticErrorRetryHost {
     client: GatewayClientLike; generation: number; identity: string;
     owner?: CoworkAutomaticErrorRetryOwner;
     confirmedSuccessors: Set<string>;
+    finalResponseWait?: { runId: string; controller: AbortController };
   }>();
   private readonly presentations = new Map<string, AutomaticErrorRetryPresentation>();
   private revision = Date.now();
@@ -87,8 +94,11 @@ export class AutomaticErrorRetryHost {
       onChanged: presentation => {
         this.publish(presentation);
         const { sessionId, chainId, phase } = presentation;
+        const source = this.sources.get(sessionId);
+        const pending = source?.finalResponseWait;
+        if (pending && this.coordinator.getSettledReceipt(pending.runId)) pending.controller.abort();
         if ((phase === AutomaticErrorRetryPhase.Completed || phase === AutomaticErrorRetryPhase.Failed ||
-            phase === AutomaticErrorRetryPhase.Cancelled) && this.sources.get(sessionId)?.owner &&
+            phase === AutomaticErrorRetryPhase.Cancelled) && source?.owner &&
             !this.coordinator.getTurn(sessionId, chainId)?.outstandingLaunch) this.sources.delete(sessionId);
       },
       onUnclaimedSettled: receipt => dependencies.unclaimed(receipt),
@@ -157,14 +167,17 @@ export class AutomaticErrorRetryHost {
   }
 
   cancel(sessionId: string): void {
-    const owner = this.sources.get(sessionId)?.owner;
+    const source = this.sources.get(sessionId);
+    const owner = source?.owner;
     const turn = owner ? this.coordinator.getPresentation(sessionId) : null;
     this.sources.delete(sessionId);
+    source?.finalResponseWait?.controller.abort();
     if (turn) this.coordinator.cancelTurn(sessionId, turn.chainId);
     else this.coordinator.cancel(sessionId);
   }
 
   clear(): void {
+    for (const source of this.sources.values()) source.finalResponseWait?.controller.abort();
     this.sources.clear();
     this.coordinator.clear();
     for (const [sessionId, presentation] of this.presentations) {
@@ -195,8 +208,10 @@ export class AutomaticErrorRetryHost {
     const source = this.sources.get(sessionId);
     this.coordinator.observeSettled(receipt);
     if (source && this.coordinator.isTechnicalRun(receipt.runId) &&
-        this.coordinator.getSettledReceipt(receipt.runId)?.clientGeneration === receipt.clientGeneration)
+        this.coordinator.getSettledReceipt(receipt.runId)?.clientGeneration === receipt.clientGeneration) {
+      if (source.finalResponseWait?.runId === receipt.runId) source.finalResponseWait.controller.abort();
       this.confirmOwnerSuccessor(source, receipt.runId);
+    }
   }
 
   observeWaitSettled(
@@ -260,13 +275,16 @@ export class AutomaticErrorRetryHost {
     const source = this.sources.get(sessionId);
     const owner = source?.owner;
     let sent = false;
+    let finalResponseController: AbortController | undefined;
+    let admissionTimer: ReturnType<typeof setTimeout> | undefined;
+    let observingFinalResponse = false;
     try {
       request.assertCurrent();
       assertStorageExecutionAdmission();
       await this.dependencies.prepare(sessionId);
       request.assertCurrent();
       const client = this.dependencies.getClient();
-      if (!client) return { status: 'rejected' as const };
+      if (!client || !source) return { status: 'rejected' as const };
       const result = await client.request<{ session?: Record<string, unknown> }>(
         'sessions.describe', { key: binding.sessionKey },
       );
@@ -274,23 +292,30 @@ export class AutomaticErrorRetryHost {
       const native = result.session;
       const predecessor = this.coordinator.getPresentation(sessionId)?.runs.find(run => run.runId === predecessorRunId);
       const predecessorClientTurnId = predecessor?.clientTurnId ?? predecessorRunId;
+      const previousTerminal = this.coordinator.getSettledReceipt(predecessorRunId);
+      const requiresNativeHead = owner || request.ruleId === SESSION_READER_RETRY_RULE_ID ||
+        (previousTerminal && ('source' in previousTerminal ||
+          previousTerminal.observedFailureCode === CONTEXT_OVERFLOW_ERROR_CODE ||
+          previousTerminal.observedFailureCode === REPLY_GENERATION_EXHAUSTED_CODE));
       if (native?.key !== binding.sessionKey || native.sessionId !== binding.nativeSessionId ||
         native.lifecycleRevision !== binding.lifecycleRevision || native.spawnedBy ||
         native.subagentRole || native.acp || native.inheritedToolAllow ||
         native.inheritedToolDeny || native.toolsAllow ||
-        ((owner || request.ruleId === SESSION_READER_RETRY_RULE_ID) && native.lastRunId !== predecessorClientTurnId) ||
+        (requiresNativeHead && native.lastRunId !== predecessorClientTurnId) ||
         !Array.isArray(native.activeRunIds) || native.activeRunIds.length > 0) {
         return { status: 'rejected' as const };
       }
       assertStorageExecutionAdmission();
       this.dependencies.beforeSuccessor(sessionId, predecessorRunId);
       const previous = store.getSessionRunByClientTurnId(predecessorClientTurnId);
-      const previousTerminal = this.coordinator.getSettledReceipt(predecessorRunId);
       if (previous?.state === 'running') store.finishSessionRun(previous.id, 'failed', previousTerminal?.endedAt ?? Date.now());
       store.beginSessionRun({ sessionId, clientTurnId: runId, startedAt: Date.now() });
       const presentation = this.coordinator.getPresentation(sessionId);
       if (presentation) this.publish(presentation);
-      if (!owner && !this.dependencies.adoptTechnicalRun(sessionId, predecessorRunId, runId, binding.nativeSessionId))
+      if (!owner && !this.dependencies.adoptTechnicalRun(
+        sessionId, predecessorRunId, runId, binding.nativeSessionId,
+        native.goal == null && native.lastRunId === predecessorClientTurnId,
+      ))
         throw Object.assign(new Error('The business execution owner changed.'), { requestSent: false });
       this.dependencies.beginRun(sessionId, binding, runId);
       request.assertCurrent();
@@ -303,8 +328,17 @@ export class AutomaticErrorRetryHost {
         });
         request.assertCurrent();
       }
+      finalResponseController = new AbortController();
+      let acknowledge!: (value: Record<string, unknown>) => void;
+      const admission = new Promise<Record<string, unknown>>((resolve, reject) => {
+        acknowledge = resolve;
+        admissionTimer = setTimeout(() => reject(new Error('Automatic continuation admission was not confirmed.')),
+          SUCCESSOR_ADMISSION_TIMEOUT_MS);
+      });
+      const isAdmission = (value: Record<string, unknown>) =>
+        value.runId === runId && (value.status === 'accepted' || value.status === 'in_flight');
       sent = true;
-      const receipt = await client.request<Record<string, unknown>>('agent', {
+      const finalResponse = client.request<Record<string, unknown>>('agent', {
         sessionKey: binding.sessionKey,
         expectedExistingSessionId: binding.nativeSessionId,
         expectedExistingSessionLifecycleRevision: binding.lifecycleRevision,
@@ -313,15 +347,45 @@ export class AutomaticErrorRetryHost {
         inputProvenance: { kind: 'internal_system', sourceTool: 'execution-error-retry' },
         deliver: false, suppressPromptPersistence: true, idempotencyKey: runId,
         ...(owner ? { channel: 'webchat' } : {}),
+      }, {
+        expectFinal: true,
+        signal: finalResponseController.signal,
+        onAccepted: value => {
+          const receipt = value as Record<string, unknown> | null;
+          if (receipt?.sessionKey === binding.sessionKey && isAdmission(receipt)) acknowledge(receipt);
+        },
       });
+      const receipt = await Promise.race([admission, finalResponse]);
+      clearTimeout(admissionTimer);
       if (client !== this.dependencies.getClient() || !this.isSourceCurrent(binding))
         return { status: 'unknown' as const };
-      if (receipt.runId !== runId || !['accepted', 'in_flight'].includes(String(receipt.status))) {
+      if (!isAdmission(receipt)) {
         this.dependencies.unknown(sessionId, runId);
         return { status: 'unknown' as const };
       }
       this.dependencies.confirmed(sessionId, runId);
-      if (source) this.confirmOwnerSuccessor(source, runId);
+      this.confirmOwnerSuccessor(source, runId);
+      if (!this.coordinator.getSettledReceipt(runId) && this.isSourceCurrent(binding)) {
+        const pending = { runId, controller: finalResponseController };
+        source.finalResponseWait?.controller.abort();
+        source.finalResponseWait = pending;
+        observingFinalResponse = true;
+        const reconcile = (): void => {
+          if (source.finalResponseWait !== pending) return;
+          delete source.finalResponseWait;
+          // Commit the acceptance before a final response that arrived with the ACK can query it.
+          setImmediate(() => {
+            if (!pending.controller.signal.aborted && this.isSourceCurrent(binding) &&
+                !this.coordinator.getSettledReceipt(runId)) this.dependencies.finalResponseObserved(sessionId, runId);
+          });
+        };
+        // The command's final transport response only wakes the exact wait
+        // lookup. Execution settlement still belongs to the native receipt.
+        void finalResponse.then(result => {
+          if (result.runId === runId && !isAdmission(result)) reconcile();
+          else if (source.finalResponseWait === pending) delete source.finalResponseWait;
+        }, reconcile).catch(() => {});
+      }
       return { status: 'accepted' as const };
     } catch (error) {
       const rejected = !sent || (error instanceof Error &&
@@ -338,6 +402,9 @@ export class AutomaticErrorRetryHost {
       }
       if (this.isSourceCurrent(binding)) this.dependencies.unknown(sessionId, runId);
       return { status: 'unknown' as const };
+    } finally {
+      clearTimeout(admissionTimer);
+      if (!observingFinalResponse) finalResponseController?.abort();
     }
   }
 

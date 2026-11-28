@@ -50,6 +50,7 @@ import { readToolPresentation } from '../tools/tool-presentation';
 import {
   FAILED_RUN_MESSAGE_FLAG,
   isFailedRunMessage,
+  projectRecoveredOutputCutoffMessages,
   readAssistantFailureDetail,
   readUncoveredFailureDetail,
 } from '../turn/failed-run-message';
@@ -669,7 +670,9 @@ export function projectPersistedTimeline(
     return applied;
   };
 
-  const visibleMessages = collapseRepeatedFailures(messages.filter(message => !isHiddenNativeMessage(message)));
+  const visibleMessages = collapseRepeatedFailures(
+    projectRecoveredOutputCutoffMessages(messages.filter(message => !isHiddenNativeMessage(message))),
+  );
   const failureDetailOwners = new Map<string, GatewayMessage>();
   for (const value of visibleMessages) {
     if (!readAssistantFailureDetail(value)) continue;

@@ -91,6 +91,8 @@ export type SessionTurn = {
   runId: string;
   /** Gateway transcript identity learned from admitted events. */
   gatewaySessionId: string | null;
+  /** Native incarnation and connection captured before the original send. */
+  preparedIdentity?: { lifecycleRevision: string; clientGeneration: number };
   /** Gateway lifecycle generation learned from admitted events. */
   lifecycleGeneration: string | null;
   /** Last admitted agent sequence for duplicate/out-of-order suppression. */

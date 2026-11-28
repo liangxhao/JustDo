@@ -2,13 +2,17 @@ import { html, LitElement, type PropertyValues } from 'lit';
 
 import { i18nService } from '@/services/i18n';
 
+import { isNativeOutputCutoffNotice } from '../../model/turn/failed-run-message';
+
 export const TERMINAL_ERROR_PREVIEW_LINES = 3;
 const NATIVE_REJECTION_PREFIX = 'LLM request rejected: ';
 let nextTextId = 0;
 
-/** Undo only the native formatter's complete, once-escaped Markdown payload. */
+/** Format native terminal copy for the chat error row. */
 export function formatTerminalErrorText(message: string): string {
-  const [firstLine = '', ...remainingLines] = message.trim().split(/\r?\n/);
+  const text = message.trim();
+  if (isNativeOutputCutoffNotice(text)) return i18nService.t('coworkOutputCutoff');
+  const [firstLine = '', ...remainingLines] = text.split(/\r?\n/);
   let summary = firstLine;
   if (summary.startsWith(NATIVE_REJECTION_PREFIX)) {
     const payload = summary.slice(NATIVE_REJECTION_PREFIX.length);

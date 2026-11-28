@@ -227,9 +227,7 @@ export const buildLoginScopedOpenClawConfig = (
     );
   }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'compaction')) {
-    // Compaction is JustDo-managed policy. Replace the whole object so removed
-    // keys (notably the legacy explicit keepRecentTokens) do not survive an
-    // auth-only config sync.
+    // Compaction is application-managed. Apply the current policy on auth-only syncs.
     defaults.compaction = managedDefaults.compaction;
   }
   if (Object.prototype.hasOwnProperty.call(managedDefaults, 'systemAgent')) {

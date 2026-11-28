@@ -62,6 +62,9 @@ const ANCHORS = {
   describe: 'const sessionByKeyReadHandlers =',
   private: 'const PRIVATE_SESSION_ENTRY_KEYS =',
 };
+const exhaustedReply = input => `(Boolean(nextEmptyResponseRetryInstruction) &&
+    retryState.emptyResponseAttempts >= 1 && (${input}.attemptAssistant?.stopReason === "stop" ||
+      (${input}.attemptAssistant?.stopReason === "toolUse" && incompleteTurnFallbackSafe && !terminalToolPresentation)))`;
 const REPLY_RECOVERY_EDITS = {
   replyResolution: [
     ['resolveEmbeddedRunTerminal', 'incompleteTurnText: incompletePayloadText',
@@ -70,8 +73,7 @@ const REPLY_RECOVERY_EDITS = {
         input.attemptAssistant?.stopReason === "length"`],
     ['resolveEmbeddedRunTerminal', 'incompleteTurnText, payloadCount, incompleteTurnFallbackSafe',
       `incompleteTurnText, payloadCount, incompleteTurnFallbackSafe,
-      replyGenerationExhausted: Boolean(nextEmptyResponseRetryInstruction) &&
-        retryState.emptyResponseAttempts >= 1 && input.attemptAssistant?.stopReason === "stop"`],
+      replyGenerationExhausted: ${exhaustedReply('input')}`],
     ['completeEmbeddedRun', 'finalAssistantVisibleText: input.prepared.finalAssistantVisibleText',
       `finalAssistantVisibleText: input.prepared.finalAssistantVisibleText,
       ...(input.replyGenerationExhausted === true ? { replyGenerationExhausted: true } : {})`],
@@ -108,7 +110,7 @@ function verifyReplyRecoveryBundle(source) {
   const input = tree.statements[0].parameters[0].name.text;
   const expected = [
     `(${input}.attemptAssistant?.stopReason === "stop" || ${input}.attemptAssistant?.stopReason === "length")`,
-    `(Boolean(nextEmptyResponseRetryInstruction) && retryState.emptyResponseAttempts >= 1 && ${input}.attemptAssistant?.stopReason === "stop")`,
+    exhaustedReply(input),
   ];
   if (properties.length !== expected.length || properties.some((prop, index) =>
     !same(prop.initializer.getText(tree), expected[index]) ||

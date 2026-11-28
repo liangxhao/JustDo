@@ -27,6 +27,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   document.body.replaceChildren();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -91,6 +92,71 @@ test('holds errors across pending and unknown retries and reveals only the final
   } finally {
     Object.defineProperty(window, 'electron', { configurable: true, value: original });
   }
+});
+
+test('holds a bound native error preview and reveals the same exact text when it is an authored final answer', async () => {
+  const original = window.electron;
+  Object.defineProperty(window, 'electron', { configurable: true, value: {
+    ...original,
+    cowork: {
+      ...original?.cowork,
+      getAutomaticErrorRetry: async () => ({ success: true, presentations: [receipt(Disposition.Candidate, Phase.Eligible)] }),
+      onAutomaticErrorRetryChanged: () => () => {},
+    },
+  } });
+  try {
+    const chat = document.createElement('justdo-chat') as JustDoChatElement;
+    const text = "Agent couldn't generate a response. Please try again.";
+    const turn: AssistantTurn = {
+      runId: 'native-run', sessionId: 'native-session', sessionKey: 'agent:main:justdo:product',
+      lifecycleGeneration: null, id: 'turn', status: 'running', lastAgentSeq: 2,
+      startedAt: 1, toolById: new Map(), items: [
+        { id: 'preview', runId: 'native-run', firstSeq: 1, lastSeq: 2, startedAt: 1, updatedAt: 2,
+          type: 'content', sourceMode: 'snapshot', status: 'streaming', text },
+        { id: 'work', runId: 'native-run', firstSeq: 1, lastSeq: 1, startedAt: 1, updatedAt: 1,
+          type: 'content', sourceMode: 'snapshot', status: 'completed', text: 'Work in progress' },
+      ],
+    };
+    chat.productSessionId = 'product';
+    chat.activeTurn = turn;
+    document.body.append(chat);
+    await vi.waitFor(() => expect(chat.shadowRoot!.textContent).toContain('Work in progress'));
+    expect(chat.shadowRoot!.textContent).not.toContain(text);
+
+    chat.activeTurn = { ...turn, status: 'final' };
+    await chat.updateComplete;
+    expect(chat.shadowRoot!.textContent).toContain(text);
+  } finally {
+    Object.defineProperty(window, 'electron', { configurable: true, value: original });
+  }
+});
+
+test.each([false, true])('waits for exact output-cutoff reply evidence before drawing the warning (reply delivered=%s)', async delivered => {
+  vi.useFakeTimers();
+  const chat = document.createElement('justdo-chat') as JustDoChatElement;
+  const warning = '⚠️ The model was cut off at its output token limit. Some work may be unfinished.';
+  const endedAt = Date.now();
+  const turn: AssistantTurn = {
+    runId: 'cutoff-run', sessionId: 'native-session', sessionKey: 'agent:main:justdo:product',
+    lifecycleGeneration: null, id: 'turn', status: 'error', lastAgentSeq: 2, startedAt: endedAt - 1,
+    endedAt, toolById: new Map(), items: [{ id: 'terminal', runId: 'cutoff-run',
+      firstSeq: 2, lastSeq: 2, startedAt: endedAt, updatedAt: endedAt, type: 'terminal', status: 'error', message: warning }],
+  };
+  chat.activeTurn = turn;
+  document.body.append(chat);
+  await chat.updateComplete;
+  expect(chat.shadowRoot!.querySelector('.process-terminal--error')).toBeNull();
+  expect(chat.shadowRoot!.querySelector('[data-automatic-error-retry]')).not.toBeNull();
+
+  if (delivered) {
+    chat.activeTurn = { ...turn, outputCutoffReply: 'The report was saved.' };
+    await chat.updateComplete;
+    expect(chat.shadowRoot!.textContent).toContain('The report was saved.');
+  }
+  await vi.advanceTimersByTimeAsync(5_000);
+  await chat.updateComplete;
+  expect(chat.shadowRoot!.querySelector('[data-automatic-error-retry]')).toBeNull();
+  expect(Boolean(chat.shadowRoot!.querySelector('.process-terminal--error'))).toBe(!delivered);
 });
 
 test('renders ordinary history immediately while retry metadata is still loading', async () => {

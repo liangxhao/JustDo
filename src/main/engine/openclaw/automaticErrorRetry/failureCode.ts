@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+
+import { normalizeExecutionFailureCopy } from '../../../../../plugins/extensions/runtime-services/contracts/execution-failure-copy';
 import type { GatewayClientLike, NativeRunTerminalReceipt } from '../../gateway/types';
 import type { AutomaticErrorRetryBinding, AutomaticErrorRetrySettledReceipt } from './coordinator';
 import {
@@ -18,6 +21,13 @@ const SESSION_READER_CAUSES = [
 ];
 const SESSION_READER_REPORTS = SESSION_READER_CAUSES.map(cause => `Your request couldn't be completed: ${cause}`);
 const PROVIDER_CONTEXT_LENGTH_ERROR_CODE = 'context_length_exceeded';
+const PREFLIGHT_COMPACTION_FAILURE_COPY = 'Auto-compaction failed before the next model request. Try again or run /compact.';
+const PREFLIGHT_COMPACTION_FAILURE_WITH_TOOLS_COPY =
+  `${PREFLIGHT_COMPACTION_FAILURE_COPY} Completed tool actions were not replayed; verify their effects before retrying.`;
+
+export function isPreflightCompactionFailureHint(copy: string | undefined): boolean {
+  return copy === PREFLIGHT_COMPACTION_FAILURE_COPY || copy === PREFLIGHT_COMPACTION_FAILURE_WITH_TOOLS_COPY;
+}
 
 /** A native chat error can request verification, but does not establish a failure or authorize a send. */
 export function isSessionReaderErrorHint(error: unknown): error is string {
@@ -30,24 +40,21 @@ export function readNativeRetryFailureCode(
   data: Record<string, unknown>,
   nativeSessionId: string,
 ): NativeRunTerminalReceipt['observedFailureCode'] {
+  if (data.phase !== 'error' || data.executionSettled !== true || data.aborted === true ||
+    data.yielded === true || data.timeoutPhase || data.status === 'timeout' || data.status === 'timed_out' ||
+    (data.stopReason !== undefined && data.stopReason !== 'error')) return undefined;
   if (
-    data.replyGenerationExhausted === true && data.phase === 'error' && data.executionSettled === true &&
-    data.stopReason === 'error' && data.executionStarted !== false && data.aborted !== true &&
-    data.yielded !== true && !data.timeoutPhase &&
-    data.status !== 'timeout' && data.status !== 'timed_out'
+    data.replyGenerationExhausted === true && data.stopReason === 'error' && data.executionStarted !== false
   ) {
     return REPLY_GENERATION_EXHAUSTED_CODE;
   }
   if (
-    data.phase === 'error' && data.executionSettled === true && data.aborted !== true &&
-    data.yielded !== true && !data.timeoutPhase &&
-    (data.stopReason === undefined || data.stopReason === 'error') &&
     data.error === `Session transcript projection is rebuilding: ${nativeSessionId}`
   ) {
     return TRANSCRIPT_PROJECTION_REBUILDING_CODE;
   }
   if (
-    data.phase === 'error' && data.livenessState === 'blocked' &&
+    data.livenessState === 'blocked' &&
     record(data.errorObservation)?.failoverReason === CONTEXT_OVERFLOW_ERROR_CODE
   ) {
     return CONTEXT_OVERFLOW_ERROR_CODE;
@@ -69,6 +76,14 @@ export async function readAutomaticErrorRetryFailureCode(
       receipt.clientGeneration !== binding.clientGeneration) return null;
   if ('source' in receipt && (receipt.stopReason === 'timeout' || receipt.stopReason === 'restart' ||
       receipt.stopReason === 'superseded')) return null;
+  const waitEndedAt = 'source' in receipt && typeof receipt.endedAt === 'number' &&
+    Number.isFinite(receipt.endedAt) && receipt.endedAt > 0 &&
+    (receipt.stopReason === undefined || receipt.stopReason === 'error') ? receipt.endedAt : undefined;
+  const terminalEndedAt = !('source' in receipt) && receipt.observedFailureCode === CONTEXT_OVERFLOW_ERROR_CODE &&
+    Number.isFinite(receipt.endedAt) && receipt.endedAt > 0 ? receipt.endedAt : waitEndedAt;
+  const waitErrorCopy = waitEndedAt !== undefined && 'source' in receipt && receipt.stopReason === undefined
+    ? normalizeExecutionFailureCopy(receipt.error)
+    : undefined;
   if (!('source' in receipt) && (receipt.observedFailureCode === TRANSCRIPT_PROJECTION_REBUILDING_CODE ||
       receipt.observedFailureCode === REPLY_GENERATION_EXHAUSTED_CODE)) {
     return receipt.observedFailureCode;
@@ -82,6 +97,9 @@ export async function readAutomaticErrorRetryFailureCode(
     response = record(await client.request(AUTOMATIC_ERROR_RETRY_FAILURE_METHOD, {
       sessionKey: binding.sessionKey, sessionId: binding.nativeSessionId,
       lifecycleRevision: binding.lifecycleRevision, runId: receipt.runId,
+      ...(terminalEndedAt === undefined ? {} : { endedAt: terminalEndedAt }),
+      ...(waitEndedAt !== undefined && 'source' in receipt && receipt.stopReason === 'error' ? { stopReason: 'error' } : {}),
+      ...(waitErrorCopy ? { errorFingerprint: createHash('sha256').update(waitErrorCopy).digest('hex') } : {}),
     }, { signal, timeoutMs: 10_000 }));
     signal?.throwIfAborted();
   } catch (error) {
@@ -94,11 +112,17 @@ export async function readAutomaticErrorRetryFailureCode(
     log({ stage: 'execution_failure', outcome: 'identity_unconfirmed' });
     return null;
   }
-  // OpenAI-compatible providers can persist the raw API code, while the exact
-  // whole-run lifecycle reports OpenClaw's normalized blocked reason.
+  if (!('source' in receipt) && response.terminalFailureCode !== undefined &&
+      response.terminalFailureCode !== receipt.observedFailureCode) return null;
+  const observedFailureCode = 'source' in receipt
+    ? waitEndedAt === undefined ? undefined : response.terminalFailureCode
+    : receipt.observedFailureCode;
+  if (observedFailureCode === REPLY_GENERATION_EXHAUSTED_CODE &&
+    (response.errorCode === null || response.errorCode === REPLY_GENERATION_EXHAUSTED_CODE))
+    return REPLY_GENERATION_EXHAUSTED_CODE;
+  // The exact whole-run evidence reports OpenClaw's normalized blocked reason.
   if ((response.errorCode === null || response.errorCode === CONTEXT_OVERFLOW_ERROR_CODE ||
-      response.errorCode === PROVIDER_CONTEXT_LENGTH_ERROR_CODE) && !('source' in receipt) &&
-      receipt.observedFailureCode === CONTEXT_OVERFLOW_ERROR_CODE) {
+      response.errorCode === PROVIDER_CONTEXT_LENGTH_ERROR_CODE) && observedFailureCode === CONTEXT_OVERFLOW_ERROR_CODE) {
     return CONTEXT_OVERFLOW_ERROR_CODE;
   }
   if (typeof response.errorCode === 'string' && response.errorCode !== CONTEXT_OVERFLOW_ERROR_CODE &&

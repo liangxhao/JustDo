@@ -507,12 +507,14 @@ describe('managed browser configuration', () => {
 });
 
 describe('OpenClaw managed compaction config', () => {
-  test('keeps only the JustDo safeguards on top of native compaction defaults', () => {
+  test('limits the raw history retained by safeguard compaction', () => {
     const compaction = buildManagedOpenClawCompactionConfig();
 
     expect(compaction).toEqual({
       mode: 'safeguard',
       timeoutSeconds: 30 * 60,
+      keepRecentTokens: 8_000,
+      recentTurnsPreserve: 1,
       memoryFlush: {
         enabled: false,
       },

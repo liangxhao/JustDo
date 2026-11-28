@@ -716,6 +716,7 @@ API Key/SecretRef 仍可用于用户显式选择的内网服务；删除的是�
 | owned execution（019）                             | native-support 注入与精确 bytes、SDK run timeout、registry actor/owner/incarnation、whole-run settlement、custody 与 managed-tool cleanup/recovery，不把 wait timeout 当执行超时 |
 | 共享终端（020/021）                                | native PTY launch/close、cwd/shell/args、viewer ownership、buffer/offset 与 attach；欢迎文字只影响展示，删除候选需单独说明用户影响                                               |
 | 压缩/转发（022/原生）                              | operation-scoped 状态/取消覆盖准备与清理，自动恢复压缩生命周期；恢复调用者授权后仅退出源 transcript/CLI-history 写入 scope，目标保持自己的写入 claim                             |
+| 上下文与补答（031/043–048）                         | 验证软硬预检、零裁剪、有主摘要但前缀为空、无调用的 `toolUse`、工具禁用的总结重试及原轮准备好的上下文。核对输出长度截断后的总结仍保留任务未完成状态。对照上游 #200714、#199636、#186288、#174376 和 #182231 |
 | 电脑提示/Windows 恢复（023/024）                   | 内容无关的 activity start/end/heartbeat/release 与真实操作分别验收；原生 recovery capture 保留获准目录 junction，不改文件链接、hardlink、相对/坏链接或授权                       |
 | SQLite 退休/历史发布（025/027）                    | 非阻塞 checkpoint 保留 stop/join；Windows canonical readiness 由原生物理键核对；deferred read 未就绪前不得发布成功或失败响应                                                     |
 | 流式交接（026/028/032/034）                        | attempt 级 finalize admission、消息 scope 与真实完成关联、长参数无正文进度及有界恢复；详见[流式专题](streaming-and-execution.md)                                                 |

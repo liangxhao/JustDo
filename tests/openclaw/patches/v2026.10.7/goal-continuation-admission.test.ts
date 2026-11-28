@@ -1,11 +1,12 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import vm from 'node:vm';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { setImmediate } from 'node:timers/promises';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import vm from 'node:vm';
+
 import { transformSync } from 'esbuild';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const patch = require('../../../../scripts/patches/v2026.10.7/031-goal-continuation-admission.cjs');
 const { createGoalContinuationRuntime } = require('../../../../src/main/openclaw/runtime/native-support/goal-continuation.mjs');
@@ -498,6 +499,31 @@ describe('locked Goal runtime patch boundaries', () => {
     const failed = { sessionId: 'session', lastRunId: 'settled', status: 'failed' };
     expect(prepare({ request: { goalContinuation: {} } }, failed, failed).lastRunId).toBe('settled');
     expect(prepare({ request: {} }, failed, failed).lastRunId).toBeUndefined();
+  });
+
+  it('publishes exhaustion for safe empty toolUse after native retries', async () => {
+    const root = fixture();
+    patch.applyPatch(root);
+    const source = fs.readFileSync(path.join(root, TARGETS.replyResolution), 'utf8');
+    const resolve = functionRange(source, 'resolveEmbeddedRunTerminal').text;
+    const run = (stopReason: string | undefined, facts: {
+      exhausted?: boolean; safe?: boolean; toolPresentation?: boolean;
+    } = {}) => vm.runInNewContext(`${resolve}; resolveEmbeddedRunTerminal(input)`, {
+      input: { attemptAssistant: stopReason ? { stopReason } : undefined },
+      reasoningOnlyRetriesExhausted: false, incompleteTurnText: 'Incomplete reply',
+      payloadCount: 0, incompleteTurnFallbackSafe: facts.safe ?? true,
+      terminalToolPresentation: facts.toolPresentation,
+      nextEmptyResponseRetryInstruction: stopReason !== undefined,
+      retryState: { emptyResponseAttempts: facts.exhausted === false ? 0 : 1 },
+      completeEmbeddedRun: (result: { replyGenerationExhausted: boolean }) => result.replyGenerationExhausted,
+    });
+
+    expect(await run(undefined)).toBe(false);
+    expect(await run('toolUse')).toBe(true);
+    expect(await run('toolUse', { exhausted: false })).toBe(false);
+    expect(await run('toolUse', { safe: false })).toBe(false);
+    expect(await run('toolUse', { toolPresentation: true })).toBe(false);
+    expect(await run('error')).toBe(false);
   });
 
   it('accepts only the exact 019 companion export block alongside the anchored original registry exports', () => {

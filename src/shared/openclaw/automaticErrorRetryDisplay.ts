@@ -7,19 +7,37 @@ const record = (value: unknown): Record<string, unknown> | undefined =>
 const contextOverflowCopy =
   'Context overflow: prompt too large for the model. Try /reset (or /new) to start a fresh session, or use a larger-context model.';
 const missingReplyCopy = "Agent couldn't generate a response. Please try again.";
+const preflightCompactionCopy = 'Auto-compaction failed before the next model request. Try again or run /compact.';
+const sideEffectCaution = ' Completed tool actions were not replayed; verify their effects before retrying.';
 const nativeRetryFailureCopies = new Set([
   'OpenClaw stopped this turn after 3 consecutive identical tool failures. Check the tool arguments or switch to a model with native tool calling before retrying.',
   contextOverflowCopy,
-  `${contextOverflowCopy} Completed tool actions were not replayed; verify their effects before retrying.`,
+  contextOverflowCopy + sideEffectCaution,
+  preflightCompactionCopy,
+  preflightCompactionCopy + sideEffectCaution,
+  'Auto-compaction could not recover this turn. I kept this conversation mapped to the current session. Please try again, use /compact, or use /new to start a fresh session.' +
+    '\n\nTry starting a fresh session or using a model with a larger context window.',
   'This conversation is too long for the model. Try /compact, or start a new conversation with /new.',
   missingReplyCopy,
-  `⚠️ ${missingReplyCopy}`,
-  `Your request couldn't be completed: ${missingReplyCopy}`,
-  `Your request couldn't be completed: ⚠️ ${missingReplyCopy}`,
 ]);
 
+const nativeFailurePrefixes = /^(?:Error: |Your request couldn't be completed: |⚠[\uFE0E\uFE0F]?\s*){1,3}/u;
+const stripFailurePrefixes = (text: string): string => text.trimStart().replace(nativeFailurePrefixes, '');
+
 export function isKnownAutomaticRetryFailureCopy(value: unknown): boolean {
-  return typeof value === 'string' && nativeRetryFailureCopies.has(value.trim().replace(/^Error: /, ''));
+  return typeof value === 'string' && value.length <= 4_096 &&
+    nativeRetryFailureCopies.has(stripFailurePrefixes(value).trimEnd().replace(/\r\n/g, '\n'));
+}
+
+function stripNativeFailureFromTerminalText(text: string): string {
+  const copy = stripFailurePrefixes(text);
+  for (const known of nativeRetryFailureCopies) {
+    for (const separator of ['\n\n', '\r\n\r\n']) {
+      const wireCopy = separator === '\n\n' ? known : known.replace(/\n/g, '\r\n');
+      if (copy.startsWith(wireCopy + separator)) return copy.slice(wireCopy.length + separator.length);
+    }
+  }
+  return text;
 }
 
 export function retryMessageRunId(value: unknown): string | undefined {
@@ -64,11 +82,8 @@ export function projectRetryFailureMessages<T>(messages: T[], hiddenRunIds: Read
         return undefined;
       }
       if (nativeTerminalError) {
-        const separator = text.indexOf('\n\n');
-        if (separator !== -1 && isKnownAutomaticRetryFailureCopy(text.slice(0, separator))) {
-          return text.slice(separator + 2);
-        }
         if (isKnownAutomaticRetryFailureCopy(text)) return undefined;
+        return stripNativeFailureFromTerminalText(text);
       }
       return text;
     };

@@ -63,6 +63,61 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+test.each(['lifecycle-first', 'chat-first', 'foreign-reply', 'foreign-receipt'])(
+  'uses a settled same-run cutoff reply across separate native frames (%s)',
+  order => {
+    const controller = new ChatController();
+    const sessionKey = 'agent:main:justdo:cutoff';
+    const sessionId = 'cutoff-session';
+    const runId = 'cutoff-run';
+    const warning = '⚠️ The model was cut off at its output token limit. Some work may be unfinished.';
+    controller.state.sessionKey = sessionKey;
+    controller.state.currentSessionId = sessionId;
+    const load = vi.spyOn(controller, 'loadHistory').mockResolvedValue(false);
+    const handleEvent = (
+      controller as unknown as { handleEvent(event: { event: string; payload: unknown }): void }
+    ).handleEvent.bind(controller);
+
+    handleEvent({
+      event: 'agent', payload: { sessionKey, sessionId, runId, seq: 1, stream: 'lifecycle', data: { phase: 'start' } },
+    });
+    const chatError = () => handleEvent({
+      event: 'chat', payload: { sessionKey, runId, state: 'error', stopReason: 'length', errorMessage: warning },
+    });
+    const lifecycle = () => handleEvent({
+      event: 'agent', payload: {
+        sessionKey, sessionId: order === 'foreign-reply' ? 'different-session' : sessionId, runId, seq: 2, stream: 'lifecycle',
+        data: {
+          phase: 'error', executionSettled: true, stopReason: 'length', error: warning,
+          terminalReply: { disposition: 'visible', text: 'The file was saved.' },
+          ...(order === 'chat-first' ? {} : {
+            terminalReceipt: { runId, sessionId: order === 'foreign-receipt' ? 'different-session' : sessionId },
+          }),
+        },
+      },
+    });
+    if (order === 'lifecycle-first') {
+      lifecycle();
+      chatError();
+    } else {
+      chatError();
+      lifecycle();
+    }
+
+    const turn = controller.state.transcript.activeTurn;
+    expect(turn?.status).toBe('error');
+    expect(turn?.items).toContainEqual(expect.objectContaining({ type: 'terminal', message: warning }));
+    const displayed = withFailureDetailsForDisplay(turn, []);
+    const verified = order === 'lifecycle-first' || order === 'chat-first';
+    expect(displayed?.items).toContainEqual(expect.objectContaining(verified
+      ? { type: 'content', text: 'The file was saved.' }
+      : { type: 'terminal', message: warning }));
+    expect(displayed?.items.some(item => item.type === 'terminal')).toBe(!verified);
+    load.mockRestore();
+    controller.disconnect();
+  },
+);
+
 test('hydrates a question answer from authenticated history into its existing live tool', async () => {
   const sessionKey = 'agent:main:justdo:question-history';
   const questions = [{ id: 'stack', question: 'Which stack?', options: [{ id: 'react', label: 'React' }, { id: 'vue', label: 'Vue' }] }];

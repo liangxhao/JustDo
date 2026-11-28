@@ -395,6 +395,59 @@
       "targets": [
         "dist/subagent-announce.requester-settle-wake-CcIWWdU6.mjs"
       ]
+    },
+    {
+      "file": "043-empty-split-summary-recovery.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/builtin-openclaw-Ci5YBsOb.mjs",
+        "dist/types-CPdr3cVV.mjs"
+      ]
+    },
+    {
+      "file": "044-midturn-hard-context-limit.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/attempt-system-prompt-prepare-77TR2SVS.mjs"
+      ]
+    },
+    {
+      "file": "045-midturn-truncation-progress.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/builtin-openclaw-Ci5YBsOb.mjs"
+      ]
+    },
+    {
+      "file": "046-settled-finalization-provider-retry.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/settled-turn-finalization-result-36KdhcIS.mjs",
+        "dist/builtin-openclaw-Ci5YBsOb.mjs",
+        "dist/embedded-agent-DAqZgJpR.mjs"
+      ]
+    },
+    {
+      "file": "047-settled-finalization-prepared-history.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/builtin-openclaw-Ci5YBsOb.mjs"
+      ]
+    },
+    {
+      "file": "048-settled-finalization-output-cutoff.cjs",
+      "pristineRejected": true,
+      "sourceVerified": true,
+      "targets": [
+        "dist/assistant-visible-text-BmBadD-q.mjs",
+        "dist/chat-display-projection.core-B4GjbqxA.mjs",
+        "dist/embedded-agent-DAqZgJpR.mjs"
+      ]
     }
   ],
   "targets": [
@@ -431,6 +484,10 @@
       "sha256": "45b5b8bcdd7aa1811be8c5b3e3630fde18f6a2a5b72d0b2aad7bbf7790162735"
     },
     {
+      "file": "dist/assistant-visible-text-BmBadD-q.mjs",
+      "sha256": "e81a6635eecf0886ed3f8d9cadb8b7491e1e36e1c270ad142ee81e68a5c0b86"
+    },
+    {
       "file": "dist/attempt-execution.runtime-D8n2qkby.mjs",
       "sha256": "3a7aee079778fccf816ff2ea73e62009aa3c2a9a4b869187f0d6f0a5c6db34a9"
     },
@@ -445,6 +502,10 @@
     {
       "file": "dist/chat-display-projection.canvas-OCRpCKvQ.mjs",
       "sha256": "605c178b0e2f81ee4382eaa72abad5a2f6344931550528cec9fac6f9b643c85c"
+    },
+    {
+      "file": "dist/chat-display-projection.core-B4GjbqxA.mjs",
+      "sha256": "1912d9ca8d3cff043ef7a52d72fb28b0d59f5009a1adcb0c60ae4618f698de49"
     },
     {
       "file": "dist/chat-history-handler-DIyNX568.mjs",
@@ -723,6 +784,10 @@
       "sha256": "1d6aba61f9039f02241024de7601e4f66ec31608db7ab5e7c296b5671e930f1e"
     },
     {
+      "file": "dist/types-CPdr3cVV.mjs",
+      "sha256": "e65d4deab4039e13fba16254121a754b837922ee14fbc084d3e18d64e0911c41"
+    },
+    {
       "file": "dist/workspace-skill-loader-sfXVTUiF.mjs",
       "sha256": "dbc6961767cbd366437bf3d54995a802ec6be810f7206edf8e85a186b8ae3646"
     },
@@ -745,6 +810,10 @@
     {
       "file": "dist/mcp-app-DRRDUDxP.mjs",
       "sha256": "fa254a637d0e13bbbf7f5d19130249253dd8abf9eeebc3afb91deb8c7dd275c5"
+    },
+    {
+      "file": "dist/settled-turn-finalization-result-36KdhcIS.mjs",
+      "sha256": "f79771bb01f3a2492d8eb95224ba704ec384ffaf21e138938c32ebe3f87f6b95"
     }
   ]
 }

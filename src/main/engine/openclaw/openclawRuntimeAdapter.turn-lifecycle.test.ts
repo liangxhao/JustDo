@@ -19,7 +19,7 @@ vi.mock('../../cowork/coworkLogger', () => ({
 
 import { createDefaultAgentRuntimeSettings } from '../../../shared/agents/agentRuntimeSettings';
 import { normalizeAgentEvent } from '../../../shared/openclaw/agentEvent';
-import type { GatewayClientLike, SessionTurn } from '../gateway/types';
+import type { GatewayClientLike, NativeRunTerminalReceipt, SessionTurn } from '../gateway/types';
 import { AUTOMATIC_ERROR_RETRY_SETTLEMENT_GRACE_MS, type AutomaticErrorRetryLifecycle } from './automaticErrorRetry/lifecycle';
 import { OpenClawRuntimeAdapter } from './openclawRuntimeAdapter';
 
@@ -1786,21 +1786,29 @@ test('late lost-ack reporting does not reopen an already terminated local run', 
   expect(internals.unknownSessionRuns.has(session.id)).toBe(false);
 });
 
-test('confirms a lost acknowledgement immediately when the run already reached a terminal event', () => {
+test.each([true, false])('confirms a lost acknowledgement from an exact terminal (display retired=%s)', retired => {
   const { store, session } = createEmptyStore();
   const adapter = new OpenClawRuntimeAdapter(store, {});
   const internals = adapter as unknown as StopTestAdapter & {
     unknownSessionRuns: Map<string, { runId: string; cancelled: boolean }>;
-    recentTerminalRunIds: Map<string, number>;
+    retiredRunBindings: Map<string, { runId: string; sessionKey: string; gatewaySessionId: string; clientGeneration: number }>;
+    runTerminalReceipts: Map<string, NativeRunTerminalReceipt>;
   };
   const onConfirmed = vi.fn();
-
-  internals.recentTerminalRunIds.set('short-run', Date.now() + 60_000);
+  const runId = 'short-run';
+  const key = 'agent:main:justdo:session-1';
+  adapter.rememberSessionKey(session.id, key);
+  if (retired) internals.retiredRunBindings.set(runId, { runId, sessionKey: key, gatewaySessionId: 'native', clientGeneration: 0 });
+  else internals.activeTurns.set(session.id, createSessionTurn({ runId, sessionKey: key, gatewaySessionId: 'native' }));
+  internals.runTerminalReceipts.set(runId, {
+    runId, sessionKey: key, sessionId: 'native', lifecycleGeneration: null, clientGeneration: 0, agentSeq: 2,
+    endedAt: Date.now(), executionSettled: true, status: 'completed',
+  });
   adapter.registerUnknownSessionRun(session.id, 'short-run', { onConfirmed });
 
   expect(onConfirmed).toHaveBeenCalledOnce();
   expect(internals.unknownSessionRuns.has(session.id)).toBe(false);
-  expect(internals.activeTurns.has(session.id)).toBe(false);
+  expect(internals.activeTurns.has(session.id)).toBe(!retired);
 });
 
 test.each([

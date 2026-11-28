@@ -5,9 +5,12 @@ import type { AssistantTurn, ChatTranscriptState } from '../chat-transcript-stat
 import { isTurnCompactionMessage, matchesCompactionHistory } from '../turn/compaction-item';
 import {
   isFailedRunMessage,
+  isNativeOutputCutoffNotice,
+  isPureOutputCutoffFailure,
   readFailedRunMessageText,
   readNativeFailureDetails,
   readNativeFailureSummary,
+  shouldRetainCutoffDisplay,
   withFailureDetailsForDisplay,
 } from '../turn/failed-run-message';
 import { readTranscriptIdentity } from './transcript-identity';
@@ -153,6 +156,9 @@ export function projectPersistedMessagesForActiveTurn<T>(
 ): T[] {
   if (!activeTurn) return messages;
   const displayTerminal = displayTurn?.items.find(item => item.type === 'terminal');
+  const displayedCutoffSummary = displayTurn?.runId === activeTurn.runId && !displayTerminal &&
+    activeTurn.items.some(item => item.type === 'terminal' && item.status === 'error' &&
+      isNativeOutputCutoffNotice(item.message));
   const displayed =
     displayTerminal?.type === 'terminal'
       ? cleanFailureDisplayText(displayTerminal.message)
@@ -168,6 +174,7 @@ export function projectPersistedMessagesForActiveTurn<T>(
     // Exact run ownership must survive a later user row in the same transcript.
     if (isTurnCompactionMessage(activeTurn, message)) return false;
     if (readActiveTurnMessageRunId(message) !== activeTurn.runId) return true;
+    if (displayedCutoffSummary && isPureOutputCutoffFailure(message)) return false;
     // Persisted diagnostics can describe a model attempt rather than the
     // whole-run failure. Show the native diagnostic alongside the retained
     // terminal explanation without allowing it to replace that explanation.
@@ -230,6 +237,7 @@ export function retireSettledActiveTurn(
 ): boolean {
   if (!state.activeTurn || state.activeTurn.status === 'running') return false;
   if (isLocallyOptimisticHistoryTail(messages[messages.length - 1])) return false;
+  if (shouldRetainCutoffDisplay(state.activeTurn, messages, Date.now())) return false;
   // A durable final append can precede its compaction marker. Keep the live
   // position until that marker arrives or a reconciled full snapshot takes over.
   if (

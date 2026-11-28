@@ -19,6 +19,30 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test('localizes the exact native output cutoff in the terminal row', async () => {
+  const previousLanguage = i18nService.getLanguage();
+  const body = 'The model was cut off at its output token limit. Some work may be unfinished.';
+  const errorText = async () => {
+    const error = document.querySelector<TerminalErrorMessage>('chat-terminal-error')!;
+    await error.updateComplete;
+    return error.querySelector('.process-terminal__error-text')?.textContent;
+  };
+  try {
+    i18nService.setLanguage('zh', { persist: false });
+    render(renderTerminalTimelineMessage(`⚠️ ${body}`, 'error'), document.body);
+    expect(await errorText()).toBe('模型输出达到长度上限，部分工作可能尚未完成。');
+
+    render(renderTerminalTimelineMessage(`⚠️ ${body} Diagnostic detail.`, 'error'), document.body);
+    expect(await errorText()).toBe(`${body} Diagnostic detail.`);
+
+    i18nService.setLanguage('en', { persist: false });
+    render(renderTerminalTimelineMessage(`⚠️ ${body}`, 'error'), document.body);
+    expect(await errorText()).toBe(body);
+  } finally {
+    i18nService.setLanguage(previousLanguage, { persist: false });
+  }
+});
+
 test.each([
   '⚠ Provider request failed.',
   'Provider request failed.\nThe connection closed before the response completed.',

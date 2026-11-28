@@ -4,7 +4,7 @@ This inventory was audited against the unmodified `openclaw@2026.10.7` npm archi
 
 ## Disposition
 
-The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038), MCP App continuity after a model change (039), online plugin removal, disable or update without a target rollback copy (040), live MCP App view renewal (041) and duplicate subagent settlement (042). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 40 patches and preserves the remaining numbers. [pristine-targets.json](pristine-targets.json) records 87 exact pristine patch target hashes bound to the locked npm archive.
+The initial rebase retained the 33 v2026.10.6 capability numbers. Later additions resolve cumulative commentary ownership (034), ordinary ACP completion lineage (036), project skill precedence (037), subagent model inventory admission (038), MCP App continuity after a model change (039), online plugin removal, disable or update without a target rollback copy (040), live MCP App view renewal (041) and duplicate subagent settlement (042). Capability 005 has since been removed because ordinary main sessions now use native automatic recovery across both application and Gateway restarts. The current set contains 46 patches, including context and finalization recovery (043–048). [pristine-targets.json](pristine-targets.json) records 91 exact pristine patch target hashes bound to the locked npm archive.
 
 The latest dev rebase refines existing capability 026 to preserve its live delivery policy through the native subscription parameter clone. The fresh C artifact was rebuilt from the locked pristine package and passed the historical C strict target matrix recorded below. Earlier B source/import/SQLite records are explicitly historical and do not establish C artifact acceptance.
 
@@ -73,6 +73,12 @@ The old-ID column below refers to the pre-v2026.10.6 lineage. The remaining IDs 
 | [040-plugin-recovery-missing-source.cjs](040-plugin-recovery-missing-source.cjs) | — | skip exact uninstall/disable/update targets' extra old-runtime rollback copies while retaining native online replacement. | native online uninstall, disable and update can omit target rollback capture while preserving cleanup and explicit failure outcomes. |
 | [041-mcp-app-view-keepalive.cjs](041-mcp-app-view-keepalive.cjs) | — | renew the exact live MCP App view while its page remains open, without replaying tools. | native authenticated view retention or renewal supports equivalent lifetime and authorization checks. |
 | [042-subagent-settle-deduplication.cjs](042-subagent-settle-deduplication.cjs) | — | settle delivered batches before waiting for descendants and omit already-delivered ordinary results from a necessary continuation. | the locked native runtime passes both delivered-batch retirement and mixed/yielded result tests. |
+| [043-empty-split-summary-recovery.cjs](043-empty-split-summary-recovery.cjs) | — | recover an exhausted, empty turn-prefix summary using an audited artifact from the same compaction. | native safeguard supplies equivalent empty-prefix recovery. |
+| [044-midturn-hard-context-limit.cjs](044-midturn-hard-context-limit.cjs) | — | let an estimated post-tool request inside the hard window proceed under soft compaction pressure. | upstream #200714 or equivalent hard-window handling is installed. |
+| [045-midturn-truncation-progress.cjs](045-midturn-truncation-progress.cjs) | — | route a hard overflow to native compaction when durable tool-result truncation made no change. | upstream #199636 or equivalent no-progress handling is installed. |
+| [046-settled-finalization-provider-retry.cjs](046-settled-finalization-provider-retry.cjs) | — | retry empty output and temporary provider failures up to three times inside built-in tool-free finalization. | native finalization supplies equivalent bounded recovery. |
+| [047-settled-finalization-prepared-history.cjs](047-settled-finalization-prepared-history.cjs) | — | retain the source attempt's smaller prepared history in the tool-free finalizer. | upstream #186288 or equivalent prepared finalization history is installed. |
+| [048-settled-finalization-output-cutoff.cjs](048-settled-finalization-output-cutoff.cjs) | — | summarize settled tools after a bare transport opener and retain the original output-limit failure. | upstream #174376 and #182231 or equivalent behavior is installed. |
 
 ## Locked target source owners
 
@@ -120,6 +126,12 @@ The following paths were returned by a clean application on the pristine target.
 | 040 | `dist/server-plugin-reload-kLZrvRgz.mjs` |
 | 041 | `dist/mcp-app-DRRDUDxP.mjs` |
 | 042 | `dist/subagent-announce.requester-settle-wake-CcIWWdU6.mjs` |
+| 043 | `dist/builtin-openclaw-Ci5YBsOb.mjs`, with `dist/types-CPdr3cVV.mjs` supplying the unchanged error type |
+| 044 | `dist/attempt-system-prompt-prepare-77TR2SVS.mjs` |
+| 045 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
+| 046 | `dist/settled-turn-finalization-result-36KdhcIS.mjs`, `dist/builtin-openclaw-Ci5YBsOb.mjs`, `dist/embedded-agent-DAqZgJpR.mjs` |
+| 047 | `dist/builtin-openclaw-Ci5YBsOb.mjs` |
+| 048 | `dist/assistant-visible-text-BmBadD-q.mjs`, `dist/chat-display-projection.core-B4GjbqxA.mjs`, `dist/embedded-agent-DAqZgJpR.mjs` |
 
 ## Test ownership
 
@@ -169,6 +181,12 @@ Native restart recovery is covered by `tests/openclaw/runtime/main-session-resta
 | 040 | `plugin-recovery-missing-source.test.ts`, `plugin-reload-recovery.fixture.js`, `plugin-reload-recovery-caller-prefix.fixture.js`, `plugin-runtime-generation.fixture.js` |
 | 041 | `mcp-app-view-keepalive.test.ts`, `mcp-app-view-keepalive.fixture.js`, Renderer `mcp-app-session.keepalive.test.ts` |
 | 042 | `subagent-settle-deduplication.test.ts` |
+| 043 | `empty-split-summary-recovery.test.ts` |
+| 044 | `midturn-hard-context-limit.test.ts` |
+| 045 | `midturn-truncation-progress.test.ts` |
+| 046 | `settled-finalization-provider-retry.test.ts` |
+| 047 | `settled-finalization-prepared-history.test.ts` |
+| 048 | `settled-finalization-output-cutoff.test.ts` |
 
 ### 033: plugin directory publication and retained installed files
 
@@ -557,6 +575,146 @@ The locked npm chunk leaves already-delivered results pending when another child
 The backport applies the behavior of [OpenClaw #176701](https://github.com/openclaw/openclaw/pull/176701) and [#178104](https://github.com/openclaw/openclaw/pull/178104). Native no-work retirement precedes both descendant waits in the locked runtime and rechecks refreshed batches. A continuation retains its original batch and identities. It reads undelivered findings and findings that still require restart reconciliation. Ordinary delivered children are identified by run ID without replaying their result or model-route notice. Changes in which results are still owed invalidate preparation at the existing native checks before dispatch. Explicit yield retains its continuation. Source and bundle verification bind the retirement order, filtering, and exact native chunk.
 
 Focused regression tests exercise the native settlement function with synthetic registry and delivery boundaries. They cover already-delivered batches, unfinished siblings, mixed findings, explicit yield, and restart-interrupted findings. Full model and Gateway transport behavior require a separate reproduction.
+
+### 043 Empty split-turn summary recovery
+
+The locked safeguard first summarizes the prepared history together with the cut
+turn prefix, then asks for a separate prefix summary. A valid first result was
+discarded when the prefix returned HTTP 200 with no visible text on every
+native attempt. A loopback replay reaches this after a settled tool call and the
+local context-budget guard. It leaves the original transcript and reports an
+overflow without submitting the next chat request.
+
+The patch is scoped to the native safeguard catch after a nonempty reconciliation
+summary. It checks the wrapped `InvalidSummaryOutputError` from the same native
+core module and keeps a better artifact from an earlier quality pass if one exists.
+Recovery uses the existing bounded turn-excerpt formatter, finalizer and quality
+audit. The candidate must retain its formatted prefix and fit the native budget.
+The original failure path handles missing reconciliation, incomplete excerpts,
+audit failure, output limits, provider errors and cancellation. The native owner
+commits the degraded artifact and decides how the interrupted turn may resume.
+
+Public compaction hooks observe the operation. A configured compaction provider
+takes over summary production and a model override changes routing. Neither
+can access the result already generated inside this safeguard attempt and reuse
+its native reconciliation, audit and commit. On upgrade repeat the isolated
+empty-prefix replay against the candidate, with normal summaries and cancellation
+as controls. Retire the patch if native behavior supplies equivalent recovery.
+
+The rebuilt Windows Gateway passed all 41 patch validators. The isolated replay
+returned one valid reconciliation and three empty prefix completions. The
+Gateway logged one audited recovery and one compaction commit, then sent one
+foreground request containing the settled tool result and completed the original
+run under the same SID and revision. The fixture made one tool call. Focused
+tests separately cover artifact rejection and cancellation. The original model
+endpoint was outside this replay.
+
+### 044 Mid-turn hard context limit
+
+The locked runtime evaluates tool results after applying its native prompt
+projection. The maintenance threshold reserves capacity for compaction. A
+post-tool estimate between that threshold and the full model window previously
+threw the same native signal as a hard overflow. The patch leaves that request
+eligible for submission. Estimates above the configured window still ask the
+native owner to recover. The provider can also reject an estimate that exceeds
+its actual window or leaves too little space for completion.
+
+The guard makes this decision before a model request. Public compaction observers
+can only observe the resulting operation. Disabling the precheck would remove
+hard-window protection as well. The patch retains the guard, its request
+projection and the native compaction and provider-error paths. On upgrade,
+verify upstream #200714 or equivalent behavior on both sides of the limit.
+
+The 42-patch Windows x64 candidate passed frozen verification and both
+loopback replays. At a 30,000-token window, the post-tool request reached the
+endpoint with the existing result and no recovery-summary requests. At a
+24,000-token window, the same fixture entered compaction, preserved the tool
+result through 043, and completed the original run. Both replays checked the
+same physical SID and lifecycle revision and one tool execution.
+
+### 045 Mid-turn truncation progress
+
+After hard overflow, the live estimate can select truncation while the durable
+branch has no oversized result left to change. The locked handler marked a
+zero-change result as handled. A successful earlier tool could then classify
+the next attempt as progress continuation and bypass the recovery retry budget.
+The patch treats only durable truncation as handled. The existing
+`compact_only` fallthrough uses native ownership, compaction and recovery limits.
+Public APIs cannot change the outcome of this in-flight preflight. This is the
+no-progress part of upstream #199636. Evaluate its other estimate and replay
+changes separately when upgrading.
+
+### 046 Tool-free finalization retry
+
+A loopback replay completed one tool, then returned HTTP 503 to the isolated
+summary request. The locked built-in finalizer reduced that response to an
+unsuccessful stop reason and immediately published its fallback reply. The
+empty-answer branch already permitted one more tool-free attempt. Eligible
+built-in runs now share a budget of three retries after their first attempt
+across empty answers, native classified transient HTTP failures and transport
+diagnostics emitted before output. Custom harnesses retain the native empty
+answer limit. The built-in loop respects a short provider retry floor, rechecks
+active authority and existing delivery before the next request, and uses a
+concise corrective prompt on retries. Explicit
+provider refusal, auth, billing, rate limiting, timeouts, cancellation and
+partial output retain their existing paths. Already failed original turns
+retain their existing failure policy.
+
+Main's `agent` continuation does not inherit the original finalizer's
+tool-disable scope. Plugin and detached completion APIs own new admissions
+and cannot commit the original writer's reply. The built-in original run is
+the sole owner of this recovery. On upgrade, repeat a single-effect tool
+fixture with transient failure then valid text, an exhausted failure, and
+cancellation. Verify wire tool schemas, original run identity and final output.
+
+The compiled Gateway replay reproduced the original fallback after one
+HTTP 503 summary request. With 046 it submitted a second tool-free request
+containing the saved tool result, retained the original session incarnation
+and run settlement, and returned the authored final answer. The transcript
+contained one tool result. The frozen candidate passed the same replay and
+the HTTP 401 control. The latter issued one summary request and preserved the
+failure.
+
+The rebuilt frozen runtime also passed a mixed replay with HTTP 503, an empty
+HTTP 200, HTTP 503, and a valid summary. The provider received four tool-free
+requests containing the original tool evidence. The tool executed once.
+
+### 047 Prepared history in isolated finalization
+
+The built-in finalizer receives the source attempt but previously assembled
+its request from stored history again. This could restore older material the
+source context engine had already excluded. Carry the native prepared view
+into the existing history sanitizer when it contains the active visible user
+message and the native settled batch check corroborates the tool pairs.
+Unavailable or incomplete evidence retains the existing restricted preparation
+path. The native finalizer still owns its transcript writer and disables
+tools. Public hooks cannot replace this private same-run input.
+
+The focused fixture drives the locked built-in harness and history preparation
+against a byte-limited model boundary. The pristine path exceeds the limit.
+The patched path retains the active request and its tool result and leaves
+stored history intact. Upstream #186288 also introduced a separate suffix
+selector. Validate the target version's behavior for active tool evidence and
+request size before removing this contained backport.
+
+### 048 Output-limit finalization
+
+In the locked Gateway, one tool batch settled and the next model response ended
+with `length` and an isolated `<tool_call>` opener. The opener counted as a reply,
+so the existing finalizer never ran and the turn was reported as successful.
+Apply the Markdown-aware sole-opener cleanup from upstream #174376. The same
+rule filters a standalone cutoff opener from chat display before the native
+anchored delivery check can count it as an answer. The raw transcript, actual
+delivery, media and Markdown code retain their existing ownership. Finalizer
+admission still requires native tool settlement and current reply ownership.
+
+For an admitted output-limit finalizer, the native restricted request asks for
+only the work established by existing results. The native terminal retains
+`error` and `length` even when an authored summary is available, and the summary
+includes a cutoff notice. Two empty summaries retain the same failure without a
+synthetic success. Cancellation and the existing receiver's delivery authority
+still govern publication. Public hooks and the host retry cannot change the
+source reply classification or the existing tool-free terminal owner.
 
 ## Validation boundary
 

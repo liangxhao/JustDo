@@ -84,6 +84,7 @@ interface NativeReceipt {
   pendingError?: boolean;
   error?: string;
   stopReason?: string;
+  timeoutPhase?: string;
   terminalReply?: { disposition?: string; text?: string };
 }
 
@@ -532,6 +533,7 @@ export function createExternalAgentExecution(
             : 'error',
       summary: receipt.error,
       retryReceipt: onAttemptSettled && receipt.status === 'error' && !receipt.yielded && !receipt.pendingError &&
+        !receipt.timeoutPhase &&
         (receipt.stopReason === undefined || receipt.stopReason === 'error') &&
         client === initialClient && runtime.getGatewayClientGeneration?.() === initialGeneration
         ? {
@@ -559,6 +561,22 @@ export function createExternalAgentExecution(
       },
     });
     const awaitSettlement = async (initial?: NativeResult): Promise<SettledResult> => {
+      const settleLive = (confirmed: NonNullable<typeof terminal>): SettledResult => {
+        settled = true;
+        onAttemptAdmitted?.();
+        return {
+          status: confirmed.status,
+          summary: confirmed.summary,
+          retryReceipt: confirmed.retryReceipt,
+          ...(confirmed.text !== undefined ? { terminalReplyText: confirmed.text } : {}),
+          outputRecovered: confirmed.replyKnown || Array.isArray(initial?.result?.payloads),
+          result: {
+            payloads: confirmed.text || confirmed.silent
+              ? [{ text: confirmed.text }]
+              : initial?.result?.payloads,
+          },
+        };
+      };
       // agent.wait is the native whole-run receipt API. A chat final, idle state,
       // cancellation ACK, or new owner cannot replace its exact terminal evidence.
       let deadline = Date.now() + reconciliationTimeoutMs;
@@ -586,21 +604,7 @@ export function createExternalAgentExecution(
           deadline = Date.now() + reconciliationTimeoutMs;
           const confirmed = terminal;
           await withinWindow(assertIdentity(client));
-          settled = true;
-          onAttemptAdmitted?.();
-          return {
-            status: confirmed.status,
-            summary: confirmed.summary,
-            retryReceipt: confirmed.retryReceipt,
-            ...(confirmed.text !== undefined ? { terminalReplyText: confirmed.text } : {}),
-            outputRecovered: confirmed.replyKnown || Array.isArray(initial?.result?.payloads),
-            result: {
-              payloads:
-                confirmed.text || confirmed.silent
-                  ? [{ text: confirmed.text }]
-                  : initial?.result?.payloads,
-            },
-          };
+          return settleLive(confirmed);
         }
         if (Date.now() >= deadline) throw unavailable();
         try {
@@ -645,6 +649,18 @@ export function createExternalAgentExecution(
             if (receipt === terminalWake) continue;
             if (runtime.getGatewayClient() !== current) continue;
             const observation = await withinWindow(assertIdentity(current));
+            const waitFinished = !receipt.pendingError && typeof receipt.endedAt === 'number' &&
+              Number.isFinite(receipt.endedAt) &&
+              (receipt.status === 'ok' || receipt.status === 'error' || receipt.status === 'timeout');
+            if (terminal && !terminal.yielded) {
+              // Only a compatible success can supply a snapshot for a live success without one.
+              const canRecoverReply = terminal.status === 'ok' && !terminal.replyKnown &&
+                receipt.runId === runId && waitFinished && receipt.status === 'ok' &&
+                !receipt.yielded && !yielded && !receipt.timeoutPhase && !receipt.error &&
+                (receipt.stopReason === undefined || receipt.stopReason === 'stop' || receipt.stopReason === 'end_turn') &&
+                receiptResult(receipt).outputRecovered;
+              if (!canRecoverReply) return settleLive(terminal);
+            }
             if (receipt.runId !== runId) {
               onUnconfirmed?.();
             } else if (receipt.yielded || yielded || terminal?.yielded) {
@@ -654,14 +670,7 @@ export function createExternalAgentExecution(
               throw new ExternalAgentOutcomeUnknownError(
                 'Native execution yielded. Its continuation cannot be attributed through the current public API; the conversation remains reserved.',
               );
-            } else if (
-              !receipt.pendingError &&
-              typeof receipt.endedAt === 'number' &&
-              Number.isFinite(receipt.endedAt) &&
-              (receipt.status === 'ok' ||
-                receipt.status === 'error' ||
-                receipt.status === 'timeout')
-            ) {
+            } else if (waitFinished) {
               settled = true;
               // The live terminal may have been lost. Use the exact native receipt
               // and the current Goal/run head before suppressing a successor.

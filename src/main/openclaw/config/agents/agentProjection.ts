@@ -233,10 +233,12 @@ export const applyManagedOpenClawHeartbeatConfig = (
       }
     : agent;
 
-/** Keep JustDo's bounded safeguards while inheriting OpenClaw's native defaults. */
+/** Keep a smaller raw history tail when the native safeguard compacts. */
 export const buildManagedOpenClawCompactionConfig = () => ({
   mode: 'safeguard',
   timeoutSeconds: OPENCLAW_COMPACTION_TIMEOUT_SECONDS,
+  keepRecentTokens: 8_000,
+  recentTurnsPreserve: 1,
   memoryFlush: {
     enabled: false,
   },

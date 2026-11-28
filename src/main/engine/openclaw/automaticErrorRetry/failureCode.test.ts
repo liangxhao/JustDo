@@ -43,10 +43,13 @@ describe('exact native retry error code reader', () => {
 
   it('uses a native overflow observation with an exact matching provider code or no transcript code', async () => {
     const terminal: NativeRunTerminalReceipt = { ...receipt, observedFailureCode: CONTEXT_OVERFLOW_ERROR_CODE };
-    const request = vi.fn(async () => ({
+    const request = vi.fn(async (): Promise<Record<string, unknown>> => ({
       ...observation, lifecycleRevision: null as string | null, errorCode: null as string | null,
     }));
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBe(CONTEXT_OVERFLOW_ERROR_CODE);
+    expect(request).toHaveBeenCalledWith('runtimeServices.executionFailure', {
+      sessionKey: binding.sessionKey, sessionId: 'native', lifecycleRevision: null, runId: 'run', endedAt: 1,
+    }, expect.any(Object));
 
     request.mockResolvedValue({ ...observation, errorCode: 'context_length_exceeded' });
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBe(CONTEXT_OVERFLOW_ERROR_CODE);
@@ -55,6 +58,8 @@ describe('exact native retry error code reader', () => {
     request.mockResolvedValue(observation);
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBe(observation.errorCode);
 
+    request.mockResolvedValue({ ...observation, errorCode: null, terminalFailureCode: REPLY_GENERATION_EXHAUSTED_CODE });
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBeNull();
     request.mockResolvedValue({ ...observation, errorCode: null, identityMatched: false });
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, terminal)).toBeNull();
   });
@@ -62,6 +67,42 @@ describe('exact native retry error code reader', () => {
   it('requires a blocked lifecycle observation even when the transcript contains the overflow code', async () => {
     const request = vi.fn(async () => ({ ...observation, errorCode: CONTEXT_OVERFLOW_ERROR_CODE }));
     expect(await readAutomaticErrorRetryFailureCode({ request }, binding, receipt)).toBeNull();
+  });
+
+  it.each([CONTEXT_OVERFLOW_ERROR_CODE, REPLY_GENERATION_EXHAUSTED_CODE])(
+    'recovers %s after a matching settled wait when Runtime Services observed the native terminal', async code => {
+      const { agentSeq: _agentSeq, ...remaining } = receipt;
+      const settled = { ...remaining, source: 'agent.wait' as const, stopReason: 'error' };
+      const request = vi.fn(async () => ({ ...observation, errorCode: null as string | null, terminalFailureCode: code }));
+
+      expect(await readAutomaticErrorRetryFailureCode({ request }, binding, settled)).toBe(code);
+      expect(request).toHaveBeenCalledWith('runtimeServices.executionFailure', {
+        sessionKey: binding.sessionKey, sessionId: 'native', lifecycleRevision: null, runId: 'run', endedAt: 1, stopReason: 'error',
+      }, expect.any(Object));
+      expect(await readAutomaticErrorRetryFailureCode({ request }, binding, { ...settled, endedAt: undefined })).toBeNull();
+      expect(await readAutomaticErrorRetryFailureCode({ request }, binding, { ...settled, stopReason: 'timeout' })).toBeNull();
+      expect(await readAutomaticErrorRetryFailureCode({ request }, binding, receipt)).toBeNull();
+      request.mockResolvedValue({ ...observation, terminalFailureCode: code });
+      expect(await readAutomaticErrorRetryFailureCode({ request }, binding, settled)).toBe(observation.errorCode);
+    },
+  );
+
+  it('correlates a wrapped wait error without treating its copy as a failure code', async () => {
+    const { agentSeq: _agentSeq, ...remaining } = receipt;
+    const settled = {
+      ...remaining, source: 'agent.wait' as const,
+      error: "Your request couldn't be completed: ⚠️ Agent couldn't generate a response. Please try again.",
+    };
+    const request = vi.fn(async (): Promise<Record<string, unknown>> => ({ ...observation, errorCode: null }));
+
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, settled)).toBeNull();
+    expect(request.mock.calls).toHaveLength(1);
+    expect(request).toHaveBeenCalledWith('runtimeServices.executionFailure', {
+      sessionKey: binding.sessionKey, sessionId: 'native', lifecycleRevision: null, runId: 'run',
+      endedAt: 1, errorFingerprint: '6a0fdaa542d689fb0422afd91a5900d526be6ad3e0cf052109f641aa25a68fd7',
+    }, expect.any(Object));
+    request.mockResolvedValue({ ...observation, errorCode: null, terminalFailureCode: REPLY_GENERATION_EXHAUSTED_CODE });
+    expect(await readAutomaticErrorRetryFailureCode({ request }, binding, settled)).toBe(REPLY_GENERATION_EXHAUSTED_CODE);
   });
 
   it('recognizes rebuilding only from the exact native settled error for this session', async () => {

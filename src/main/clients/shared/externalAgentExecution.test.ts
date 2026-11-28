@@ -916,6 +916,102 @@ describe('external execution ownership', () => {
     },
   );
 
+  it.each([false, true])('uses a wait reply only with compatible live success (conflict=%s)', async conflict => {
+    const f = fixture();
+    const run = f.execute(f.input);
+    const assertion = expect(run).resolves.toBe(conflict ? final.result.payloads[0].text : receipt.terminalReply.text);
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent', expect.anything(), expect.anything()));
+    f.finishAgent(conflict ? final : { runId: f.input.runId, status: 'error' });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent.wait', expect.anything()));
+
+    let finishDescribe!: () => void;
+    f.request.mockImplementationOnce(method => {
+      expect(method).toBe('sessions.describe');
+      return new Promise(resolve => {
+        finishDescribe = () => resolve({ session: { key: 'native-key', ...f.identity } });
+      });
+    });
+    f.finishReceipt(conflict ? { ...receipt, status: 'error', stopReason: 'error', error: 'Conflicting failure' } : receipt);
+    await vi.waitFor(() => expect(finishDescribe).toBeDefined());
+    f.runtime.emit('gatewayEvent', {
+      event: 'agent', payload: {
+        runId: f.input.runId, sessionKey: 'native-key', sessionId: 'native-id', seq: 1,
+        stream: 'lifecycle', data: { phase: 'end', executionSettled: true },
+      },
+    });
+    finishDescribe();
+
+    await assertion;
+    expect(f.onSettled).toHaveBeenCalledExactlyOnceWith('completed');
+  });
+
+  it('recovers exhausted replies when the live terminal arrives during wait receipt verification', async () => {
+    const f = fixture({ retryDelayMs: 0 }, 1, null);
+    f.identity.lastRunId = f.input.runId;
+    f.identity.activeRunIds = [];
+    let holdDescribe = false;
+    let finishDescribe: (() => void) | undefined;
+    const request = f.request.getMockImplementation()!;
+    f.request.mockImplementation((method, params, options) => {
+      if (method === 'sessions.describe' && holdDescribe) {
+        holdDescribe = false;
+        return new Promise(resolve => {
+          finishDescribe = () => resolve({ session: { key: 'native-key', ...f.identity } });
+        });
+      }
+      return request(method, params, options);
+    });
+    const run = f.execute({ ...f.input, isRetryCurrent: () => true });
+    const outcome = run.then(value => ({ value }), error => ({ error }));
+    const sends = () => f.request.mock.calls.filter(([method]) => method === 'agent');
+    await vi.waitFor(() => expect(sends()).toHaveLength(1));
+    f.finishAgent({ runId: f.input.runId, status: 'error' });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent.wait', expect.anything()));
+
+    holdDescribe = true;
+    f.finishReceipt({ runId: f.input.runId, status: 'error', endedAt: 100, error: missingReplyCopy });
+    await vi.waitFor(() => expect(finishDescribe).toBeDefined());
+    f.runtime.emit('gatewayEvent', {
+      event: 'agent', payload: {
+        runId: f.input.runId, sessionKey: 'native-key', sessionId: 'native-id', seq: 1,
+        stream: 'lifecycle', data: { phase: 'error', executionSettled: true, stopReason: 'error',
+          error: missingReplyCopy, replyGenerationExhausted: true },
+      },
+    });
+    finishDescribe!();
+    await vi.waitFor(() => expect(sends()).toHaveLength(2));
+    const successor = sends()[1][1] as { idempotencyKey: string };
+    f.runtime.emit('gatewayEvent', {
+      event: 'agent', payload: {
+        runId: successor.idempotencyKey, sessionKey: 'native-key', sessionId: 'native-id', seq: 1,
+        stream: 'lifecycle', data: { phase: 'end', executionSettled: true,
+          terminalReply: { disposition: 'visible', text: 'Recovered answer' } },
+      },
+    });
+
+    expect(await outcome).toEqual({ value: 'Recovered answer' });
+    expect(successor.idempotencyKey).not.toBe(f.input.runId);
+    expect(f.publishAutomaticErrorRetry).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'completed', attempt: 1 }));
+  });
+
+  it('does not turn an exact provider timeout into a tool-error continuation', async () => {
+    const f = fixture({ retryDelayMs: 0 }, 1);
+    f.identity.lastRunId = f.input.runId;
+    f.identity.activeRunIds = [];
+    const run = f.execute({ ...f.input, isRetryCurrent: () => true });
+    const rejection = expect(run).rejects.toThrow(repeatedToolFailureCopy);
+    await vi.waitFor(() => expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1));
+    f.finishAgent({ runId: f.input.runId, status: 'error' });
+    await vi.waitFor(() => expect(f.request).toHaveBeenCalledWith('agent.wait', expect.anything()));
+
+    f.finishReceipt({ runId: f.input.runId, status: 'error', endedAt: 100, stopReason: 'error',
+      error: repeatedToolFailureCopy, timeoutPhase: 'model_response' });
+
+    await rejection;
+    expect(f.request.mock.calls.map(([method]) => method)).not.toContain(AUTOMATIC_ERROR_RETRY_FAILURE_METHOD);
+    expect(f.request.mock.calls.filter(([method]) => method === 'agent')).toHaveLength(1);
+  });
+
   it.each(['agent', 'agent.wait'])(
     'rechecks native incarnation after a live terminal wakes %s',
     async pending => {

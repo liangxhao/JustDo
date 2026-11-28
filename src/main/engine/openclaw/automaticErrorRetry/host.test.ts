@@ -26,7 +26,9 @@ import type { GatewayClientLike, NativeRunTerminalReceipt } from '../../gateway/
 import { ExecutionSuccessorClaims } from '../executionSuccessorClaims';
 import { readNativeRetryFailureCode } from './failureCode';
 import { AutomaticErrorRetryHost } from './host';
-import { AUTOMATIC_ERROR_RETRY_RULES, CONTEXT_OVERFLOW_ERROR_CODE, REPEATED_TOOL_ERROR_CODE } from './rules';
+import {
+  AUTOMATIC_ERROR_RETRY_RULES, CONTEXT_OVERFLOW_ERROR_CODE, REPEATED_TOOL_ERROR_CODE, REPLY_GENERATION_EXHAUSTED_CODE,
+} from './rules';
 
 const sessionId = 'desktop-session';
 const sessionKey = `agent:main:justdo:${sessionId}`;
@@ -81,7 +83,9 @@ function fixture(transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE, 
     getSessionRunByClientTurnId: (clientTurnId: string) => rows.get(clientTurnId),
     beginSessionRun, finishSessionRun, setSessionRunAutomaticErrorRetry,
   };
-  const request = vi.fn(async (method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  const request = vi.fn(async (
+    method: string, params?: Record<string, unknown>, _options?: Parameters<GatewayClientLike['request']>[2],
+  ): Promise<Record<string, unknown>> => {
     if (method === 'sessions.describe') return { session: native };
     if (method === 'runtimeServices.executionFailure') return {
       sessionKey, sessionId: nativeSessionId, lifecycleRevision, runId: params?.runId, identityMatched: true,
@@ -97,6 +101,7 @@ function fixture(transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE, 
   const beforeSuccessor = vi.fn();
   const beginRun = vi.fn();
   const confirmed = vi.fn();
+  const finalResponseObserved = vi.fn();
   const rejected = vi.fn();
   const unknown = vi.fn();
   const adoptTechnicalRun = vi.fn(() => true);
@@ -111,14 +116,14 @@ function fixture(transcriptErrorCode: string | null = REPEATED_TOOL_ERROR_CODE, 
     getGeneration: () => generation,
     sessionKey: () => sessionKey,
     isBlocked: () => blocked,
-    prepare, beforeSuccessor, beginRun, confirmed, rejected, unknown,
+    prepare, beforeSuccessor, beginRun, confirmed, finalResponseObserved, rejected, unknown,
     adoptTechnicalRun, unclaimed, onPresentation,
     isResponseError: error => Boolean(error && typeof error === 'object' && 'gatewayCode' in error),
   });
   hosts.push(host);
   return {
     host, claims, session, rows, native, request, prepare, beforeSuccessor, beginRun,
-    confirmed, rejected, unknown, adoptTechnicalRun, unclaimed, onPresentation,
+    confirmed, finalResponseObserved, rejected, unknown, adoptTechnicalRun, unclaimed, onPresentation,
     beginSessionRun, finishSessionRun, setSessionRunAutomaticErrorRetry,
     replaceClient: () => { client = { request } as unknown as GatewayClientLike; },
     nextGeneration: () => { generation += 1; },
@@ -135,6 +140,54 @@ afterEach(() => {
 });
 
 describe('automatic error retry host transport', () => {
+  it.each([false, true])('observes an accepted successor final only while its source is current (retired=%s)', async retired => {
+    const f = fixture();
+    await f.arm();
+    const defaultRequest = f.request.getMockImplementation()!;
+    const final = deferred<Record<string, unknown>>();
+    f.request.mockImplementation((method, args, options) => {
+      if (method !== 'agent') return defaultRequest(method, args, options);
+      expect(options?.expectFinal).toBe(true);
+      options?.onAccepted?.({ status: 'accepted', runId: args?.idempotencyKey, sessionKey });
+      return final.promise;
+    });
+
+    f.host.observeSettled(sessionId, terminal());
+    await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledOnce());
+    const [, runId] = f.confirmed.mock.calls[0];
+    expect(f.finalResponseObserved).not.toHaveBeenCalled();
+    if (retired) f.nextGeneration();
+    final.resolve({ status: 'error', runId });
+    await final.promise;
+    await new Promise(resolve => setImmediate(resolve));
+
+    if (retired) expect(f.finalResponseObserved).not.toHaveBeenCalled();
+    else expect(f.finalResponseObserved).toHaveBeenCalledExactlyOnceWith(sessionId, runId);
+    expect(f.agentCalls()).toHaveLength(1);
+  });
+
+  it('retains a single unknown attempt if the connected Gateway never acknowledges the continuation', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await f.arm();
+    const request = f.request.getMockImplementation()!;
+    f.request.mockImplementation((method, args, options) => method === 'agent'
+      ? new Promise(() => {})
+      : request(method, args, options));
+    f.host.observeSettled(sessionId, terminal());
+    await vi.waitFor(() => expect(f.agentCalls()).toHaveLength(1));
+    const [, params, options] = f.agentCalls()[0];
+    expect(options?.signal?.aborted).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(f.unknown).toHaveBeenCalledExactlyOnceWith(sessionId, params?.idempotencyKey);
+    expect(options?.signal?.aborted).toBe(true);
+    expect(f.confirmed).not.toHaveBeenCalled();
+    expect(f.finalResponseObserved).not.toHaveBeenCalled();
+    expect(f.agentCalls()).toHaveLength(1);
+  });
+
   it('shares the injected predecessor claim with an independent execution policy', async () => {
     const f = fixture();
     f.claims.claim(rootRunId, 'goal-successor');
@@ -265,6 +318,40 @@ describe('automatic error retry host transport', () => {
     expect(f.agentCalls()).toHaveLength(1);
   });
 
+  it('recovers from overflow followed by an exhausted reply within one continuation budget', async () => {
+    const f = fixture(null, 2);
+    await f.arm();
+    const failedTurn = (runId: string, data: Record<string, unknown>): NativeRunTerminalReceipt => ({
+      ...terminal(runId),
+      observedFailureCode: readNativeRetryFailureCode({ phase: 'error', executionSettled: true, ...data }, nativeSessionId),
+    });
+
+    f.host.observeSettled(sessionId, failedTurn(rootRunId, {
+      livenessState: 'blocked', errorObservation: { failoverReason: CONTEXT_OVERFLOW_ERROR_CODE },
+    }));
+    await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledOnce());
+    const first = f.agentCalls()[0][1]!;
+    const firstRunId = first.idempotencyKey as string;
+    f.native.lastRunId = firstRunId;
+    f.host.observeSettled(sessionId, failedTurn(firstRunId, {
+      stopReason: 'error', replyGenerationExhausted: true,
+    }));
+    await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledTimes(2));
+    const second = f.agentCalls()[1][1]!;
+    const secondRunId = second.idempotencyKey as string;
+    f.host.observeSettled(sessionId, terminal(secondRunId, 'completed'));
+
+    expect(new Set([rootRunId, firstRunId, secondRunId]).size).toBe(3);
+    for (const send of [first, second]) expect(send).toMatchObject({
+      expectedExistingSessionId: nativeSessionId,
+      expectedExistingSessionLifecycleRevision: lifecycleRevision,
+      suppressPromptPersistence: true,
+    });
+    expect(f.host.getPresentation(sessionId)).toMatchObject({
+      phase: AutomaticErrorRetryPhase.Completed, attempt: 2, maxContinuations: 2,
+    });
+  });
+
   it.each([true, false])('resumes a stale reader only while its failed run is the native head (%s)', async isLatest => {
     const f = fixture(null);
     await f.arm();
@@ -292,6 +379,35 @@ describe('automatic error retry host transport', () => {
     }
   });
 
+  it('does not resume a classified wait receipt after a newer native run took the head', async () => {
+    const f = fixture(null);
+    await f.arm();
+    const request = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (method, params, options) => {
+      const result = await request(method, params, options);
+      return method === 'runtimeServices.executionFailure'
+        ? { ...result, terminalFailureCode: REPLY_GENERATION_EXHAUSTED_CODE } : result;
+    });
+    f.native.lastRunId = 'newer-native-run';
+    const { agentSeq: _agentSeq, ...failed } = terminal();
+
+    expect(f.host.coordinator.observeWaitSettled({ ...failed, source: 'agent.wait' })).toBe(true);
+    await vi.waitFor(() => expect(f.unclaimed).toHaveBeenCalledOnce());
+    expect(f.agentCalls()).toHaveLength(0);
+  });
+
+  it.each([CONTEXT_OVERFLOW_ERROR_CODE, REPLY_GENERATION_EXHAUSTED_CODE])(
+    'does not resume a live %s failure after a newer native run took the head', async observedFailureCode => {
+      const f = fixture(null);
+      await f.arm();
+      f.native.lastRunId = 'newer-native-run';
+
+      expect(f.host.coordinator.observeSettled({ ...terminal(), observedFailureCode })).toBe(true);
+      await vi.waitFor(() => expect(f.unclaimed).toHaveBeenCalledOnce());
+      expect(f.agentCalls()).toHaveLength(0);
+    },
+  );
+
   it.each([
     { ruleId: 'transcript-projection-rebuilding', data: { error: `Session transcript projection is rebuilding: ${nativeSessionId}` } },
     { ruleId: 'reply-generation-exhausted', data: { stopReason: 'error', replyGenerationExhausted: true } },
@@ -303,6 +419,7 @@ describe('automatic error retry host transport', () => {
 
     let runId = rootRunId;
     for (const attempt of [1, 2, 3]) {
+      f.native.lastRunId = runId;
       expect(f.host.coordinator.observeSettled(failure(runId))).toBe(true);
       await vi.waitFor(() => expect(f.confirmed).toHaveBeenCalledTimes(attempt));
       const params = f.agentCalls()[attempt - 1]?.[1];
@@ -336,6 +453,23 @@ describe('automatic error retry host transport', () => {
     expect(f.rejected).toHaveBeenCalledWith(sessionId, expect.any(String), rootRunId);
     expect([...f.rows.values()].every(row => row.state === 'failed')).toBe(true);
   });
+
+  it.each(['current without Goal', 'current with Goal', 'newer native run'] as const)(
+    'passes pre-start handoff proof only for the exact Goal-free native head (%s)', async state => {
+      const f = fixture();
+      await f.arm();
+      if (state === 'current with Goal') Object.assign(f.native, { goal: { id: 'goal' } });
+      if (state === 'newer native run') f.native.lastRunId = 'new-run';
+      f.adoptTechnicalRun.mockReturnValue(state === 'current without Goal');
+
+      f.host.coordinator.observeSettled(terminal());
+
+      await vi.waitFor(() => expect(f.adoptTechnicalRun).toHaveBeenCalledExactlyOnceWith(
+        sessionId, rootRunId, expect.any(String), nativeSessionId, state === 'current without Goal',
+      ));
+      expect(f.agentCalls()).toHaveLength(state === 'current without Goal' ? 1 : 0);
+    },
+  );
 
   it('returns a structured preaccept rejection to the original native terminal without another send', async () => {
     const f = fixture();
