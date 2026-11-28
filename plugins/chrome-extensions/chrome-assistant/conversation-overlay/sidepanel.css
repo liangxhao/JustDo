@@ -552,6 +552,7 @@ main {
   padding: 0;
   background: transparent;
 }
+.message.assistant[hidden] { display: none; }
 .assistant-content { font-size: 15px; line-height: 1.65; }
 .assistant-content > div + div { margin-top: 12px; }
 .message.user > div > :first-child,

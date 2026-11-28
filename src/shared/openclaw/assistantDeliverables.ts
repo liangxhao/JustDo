@@ -1,3 +1,5 @@
+import { parseManagedOutgoingMediaSource } from './assistantMedia';
+
 function parseUrl(value: string): URL | undefined {
   try { return new URL(value); } catch { return undefined; }
 }
@@ -5,6 +7,13 @@ function parseUrl(value: string): URL | undefined {
 export function unwrapAssistantDeliverableSource(source: string): string {
   if (/^(?:"[^"]+"|'[^']+'|<[^<>]+>)$/u.test(source)) return source.slice(1, -1);
   return source;
+}
+
+export function isInvalidManagedAssistantDelivery(source: string): boolean {
+  const reference = unwrapAssistantDeliverableSource(source.trim());
+  const namespace = '/api/chat/media/outgoing';
+  return (reference === namespace || reference.startsWith(`${namespace}/`)) &&
+    parseManagedOutgoingMediaSource(reference) === null;
 }
 
 export function isLocalAssistantDeliverableSource(raw: string): boolean {

@@ -8,6 +8,7 @@ import '../webpage-embed/view';
  */
 import { isLocalHtmlFilePath, parseLocalHtmlLink } from '@shared/browser/browserLinkOpening';
 import {
+  isInvalidManagedAssistantDelivery,
   isLocalAssistantDeliverableSource,
   unwrapAssistantDeliverableSource,
 } from '@shared/openclaw/assistantDeliverables';
@@ -528,10 +529,13 @@ export function renderAssistantAttachments(
   workingDirectory?: string,
   sessionKey?: string,
 ): TemplateResult | typeof nothing {
-  if (attachments.length === 0) return nothing;
+  const visibleAttachments = attachments.filter(attachment =>
+    attachment.url.trim() && !isInvalidManagedAssistantDelivery(attachment.url),
+  );
+  if (visibleAttachments.length === 0) return nothing;
   return html`
     <div class="message-attachments">
-      ${attachments.map(attachment => {
+      ${visibleAttachments.map(attachment => {
         if (attachment.kind === 'audio' || attachment.kind === 'video') {
           if (attachment.url.startsWith('/api/chat/media/outgoing/')) {
             return html`<justdo-message-media
@@ -561,15 +565,16 @@ export function renderAssistantAttachments(
 
 function renderAttachmentButton(
   label: string,
-  source?: string,
+  source: string,
   workingDirectory?: string,
   sessionKey?: string,
 ): TemplateResult {
-  const managed = source?.startsWith('/api/chat/media/outgoing/');
+  const reference = unwrapAssistantDeliverableSource(source);
+  const managed = Boolean(parseManagedOutgoingMediaSource(reference));
   const engine = typeof window === 'undefined' ? undefined : window.electron?.openclaw?.engine;
-  const canSave = source && managed && sessionKey &&
-    parseManagedOutgoingMediaSource(source, sessionKey) && engine?.saveAssistantDelivery;
-  const canOpen = source && !managed;
+  const canSave = managed && sessionKey &&
+    parseManagedOutgoingMediaSource(reference, sessionKey) && engine?.saveAssistantDelivery;
+  const canOpen = !managed;
   const action = i18nService.t(managed ? 'coworkSaveAttachment' : 'coworkOpenAttachment');
   const title = canOpen ? resolveAttachmentUrl(source, workingDirectory) : action;
   const openOptions = { workingDirectory };
@@ -583,7 +588,7 @@ function renderAttachmentButton(
     if (canSave) {
       message = i18nService.t('coworkSaveAttachmentFailed');
       try {
-        const result = await canSave({ source, sessionKey, filename: label });
+        const result = await canSave({ source: reference, sessionKey, filename: label });
         if (result.success) return;
         if (result.reason === AssistantDeliverySaveError.Busy) {
           message = i18nService.t('coworkSaveAttachmentBusy');
@@ -653,7 +658,7 @@ function renderListedAttachment(
   content: TemplateResult | typeof nothing,
 ): TemplateResult | typeof nothing {
   const marker = attachment.listMarker;
-  if (!marker) return content;
+  if (!marker || content === nothing) return content;
   return html`
     <div class="message-attachment-list-item">
       <span class="message-attachment-list-item__marker" aria-hidden="true"
@@ -717,7 +722,7 @@ type BubbleContentItem =
   | { type: 'text'; text?: string; name?: string; args?: unknown }
   | Extract<MessageContentItem, { type: 'browser_annotation' }>
   | Extract<MessageContentItem, { type: 'browser_recording' }>
-  | Extract<MessageContentItem, { type: 'attachment' | 'attachment_error' }>;
+  | Extract<MessageContentItem, { type: 'attachment' }>;
 
 type AttachmentAlternatives = {
   type: 'attachment-alternatives';
@@ -836,9 +841,6 @@ function renderOrderedBubble(
                 ${unsafeHTML((streaming ? toStreamingMarkdownHtml : toSanitizedMarkdownHtml)(item.text, { allowDetails: true, fileLinks }))}
               </div>
             `;
-          }
-          if (item.type === 'attachment_error') {
-            return renderListedAttachment(item.attachment, renderAttachmentButton(item.attachment.label));
           }
           if (item.type === 'browser_recording') {
             return renderBrowserRecording(item.recording);
@@ -1090,8 +1092,8 @@ function renderAssistantMessage(
     ...media.map(attachment => ({ type: 'attachment' as const, attachment })),
   ];
   for (const item of content) {
-    if (item.type === 'attachment' || item.type === 'attachment_error') {
-      bubbleItems.push(item);
+    if (item.type === 'attachment') {
+      if (item.attachment.url.trim() && !isInvalidManagedAssistantDelivery(item.attachment.url)) bubbleItems.push(item);
       continue;
     }
     if (item.type === 'text') {

@@ -4,6 +4,7 @@ import {
   getChromeDeliveryMediaUrls,
 } from '@shared/chrome/chromeExtensionDeliverables';
 import {
+  isInvalidManagedAssistantDelivery,
   isLocalAssistantDeliverableSource,
   unwrapAssistantDeliverableSource,
 } from '@shared/openclaw/assistantDeliverables';
@@ -234,9 +235,9 @@ export function renderRichContent(
       },
     });
   }
-  const manifestReferences = new Set(entry.role === 'assistant'
-    ? getChromeDeliveryMediaUrls(raw).map(deliveryReference)
-    : []);
+  const manifest = entry.role === 'assistant' ? getChromeDeliveryMediaUrls(raw) : [];
+  const manifestReferences = new Set(manifest.map(deliveryReference));
+  let omittedInvalidDelivery = manifest.some(isInvalidManagedAssistantDelivery);
   const shownDeliveries = new Set<string>();
   const canOpenMessageFile =
     entry.role === 'user' || entry.role === 'assistant' ? openMessageFile : undefined;
@@ -270,6 +271,10 @@ export function renderRichContent(
     const reference = item.type === 'attachment' ? deliveryReference(item.attachment.url) : undefined;
     const delivery = reference === undefined ? undefined : deliverables.get(reference);
     if (reference !== undefined) {
+      if (entry.role === 'assistant' && isInvalidManagedAssistantDelivery(reference)) {
+        omittedInvalidDelivery = true;
+        continue;
+      }
       if (manifestReferences.has(reference) && (!delivery || raw.__chromeExtensionOmitDeliveryMedia === true)) continue;
       if (delivery) {
         if (shownDeliveries.has(reference)) continue;
@@ -334,6 +339,7 @@ export function renderRichContent(
       );
   }
   flushDocumentCards();
+  return omittedInvalidDelivery;
 }
 
 function renderMessageFileLinks(

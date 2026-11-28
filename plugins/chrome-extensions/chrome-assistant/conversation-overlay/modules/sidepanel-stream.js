@@ -8324,6 +8324,20 @@ function readTerminalDecision(data) {
   return action === "commit" || action === "rollback";
 }
 
+// src/shared/openclaw/assistantMedia.ts
+var MANAGED_OUTGOING_MEDIA_SOURCE = /^\/api\/chat\/media\/outgoing\/([^/?#]+)\/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/full$/u;
+function parseManagedOutgoingMediaSource(source, expectedSessionKey) {
+  if (typeof source !== "string" || source.length > 2048) return null;
+  const match2 = MANAGED_OUTGOING_MEDIA_SOURCE.exec(source);
+  if (!match2) return null;
+  try {
+    const sessionKey = decodeURIComponent(match2[1]);
+    return sessionKey && sessionKey.length <= 512 && !/[\u0000-\u001f\u007f]/u.test(sessionKey) && !/%[0-9a-f]{2}/iu.test(sessionKey) && encodeURIComponent(sessionKey) === match2[1] && (expectedSessionKey === void 0 || expectedSessionKey === sessionKey) ? sessionKey : null;
+  } catch {
+    return null;
+  }
+}
+
 // src/shared/openclaw/assistantDeliverables.ts
 function parseUrl(value) {
   try {
@@ -8335,6 +8349,11 @@ function parseUrl(value) {
 function unwrapAssistantDeliverableSource(source) {
   if (/^(?:"[^"]+"|'[^']+'|<[^<>]+>)$/u.test(source)) return source.slice(1, -1);
   return source;
+}
+function isInvalidManagedAssistantDelivery(source) {
+  const reference2 = unwrapAssistantDeliverableSource(source.trim());
+  const namespace = "/api/chat/media/outgoing";
+  return (reference2 === namespace || reference2.startsWith(`${namespace}/`)) && parseManagedOutgoingMediaSource(reference2) === null;
 }
 function isLocalAssistantDeliverableSource(raw) {
   const source = unwrapAssistantDeliverableSource(raw);
@@ -20392,7 +20411,7 @@ function assistantMediaUrls(message) {
     ...new Set(
       delivery.mediaUrls.flatMap((value) => {
         const url = pickTrimmedString(value);
-        return url ? [url] : [];
+        return url && !isInvalidManagedAssistantDelivery(url) ? [url] : [];
       })
     )
   ];

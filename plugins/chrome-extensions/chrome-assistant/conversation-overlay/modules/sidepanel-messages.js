@@ -59,7 +59,7 @@ export function createMessageRenderer(
   function renderContent(host, entry) {
     const scope = currentScope;
     const isCurrent = () => scope === currentScope && container.contains(host);
-    renderRichContent(
+    return renderRichContent(
       host,
       entry,
       source => readImage(scope, source),
@@ -692,7 +692,8 @@ export function createMessageRenderer(
     if (signature !== node.renderSignature) {
       copyController.invalidate(node);
       content.replaceChildren();
-      renderContent(content, entry);
+      const omittedInvalidDelivery = renderContent(content, entry);
+      node.hidden = omittedInvalidDelivery === true && !content.hasChildNodes();
       copy.copyText = messageCopyText(entry);
       node.renderSignature = signature;
     } else retryRichImages(content);

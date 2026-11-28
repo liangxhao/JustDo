@@ -888,7 +888,7 @@ describe('renderMessageBlock', () => {
     expect(rendered).not.toContain('message-attachment__detail');
   });
 
-  test('reports an unavailable attachment only after clicking its card', async () => {
+  test('omits a failed delivery record without an original attachment reference', () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent });
     const group = createGroup('assistant');
@@ -909,17 +909,14 @@ describe('renderMessageBlock', () => {
     const template = renderMessageBlock(group, { workingDirectory: 'C:\\workspace\\project' });
     const rendered = stringifyTemplate(template);
 
-    expect(rendered).toContain('quicksort_v1.py');
+    expect(rendered).not.toContain('message-attachment');
+    expect(rendered).not.toContain('quicksort_v1.py');
     expect(rendered).not.toContain('C:\\workspace\\project\\quicksort_demo\\quicksort_v1.py');
     expect(rendered).not.toContain('Managed media attachment has an unsupported content type');
     expect(rendered).not.toContain('附件交付失败');
     expect(rendered).not.toContain('附件不可用');
-    expect(rendered).not.toContain('disabled');
-    expect(collectTemplateFunctions(template)).toHaveLength(1);
-    await collectTemplateFunctions(template)[0](new Event('click'));
-    expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      type: 'app:showToast', detail: '附件不可用：quicksort_v1.py',
-    }));
+    expect(collectTemplateFunctions(template)).toHaveLength(0);
+    expect(dispatchEvent).not.toHaveBeenCalled();
   });
 
   test.each([true, false])('keeps one clickable original for a file missing at delivery (inline=%s)', async inline => {
@@ -1199,7 +1196,9 @@ describe('renderMessageBlock', () => {
     },
   );
 
-  test('does not infer a local path when an unbound managed attachment is clicked', async () => {
+  test('keeps the declared local file when a same-name managed address is invalid', async () => {
+    const local = 'C:/workspace/project/remote.pdf';
+    const invalid = '/api/chat/media/outgoing/session/remote/full';
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent });
     const renderedTemplate = renderMessageBlock(
@@ -1212,12 +1211,14 @@ describe('renderMessageBlock', () => {
             key: 'assistant-unbound-managed-message',
             message: {
               role: 'assistant',
+              openclawDelivery: { mediaUrls: [invalid] },
               content: [
+                { type: 'text', text: `MEDIA:${local}` },
                 {
                   type: 'attachment',
                   attachment: {
                     artifactId: 'artifact_managed_media_remote',
-                    url: '/api/chat/media/outgoing/session/remote/full',
+                    url: invalid,
                     kind: 'document',
                     label: 'remote.pdf',
                   },
@@ -1233,11 +1234,12 @@ describe('renderMessageBlock', () => {
     );
     const rendered = stringifyTemplate(renderedTemplate);
 
-    expect(rendered).not.toContain('disabled');
-    expect(rendered).not.toContain('C:\\workspace\\project\\remote.pdf');
+    expect(rendered.match(/class="message-attachment"/g)).toHaveLength(1);
+    expect(rendered).not.toContain('另存附件');
+    expect(dispatchEvent).not.toHaveBeenCalled();
     await collectTemplateFunctions(renderedTemplate)[0](new Event('click'));
     expect(dispatchEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-      type: 'app:showToast', detail: '附件不可用：remote.pdf',
+      type: 'cowork:preview-file', detail: { filePath: local, workingDirectory: 'C:\\workspace\\project' },
     }));
   });
 

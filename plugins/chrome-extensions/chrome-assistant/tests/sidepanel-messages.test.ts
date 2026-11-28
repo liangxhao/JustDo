@@ -241,6 +241,50 @@ describe('side panel process presentation matches the desktop', () => {
     expect(openDelivery).toHaveBeenLastCalledWith('thread-files', managed);
   });
 
+  it('hides an invalid managed delivery and keeps the explicit local attachment', async () => {
+    const local = './out/report.pdf';
+    const invalid = '/api/chat/media/outgoing/agent%3Amain/missing/full';
+    const managed = '/api/chat/media/outgoing/agent%3Amain/11111111-1111-4111-8111-111111111111/full';
+    const invalidBlock = { type: 'attachment', attachment: { kind: 'document', label: 'report.pdf', url: invalid } };
+    renderer.render([
+      {
+        ...answer('invalid-managed', `MEDIA: ${local}`),
+        rawMessage: {
+          role: 'assistant',
+          openclawDelivery: { mediaUrls: [invalid, managed] },
+          content: [
+            { type: 'text', text: `MEDIA: ${local}` },
+            invalidBlock,
+            { type: 'attachment', attachment: { kind: 'document', label: 'other.pdf', url: managed } },
+            { type: 'attachment_error', attachment: { code: 'delivery-failed', kind: 'document', label: 'report.pdf' } },
+          ],
+        },
+      },
+      {
+        ...answer('invalid-projected-block', ''),
+        rawMessage: {
+          role: 'assistant',
+          content: [invalidBlock],
+          openclawDelivery: { mediaUrls: [local, invalid, managed] },
+          __chromeExtensionOmitDeliveryMedia: true,
+        },
+      },
+      answer('invalid-live-media', `MEDIA: ${invalid}`),
+    ], 'thread-files');
+
+    const cards = [...messages.querySelectorAll<HTMLButtonElement>('button.chrome-delivery-card')];
+    expect(cards.map(card => card.getAttribute('aria-label'))).toEqual(['Open attachment report.pdf', 'Download other.pdf']);
+    expect(messages.querySelectorAll('.message.assistant:not([hidden])')).toHaveLength(1);
+    expect(messages.textContent?.match(/report\.pdf/g)).toHaveLength(1);
+    expect(openDelivery).not.toHaveBeenCalled();
+    cards[0].click();
+    openDelivery.mockRejectedValueOnce(new Error('Gateway temporarily unavailable'));
+    cards[1].click();
+    await vi.waitFor(() => expect(cards[1].parentElement?.querySelector('[role="status"]')?.textContent).toBe('Unable to open this file'));
+    expect(openDelivery.mock.calls).toEqual([['thread-files', local], ['thread-files', managed]]);
+    expect(cards[1].isConnected).toBe(true);
+  });
+
   it('preserves distinct local sources in a partial native delivery and groups the same-name choices', () => {
     const first = './out/report.pdf';
     const second = './archive/report.pdf';

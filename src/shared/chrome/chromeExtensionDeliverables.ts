@@ -1,4 +1,4 @@
-import { isLocalAssistantDeliverableSource, unwrapAssistantDeliverableSource } from '../openclaw/assistantDeliverables';
+import { isInvalidManagedAssistantDelivery, isLocalAssistantDeliverableSource, unwrapAssistantDeliverableSource } from '../openclaw/assistantDeliverables';
 import { parseManagedOutgoingMediaSource } from '../openclaw/assistantMedia';
 import { filterMediaDirectiveLines } from '../openclaw/mediaDirectives';
 
@@ -117,13 +117,16 @@ export function getChromeAssistantDeliverables(message: unknown): AssistantDeliv
 function readAssistantDeliverables(message: unknown, forSidePanel: boolean): AssistantDeliverable[] {
   const row = record(message);
   if (row?.role !== 'assistant' || row.display === false) return [];
-  const delivered = getChromeDeliveryMediaUrls(row);
+  const manifest = getChromeDeliveryMediaUrls(row);
+  const delivered = forSidePanel ? manifest.filter(source => !isInvalidManagedAssistantDelivery(source)) : manifest;
+  const incompleteManifest = manifest.length !== delivered.length;
   const deliveredSet = new Set(delivered);
   const managedBlocks = new Set<string>();
   const declarations = new Map<string, Record<string, unknown>>();
   const add = (value: unknown, details: Record<string, unknown> = {}) => {
     const source = string(value);
-    if (!source || source.length > 4096 || /[\x00-\x1f\x7f]/u.test(source)) return;
+    if (!source || source.length > 4096 || /[\x00-\x1f\x7f]/u.test(source) ||
+        (forSidePanel && isInvalidManagedAssistantDelivery(source))) return;
     if (!declarations.has(source)) declarations.set(source, details);
   };
   const describeBlock = (block: Record<string, unknown>) => {
@@ -165,7 +168,7 @@ function readAssistantDeliverables(message: unknown, forSidePanel: boolean): Ass
       describeContentBlock(block);
     }
   }
-  if (!delivered.length) {
+  if (!delivered.length || incompleteManifest) {
     const blockText = blocks.filter(block => block.type === 'text').map(block => string(block.text)).join('\n');
     const body = typeof row.content === 'string' ? row.content :
       blocks.length && (!forSidePanel || blockText.trim()) ? blockText : string(row.text);
@@ -183,18 +186,23 @@ function readAssistantDeliverables(message: unknown, forSidePanel: boolean): Ass
     return result ? [result] : [];
   };
   if (!delivered.length) return [...declarations.keys()].flatMap(describeSource);
+  // An invalid managed entry has no source to open. Preserve any local files
+  // explicitly named in the same reply without guessing from attachment labels.
+  const originalSources = incompleteManifest
+    ? [...new Set([...delivered, ...[...declarations.keys()].filter(isLocalAssistantDeliverableSource)])]
+    : delivered;
   if (!managedBlocks.size || delivered.some(source => parseManagedOutgoingMediaSource(source))) {
-    return delivered.flatMap(describeSource);
+    return originalSources.flatMap(describeSource);
   }
   const managed = [...managedBlocks].flatMap(describeSource);
   if (!forSidePanel) return managed;
 
   // A complete native batch can identify the managed replacement for each
   // original. An incomplete batch doesn't identify which originals succeeded.
-  const originals = delivered.flatMap(describeSource);
+  const originals = originalSources.flatMap(describeSource);
   const managedKinds = new Map(managed.map(item => [item.name, item.kind] as const));
   const originalNames = new Set(originals.map(item => item.name));
-  const complete = originals.length === delivered.length && originals.length === managedBlocks.size &&
+  const complete = !incompleteManifest && originals.length === delivered.length && originals.length === managedBlocks.size &&
     originalNames.size === originals.length && managedKinds.size === managedBlocks.size &&
     !blocks.some(block => block.type === 'attachment_error') &&
     originals.every(({ source, name, kind }) => isLocalAssistantDeliverableSource(source) && managedKinds.get(name) === kind);

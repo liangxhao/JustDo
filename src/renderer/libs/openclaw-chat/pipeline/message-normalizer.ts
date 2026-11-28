@@ -10,6 +10,7 @@ type BrowserRecordingDraft,
 import { readRecordingNetworkSummary } from '@shared/browser/browserRecordingNetwork';
 import { parseCoworkSessionKey } from '@shared/cowork/sessionKey';
 import {
+  isInvalidManagedAssistantDelivery,
   isLocalAssistantDeliverableSource,
   unwrapAssistantDeliverableSource,
 } from '@shared/openclaw/assistantDeliverables';
@@ -366,7 +367,7 @@ export function assistantMediaUrls(message: Record<string, unknown>): string[] {
     ...new Set(
       delivery.mediaUrls.flatMap(value => {
         const url = pickTrimmedString(value);
-        return url ? [url] : [];
+        return url && !isInvalidManagedAssistantDelivery(url) ? [url] : [];
       }),
     ),
   ];
